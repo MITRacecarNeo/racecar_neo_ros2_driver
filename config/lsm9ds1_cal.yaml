@@ -1,0 +1,9 @@
+imu_node:
+  ros__parameters:
+    i2c_bus: 1
+    update_rate: 100.0
+    frame_id: imu_link
+    # Defaults are zero biases. Regenerate via the v1 calibrate_imu.py utility
+    # once we port it; for now /imu publishes raw + sensitivity-scaled values.
+    accelerometer.bias: [0.0, 0.0, 0.0]
+    gyroscope.bias: [0.0, 0.0, 0.0]

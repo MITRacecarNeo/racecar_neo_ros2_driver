@@ -1,7 +1,8 @@
 """Pololu Maestro driver. Upstream: FRC4564/Maestro; ported from v1."""
 
-import serial
 from sys import version_info
+
+import serial
 
 PY2 = version_info[0] == 2
 
@@ -25,9 +26,9 @@ class Controller:
         else:
             self.usb.write(bytes(cmdStr, 'latin-1'))
 
-    def setRange(self, chan, min, max):
-        self.Mins[chan] = min
-        self.Maxs[chan] = max
+    def setRange(self, chan, min_target, max_target):
+        self.Mins[chan] = min_target
+        self.Maxs[chan] = max_target
 
     def getMin(self, chan):
         return self.Mins[chan]

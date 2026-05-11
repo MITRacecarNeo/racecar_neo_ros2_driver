@@ -38,13 +38,35 @@ Safety/uptime layers (inherited from UAV Neo):
 - Per-session timestamped log dirs with `~/logs/latest` atomic symlink.
 - Pre-flight `colcon test` suite asserting every peripheral and embedding fix commands in failure messages.
 
-## Build
+## Quick start (fresh machine)
 
-ROS2 Jazzy on Ubuntu 24.04.
+Ubuntu 24.04 (Noble) on a Raspberry Pi.
+
+```sh
+mkdir -p ~/ros2_ws/src
+cd ~/ros2_ws/src
+git clone https://github.com/MITRacecarNeo/racecar_neo_ros2_driver.git
+bash racecar_neo_ros2_driver/scripts/setup_all.sh
+# Log out + back in (group changes take effect)
+ros2 launch racecar_neo_ros2_driver teleop.launch.py
+```
+
+`setup_all.sh` is idempotent — re-running is safe. It runs four phases:
+
+1. **`setup_ros2.sh`** — adds the ROS2 apt repo and installs Jazzy + the message/driver packages used by the racecar driver
+2. **`setup_dev_tools.sh`** — build tools, Python hardware libraries (smbus / serial / spidev), CLI utilities, GStreamer dev headers
+3. **`setup_user_env.sh`** — adds the user to `dialout` / `i2c` / `spi` / `gpio` groups and auto-sources ROS2 in `.bashrc`
+4. **`setup_workspace.sh`** — clones `sllidar_ros2` (sibling package) and runs `colcon build --symlink-install`
+
+Individual phase scripts can be run on their own to re-do or skip steps.
+
+## Manual build
+
+If you've already run setup once and just want to rebuild after edits:
 
 ```sh
 cd ~/ros2_ws
-colcon build --packages-select racecar_neo_ros2_driver
+colcon build --packages-select racecar_neo_ros2_driver --symlink-install
 source install/setup.bash
 ```
 

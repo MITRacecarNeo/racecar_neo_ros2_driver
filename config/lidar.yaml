@@ -1,0 +1,14 @@
+sllidar_node:
+  ros__parameters:
+    channel_type: "serial"
+    serial_port: "/dev/ttyUSB0"
+    serial_baudrate: 115200    # RPLIDAR A1/A2/A3 default; S1=256000, S2=1000000
+    frame_id: "laser"
+    inverted: false
+    angle_compensate: true
+    # scan_mode unset → driver picks the LIDAR's "typical" mode.
+    # On our hardware (HW rev 7) that's "Sensitivity": 8 kHz @ 10 Hz → 800
+    # raw points/rev → 1080-point angle-compensated grid.
+    # Override if your LIDAR ships with a different default: "Standard",
+    # "Express", "Boost", "Stability", "DenseBoost" (model-dependent).
+    scan_mode: ""

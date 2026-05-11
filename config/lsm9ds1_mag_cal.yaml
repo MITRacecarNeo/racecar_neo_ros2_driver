@@ -1,0 +1,7 @@
+imu_node:
+  ros__parameters:
+    magnetometer.hard_iron_bias: [0.0, 0.0, 0.0]
+    magnetometer.soft_iron_matrix.data:
+      [1.0, 0.0, 0.0,
+       0.0, 1.0, 0.0,
+       0.0, 0.0, 1.0]

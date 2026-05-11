@@ -1,0 +1,29 @@
+camera_forward:
+  ros__parameters:
+    # GStreamer pipeline feeding gscam's appsink. Logitech BRIO at /dev/video0
+    # (until Phase 5 udev rules give us /dev/cam_forward). MJPG transport keeps
+    # the USB bandwidth manageable at higher resolutions.
+    gscam_config: "v4l2src device=/dev/video0 do-timestamp=true ! image/jpeg,width=640,height=480,framerate=30/1 ! jpegparse ! jpegdec ! videoconvert"
+    camera_name: "camera_forward"
+    frame_id: "camera_forward_link"
+    sync_sink: false
+    use_gst_timestamps: true
+    camera_info_url: ""
+
+    # Intrinsic calibration — placeholder (zeros = uncalibrated). Replace via
+    # `ros2 run camera_calibration cameracalibrator --size NxN --square S` and
+    # paste the OpenCV-format result here. Not consumed yet; gscam reads its
+    # camera_info from camera_info_url when set.
+    image_width: 640
+    image_height: 480
+    distortion_model: "plumb_bob"
+    camera_matrix.data: [0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0]
+    distortion_coefficients.data: [0.0, 0.0, 0.0, 0.0, 0.0]
+    rectification_matrix.data: [1.0, 0.0, 0.0,
+                                0.0, 1.0, 0.0,
+                                0.0, 0.0, 1.0]
+    projection_matrix.data: [0.0, 0.0, 0.0, 0.0,
+                             0.0, 0.0, 0.0, 0.0,
+                             0.0, 0.0, 0.0, 0.0]

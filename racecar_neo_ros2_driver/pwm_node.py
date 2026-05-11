@@ -1,15 +1,27 @@
-"""PWM driver: maps /motor (AckermannDriveStamped in [-1, 1]) to Maestro pulses.
+"""
+PWM driver: maps /motor (AckermannDriveStamped in [-1, 1]) to Maestro pulses.
 
 Per axis: PWM = center + cmd * magnitude. Convention: +speed = forward,
 +steering = left (matches ackermann_msgs).
 """
 
+from ackermann_msgs.msg import AckermannDriveStamped
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSReliabilityPolicy, QoSProfile
-from ackermann_msgs.msg import AckermannDriveStamped
+from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 
 from . import maestro
+
+
+def command_to_pwm(cmd: float, center: int, magnitude: int, sign: int = 1) -> int:
+    """
+    Map a normalized command in [-1, 1] to a Maestro PWM target.
+
+    sign=+1: cmd=+1 → center + magnitude (motor / forward = positive)
+    sign=-1: cmd=+1 → center - magnitude (steering / +angle = left)
+    """
+    cmd = max(-1.0, min(1.0, cmd))
+    return int(center + sign * cmd * magnitude)
 
 
 class PwmNode(Node):
@@ -66,15 +78,14 @@ class PwmNode(Node):
         )
 
     def _motor_cb(self, msg: AckermannDriveStamped):
-        speed = max(-1.0, min(1.0, msg.drive.speed))
-        motor_target = self._motor_center + speed * self._motor_mag
-
-        # +angle = left → subtract magnitude (ackermann_msgs convention)
-        angle = max(-1.0, min(1.0, msg.drive.steering_angle))
-        steer_target = self._steer_center - angle * self._steer_mag
-
-        self._controller.setTarget(self._motor_ch, int(motor_target))
-        self._controller.setTarget(self._steer_ch, int(steer_target))
+        motor_target = command_to_pwm(
+            msg.drive.speed, self._motor_center, self._motor_mag, sign=+1
+        )
+        steer_target = command_to_pwm(
+            msg.drive.steering_angle, self._steer_center, self._steer_mag, sign=-1
+        )
+        self._controller.setTarget(self._motor_ch, motor_target)
+        self._controller.setTarget(self._steer_ch, steer_target)
 
     def shutdown(self):
         try:
