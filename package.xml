@@ -9,7 +9,7 @@
     pre-flight tests) inherited from the UAV Neo driver architecture.
   </description>
   <maintainer email="chrisclai02@gmail.com">racecar</maintainer>
-  <license>MIT</license>
+  <license>GPL-3.0-or-later</license>
 
   <depend>rclpy</depend>
   <depend>std_msgs</depend>

@@ -25,7 +25,7 @@ setup(
     maintainer='racecar',
     maintainer_email='chrisclai02@gmail.com',
     description='ROS2 driver for MIT RACECAR Neo v2',
-    license='MIT',
+    license='GPL-3.0-or-later',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [

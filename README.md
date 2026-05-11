@@ -58,4 +58,4 @@ For boot-time startup, see [scripts/](./scripts/) for systemd units and the `set
 
 ## License
 
-MIT — see [LICENSE](./LICENSE).
+GPLv3 — see [LICENSE](./LICENSE).
