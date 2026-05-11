@@ -1,9 +1,11 @@
-"""Standalone pwm_node launch (watchdog restart target).
+"""
+Standalone pwm_node launch (watchdog restart target).
 
 Owns /dev/ttyACM0; watchdog should TERM→KILL before restart to release it.
 """
 
 import os
+
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument

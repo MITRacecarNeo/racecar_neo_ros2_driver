@@ -1,23 +1,35 @@
-"""Command mux: gates /gamepad_drive (LB) or /drive (RB) onto /mux_out.
+"""
+Command mux: gates /gamepad_drive (LB) or /drive (RB) onto /mux_out.
 
 Timer-driven so the Maestro stays fed and the watchdog sees a steady publish
 rate. Zeroes on joy disconnect or stale upstream commands (>0.5s).
 """
 
+from enum import auto, Enum
 import time
-from enum import Enum, auto
 
+from ackermann_msgs.msg import AckermannDriveStamped
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSReliabilityPolicy, QoSProfile
+from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import Joy
-from ackermann_msgs.msg import AckermannDriveStamped
 
 
 class MuxMode(Enum):
     IDLE = auto()
     GAMEPAD = auto()
     AUTONOMY = auto()
+
+
+def select_mode(buttons, gamepad_btn: int, auto_btn: int) -> MuxMode:
+    """Pick the mux mode from the latest /joy button state."""
+    gp = len(buttons) > gamepad_btn and bool(buttons[gamepad_btn])
+    ao = len(buttons) > auto_btn and bool(buttons[auto_btn])
+    if gp and not ao:
+        return MuxMode.GAMEPAD
+    if ao and not gp:
+        return MuxMode.AUTONOMY
+    return MuxMode.IDLE
 
 
 class MuxNode(Node):
@@ -100,20 +112,7 @@ class MuxNode(Node):
             self._last_mode = MuxMode.IDLE
             return
 
-        gamepad_held = (
-            len(joy.buttons) > self._gamepad_btn
-            and bool(joy.buttons[self._gamepad_btn])
-        )
-        auto_held = (
-            len(joy.buttons) > self._auto_btn
-            and bool(joy.buttons[self._auto_btn])
-        )
-        if gamepad_held and not auto_held:
-            mode = MuxMode.GAMEPAD
-        elif auto_held and not gamepad_held:
-            mode = MuxMode.AUTONOMY
-        else:
-            mode = MuxMode.IDLE
+        mode = select_mode(joy.buttons, self._gamepad_btn, self._auto_btn)
 
         if mode == MuxMode.GAMEPAD:
             if (

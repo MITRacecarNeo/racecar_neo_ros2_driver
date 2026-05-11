@@ -1,4 +1,4 @@
-"""Standalone throttle_node launch (watchdog restart target)."""
+"""Standalone sllidar_node launch (watchdog restart target)."""
 
 import os
 
@@ -11,20 +11,20 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     pkg_dir = get_package_share_directory('racecar_neo_ros2_driver')
-    default_cfg = os.path.join(pkg_dir, 'config', 'throttle.yaml')
+    default_cfg = os.path.join(pkg_dir, 'config', 'lidar.yaml')
 
     cfg_arg = DeclareLaunchArgument(
-        'throttle_config',
+        'lidar_config',
         default_value=default_cfg,
-        description='Path to throttle_node config YAML',
+        description='Path to sllidar_node config YAML',
     )
 
-    throttle = Node(
-        package='racecar_neo_ros2_driver',
-        executable='throttle_node',
-        name='throttle_node',
+    sllidar = Node(
+        package='sllidar_ros2',
+        executable='sllidar_node',
+        name='sllidar_node',
         output='screen',
-        parameters=[LaunchConfiguration('throttle_config')],
+        parameters=[LaunchConfiguration('lidar_config')],
     )
 
-    return LaunchDescription([cfg_arg, throttle])
+    return LaunchDescription([cfg_arg, sllidar])
