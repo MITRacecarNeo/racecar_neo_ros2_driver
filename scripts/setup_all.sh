@@ -23,23 +23,27 @@ sudo -v
 SUDO_KEEPALIVE_PID=$!
 trap 'kill $SUDO_KEEPALIVE_PID 2>/dev/null' EXIT
 
-echo "==> [1/5] ROS2 Jazzy + driver dependencies"
+echo "==> [1/6] ROS2 Jazzy + driver dependencies"
 bash "$SCRIPT_DIR/setup_ros2.sh"
 
 echo
-echo "==> [2/5] Robotics dev tools"
+echo "==> [2/6] Robotics dev tools"
 bash "$SCRIPT_DIR/setup_dev_tools.sh"
 
 echo
-echo "==> [3/5] User environment (groups, .bashrc)"
+echo "==> [3/6] User environment (groups, .bashrc)"
 bash "$SCRIPT_DIR/setup_user_env.sh"
 
 echo
-echo "==> [4/5] Dot matrix display deps"
+echo "==> [4/6] Dot matrix display deps"
 bash "$SCRIPT_DIR/setup_dotmatrix.sh"
 
 echo
-echo "==> [5/5] Workspace build"
+echo "==> [5/6] gscam overlay (camera memory-leak patch)"
+bash "$SCRIPT_DIR/patch_gscam.sh"
+
+echo
+echo "==> [6/6] Workspace build"
 bash "$SCRIPT_DIR/setup_workspace.sh"
 
 echo

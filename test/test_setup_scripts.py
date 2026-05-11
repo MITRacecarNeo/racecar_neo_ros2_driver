@@ -18,6 +18,7 @@ PHASE_SCRIPTS = [
     'setup_dev_tools.sh',
     'setup_user_env.sh',
     'setup_dotmatrix.sh',
+    'patch_gscam.sh',
     'setup_workspace.sh',
 ]
 ORCHESTRATOR = 'setup_all.sh'
@@ -67,3 +68,14 @@ def test_scripts_use_set_dash_e():
     for name in PHASE_SCRIPTS + [ORCHESTRATOR]:
         text = (SCRIPTS_DIR / name).read_text()
         assert 'set -e' in text, f'{name} should `set -e` for fail-fast'
+
+
+def test_no_stray_colcon_dirs_in_package():
+    """build/, install/, log/ must live in the workspace root, not the package."""
+    pkg_root = SCRIPTS_DIR.parent
+    for d in ('build', 'install', 'log'):
+        stray = pkg_root / d
+        assert not stray.exists(), (
+            f'{stray} exists; colcon was invoked from the wrong CWD. '
+            f'Always run `colcon build` from $HOME/ros2_ws, not the package dir.'
+        )

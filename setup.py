@@ -31,6 +31,7 @@ setup(
     entry_points={
         'console_scripts': [
             'gamepad_node = racecar_neo_ros2_driver.gamepad_node:main',
+            'imu_node = racecar_neo_ros2_driver.imu_node:main',
             'mux_node = racecar_neo_ros2_driver.mux_node:main',
             'throttle_node = racecar_neo_ros2_driver.throttle_node:main',
             'pwm_node = racecar_neo_ros2_driver.pwm_node:main',
