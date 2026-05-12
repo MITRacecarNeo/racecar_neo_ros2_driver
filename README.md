@@ -12,7 +12,7 @@ This package is the v2 successor to [`racecar-neo-ros2-backend`](https://github.
 | Backward camera | Arducam B0578 | gscam over V4L2 (`/dev/cam_backward`) |
 | 2D LIDAR | RPLIDAR A3-class | UART (`/dev/lidar`) |
 | IMU | LSM9DS1 | I²C (`0x6B` + `0x1E`) |
-| Gamepad | EasySMX | USB HID (`/dev/input/js0`) |
+| Gamepad | Switch Pro / EasySMX | USB HID (`/dev/input/event*` or `/dev/input/js*`) |
 | Motor / steering | Pololu Maestro | USB serial (`/dev/maestro`) |
 | ML inference | Coral EdgeTPU | USB |
 | Display | MAX7219 dot matrix (3 cascaded) | SPI (`/dev/spidev0.0`) |
@@ -36,12 +36,14 @@ Sensor and ML nodes publish independently:
 Display node subscribes:
 - `/dotmatrix/text` (std_msgs/String) — renders user messages; falls back to a mode glyph (IDLE / TELEOP / AUTO) tied to the gamepad state
 
-Safety/uptime layers (inherited from UAV Neo):
-- Mux node enforces speed/steer limits and gates commands behind controller bumpers; zeroes output on joystick disconnect (500 ms timeout).
-- Watchdog with two-signal liveness (ROS topic + `pgrep`), hardware-aware restart skip, and FastRTPS SHM orphan cleanup.
-- systemd units (`racecar-teleop.service`, `racecar-watchdog.service`) with `BindsTo=` graphs and `KillMode=control-group`.
-- Per-session timestamped log dirs with `~/logs/latest` atomic symlink.
-- Pre-flight `colcon test` suite asserting every peripheral and embedding fix commands in failure messages.
+Safety/uptime layers (inherited from UAV Neo, shipped in v0.0.4):
+- **Mux** enforces speed/steer limits and gates commands behind controller bumpers; zeroes output on joystick disconnect (500 ms timeout).
+- **Watchdog** (`scripts/watchdog.py`) supervises 8 nodes with two-signal liveness (ROS topic + `pgrep` on the entry-point path), 30 s restart cooldown, SIGTERM → SIGKILL escalation, FastRTPS SHM orphan sweep every 60 s, Pi 5 PMIC under-voltage alarm. Hardware-aware: skips restart when the device is physically missing.
+- **Four systemd units** (`racecar-{teleop,watchdog,dashboard,jupyter}.service`) wired with `BindsTo=` so watchdog dies when teleop dies, and `Wants=` so watchdog auto-starts when teleop starts.
+- **Launch wrapper** (`scripts/launch_teleop.sh`) creates `~/logs/<timestamp>/`, updates `~/logs/latest` atomically, sweeps FastRTPS SHM orphans, and `exec`s `ros2 launch` so systemd tracks the launch PID directly.
+- **Web dashboard** at `http://<robot>:8080` — 10 node cards, 7 topic-rate rows, System Health (RTC battery + Pi under-voltage alarm), watchdog log tail. Auto-refresh.
+- **JupyterLab** at `http://<robot>:8888` with PYTHONPATH/AMENT_PREFIX_PATH pre-set so `import rclpy` works in notebooks.
+- **Pre-flight `colcon test` suite** (332 tests) asserting every peripheral, embedding fix commands in failure messages.
 
 ## Quick start (fresh machine)
 
@@ -56,36 +58,66 @@ bash racecar_neo_ros2_driver/scripts/setup_all.sh
 racecar teleop
 ```
 
-`setup_all.sh` is idempotent — re-running is safe. It runs eight phases:
+`setup_all.sh` is idempotent — re-running is safe. It runs eleven phases:
 
 1. **`setup_ros2.sh`** — ROS2 Jazzy apt repo + message/driver packages
-2. **`setup_dev_tools.sh`** — build tools, Python hardware libs (`smbus`/`serial`/`spidev`), GStreamer dev headers
-3. **`setup_user_env.sh`** — joins `dialout`/`i2c`/`spi`/`gpio`/`video` groups; sources ROS2 + the `racecar` shell tool in `.bashrc`
-4. **`setup_udev.sh`** — installs `/etc/udev/rules.d/99-racecar.rules` (stable `/dev/maestro` etc.)
-5. **`setup_dotmatrix.sh`** — enables SPI via `raspi-config` and installs `luma.led_matrix`
-6. **`setup_coral.sh`** — installs `libedgetpu1-std`, `tflite_runtime`, `pycoral` from vendored `depend/` artifacts
-7. **`patch_gscam.sh`** — clones `ros-drivers/gscam`, applies the appsink memory-leak fix, builds it as a colcon overlay
-8. **`setup_workspace.sh`** — clones `sllidar_ros2` and runs `colcon build --symlink-install`
+2. **`setup_dev_tools.sh`** — build tools, Python hardware libs (`smbus` / `serial` / `spidev`), GStreamer dev headers
+3. **`setup_user_env.sh`** — joins `dialout` / `i2c` / `spi` / `gpio` / `video` groups; sources ROS2 + the `racecar` shell tool in `.bashrc`
+4. **`setup_raspi_config.sh`** — `raspi-config` flags: enable I2C, enable SPI, disable serial console (frees `/dev/serial0`)
+5. **`setup_udev.sh`** — installs `/etc/udev/rules.d/99-racecar.rules` (stable `/dev/maestro` etc.)
+6. **`setup_dotmatrix.sh`** — `pip install --user luma.led_matrix`
+7. **`setup_coral.sh`** — installs `libedgetpu1-std`, `tflite_runtime`, `pycoral` from vendored `depend/` artifacts
+8. **`patch_gscam.sh`** — clones `ros-drivers/gscam`, applies the appsink memory-leak fix, builds it as a colcon overlay
+9. **`setup_workspace.sh`** — clones `sllidar_ros2` and runs `colcon build --symlink-install`
+10. **`setup_jupyter.sh`** — `pip install --user jupyterlab`, creates `~/jupyter_ws/`
+11. **`setup_services.sh`** — installs and enables the four systemd units (`racecar-{teleop,watchdog,dashboard,jupyter}.service`)
 
-Individual phase scripts can be run on their own to re-do or skip steps.
+Individual phase scripts can be run on their own to re-do or skip steps. After `setup_all.sh` completes, reboot once — `racecar-teleop.service` auto-starts and pulls the watchdog along via `Wants=racecar-watchdog.service`.
 
 ## The `racecar` shell tool
 
-`setup_user_env.sh` sources [`scripts/racecar-tool.sh`](scripts/racecar-tool.sh) into your `~/.bashrc`. Once you re-open a shell you'll have a single `racecar` command for the common workflows:
+`setup_user_env.sh` sources [`scripts/racecar-tool.sh`](scripts/racecar-tool.sh) into your `~/.bashrc`. Once you re-open a shell, a single `racecar` command covers the common workflows:
 
 ```sh
-racecar build              # colcon build --symlink-install + source overlay
-racecar test               # colcon test + verbose results
-racecar source             # source the workspace overlay
-racecar teleop             # launch the full teleop stack
-racecar launch dotmatrix   # ros2 launch racecar_neo_ros2_driver dotmatrix.launch.py
-racecar clear --dmatrix    # flash + clear the MAX7219 display
-racecar udev               # re-install the udev rules
-racecar status             # USB peripherals + device symlinks + running ros2 nodes
-racecar help               # full usage
+racecar build               # colcon build --symlink-install + source overlay
+racecar test                # colcon test + verbose results
+racecar source              # source the workspace overlay
+racecar cd                  # chdir to the package source root
+racecar teleop              # launch the full stack via launch_teleop.sh
+racecar launch dotmatrix    # ros2 launch racecar_neo_ros2_driver dotmatrix.launch.py
+racecar watchdog            # run the supervisor in the foreground
+
+racecar service status      # active/enabled snapshot for all 4 racecar-* units
+racecar service install     # drop unit files in /etc/systemd/system/ + enable
+racecar service start       # default: start teleop (watchdog follows via Wants=)
+racecar service stop        # default: stop teleop (watchdog follows via BindsTo=)
+racecar service logs teleop # journalctl -u racecar-teleop -f
+
+racecar selftest --dmatrix          # run all dot matrix patterns
+racecar selftest --dmatrix=font     # just the font scroll
+racecar clear --dmatrix             # flash + clear the MAX7219 display
+racecar udev                        # re-install the udev rules
+racecar cleanup [--force]           # list / kill stale racecar processes + SHM orphans
+racecar status                      # USB peripherals + device symlinks + running ros2 nodes
+racecar help                        # full usage
 ```
 
-Tab completion is registered for subcommands; `racecar launch <TAB>` discovers launch files dynamically.
+Tab completion is registered for subcommands; `racecar launch <TAB>` discovers launch files dynamically, `racecar service <TAB>` offers actions, etc.
+
+## Web dashboard
+
+Once `racecar-teleop.service` is running, browse to `http://<robot>:8080` for a live status page:
+
+- **Nodes**: one card per monitored subsystem (10 total) — green when the expected topic is being advertised, red when not.
+- **System Health**: RTC backup battery voltage (green ≥ 3.0 V, yellow 2.7–3.0 V, red < 2.7 V) and the Pi 5 PMIC sticky under-voltage alarm.
+- **Topic Rates**: live Hz for `/motor`, `/mux_out`, `/imu`, `/scan`, both cameras, and `/edgetpu/inference`. Yellow when stale (< 0.5 Hz), red when missing.
+- **Watchdog Log**: tail of `~/logs/latest/watchdog.log` so you can see restart events.
+
+Refreshes every 3 s; System Health refreshes on a slower 60 s cadence (RTC drifts on the order of weeks, not seconds).
+
+## Jupyter notebooks
+
+`http://<robot>:8888/lab` — JupyterLab with `import rclpy` working out of the box. Notebooks land in `~/jupyter_ws/`. No token / password by default (the systemd unit assumes the robot's network is trusted).
 
 ## Manual build
 

@@ -1,0 +1,35 @@
+# sensor_msgs/CameraInfo for the backward (Arducam B0578) camera.
+#
+# Placeholder until calibrated. Replace by running:
+#   ros2 run camera_calibration cameracalibrator \
+#       --size 8x6 --square 0.025 \
+#       --ros-args -r image:=/camera/backward -r camera:=/camera/backward
+# and pasting the generated YAML over this file (preserve image_width/height).
+#
+# Loaded by gscam via camera_info_url in config/camera_backward.yaml.
+image_width: 640
+image_height: 480
+camera_name: camera_backward
+camera_matrix:
+  rows: 3
+  cols: 3
+  data: [0.0, 0.0, 0.0,
+         0.0, 0.0, 0.0,
+         0.0, 0.0, 0.0]
+distortion_model: plumb_bob
+distortion_coefficients:
+  rows: 1
+  cols: 5
+  data: [0.0, 0.0, 0.0, 0.0, 0.0]
+rectification_matrix:
+  rows: 3
+  cols: 3
+  data: [1.0, 0.0, 0.0,
+         0.0, 1.0, 0.0,
+         0.0, 0.0, 1.0]
+projection_matrix:
+  rows: 3
+  cols: 4
+  data: [0.0, 0.0, 0.0, 0.0,
+         0.0, 0.0, 0.0, 0.0,
+         0.0, 0.0, 0.0, 0.0]

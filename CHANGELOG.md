@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+## [0.0.5] — 2026-05-11
+
+Phase 5 polish: log noise eliminated, raspi-config consolidated, real Coral latency test, README brought current with v0.0.3 + v0.0.4 features.
+
+### Added
+
+- `scripts/setup_raspi_config.sh` — consolidates the raspi-config flags the racecar stack depends on: `do_i2c 0` (IMU), `do_spi 0` (dot matrix), `do_serial_cons 1` + `do_serial_hw 0` (frees `/dev/serial0` for future modules; getty no longer holds the UART). Idempotent. Wired as phase 4 of `setup_all.sh` (now 11 phases).
+- `config/camera_forward_info.yaml` and `config/camera_backward_info.yaml` — `sensor_msgs/CameraInfo` placeholder files referenced by `camera_info_url` in each camera config. Stops gscam from logging an ERROR + WARN on every boot trying to read a missing file. Replace via `ros2 run camera_calibration cameracalibrator …` when real calibration is needed.
+- `test/test_hardware.py::TestCoral::test_inference_within_latency_budget` — loads the bundled efficientdet-lite0 model, runs 10 timed inferences with a synthetic frame, asserts mean latency < 100 ms. Skips cleanly when `edgetpu_node` is already holding the USB device. Catches Coral firmware regressions / wrong-model-format issues the existing import tests miss.
+
+### Changed
+
+- Bumped `<version>` 0.0.4 → 0.0.5 in `package.xml` and `setup.py`.
+- `launch/teleop.launch.py` migrates `LaunchConfigurationEquals` → `IfCondition(EqualsSubstitution(...))` (the deprecated `LaunchConfigurationEquals` was logging a DeprecationWarning every teleop start).
+- `config/camera_forward.yaml` and `config/camera_backward.yaml` set `camera_info_url: "package://racecar_neo_ros2_driver/config/camera_*_info.yaml"` and drop the inline placeholder fields (those have moved into the sibling `*_info.yaml` files).
+- `scripts/setup_dotmatrix.sh` no longer enables SPI — that responsibility moved to `setup_raspi_config.sh`. The dotmatrix script is now just `pip install luma.led_matrix`.
+- `README.md` documented Phase 3 + 4 features: 11-phase setup, the full `racecar` subcommand list (`cd`, `watchdog`, `service`, `selftest`, `cleanup`), the dashboard at `:8080`, and JupyterLab at `:8888`.
+
+### Fixed
+
+- gscam camera calibration noise on every boot — `Unable to open camera calibration file` ERROR + `Camera calibration file not found` WARN are gone now that both cameras have a real (placeholder) `camera_info` YAML loaded via `package://` URLs.
+- `LaunchConfigurationEquals` deprecation warning on every teleop start.
+
 ## [0.0.4] — 2026-05-11
 
 Safety + recovery infrastructure: full-stack launch wrapper, restart-on-failure watchdog, four systemd services (teleop / watchdog / dashboard / jupyter), a real-time web dashboard, and quality-of-life additions to the `racecar` tool.
@@ -160,7 +183,8 @@ Sensor integration phase + setup automation + a 107-test pytest suite that cover
 - `maestro.py` `setRange(chan, min, max)` → `setRange(chan, min_target, max_target)` to stop shadowing Python builtins (A002)
 - Imports across the package reordered to Google style (stdlib → third-party, alphabetic within each); multi-line docstrings switched to second-line-summary format (D213)
 
-[Unreleased]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.0.4...HEAD
+[Unreleased]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.0.5...HEAD
+[0.0.5]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.0.1...v0.0.2
