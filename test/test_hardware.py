@@ -273,6 +273,75 @@ class TestCoral:
     def test_pycoral_importable(self):
         import pycoral.utils.edgetpu  # noqa: F401
 
+    # Inference latency budget. The bundled efficientdet-lite0 typically
+    # runs at 15-25 ms on the USB Coral attached to a Pi 5; 100 ms gives
+    # generous headroom for the first 1-2 warmup invocations + USB
+    # contention with active camera streams while teleop is running.
+    INFERENCE_BUDGET_MS = 100.0
+
+    @pytest.mark.skipif(
+        importlib.util.find_spec('pycoral') is None,
+        reason='pycoral not installed',
+    )
+    def test_inference_within_latency_budget(self):
+        import numpy as np
+        from pathlib import Path
+        import subprocess
+        from pycoral.utils.edgetpu import list_edge_tpus, make_interpreter
+
+        if not list_edge_tpus():
+            pytest.skip('No EdgeTPU device — cannot run inference')
+
+        # The Coral USB device only supports one user at a time. If
+        # edgetpu_node is running (likely under racecar-teleop.service) the
+        # delegate load will fail. Skip rather than report a spurious failure.
+        running = subprocess.run(
+            ['pgrep', '-f', 'lib/racecar_neo_ros2_driver/edgetpu_node'],
+            capture_output=True,
+        )
+        if running.returncode == 0:
+            pytest.skip('edgetpu_node is running; cannot test in isolation')
+
+        model = (Path(__file__).parent.parent / 'models'
+                 / 'efficientdet_lite0_generic_edgetpu.tflite')
+        if not model.exists():
+            pytest.skip(f'Model file missing: {model}')
+
+        # Retry once on first call (cold-boot Coral firmware reload).
+        try:
+            interpreter = make_interpreter(str(model))
+        except ValueError:
+            import time
+            time.sleep(1.5)
+            interpreter = make_interpreter(str(model))
+
+        interpreter.allocate_tensors()
+        input_details = interpreter.get_input_details()[0]
+        _, h, w, _ = input_details['shape']
+        # Synthetic mid-gray image avoids needing a real camera frame.
+        frame = np.full((1, h, w, 3), 128, dtype=np.uint8)
+
+        import time
+        # Warmup invocation — first one always pays an extra ~30 ms for tensor
+        # allocation paths that aren't relevant to steady-state latency.
+        interpreter.set_tensor(input_details['index'], frame)
+        interpreter.invoke()
+
+        # Measure mean over 10 invocations.
+        n = 10
+        t0 = time.monotonic()
+        for _ in range(n):
+            interpreter.set_tensor(input_details['index'], frame)
+            interpreter.invoke()
+        mean_ms = (time.monotonic() - t0) / n * 1000.0
+
+        assert mean_ms < self.INFERENCE_BUDGET_MS, (
+            f'Mean inference latency {mean_ms:.1f} ms exceeds '
+            f'{self.INFERENCE_BUDGET_MS:.0f} ms budget. Possible causes: '
+            f'USB-2 hub instead of direct USB-3 port, model not '
+            f'edgetpu_compiler-compiled, or libedgetpu version mismatch.'
+        )
+
 
 # ---------------------------------------------------------------------------
 # MAX7219 dot matrix — SPI (Phase 3B)

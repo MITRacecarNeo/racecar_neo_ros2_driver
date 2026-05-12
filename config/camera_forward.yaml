@@ -8,22 +8,10 @@ camera_forward:
     frame_id: "camera_forward_link"
     sync_sink: false
     use_gst_timestamps: true
-    camera_info_url: ""
 
-    # Intrinsic calibration — placeholder (zeros = uncalibrated). Replace via
-    # `ros2 run camera_calibration cameracalibrator --size NxN --square S` and
-    # paste the OpenCV-format result here. Not consumed yet; gscam reads its
-    # camera_info from camera_info_url when set.
-    image_width: 640
-    image_height: 480
-    distortion_model: "plumb_bob"
-    camera_matrix.data: [0.0, 0.0, 0.0,
-                         0.0, 0.0, 0.0,
-                         0.0, 0.0, 0.0]
-    distortion_coefficients.data: [0.0, 0.0, 0.0, 0.0, 0.0]
-    rectification_matrix.data: [1.0, 0.0, 0.0,
-                                0.0, 1.0, 0.0,
-                                0.0, 0.0, 1.0]
-    projection_matrix.data: [0.0, 0.0, 0.0, 0.0,
-                             0.0, 0.0, 0.0, 0.0,
-                             0.0, 0.0, 0.0, 0.0]
+    # camera_info comes from a sibling YAML in this package's share dir.
+    # Empty here would make gscam fall back to ${ROS_HOME}/camera_info/<name>.yaml
+    # which doesn't exist on a fresh install and logs a noisy ERROR.
+    # Calibrate via `ros2 run camera_calibration cameracalibrator` and replace
+    # config/camera_forward_info.yaml.
+    camera_info_url: "package://racecar_neo_ros2_driver/config/camera_forward_info.yaml"
