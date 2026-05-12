@@ -37,19 +37,25 @@ EOF
     echo "  added ROS2 sourcing to $BASHRC"
 fi
 
-# Block 2: convenience aliases.
-ALIAS_MARKER="# RACECAR Neo - aliases"
-if grep -qF "$ALIAS_MARKER" "$BASHRC" 2>/dev/null; then
-    echo "  $BASHRC already has aliases"
+# Block 2: source the `racecar` shell tool.
+TOOL_MARKER="# RACECAR Neo - shell tool"
+if grep -qF "$TOOL_MARKER" "$BASHRC" 2>/dev/null; then
+    echo "  $BASHRC already sources racecar-tool.sh"
 else
     cat >> "$BASHRC" <<'EOF'
 
-# RACECAR Neo - aliases
-alias teleop='ros2 launch racecar_neo_ros2_driver teleop.launch.py'
-alias racecar-source='source "$HOME/ros2_ws/install/setup.bash"'
-alias racecar-build='(cd "$HOME/ros2_ws" && colcon build --packages-select racecar_neo_ros2_driver --symlink-install) && source "$HOME/ros2_ws/install/setup.bash"'
-alias racecar-test='(cd "$HOME/ros2_ws" && colcon test --packages-select racecar_neo_ros2_driver --event-handlers console_direct+ && colcon test-result --verbose)'
-alias racecar-clear-dmatrix='python3 "$HOME/ros2_ws/src/racecar_neo_ros2_driver/scripts/clear_dotmatrix.py"'
+# RACECAR Neo - shell tool
+[ -f "$HOME/ros2_ws/src/racecar_neo_ros2_driver/scripts/racecar-tool.sh" ] && \
+    source "$HOME/ros2_ws/src/racecar_neo_ros2_driver/scripts/racecar-tool.sh"
 EOF
-    echo "  added aliases to $BASHRC"
+    echo "  added racecar-tool source line to $BASHRC"
+fi
+
+# Block 3: clean up the legacy aliases (anyone who ran an earlier setup_user_env
+# still has them; the new `racecar` function replaces them).
+LEGACY_ALIAS_MARKER="# RACECAR Neo - aliases"
+if grep -qF "$LEGACY_ALIAS_MARKER" "$BASHRC" 2>/dev/null; then
+    # Delete the 6 lines starting at the marker (5 aliases + the marker line).
+    sed -i "/^${LEGACY_ALIAS_MARKER}$/,+5d" "$BASHRC"
+    echo "  removed legacy racecar-* aliases from $BASHRC"
 fi

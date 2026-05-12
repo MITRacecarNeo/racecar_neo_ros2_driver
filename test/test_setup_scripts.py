@@ -17,7 +17,9 @@ PHASE_SCRIPTS = [
     'setup_ros2.sh',
     'setup_dev_tools.sh',
     'setup_user_env.sh',
+    'setup_udev.sh',
     'setup_dotmatrix.sh',
+    'setup_coral.sh',
     'patch_gscam.sh',
     'setup_workspace.sh',
 ]
@@ -78,4 +80,46 @@ def test_no_stray_colcon_dirs_in_package():
         assert not stray.exists(), (
             f'{stray} exists; colcon was invoked from the wrong CWD. '
             f'Always run `colcon build` from $HOME/ros2_ws, not the package dir.'
+        )
+
+
+class TestUdevRules:
+    """The 99-racecar.rules file ships with the package and binds each peripheral."""
+
+    RULES_FILE = SCRIPTS_DIR / 'udev' / '99-racecar.rules'
+
+    def test_rules_file_exists(self):
+        assert self.RULES_FILE.is_file(), f'{self.RULES_FILE} missing'
+
+    @pytest.mark.parametrize('symlink', [
+        'maestro', 'lidar', 'cam_forward', 'cam_backward',
+    ])
+    def test_rules_define_symlink(self, symlink):
+        text = self.RULES_FILE.read_text()
+        assert f'SYMLINK+="{symlink}"' in text, (
+            f'No rule defines /dev/{symlink}'
+        )
+
+    @pytest.mark.parametrize('vid_pid', [
+        ('10c4', 'ea60'),  # CP2102 (RPLIDAR)
+        ('046d', '085e'),  # Logitech BRIO
+        ('0c45', '0578'),  # Arducam B0578
+        ('1a6e', '089a'),  # Coral pre-init
+        ('18d1', '9302'),  # Coral post-init
+    ])
+    def test_rules_match_known_usb_ids(self, vid_pid):
+        # Maestro uses ENV-style matching (see test below) — exempted.
+        vid, pid = vid_pid
+        text = self.RULES_FILE.read_text()
+        assert f'ATTRS{{idVendor}}=="{vid}"' in text, f'VID {vid} not matched'
+        assert f'ATTRS{{idProduct}}=="{pid}"' in text, f'PID {pid} not matched'
+
+    def test_maestro_rule_pins_command_interface(self):
+        # The Maestro exposes two CDC ACM interfaces (00 = command, 02 = aux TTL).
+        # The rule must pin interface 00 or /dev/maestro races between the two.
+        text = self.RULES_FILE.read_text()
+        assert 'ENV{ID_VENDOR_ID}=="1ffb"' in text, 'Maestro VID not matched via ENV'
+        assert 'ENV{ID_USB_INTERFACE_NUM}=="00"' in text, (
+            'Maestro rule must pin ID_USB_INTERFACE_NUM=00 (command port). '
+            'Without this, /dev/maestro may bind to the wrong CDC interface.'
         )

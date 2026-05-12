@@ -1,9 +1,9 @@
 camera_forward:
   ros__parameters:
-    # GStreamer pipeline feeding gscam's appsink. Logitech BRIO at /dev/video0
-    # (until Phase 5 udev rules give us /dev/cam_forward). MJPG transport keeps
-    # the USB bandwidth manageable at higher resolutions.
-    gscam_config: "v4l2src device=/dev/video0 do-timestamp=true ! image/jpeg,width=640,height=480,framerate=30/1 ! jpegparse ! jpegdec ! videoconvert"
+    # GStreamer pipeline feeding gscam's appsink. /dev/cam_forward is the udev
+    # symlink for the Logitech BRIO (capture node, MJPG-capable). MJPG keeps
+    # USB bandwidth manageable at higher resolutions.
+    gscam_config: "v4l2src device=/dev/cam_forward do-timestamp=true ! image/jpeg,width=640,height=480,framerate=30/1 ! jpegparse ! jpegdec ! videoconvert"
     camera_name: "camera_forward"
     frame_id: "camera_forward_link"
     sync_sink: false

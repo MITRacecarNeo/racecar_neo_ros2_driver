@@ -4,6 +4,60 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+## [0.0.3] — 2026-05-11
+
+ML inference, dot matrix display, stable device paths, and a unified `racecar` developer CLI.
+
+### Added
+
+**Phase 3A — Coral EdgeTPU object detection:**
+- `edgetpu_node` — subscribes to `/camera/forward`, runs object detection on the USB Coral, and publishes `vision_msgs/Detection2DArray` on `/edgetpu/inference` plus a heartbeat `diagnostic_msgs/DiagnosticArray` on `/diagnostics`
+- Numpy-only image path — no `cv_bridge` / `cv2` dependency. PIL bilinear resize keeps the package opencv-free
+- SSD-style output-tensor auto-detection (`map_output_tensors`) — works with any 4-output EfficientDet-Lite / SSD-MobileNet variant; no hardcoded output indices
+- Retry-once `make_interpreter` to absorb the cold-boot Coral firmware load (USB ID flip from `1a6e:089a` to `18d1:9302`)
+- `config/edgetpu.yaml` — model + labels paths, score threshold, max detections, image topic, diagnostics period
+- `launch/edgetpu.launch.py` — standalone launch (watchdog restart target)
+- `scripts/setup_coral.sh` — idempotent userspace install: `libedgetpu1-std.deb` + `tflite_runtime` and `pycoral` wheels (all vendored under `depend/`)
+- Bundled model: `models/efficientdet_lite0_generic_edgetpu.tflite` + `models/labels.txt`
+
+**Phase 3B — MAX7219 dot matrix driver:**
+- `dotmatrix_node` — three input topics with priority (highest first):
+  - `/dotmatrix/pixels` (`std_msgs/UInt8MultiArray`) — 8×24 row-major pixel array for arbitrary frames. Non-zero is on; values stale after `pixels_timeout_sec` (default 5 s) revert to the next priority.
+  - `/dotmatrix/text` (`std_msgs/String`) — renders in `proportional(TINY_FONT)` with a patched diagonal `N` glyph; auto-scrolls when wider than the 24 px viewport (uses true `rendered_text_width`, not the over-counting `text_pixel_width`, so short messages render static).
+  - Fallback — 8×8 pictographic mode glyph on the leftmost module (IDLE = pause bars, GAMEPAD = steering wheel, AUTONOMY = play triangle) plus a centered `IDLE` / `MAN` / `AUTO` text label on the right two modules. `MAN` is centered (per-mode origin precomputed) since `MANUAL` is 23 px (too wide for the 16 px label region).
+- `config/dotmatrix.yaml` + `launch/dotmatrix.launch.py` — defaults to 3 cascaded modules (24×8 viewport on this robot)
+- Module-level helpers `mode_glyph`, `mode_label`, `draw_glyph`, `decode_pixel_array`, `text_pixel_width`, `rendered_text_width`, `scroll_offset` for unit testing
+- `scripts/dmatrix_patterns.py` — self-test pattern publisher (checkerboard, all-on, sweep, module-id, font A-Z 0-9 in static 6-char chunks)
+
+**Phase 5B (pulled forward) — udev rules:**
+- `scripts/udev/99-racecar.rules` — stable symlinks `/dev/maestro`, `/dev/lidar`, `/dev/cam_forward`, `/dev/cam_backward`. Maestro rule pins `ID_USB_INTERFACE_NUM=00` so the symlink always binds the command CDC port (not the auxiliary TTL one). Arducam autosuspend disabled. Coral pre/post-init USB IDs get `GROUP="plugdev"`.
+- `scripts/setup_udev.sh` — installs the rules and triggers a reload. Wired in as phase 4 of `setup_all.sh` (now 8 phases).
+- `config/pwm.yaml`, `config/lidar.yaml`, `config/camera_forward.yaml`, `config/camera_backward.yaml` updated to reference the stable symlinks instead of `/dev/ttyACM0`, `/dev/ttyUSB0`, `/dev/video{0,4}`.
+
+**`racecar` developer shell tool:**
+- `scripts/racecar-tool.sh` — single `racecar` shell function exposing: `build`, `test`, `source`, `teleop`, `launch <name>`, `clear --dmatrix`, `udev`, `selftest --dmatrix[=<pattern>]`, `status`, `help`
+- `selftest --dmatrix` runs hardware patterns through the live `dotmatrix_node` via `/dotmatrix/pixels` (checkerboard / all-on / sweep / module-id / font / all)
+- Tab completion for subcommands; `racecar launch <TAB>` discovers launch files dynamically; `racecar clear --<TAB>` and `racecar selftest --<TAB>` offer their flags
+- Extra args forward through (e.g. `racecar build --cmake-args ...`, `racecar launch dotmatrix dotmatrix_config:=/tmp/x.yaml`)
+- `scripts/setup_user_env.sh` now sources `racecar-tool.sh` from `~/.bashrc` instead of installing five `racecar-*` aliases; cleans up legacy aliases on re-run
+
+**Tests (now 206 total):**
+- `test/test_dotmatrix.py` — glyph shapes, mode→bitmap mapping, label mapping (with rendered-width check), patched-N glyph integrity, `decode_pixel_array` (rgb8 + truncate + pad + bytes input), text width helpers, scroll math
+- `test/test_edgetpu.py` — `image_msg_to_rgb` (rgb8 + bgr8), `resize_rgb` (PIL bilinear), `load_labels`, `map_output_tensors`
+- `test/test_dmatrix_patterns.py` — pure-helper tests for checkerboard / all-on / sweep / module-id pattern generators
+- `test/test_racecar_tool.py` — `bash -n` syntax, function definition, help rendering, error paths (`unknown command`, missing args, unknown flag), completion installation, `selftest` flag validation
+- `test/test_setup_scripts.py::TestUdevRules` — rules file existence, symlink declarations, known VID:PID matches, Maestro `ID_USB_INTERFACE_NUM=00` pinning
+
+### Changed
+
+- Bumped `<version>` 0.0.2 → 0.0.3 in `package.xml` and `setup.py`
+- `scripts/setup_all.sh` now orchestrates 8 phases (added `setup_udev.sh` + `setup_coral.sh`)
+- `scripts/setup_dotmatrix.sh` now also runs `raspi-config nonint do_spi 0` for fresh installs
+- `scripts/clear_dotmatrix.py` default `--cascaded` 4 → 3 to match physical hardware
+- `dotmatrix_node` text path uses `TINY_FONT` (was `CP437_FONT`) so /dotmatrix/text fits more chars static; uses true `rendered_text_width` to decide scroll vs static (was the over-counting `text_pixel_width`)
+- `setup.py` `data_files` ships `models/` to the install share so `model_path: "models/..."` resolves correctly via `get_package_share_directory`
+- `test/test_hardware.py` — Maestro, RPLIDAR, BRIO, and Arducam classes now check the udev symlinks instead of raw `/dev/tty*` / `/dev/video*` paths
+
 ## [0.0.2] — 2026-05-11
 
 Sensor integration phase + setup automation + a 107-test pytest suite that covers software, hardware connectivity, and the setup scripts themselves.
@@ -52,7 +106,8 @@ Sensor integration phase + setup automation + a 107-test pytest suite that cover
 - `maestro.py` `setRange(chan, min, max)` → `setRange(chan, min_target, max_target)` to stop shadowing Python builtins (A002)
 - Imports across the package reordered to Google style (stdlib → third-party, alphabetic within each); multi-line docstrings switched to second-line-summary format (D213)
 
-[Unreleased]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.0.2...HEAD
+[Unreleased]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.0.3...HEAD
+[0.0.3]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.0.1...v0.0.2
 
 ## [0.0.1] — 2026-05-11

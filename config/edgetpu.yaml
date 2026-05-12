@@ -1,0 +1,19 @@
+edgetpu_node:
+  ros__parameters:
+    # Paths are resolved against the package share dir if relative.
+    # Compile new .tflite models with `edgetpu_compiler` (x86 only) before use.
+    model_path: "models/efficientdet_lite0_generic_edgetpu.tflite"
+    labels_path: "models/labels.txt"
+
+    # Minimum confidence (0..1) to keep a detection.
+    score_threshold: 0.5
+
+    # Cap detections per frame; 0 = no limit.
+    max_detections: 0
+
+    # Forward camera by default (gscam → /camera/forward).
+    image_topic: "/camera/forward"
+
+    # Heartbeat + stale-input watchdog.
+    diagnostics_period_sec: 1.0
+    image_timeout_sec: 5.0

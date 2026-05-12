@@ -72,12 +72,19 @@ def _user_in_group(name):
 
 @pytest.mark.hardware
 class TestMaestro:
-    DEVICE = '/dev/ttyACM0'
+    DEVICE = '/dev/maestro'
+    POLOLU_USB_ID = '1ffb:0089'
 
-    def test_device_node_exists(self):
+    def test_device_symlink_exists(self):
         assert os.path.exists(self.DEVICE), (
-            f'{self.DEVICE} not present. Plug in the Pololu Maestro USB cable; '
-            f'verify with `lsusb | grep -i pololu`.'
+            f'{self.DEVICE} symlink not present. Run `bash scripts/setup_udev.sh` '
+            f'to install the udev rules, then unplug+replug the Maestro. '
+            f'Verify with `lsusb | grep -i pololu`.'
+        )
+
+    def test_maestro_enumerated(self):
+        assert _lsusb_match(self.POLOLU_USB_ID), (
+            'Pololu Maestro not detected via lsusb. Check the USB cable.'
         )
 
     def test_user_in_dialout(self):
@@ -93,13 +100,14 @@ class TestMaestro:
 
 @pytest.mark.hardware
 class TestRPLIDAR:
-    DEVICE = '/dev/ttyUSB0'
+    DEVICE = '/dev/lidar'
     CP210X_USB_ID = '10c4:ea60'
 
-    def test_device_node_exists(self):
+    def test_device_symlink_exists(self):
         assert os.path.exists(self.DEVICE), (
-            f'{self.DEVICE} not present. Plug in the RPLIDAR USB cable, '
-            f'or check the CP210x bridge with `lsusb | grep -i silicon`.'
+            f'{self.DEVICE} symlink not present. Run `bash scripts/setup_udev.sh` '
+            f'and unplug+replug the LIDAR USB cable. '
+            f'Check the CP210x bridge with `lsusb | grep -i silicon`.'
         )
 
     def test_cp210x_bridge_enumerated(self):
@@ -168,6 +176,20 @@ class TestLSM9DS1:
 
 @pytest.mark.hardware
 class TestForwardCamera:
+    DEVICE = '/dev/cam_forward'
+    BRIO_USB_ID = '046d:085e'
+
+    def test_device_symlink_exists(self):
+        assert os.path.exists(self.DEVICE), (
+            f'{self.DEVICE} symlink not present. Run `bash scripts/setup_udev.sh` '
+            f'and unplug+replug the BRIO. Check `lsusb | grep -i logitech`.'
+        )
+
+    def test_brio_enumerated(self):
+        assert _lsusb_match(self.BRIO_USB_ID), (
+            f'Logitech BRIO (USB {self.BRIO_USB_ID}) not detected.'
+        )
+
     def test_v4l2_device_enumerated(self):
         try:
             out = subprocess.run(
@@ -188,7 +210,14 @@ class TestForwardCamera:
 
 @pytest.mark.hardware
 class TestArducam:
+    DEVICE = '/dev/cam_backward'
     USB_ID = '0c45:0578'
+
+    def test_device_symlink_exists(self):
+        assert os.path.exists(self.DEVICE), (
+            f'{self.DEVICE} symlink not present. Run `bash scripts/setup_udev.sh` '
+            f'and unplug+replug the Arducam.'
+        )
 
     def test_usb_present(self):
         assert _lsusb_match(self.USB_ID), (

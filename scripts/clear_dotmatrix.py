@@ -18,8 +18,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--spi-port', type=int, default=0)
     parser.add_argument('--spi-device', type=int, default=0)
-    parser.add_argument('--cascaded', type=int, default=4,
-                        help='Number of cascaded MAX7219 modules (default 4)')
+    parser.add_argument('--cascaded', type=int, default=3,
+                        help='Number of cascaded MAX7219 modules (default 3)')
     parser.add_argument('--hold-seconds', type=float, default=1.0)
     args = parser.parse_args()
 

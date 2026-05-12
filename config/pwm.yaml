@@ -1,6 +1,6 @@
 pwm_node:
   ros__parameters:
-    serial_port: "/dev/ttyACM0"
+    serial_port: "/dev/maestro"
     device_id: 12  # 0x0c — Pololu default
 
     # Calibrate each axis in two steps:

@@ -1,0 +1,29 @@
+# RACECAR Neo v2 — stable device symlinks
+# Installed to /etc/udev/rules.d/ by scripts/setup_udev.sh.
+# After install: sudo udevadm control --reload-rules && sudo udevadm trigger
+
+# Pololu Micro Maestro 6-Servo Controller (drive ESC + steering servo)
+# VID 1ffb:0089, serial unique per unit. The Maestro exposes two CDC ACM
+# interfaces: ID_USB_INTERFACE_NUM=00 is the command port, =02 is an auxiliary
+# TTL serial we don't use — match only the command port via ENV (ATTRS and
+# bInterfaceNumber live on different parent nodes, can't mix in one ATTRS rule).
+SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="1ffb", ENV{ID_MODEL_ID}=="0089", ENV{ID_SERIAL_SHORT}=="00251464", ENV{ID_USB_INTERFACE_NUM}=="00", SYMLINK+="maestro", GROUP="dialout", MODE="0660"
+
+# RPLIDAR A3-class via CP2102 USB-UART bridge
+# VID 10c4:ea60. Serial "0001" is generic for CP2102; match by VID:PID only.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", SYMLINK+="lidar", GROUP="dialout", MODE="0660"
+
+# Logitech BRIO Ultra HD (forward camera)
+# VID 046d:085e; serial 0C357E4B unique per unit. Symlink only the v4l2 capture node.
+SUBSYSTEM=="video4linux", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="085e", ATTRS{serial}=="0C357E4B", ATTR{index}=="0", SYMLINK+="cam_forward"
+
+# Arducam B0578 (backward camera)
+# VID 0c45:0578. Serial "SN001" is generic factory default; VID:PID is product-unique.
+SUBSYSTEM=="video4linux", ATTRS{idVendor}=="0c45", ATTRS{idProduct}=="0578", ATTR{index}=="0", SYMLINK+="cam_backward"
+# Disable USB autosuspend on the Arducam (prevents driver re-init storms)
+ACTION=="add", SUBSYSTEM=="usb", ATTRS{idVendor}=="0c45", ATTRS{idProduct}=="0578", ATTR{power/autosuspend}="-1", ATTR{power/control}="on"
+
+# Coral EdgeTPU — non-root access in both pre-init and post-init USB IDs
+# Pre-init: 1a6e:089a (Global Unichip). Post-init (after firmware load): 18d1:9302 (Google).
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1a6e", ATTRS{idProduct}=="089a", GROUP="plugdev", MODE="0660"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="18d1", ATTRS{idProduct}=="9302", GROUP="plugdev", MODE="0660"

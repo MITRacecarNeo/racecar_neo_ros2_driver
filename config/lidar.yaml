@@ -1,7 +1,7 @@
 sllidar_node:
   ros__parameters:
     channel_type: "serial"
-    serial_port: "/dev/ttyUSB0"
+    serial_port: "/dev/lidar"
     serial_baudrate: 115200    # RPLIDAR A1/A2/A3 default; S1=256000, S2=1000000
     frame_id: "laser"
     inverted: false

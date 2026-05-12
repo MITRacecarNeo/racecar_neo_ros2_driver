@@ -6,7 +6,7 @@ package_name = 'racecar_neo_ros2_driver'
 
 setup(
     name=package_name,
-    version='0.0.2',
+    version='0.0.3',
     packages=find_packages(exclude=['test']),
     data_files=[
         ('share/ament_index/resource_index/packages',
@@ -20,6 +20,8 @@ setup(
             glob.glob('scripts/*.sh') + glob.glob('scripts/*.py')),
         ('share/' + package_name + '/services',
             glob.glob('scripts/*.service')),
+        ('share/' + package_name + '/models',
+            glob.glob('models/*')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -30,6 +32,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'dotmatrix_node = racecar_neo_ros2_driver.dotmatrix_node:main',
+            'edgetpu_node = racecar_neo_ros2_driver.edgetpu_node:main',
             'gamepad_node = racecar_neo_ros2_driver.gamepad_node:main',
             'imu_node = racecar_neo_ros2_driver.imu_node:main',
             'mux_node = racecar_neo_ros2_driver.mux_node:main',

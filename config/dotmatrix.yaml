@@ -1,0 +1,30 @@
+dotmatrix_node:
+  ros__parameters:
+    # SPI wiring (Pi 5: /dev/spidev0.0, group dialout on this image).
+    spi_port: 0
+    spi_device: 0
+
+    # Daisy-chained MAX7219 modules. 3 → 24x8 viewport.
+    cascaded: 3
+
+    # luma orientation flags — adjust if the modules read sideways/mirrored.
+    block_orientation: -90
+    rotate: 0
+
+    # 0..15; lower = dimmer.
+    contrast: 4
+
+    # Render loop rate. 15Hz is smooth enough for scrolling text.
+    refresh_rate_hz: 15.0
+
+    # Time to scroll a long message fully across the display (seconds).
+    scroll_period_sec: 4.0
+
+    # /dotmatrix/pixels staleness window. After this many seconds with no
+    # republish, the custom pixel frame is dropped and we fall back to text
+    # or the mode glyph.
+    pixels_timeout_sec: 5.0
+
+    # Match the mux button mapping so the mode glyph tracks LB/RB.
+    gamepad_enable_button: 4
+    autonomy_enable_button: 5

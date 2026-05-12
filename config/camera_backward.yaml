@@ -1,9 +1,9 @@
 camera_backward:
   ros__parameters:
-    # GStreamer pipeline for the Arducam B0578 (global-shutter 2.3 MP) at
-    # /dev/video4. MJPG @ 30 fps keeps USB bandwidth low; the gscam overlay's
-    # max-buffers=1 / drop=true patch keeps memory bounded under CPU load.
-    gscam_config: "v4l2src device=/dev/video4 do-timestamp=true ! image/jpeg,width=640,height=480,framerate=30/1 ! jpegparse ! jpegdec ! videoconvert"
+    # GStreamer pipeline for the Arducam B0578 (global-shutter 2.3 MP) via the
+    # /dev/cam_backward udev symlink. MJPG @ 30 fps keeps USB bandwidth low;
+    # the gscam overlay's max-buffers=1 / drop=true patch bounds memory.
+    gscam_config: "v4l2src device=/dev/cam_backward do-timestamp=true ! image/jpeg,width=640,height=480,framerate=30/1 ! jpegparse ! jpegdec ! videoconvert"
     camera_name: "camera_backward"
     frame_id: "camera_backward_link"
     sync_sink: false
