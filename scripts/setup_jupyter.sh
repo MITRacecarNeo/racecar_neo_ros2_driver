@@ -13,6 +13,22 @@ if ! command -v "$USER_HOME/.local/bin/jupyter" >/dev/null 2>&1; then
     pip3 install --user --break-system-packages jupyterlab
 fi
 
+# Student-library runtime deps. nptyping is imported by camera/lidar/physics
+# for return-type annotations; pandas backs telemetry.visualize(); ipywidgets
+# powers the live FPS / joystick / detection widgets in
+# labs/tests/test_async_core_real.ipynb. JupyterLab 4.x renders ipywidgets >= 8
+# natively (no labextension install needed).
+LIB_DEPS=(ipywidgets pandas nptyping)
+MISSING_DEPS=()
+for dep in "${LIB_DEPS[@]}"; do
+    if ! sudo -u "$USER_NAME" python3 -c "import ${dep//-/_}" >/dev/null 2>&1; then
+        MISSING_DEPS+=("$dep")
+    fi
+done
+if [ ${#MISSING_DEPS[@]} -gt 0 ]; then
+    pip3 install --user --break-system-packages "${MISSING_DEPS[@]}"
+fi
+
 # Notebook root. Empty unless we ship example notebooks later.
 if [ ! -d "$JUPYTER_WS" ]; then
     mkdir -p "$JUPYTER_WS"

@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+### Added
+
+- `scripts/setup_jupyter.sh` now installs three additional pip packages required by the v2 student library and the `labs/tests/test_async_core_real.ipynb` walkthrough: `ipywidgets` (live FPS / joystick / detection widgets — JupyterLab 4.x renders `ipywidgets >= 8` natively, no labextension step needed), `pandas` (backs `telemetry_real.visualize()` reading the recorded CSV), and `nptyping` (imported by `camera`, `lidar`, `physics` for return-type annotations). Idempotent: each dep is import-probed under the target user first, and `pip install` only runs for the missing ones — so re-runs after a successful install are silent.
+
 ## [0.0.7] — 2026-05-12
 
 Functionality audit before tagging, plus the lidar/ModemManager hardening surfaced by the 2026-05-12 endurance test. Safety hardening, Pi 5 efficiency wins, and dead-code removal — no new features.
