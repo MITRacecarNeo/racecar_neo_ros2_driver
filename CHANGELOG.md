@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0] — 2026-05-13
+
+QoL: give the `racecar` tool authority over which `~/jupyter_ws/<folder>/library/` is on Python's `sys.path`, so student scripts (e.g. `labs/demo.py`) can `import racecar_core` without a manually-placed `.pth` or `sys.path` hack. Matches the sim installer's existing convention (a `racecar_student.pth` in site-packages) but anchored to user site-packages since the Pi has no venv.
+
+### Added
+
+- **`racecar library` subcommand** in `scripts/racecar-tool.sh` manages `racecar_student.pth` in the user site-packages dir (`~/.local/lib/pythonX.Y/site-packages/`, resolved via `python3 -c 'import site; print(site.getusersitepackages())'`). Actions:
+  - `--select <folder>` — point the `.pth` at `~/jupyter_ws/<folder>/library/`. Validates the folder exists and contains `library/racecar_core.py` before writing; rejects with a usage hint otherwise. Both `--select foo` and `--select=foo` forms accepted.
+  - `--list` — enumerate `~/jupyter_ws/` subdirectories that look like valid student libraries (filtered by presence of `library/racecar_core.py`). The currently-selected folder is prefixed with `*`. Random clones that don't ship a library are skipped so the list only shows actionable candidates.
+  - `--reset` — delete the `.pth` file. Idempotent — reports cleanly when there's nothing to remove.
+  - `--status` — print the currently-selected library path (and the `.pth` file location), or, on a fresh system, an explicit "no library selected" + the `--select` hint. Read-only; always exits 0. Emits a warning if the recorded path no longer contains `racecar_core.py` (stale selection).
+  - `--help` / `-h` — full usage block.
+- Bash completion entries for `racecar library` (action flags + dynamic folder completion for `--select`, filtered the same way `--list` is).
+- 15 new tests in `test/test_racecar_tool.py` (under `TestLibrary`): HOME-isolated fixtures (`PYTHONUSERBASE` pinned to `tmp_path` so `site.getusersitepackages()` resolves inside the sandbox), covering help/usage, list filtering, select success + both rejection paths, reset idempotency, status pre/post-select, and the `*` marker in `--list`.
+
+### Changed
+
+- Bumped `<version>` 0.0.9 → 0.1.0 in `package.xml` and `setup.py`. Minor-version bump because this is a new user-facing capability, not a bugfix.
+
+### Notes
+
+- The fix-the-installer-side counterpart (template `${RACECAR_DIR}/library` into the `.pth` from the rsync path during install) is tracked separately in `racecar-neo-installer`. This change gives the on-Pi user the ability to *re-select* without re-running the installer — useful when a student keeps multiple work folders side-by-side (e.g. course copy + personal copy + experimental clone).
+
 ## [0.0.9] — 2026-05-13
 
 New-machine audit: full `setup_all.sh` run on a fresh Ubuntu 24.04 Pi 5 (NVMe-only) surfaced three independent fleet-portability bugs that all silently produced a "mostly working" robot. No driver code changes — setup scripts and udev rules only.

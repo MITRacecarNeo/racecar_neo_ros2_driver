@@ -46,8 +46,8 @@ def test_help_renders(args):
     assert 'racecar' in result.stdout
     assert 'Commands' in result.stdout
     expected = ('build', 'test', 'source', 'cd', 'teleop', 'launch',
-                'clear', 'udev', 'watchdog', 'service', 'setup', 'cleanup',
-                'selftest', 'status')
+                'clear', 'udev', 'watchdog', 'service', 'setup', 'library',
+                'cleanup', 'selftest', 'status')
     for sub in expected:
         assert sub in result.stdout, f'help missing "{sub}"'
 
@@ -236,6 +236,163 @@ class TestSetup:
         )
         assert result.returncode == 2
         assert 'cannot be combined' in result.stderr
+
+
+class TestLibrary:
+    """`racecar library` manages racecar_student.pth in user site-packages."""
+
+    @staticmethod
+    def _run_isolated(home, *args):
+        # Override HOME so site.getusersitepackages() resolves to a tmp dir
+        # and ~/jupyter_ws probes a tmp tree. PYTHONUSERBASE pins the user-site
+        # path under HOME on systems where it would otherwise resolve elsewhere.
+        env_setup = (
+            f'export HOME="{home}"; '
+            f'export PYTHONUSERBASE="{home}/.local"; '
+        )
+        return subprocess.run(
+            ['bash', '-c',
+             f'set +u; {env_setup} source "{TOOL}"; '
+             f'racecar library {" ".join(args)}'],
+            capture_output=True, text=True, timeout=10,
+        )
+
+    def test_no_action_errors(self):
+        result = _run('library')
+        assert result.returncode == 2
+        assert 'usage:' in result.stderr
+
+    def test_help_lists_actions(self):
+        result = _run('library', '--help')
+        assert result.returncode == 0
+        for flag in ('--select', '--list', '--reset', '--status'):
+            assert flag in result.stdout
+
+    def test_unknown_flag_errors(self):
+        result = _run('library', '--vaporize')
+        assert result.returncode == 2
+        assert 'unknown flag' in result.stderr
+
+    def test_status_with_no_pth(self, tmp_path):
+        # Fresh HOME → no .pth file → friendly hint, exit 0.
+        result = self._run_isolated(tmp_path, '--status')
+        assert result.returncode == 0
+        assert 'No racecar library is currently selected' in result.stdout
+        assert '--select' in result.stdout
+
+    def test_list_with_no_jupyter_ws(self, tmp_path):
+        result = self._run_isolated(tmp_path, '--list')
+        assert result.returncode == 0
+        assert 'No ~/jupyter_ws/ directory' in result.stdout
+
+    def test_list_skips_folders_without_racecar_core(self, tmp_path):
+        jws = tmp_path / 'jupyter_ws'
+        # Valid candidate
+        (jws / 'goodlib' / 'library').mkdir(parents=True)
+        (jws / 'goodlib' / 'library' / 'racecar_core.py').write_text('')
+        # Bogus: no library/ at all
+        (jws / 'badlib').mkdir(parents=True)
+        # Bogus: library/ exists but no racecar_core.py
+        (jws / 'emptylib' / 'library').mkdir(parents=True)
+        result = self._run_isolated(tmp_path, '--list')
+        assert result.returncode == 0
+        assert 'goodlib' in result.stdout
+        assert 'badlib' not in result.stdout
+        assert 'emptylib' not in result.stdout
+
+    def test_select_writes_pth_file(self, tmp_path):
+        jws = tmp_path / 'jupyter_ws'
+        libdir = jws / 'mylib' / 'library'
+        libdir.mkdir(parents=True)
+        (libdir / 'racecar_core.py').write_text('')
+        result = self._run_isolated(tmp_path, '--select', 'mylib')
+        assert result.returncode == 0, result.stderr
+        assert 'Selected library' in result.stdout
+        # The .pth file should land somewhere under HOME/.local and contain libdir.
+        pth_files = list(tmp_path.rglob('racecar_student.pth'))
+        assert len(pth_files) == 1, f'expected one .pth, found {pth_files}'
+        assert pth_files[0].read_text().strip() == str(libdir)
+
+    def test_select_with_equals_form(self, tmp_path):
+        jws = tmp_path / 'jupyter_ws'
+        libdir = jws / 'mylib' / 'library'
+        libdir.mkdir(parents=True)
+        (libdir / 'racecar_core.py').write_text('')
+        result = self._run_isolated(tmp_path, '--select=mylib')
+        assert result.returncode == 0, result.stderr
+        pth_files = list(tmp_path.rglob('racecar_student.pth'))
+        assert len(pth_files) == 1
+        assert pth_files[0].read_text().strip() == str(libdir)
+
+    def test_select_rejects_missing_folder(self, tmp_path):
+        (tmp_path / 'jupyter_ws').mkdir()
+        result = self._run_isolated(tmp_path, '--select', 'ghost')
+        assert result.returncode == 2
+        assert 'not a folder' in result.stderr
+
+    def test_select_rejects_folder_without_racecar_core(self, tmp_path):
+        jws = tmp_path / 'jupyter_ws'
+        (jws / 'shell' / 'library').mkdir(parents=True)
+        # Note: no racecar_core.py
+        result = self._run_isolated(tmp_path, '--select', 'shell')
+        assert result.returncode == 2
+        assert 'racecar_core.py' in result.stderr
+
+    def test_select_requires_target(self):
+        # `--select` with no following arg.
+        result = _run('library', '--select')
+        assert result.returncode == 2
+        assert 'requires a folder name' in result.stderr
+
+    def test_reset_removes_pth(self, tmp_path):
+        jws = tmp_path / 'jupyter_ws'
+        libdir = jws / 'mylib' / 'library'
+        libdir.mkdir(parents=True)
+        (libdir / 'racecar_core.py').write_text('')
+        # Select, then reset.
+        self._run_isolated(tmp_path, '--select', 'mylib')
+        pth_before = list(tmp_path.rglob('racecar_student.pth'))
+        assert len(pth_before) == 1
+        result = self._run_isolated(tmp_path, '--reset')
+        assert result.returncode == 0
+        assert 'removed' in result.stdout
+        pth_after = list(tmp_path.rglob('racecar_student.pth'))
+        assert pth_after == []
+
+    def test_reset_when_nothing_to_remove(self, tmp_path):
+        result = self._run_isolated(tmp_path, '--reset')
+        assert result.returncode == 0
+        assert 'no .pth file to remove' in result.stdout
+
+    def test_status_after_select_reports_path(self, tmp_path):
+        jws = tmp_path / 'jupyter_ws'
+        libdir = jws / 'mylib' / 'library'
+        libdir.mkdir(parents=True)
+        (libdir / 'racecar_core.py').write_text('')
+        self._run_isolated(tmp_path, '--select', 'mylib')
+        result = self._run_isolated(tmp_path, '--status')
+        assert result.returncode == 0
+        assert 'Current library' in result.stdout
+        assert str(libdir) in result.stdout
+
+    def test_list_marks_current_with_asterisk(self, tmp_path):
+        jws = tmp_path / 'jupyter_ws'
+        for name in ('alpha', 'beta'):
+            libdir = jws / name / 'library'
+            libdir.mkdir(parents=True)
+            (libdir / 'racecar_core.py').write_text('')
+        self._run_isolated(tmp_path, '--select', 'beta')
+        result = self._run_isolated(tmp_path, '--list')
+        assert result.returncode == 0
+        # Find the line for beta and check it has a '*' marker.
+        lines = [ln for ln in result.stdout.splitlines() if 'beta' in ln]
+        assert lines, 'beta missing from --list output'
+        assert '*' in lines[0]
+        # alpha line should NOT have a star (just leading whitespace).
+        alpha_lines = [ln for ln in result.stdout.splitlines()
+                       if 'alpha' in ln]
+        assert alpha_lines
+        assert '*' not in alpha_lines[0]
 
 
 class TestCleanup:

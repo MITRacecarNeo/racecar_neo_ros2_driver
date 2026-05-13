@@ -274,6 +274,155 @@ __RC_NET_HELP__
             esac
             ;;
 
+        library)
+            # Manage which ~/jupyter_ws/<folder>/library/ is on Python's sys.path
+            # by writing a .pth file into the user site-packages directory.
+            # Mirrors what the sim installer does inside its venv (see
+            # racecar-neo-installer setup.sh), but uses the user-site dir since
+            # the Pi has no venv.
+            local jws="$HOME/jupyter_ws"
+            local site_pkgs
+            site_pkgs=$(python3 -c 'import site; print(site.getusersitepackages())' 2>/dev/null)
+            local pth_file="$site_pkgs/racecar_student.pth"
+
+            local action=""
+            local select_target=""
+            while [[ $# -gt 0 ]]; do
+                local arg="$1"; shift
+                case "$arg" in
+                    --select)
+                        action="select"
+                        select_target="${1:-}"
+                        [[ -n "$select_target" ]] && shift
+                        ;;
+                    --select=*)
+                        action="select"
+                        select_target="${arg#*=}"
+                        ;;
+                    --list)    action="list" ;;
+                    --reset)   action="reset" ;;
+                    --status)  action="status" ;;
+                    --help|-h) action="help" ;;
+                    *)
+                        echo "racecar library: unknown flag '$arg'" >&2
+                        return 2
+                        ;;
+                esac
+            done
+
+            if [[ -z "$action" ]]; then
+                echo "usage: racecar library [--select <folder> | --list | --reset | --status]" >&2
+                return 2
+            fi
+
+            if [[ "$action" == "help" ]]; then
+                cat <<'__RC_LIB_HELP__'
+usage: racecar library <action>
+Manages the racecar_student.pth file in user site-packages so Python scripts
+(e.g. labs/demo.py) can `import racecar_core` without sys.path hacks.
+
+Actions:
+  --select <folder>  Point the .pth at ~/jupyter_ws/<folder>/library/.
+                     <folder> must contain library/racecar_core.py.
+  --list             List all ~/jupyter_ws/ folders that look like valid
+                     student libraries (contain library/racecar_core.py).
+                     The currently-selected folder is marked with *.
+  --reset            Delete the .pth file (no library on sys.path).
+  --status           Show the currently-selected library, or report none.
+
+The .pth is written to:
+  ~/.local/lib/pythonX.Y/site-packages/racecar_student.pth
+__RC_LIB_HELP__
+                return 0
+            fi
+
+            if [[ -z "$site_pkgs" ]]; then
+                echo "racecar library: could not determine user site-packages directory" >&2
+                return 1
+            fi
+
+            case "$action" in
+                list)
+                    if [[ ! -d "$jws" ]]; then
+                        echo "No ~/jupyter_ws/ directory found."
+                        return 0
+                    fi
+                    local current=""
+                    if [[ -f "$pth_file" ]]; then
+                        current=$(head -n 1 "$pth_file")
+                    fi
+                    local found=0
+                    echo "Available libraries in $jws:"
+                    local d
+                    for d in "$jws"/*/; do
+                        [[ -d "$d" ]] || continue
+                        local libdir="${d}library"
+                        if [[ -f "$libdir/racecar_core.py" ]]; then
+                            local name
+                            name=$(basename "$d")
+                            local marker="  "
+                            if [[ "$current" == "${libdir%/}" ]]; then
+                                marker=" *"
+                            fi
+                            printf "%s %s\n" "$marker" "$name"
+                            found=1
+                        fi
+                    done
+                    if [[ $found -eq 0 ]]; then
+                        echo "  (none — no folder contains library/racecar_core.py)"
+                    fi
+                    ;;
+
+                select)
+                    if [[ -z "$select_target" ]]; then
+                        echo "racecar library: --select requires a folder name" >&2
+                        echo "  (run 'racecar library --list' to see candidates)" >&2
+                        return 2
+                    fi
+                    local target_dir="$jws/$select_target"
+                    local target_lib="$target_dir/library"
+                    if [[ ! -d "$target_dir" ]]; then
+                        echo "racecar library: '$select_target' is not a folder under $jws" >&2
+                        return 2
+                    fi
+                    if [[ ! -f "$target_lib/racecar_core.py" ]]; then
+                        echo "racecar library: '$target_lib/racecar_core.py' not found" >&2
+                        echo "  (folder must contain library/racecar_core.py)" >&2
+                        return 2
+                    fi
+                    mkdir -p "$site_pkgs"
+                    echo "$target_lib" > "$pth_file"
+                    echo "Selected library: $target_lib"
+                    echo "  wrote $pth_file"
+                    ;;
+
+                reset)
+                    if [[ -f "$pth_file" ]]; then
+                        rm -f "$pth_file"
+                        echo "Reset: removed $pth_file"
+                    else
+                        echo "Reset: no .pth file to remove ($pth_file)"
+                    fi
+                    ;;
+
+                status)
+                    if [[ -f "$pth_file" ]]; then
+                        local current
+                        current=$(head -n 1 "$pth_file")
+                        echo "Current library: $current"
+                        echo "  ($pth_file)"
+                        if [[ ! -f "$current/racecar_core.py" ]]; then
+                            echo "  WARNING: racecar_core.py not found at this path" >&2
+                        fi
+                    else
+                        echo "No racecar library is currently selected."
+                        echo "  Run: racecar library --select <folder>"
+                        echo "  (or: racecar library --list)"
+                    fi
+                    ;;
+            esac
+            ;;
+
         cleanup)
             # Find orphaned/stale racecar processes + FastRTPS SHM segments.
             # Dry-run by default; pass --force to actually kill / remove.
@@ -467,6 +616,11 @@ Commands:
                           logs [name]          journalctl -f for racecar-<name>
                           status               active/enabled summary (default)
                         Units: teleop, watchdog, dashboard, jupyter
+    library <action>    Manage racecar_student.pth in user site-packages.
+                          --select <folder>   point at ~/jupyter_ws/<folder>/library
+                          --list              show valid folders in ~/jupyter_ws
+                          --reset             delete the .pth file
+                          --status            show current selection
     cleanup             List orphaned racecar processes + FastRTPS SHM segments.
                         Defaults to a dry-run. Pass --force to actually kill/remove
                         (uses sudo for root-owned PIDs).
@@ -502,7 +656,7 @@ _racecar_complete() {
     local sub="${COMP_WORDS[1]:-}"
 
     if [[ $COMP_CWORD -eq 1 ]]; then
-        COMPREPLY=( $(compgen -W "build test source cd teleop launch clear udev watchdog service setup cleanup selftest status help" -- "$cur") )
+        COMPREPLY=( $(compgen -W "build test source cd teleop launch clear udev watchdog service setup library cleanup selftest status help" -- "$cur") )
         return
     fi
 
@@ -520,6 +674,30 @@ _racecar_complete() {
             ;;
         cleanup)
             COMPREPLY=( $(compgen -W "--dry-run --force --help" -- "$cur") )
+            ;;
+        library)
+            if [[ "$cur" == --select=* || "$prev" == "--select" ]]; then
+                # Complete with folder names under ~/jupyter_ws that contain library/racecar_core.py.
+                local jws="$HOME/jupyter_ws"
+                local candidates=""
+                if [[ -d "$jws" ]]; then
+                    local d
+                    for d in "$jws"/*/; do
+                        [[ -d "$d" ]] || continue
+                        if [[ -f "${d}library/racecar_core.py" ]]; then
+                            candidates+="$(basename "$d") "
+                        fi
+                    done
+                fi
+                if [[ "$cur" == --select=* ]]; then
+                    local prefix="${cur#--select=}"
+                    COMPREPLY=( $(compgen -W "$candidates" -- "$prefix") )
+                else
+                    COMPREPLY=( $(compgen -W "$candidates" -- "$cur") )
+                fi
+            else
+                COMPREPLY=( $(compgen -W "--select --select= --list --reset --status --help" -- "$cur") )
+            fi
             ;;
         setup)
             if [[ $COMP_CWORD -eq 2 ]]; then
