@@ -8,6 +8,14 @@ USER_HOME="$(getent passwd "$USER_NAME" | cut -d: -f6)"
 
 # Groups: dialout (ttyUSB/ttyACM), i2c (LSM9DS1), spi (MAX7219), gpio (RPi pins),
 # video (vcgencmd / /dev/vcio for the RTC battery probe).
+# Ubuntu 24.04 for Pi doesn't ship `spi` or `gpio` groups (RPi OS does); create
+# them so the udev rules in 99-racecar.rules have a target to chgrp into.
+for grp in spi gpio; do
+    if ! getent group "$grp" >/dev/null 2>&1; then
+        sudo groupadd --system "$grp"
+        echo "  created system group $grp"
+    fi
+done
 # Skip groups that don't exist on this OS image.
 for grp in dialout i2c spi gpio video; do
     if ! getent group "$grp" >/dev/null 2>&1; then
