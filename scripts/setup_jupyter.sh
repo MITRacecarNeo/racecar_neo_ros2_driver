@@ -13,37 +13,25 @@ if ! command -v "$USER_HOME/.local/bin/jupyter" >/dev/null 2>&1; then
     pip3 install --user --break-system-packages jupyterlab
 fi
 
-# Student-library runtime deps. nptyping is imported by camera/lidar/physics
-# for return-type annotations; pandas backs telemetry.visualize(); ipywidgets
-# powers the live FPS / joystick / detection widgets in
-# labs/tests/test_async_core_real.ipynb. JupyterLab 4.x renders ipywidgets >= 8
-# natively (no labextension install needed).
+# Student-library runtime deps for the v2 racecar-neo library / labs:
+#   - ipywidgets: live FPS / joystick / detection widgets in
+#     labs/tests/test_async_core_real.ipynb. JupyterLab 4.x renders
+#     ipywidgets >= 8 natively (no labextension install needed).
+#   - pandas: backs telemetry_real.visualize() reading the recorded CSV.
 #
-# nptyping is pinned <2 because the v2 release ships an incompatible generic
-# syntax (Shape["..."]) and the student library uses the v1 form
-# NDArray[(480, 640, 3), np.uint8]; on Python 3.12 (Pi 5 default) pip resolves
-# to 2.5.0 and every annotation in camera.py / lidar.py / physics.py raises
-# InvalidArgumentsError at import. Pinning here keeps the v1 library readable
-# until a future library bump rewrites the annotations.
-LIB_DEPS=(ipywidgets pandas 'nptyping<2')
+# Not installed: nptyping. Earlier v0.0.8 drafts pinned nptyping<2 because
+# the v1 library used the deprecated NDArray[(480, 640, 3), np.uint8] form
+# (the v2 nptyping release replaced it with Shape["..."]). On Py3.12 both
+# nptyping 1.x and 2.x are broken: 2.x raises InvalidArgumentsError at the
+# class def, and 1.x triggers a runaway typing._type_repr recursion that
+# adds ~30 s to a cold import. MITUavNeo/uav-neo-library hit the same wall
+# and resolved it by dropping nptyping entirely — they ship a 2-line inline
+# NDArray stub in every module that needs the syntax. The racecar-neo v2
+# library v1.2.0 mirrors that pattern, so nptyping is not a dep here.
+LIB_DEPS=(ipywidgets pandas)
 MISSING_DEPS=()
 for dep in "${LIB_DEPS[@]}"; do
-    # Strip any version specifier (e.g. 'nptyping<2' -> 'nptyping') for the
-    # import probe; pip handles the version check on install.
-    mod="${dep%%[<>=!~ ]*}"
-    if ! sudo -u "$USER_NAME" python3 -c "
-import importlib, sys
-try:
-    importlib.import_module('${mod//-/_}')
-except Exception:
-    sys.exit(1)
-# nptyping 2.x installs cleanly but breaks the library's NDArray[(...)]
-# syntax; treat it as 'missing' so pip downgrades to <2.
-if '${mod}' == 'nptyping':
-    import nptyping
-    major = int(nptyping.__version__.split('.')[0])
-    sys.exit(0 if major < 2 else 1)
-" >/dev/null 2>&1; then
+    if ! sudo -u "$USER_NAME" python3 -c "import ${dep//-/_}" >/dev/null 2>&1; then
         MISSING_DEPS+=("$dep")
     fi
 done

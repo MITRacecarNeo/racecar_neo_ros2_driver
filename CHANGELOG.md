@@ -6,9 +6,11 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Added
 
-- `scripts/setup_jupyter.sh` now installs three additional pip packages required by the v2 student library and the `labs/tests/test_async_core_real.ipynb` walkthrough: `ipywidgets` (live FPS / joystick / detection widgets — JupyterLab 4.x renders `ipywidgets >= 8` natively, no labextension step needed), `pandas` (backs `telemetry_real.visualize()` reading the recorded CSV), and `nptyping<2` (imported by `camera`, `lidar`, `physics` for return-type annotations).
-  - **Why `nptyping<2`:** the v2 release shipped an incompatible generic syntax (`Shape["480, 640, 3"]`) but the student library uses the v1 form `NDArray[(480, 640, 3), np.uint8]`. On Python 3.12 (Pi 5 default) pip resolves to `nptyping 2.5.0` and every annotation in `camera.py` / `lidar.py` / `physics.py` raises `InvalidArgumentsError` at first import. Pinning `<2` keeps the v1 library readable on Py3.12 until a future student-library bump rewrites the annotations to the v2 form. UAV Neo's library runs on Py3.10 with the older nptyping and never hit this.
-  - **Idempotency:** each dep is import-probed under the target user first, and `pip install` only runs for the missing ones. The nptyping probe is version-aware — a system with `nptyping 2.x` installed (e.g. from an earlier v0.0.8 build before the pin landed) gets re-resolved down to `<2` on next run instead of being treated as already-satisfied. Re-runs with the correct versions in place are silent.
+- `scripts/setup_jupyter.sh` now installs two additional pip packages required by the v2 student library and the `labs/tests/test_async_core_real.ipynb` walkthrough: `ipywidgets` (live FPS / joystick / detection widgets — JupyterLab 4.x renders `ipywidgets >= 8` natively, no labextension step needed) and `pandas` (backs `telemetry_real.visualize()` reading the recorded CSV). Idempotent: each dep is import-probed under the target user first, and `pip install` only runs for the missing ones — re-runs after a successful install are silent.
+
+### Notes
+
+- **nptyping intentionally not added.** An earlier v0.0.8 draft pinned `nptyping<2` because the v1 student library used the deprecated `NDArray[(480, 640, 3), np.uint8]` generic form. On Python 3.12 (Pi 5 default) both nptyping branches are broken: 2.x raises `InvalidArgumentsError` at class definition (incompatible `Shape["..."]` API), and 1.4.4 triggers a runaway recursion between `typing._type_repr` and nptyping's `__repr__` that adds ~30 s to a cold `import racecar_core`. MITUavNeo/uav-neo-library hit the same Py3.12 wall and resolved it by dropping nptyping entirely — every module that needed the `NDArray[...]` syntax got a 2-line inline stub instead. The racecar-neo v2 library v1.2.0 mirrors that pattern, so this driver doesn't need to ship nptyping at all.
 
 ## [0.0.7] — 2026-05-12
 
