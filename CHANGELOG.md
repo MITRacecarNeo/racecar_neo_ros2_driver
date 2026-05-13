@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.9] — 2026-05-13
+
+New-machine audit: full `setup_all.sh` run on a fresh Ubuntu 24.04 Pi 5 (NVMe-only) surfaced three independent fleet-portability bugs that all silently produced a "mostly working" robot. No driver code changes — setup scripts and udev rules only.
+
+### Fixed
+
+- **`setup_raspi_config.sh` hung at step 4/11 on Ubuntu.** Ubuntu ships an older fork of `raspi-config` than current Raspberry Pi OS — it lacks the `do_serial_cons` / `do_serial_hw` split and only has the older combined `do_serial`. The call to `do_serial_cons 1` exited with `not found`, and under `set -eo pipefail` aborted the whole orchestrator. Now feature-detects via `grep '^do_serial_cons\b' /usr/bin/raspi-config` and falls back to `do_serial 1 1` + manual `enable_uart=1` in `config.txt` + a belt-and-suspenders sed that scrubs stray `console=serial0/ttyAMA0/ttyS0` entries from `cmdline.txt`. Header documents the Ubuntu-fork quirks (combined helper, plus the benign `DTOVERLAY[warn]: no matching platform found` that `do_i2c` / `do_spi` emit on Ubuntu — the underlying dtparam edits still take effect).
+- **`spi` and `gpio` groups didn't exist on Ubuntu's Pi image.** `setup_user_env.sh` already had a loop that added the user to `dialout i2c spi gpio video`, but the loop's `getent group ... || continue` guard silently skipped any group the OS didn't ship. Ubuntu 24.04 doesn't ship `spi` or `gpio` (RPi OS creates them via raspi-gpio / wiringpi). Result: `/dev/spidev0.0` was reachable only by accident (Ubuntu ships it as `root:dialout` with an ACL), and `/dev/gpiochip0` (`root:root 0600`) required `sudo` for any gpiozero / lgpio / RPi.GPIO use. Fix runs `groupadd --system spi gpio` if absent, before the membership loop, so the loop actually adds the user. Two new lines in `scripts/udev/99-racecar.rules` chgrp `/dev/spidev*` into `spi` and `/dev/gpiochip*` into `gpio` with mode 0660. Since `setup_user_env.sh` runs at step 3/11 and `setup_udev.sh` at step 5/11, groups exist by the time udev tries to use them.
+- **Maestro and Logitech BRIO udev rules were pinned to a single per-unit serial.** Every Pololu Maestro and every BRIO has a unique factory serial; the rules in `99-racecar.rules` hardcoded `ENV{ID_SERIAL_SHORT}=="00251464"` for the Maestro and `ATTRS{serial}=="0C357E4B"` for the BRIO, which only matched the dev machine's specific hardware. On any other car the `/dev/maestro` and `/dev/cam_forward` symlinks silently failed to appear, and consumers fell back to `/dev/ttyACM0` (which the Coral / joystick passthrough can transiently grab — the same v0.0.7 footgun the symlink contract was supposed to close). Both rules now match on VID:PID only (`1ffb:0089` + `ID_USB_INTERFACE_NUM=00` for the Maestro command port; `046d:085e` + `index=0` for the BRIO capture node), matching the convention the lidar and Arducam rules already followed.
+
+### Changed
+
+- Bumped `<version>` 0.0.8 → 0.0.9 in `package.xml` and `setup.py`.
+
+### Verified on fresh hardware
+
+End-to-end re-run of `setup_all.sh` on a fresh Pi 5 (NVMe-only, no SD): all 11 phases complete without error, `groups` shows `racecar adm dialout cdrom sudo dip video plugdev users lpadmin sambashare i2c gpio spi`, `/dev/spidev0.0` is `root:spi 0660`, `/dev/gpiochip0` is `root:gpio 0660`, `/dev/maestro` → `ttyACM0`, `/dev/lidar` → `ttyUSB0`, `/dev/cam_forward` → `video0`. Only outstanding device is `/dev/cam_backward` (Arducam B0578) which appears when the camera is plugged in — its rule was already VID:PID-based and correct.
+
 ## [0.0.8] — 2026-05-13
 
 Ship the pip dependencies the v2 student library needs to run on Python 3.12 / Pi 5. No driver code changes — `setup_jupyter.sh` only.
