@@ -2,7 +2,7 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>racecar_neo_ros2_driver</name>
-  <version>0.0.7</version>
+  <version>0.0.8</version>
   <description>
     ROS2 driver for the MIT RACECAR Neo v2 — sensor/actuator drivers, command
     arbitration, safety/uptime/recovery infrastructure (watchdog, systemd units,

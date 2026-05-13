@@ -2,16 +2,15 @@
 
 All notable changes to this project will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.0.8] — 2026-05-13
+
+Ship the pip dependencies the v2 student library needs to run on Python 3.12 / Pi 5. No driver code changes — `setup_jupyter.sh` only.
 
 ### Added
 
 - `scripts/setup_jupyter.sh` now installs three additional pip packages required by the v2 student library and the `labs/tests/test_async_core_real.ipynb` walkthrough: `ipywidgets` (live FPS / joystick / detection widgets — JupyterLab 4.x renders `ipywidgets >= 8` natively, no labextension step needed), `pandas` (backs `telemetry_real.visualize()` reading the recorded CSV), and `matplotlib-inline<0.2` (the IPython inline matplotlib backend). Idempotent: each dep is import-probed under the target user first, and `pip install` only runs for the missing ones — re-runs after a successful install are silent. The matplotlib-inline probe is version-aware so a system that already has a stale 0.2.x installation (e.g. pulled transitively by `ipykernel` before the pin landed) gets re-resolved to 0.1.x.
   - **Why `matplotlib-inline<0.2`:** the 0.2 line calls `matplotlib.rcParams._get(...)`, which only exists in matplotlib >= 3.10. Pi-OS bookworm/noble ship apt matplotlib 3.6.3, so on Python 3.12 (the Pi 5 default) the 0.2.x transitive blows up the first `plt.subplots()` call inside Jupyter with `AttributeError: 'RcParams' object has no attribute '_get'`. Pinning 0.1.x keeps the inline backend usable on the current apt matplotlib.
-
-### Notes
-
-- **nptyping intentionally not added.** An earlier v0.0.8 draft pinned `nptyping<2` because the v1 student library used the deprecated `NDArray[(480, 640, 3), np.uint8]` generic form. On Python 3.12 (Pi 5 default) both nptyping branches are broken: 2.x raises `InvalidArgumentsError` at class definition (incompatible `Shape["..."]` API), and 1.4.4 triggers a runaway recursion between `typing._type_repr` and nptyping's `__repr__` that adds ~30 s to a cold `import racecar_core`. MITUavNeo/uav-neo-library hit the same Py3.12 wall and resolved it by dropping nptyping entirely — every module that needed the `NDArray[...]` syntax got a 2-line inline stub instead. The racecar-neo v2 library v1.2.0 mirrors that pattern, so this driver doesn't need to ship nptyping at all.
+- **nptyping intentionally not added.** An earlier v0.0.8 draft pinned `nptyping<2` because the v1 student library used the deprecated `NDArray[(480, 640, 3), np.uint8]` generic form. On Python 3.12 both nptyping branches are broken: 2.x raises `InvalidArgumentsError` at class definition (incompatible `Shape["..."]` API), and 1.4.4 triggers a runaway recursion between `typing._type_repr` and nptyping's `__repr__` that adds ~30 s to a cold `import racecar_core`. MITUavNeo/uav-neo-library hit the same Py3.12 wall and resolved it by dropping nptyping entirely — every module that needed the `NDArray[...]` syntax got a 2-line inline stub instead. The racecar-neo v2 library v1.2.0 mirrors that pattern, so this driver doesn't need to ship nptyping at all.
 
 ## [0.0.7] — 2026-05-12
 
