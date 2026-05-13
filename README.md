@@ -4,6 +4,20 @@ ROS2 driver for the **MIT RACECAR Neo v2** — a 1:14-scale autonomous Ackermann
 
 This package is the v2 successor to [`racecar-neo-ros2-backend`](https://github.com/MITRacecarNeo/racecar-neo-ros2-backend), with the safety, uptime, and recovery infrastructure ported from [`uav_neo_ros2_driver`](https://github.com/MITUavNeo/uav_neo_ros2_driver). For the full feature catalog of the patterns being inherited, see [docs/features.md](https://github.com/MITUavNeo/uav_neo_ros2_driver/blob/main/docs/features.md) in the UAV Neo repo.
 
+## Contents
+
+- [Hardware](#hardware)
+- [Architecture](#architecture)
+- [Quickstart (fresh Ubuntu 24.04 install)](#quickstart-fresh-ubuntu-2404-install)
+- [The `racecar` shell tool](#the-racecar-shell-tool)
+- [Networking (optional)](#networking-optional)
+- [Web dashboard](#web-dashboard)
+- [Jupyter notebooks](#jupyter-notebooks)
+- [Manual build](#manual-build)
+- [Launch](#launch)
+- [Changelog](#changelog)
+- [License](#license)
+
 ## Hardware
 
 | Subsystem | Component | Interface |
@@ -45,20 +59,80 @@ Safety/uptime layers (inherited from UAV Neo, shipped in v0.0.4):
 - **JupyterLab** at `http://<robot>:8888` with PYTHONPATH/AMENT_PREFIX_PATH pre-set so `import rclpy` works in notebooks.
 - **Pre-flight `colcon test` suite** (332 tests) asserting every peripheral, embedding fix commands in failure messages.
 
-## Quick start (fresh machine)
+## Quickstart (fresh Ubuntu 24.04 install)
 
-Ubuntu 24.04 (Noble) on a Raspberry Pi 5.
+Target: Raspberry Pi 5 running **Ubuntu Server 24.04 LTS for arm64** (Noble). ROS2 Jazzy is the only supported distro for this driver — older Ubuntu releases (22.04 Jammy) are **not** supported because Jazzy doesn't install there.
+
+### 1. Image the SD card / NVMe
+
+Use Raspberry Pi Imager → *Other general-purpose OS* → *Ubuntu* → *Ubuntu Server 24.04 LTS (64-bit)*. Before writing, click the gear icon and pre-set:
+
+- **Hostname**: `racecar-neo` (matches what the systemd services + dashboard expect)
+- **Username**: `racecar` (the `racecar` shell tool, udev groups, and service unit `User=` are all hard-coded to this name — don't change it)
+- **Password**: your choice
+- **Wireless LAN**: your home/lab SSID (only needed for the initial setup; later replaced by the AP via `racecar setup networking`)
+- **SSH**: enabled, password auth
+
+Boot the Pi, find its IP (`ip neigh` from another machine, or check your router), then `ssh racecar@<ip>`.
+
+### 2. System update + git
+
+```sh
+sudo apt update && sudo apt -y full-upgrade
+sudo apt -y install git
+```
+
+### 3. Clone and run the orchestrator
 
 ```sh
 mkdir -p ~/ros2_ws/src
 cd ~/ros2_ws/src
 git clone https://github.com/MITRacecarNeo/racecar_neo_ros2_driver.git
 bash racecar_neo_ros2_driver/scripts/setup_all.sh
-# Log out + back in (group changes take effect)
-racecar teleop
 ```
 
-`setup_all.sh` is idempotent — re-running is safe. It runs eleven phases:
+`setup_all.sh` is idempotent — re-running is safe (each phase checks for existing state and skips when already applied). It needs sudo for some phases; you'll be prompted once.
+
+### 4. Apply group memberships
+
+The setup adds your user to `dialout`, `i2c`, `spi`, `gpio`, and `video`. Group membership applies to **new login sessions only**, so:
+
+```sh
+exit                     # close SSH
+ssh racecar@<ip>         # back in — groups now active
+groups                   # verify: dialout i2c spi gpio video should appear
+```
+
+### 5. Plug in the hardware and reboot
+
+With the Pi powered off: connect the Maestro, both cameras, the lidar, the dot matrix (SPI), the IMU (I²C), the Coral EdgeTPU, and the EasySMX gamepad's USB dongle. Power on and:
+
+```sh
+sudo reboot
+```
+
+After reboot, `racecar-teleop.service` auto-starts and pulls the watchdog via `Wants=racecar-watchdog.service`. Verify:
+
+```sh
+racecar status              # USB peripherals + device symlinks + running ros2 nodes
+racecar service status      # all 4 racecar-* units should be active+enabled
+```
+
+Browse to `http://racecar-neo.local:8080` for the live dashboard.
+
+### 6. (Optional) Switch to AP-mode networking
+
+Once the wired setup works, you can untether the robot from your home WiFi by running:
+
+```sh
+racecar setup networking --ssid=racecar-neo-1 --psk='your-password'
+```
+
+This brings up an isolated AP on `wlan0` and configures eth0 with both a static IP and DHCP. See [Networking (optional)](#networking-optional). **Run this from a wired (eth0) session or directly on the console** — it reconfigures `wlan0` and will drop SSH-over-WiFi.
+
+### What `setup_all.sh` actually does
+
+Eleven phases, all under `scripts/`:
 
 1. **`setup_ros2.sh`** — ROS2 Jazzy apt repo + message/driver packages
 2. **`setup_dev_tools.sh`** — build tools, Python hardware libs (`smbus` / `serial` / `spidev`), GStreamer dev headers
@@ -72,7 +146,7 @@ racecar teleop
 10. **`setup_jupyter.sh`** — `pip install --user jupyterlab`, creates `~/jupyter_ws/`
 11. **`setup_services.sh`** — installs and enables the four systemd units (`racecar-{teleop,watchdog,dashboard,jupyter}.service`)
 
-Individual phase scripts can be run on their own to re-do or skip steps. After `setup_all.sh` completes, reboot once — `racecar-teleop.service` auto-starts and pulls the watchdog along via `Wants=racecar-watchdog.service`.
+Individual phase scripts can be run on their own to re-do or skip steps (e.g. `racecar setup networking` for just the networking phase, or `bash scripts/setup_udev.sh` to reinstall the udev rules after a hardware swap).
 
 ## The `racecar` shell tool
 

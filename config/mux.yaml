@@ -16,3 +16,6 @@ mux_node:
     # before bumpers can leave IDLE. Defends against stuck-stick-at-power-on.
     startup_grace_sec: 1.0
     arm_axis_threshold: 0.2
+    # Xbox-mode triggers (LT/RT) rest at +1.0, not 0.0 — exclude from the
+    # centered check or the mux never arms on EasySMX-in-Xbox-360-mode.
+    arm_ignore_axes: [2, 5]

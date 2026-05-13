@@ -62,3 +62,20 @@ class TestJoyCentered:
 
     def test_negative_above_threshold_is_not_centered(self):
         assert not joy_is_centered([0.0, -0.9, 0.0, 0.0], threshold=0.2)
+
+    def test_xbox_trigger_rest_blocks_without_ignore(self):
+        # EasySMX in Xbox-360 mode: axes[2] (LT) and axes[5] (RT) rest at +1.0,
+        # not 0.0. Without ignore_axes the arming gate never opens.
+        axes = [0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0]
+        assert not joy_is_centered(axes, threshold=0.2)
+
+    def test_xbox_trigger_rest_ok_with_ignore(self):
+        # Same axes, but axes 2 and 5 excluded — should arm.
+        axes = [0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0]
+        assert joy_is_centered(axes, threshold=0.2, ignore_axes=(2, 5))
+
+    def test_ignore_axes_does_not_excuse_stuck_stick(self):
+        # axes 2 and 5 ignored, but axis 1 (left-stick Y) is stuck forward.
+        # Must still block arming — ignoring triggers shouldn't excuse sticks.
+        axes = [0.0, 0.8, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0]
+        assert not joy_is_centered(axes, threshold=0.2, ignore_axes=(2, 5))

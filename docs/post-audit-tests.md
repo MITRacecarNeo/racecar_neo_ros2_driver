@@ -15,20 +15,20 @@ flip to `[ ]` if you spot a regression, and **stop**.
 
 ## 0. Pre-flight (no hardware risk)
 
-- [ ] Build is clean
+- [X] Build is clean
   ```sh
   cd ~/ros2_ws && colcon build --packages-select racecar_neo_ros2_driver
   ```
   Expected: `Finished` with no errors. Pi 5 ≈ 5 s.
 
-- [ ] Unit tests all pass
+- [X] Unit tests all pass
   ```sh
   racecar test
   ```
   Expected: `364 passed, 2 skipped`. The two skipped are EdgeTPU/Coral
   hardware tests that only run when the device is free.
 
-- [ ] Version bump landed
+- [X] Version bump landed
   ```sh
   grep version setup.py package.xml
   ```
@@ -40,7 +40,7 @@ The audit collapsed 9 launch files behind `single_node_launch()` in
 `racecar_neo_ros2_driver/launch_common.py`. A regression here would prevent
 the watchdog from restarting any node.
 
-- [ ] Every per-node launch file shows its config arg
+- [X] Every per-node launch file shows its config arg
   ```sh
   for lf in pwm mux throttle gamepad lidar dotmatrix edgetpu camera_forward camera_backward; do
       echo "=== $lf ==="
@@ -49,13 +49,13 @@ the watchdog from restarting any node.
   ```
   Expected: each prints `'<name>_config':` as the first arg. No tracebacks.
 
-- [ ] IMU launch (only outlier — two YAML param files) still works
+- [X] IMU launch (only outlier — two YAML param files) still works
   ```sh
   ros2 launch racecar_neo_ros2_driver imu.launch.py --show-args
   ```
   Expected: shows both `imu_cal` and `imu_mag_cal` args.
 
-- [ ] Teleop aggregator still resolves every subsystem
+- [X] Teleop aggregator still resolves every subsystem
   ```sh
   ros2 launch racecar_neo_ros2_driver teleop.launch.py --show-args | grep _enable
   ```
@@ -69,14 +69,14 @@ The pwm_node default was changed from `/dev/ttyACM0` → `/dev/maestro`. The
 YAML always wins, but anyone running `ros2 run` without `--params-file`
 would previously have grabbed whatever ACM0 enumerated to first.
 
-- [ ] udev symlink is alive
+- [X] udev symlink is alive
   ```sh
   ls -l /dev/maestro
   ```
   Expected: symlink → `ttyACM*`. If absent, `racecar setup` Phase 5 (udev) was
   never run on this robot.
 
-- [ ] Direct invocation now uses the right device
+- [X] Direct invocation now uses the right device
   Pull the Maestro power for a moment if you can do it safely, then:
   ```sh
   ros2 run racecar_neo_ros2_driver pwm_node 2>&1 | head -3
@@ -85,7 +85,7 @@ would previously have grabbed whatever ACM0 enumerated to first.
   confirming it's looking at the symlink, not at whatever ACM0 happens to be.
   Plug Maestro back in.
 
-- [ ] YAML-driven launch unchanged
+- [X] YAML-driven launch unchanged
   ```sh
   ros2 launch racecar_neo_ros2_driver pwm.launch.py
   ```
@@ -101,7 +101,7 @@ The mux now publishes zero until (a) `startup_grace_sec` (1 s) has elapsed AND
 stuck-stick condition, hold the throttle stick all the way forward when you
 power-cycle the bench.
 
-- [ ] Centered controller: arms within ~1 s, normal operation
+- [X] Centered controller: arms within ~1 s, normal operation
   ```sh
   # Bench. Wheels off ground. EasySMX powered ON, sticks released.
   racecar service start teleop
@@ -111,7 +111,7 @@ power-cycle the bench.
   or RB is pressed — but is armed). Press LB and gently flick throttle:
   motors respond. Log line `Mux armed` appears in `journalctl -u racecar-teleop`.
 
-- [ ] **Deflected stick at boot: stays in IDLE**
+- [X] **Deflected stick at boot: stays in IDLE**
   ```sh
   # 1. Stop the stack
   racecar service stop teleop
@@ -125,7 +125,7 @@ power-cycle the bench.
   `Mux armed` log line appears. Release the stick → within ~50 ms (one timer
   tick at 50 Hz) the mux logs `Mux armed`. Subsequent LB-throttle works.
 
-- [ ] Cooldown after deflected stick: still armed after release
+- [X] Cooldown after deflected stick: still armed after release
   ```sh
   # Continuing from previous: stick now released, mux just armed.
   # Press LB, gently flick stick. Then release. Then deflect again.
@@ -133,7 +133,7 @@ power-cycle the bench.
   Expected: arming is one-shot. Once armed in a session, deflecting the
   stick again is treated as a normal command, not as a re-arm requirement.
 
-- [ ] Tunable threshold works
+- [X] Tunable threshold works
   ```sh
   ros2 param set /mux_node arm_axis_threshold 0.01
   ```
@@ -145,14 +145,14 @@ power-cycle the bench.
 The gamepad node now clips to `[-1, 1]` before publishing. Hard to trigger
 from a sane controller, but verify the contract holds.
 
-- [ ] Normal range passes through
+- [X] Normal range passes through
   ```sh
   ros2 topic echo /gamepad_drive --field drive.speed
   ```
   With teleop running, max-throttle the stick. Expected: values in `[-1.0, 1.0]`,
   never exceeding bounds.
 
-- [ ] Misconfigured sign multiplier doesn't escape
+- [X] Misconfigured sign multiplier doesn't escape
   ```sh
   ros2 param set /gamepad_node throttle_sign 2
   ```
@@ -174,7 +174,7 @@ Internal: the watchdog now spins an rclpy `Node` (`racecar_watchdog`) and
 calls `node.get_topic_names_and_types()` in-process instead of forking
 `ros2 topic list` every 5 s. Behavior should be identical.
 
-- [ ] Watchdog starts cleanly
+- [X] Watchdog starts cleanly
   ```sh
   racecar service start teleop   # pulls watchdog along
   sleep 20                        # 15s startup grace + first poll
@@ -184,13 +184,13 @@ calls `node.get_topic_names_and_types()` in-process instead of forking
   a log line per node that's alive. **No `Failed to query ros2 topic list`
   warnings.** No tracebacks.
 
-- [ ] `racecar_watchdog` node is visible
+- [X] `racecar_watchdog` node is visible
   ```sh
   ros2 node list | grep watchdog
   ```
   Expected: `/racecar_watchdog`.
 
-- [ ] Kill-and-restart still works (regression of v0.0.4 contract)
+- [X] Kill-and-restart still works (regression of v0.0.4 contract)
   ```sh
   pkill -f "racecar_neo_ros2_driver/imu_node"
   sleep 35  # cooldown 30s + poll 5s
@@ -200,7 +200,7 @@ calls `node.get_topic_names_and_types()` in-process instead of forking
   `imu: process not running — device LSM9DS1 @ I2C bus 1 addr 0x6B
   connected, attempting restart` followed by `imu: launched PID NNN`.
 
-- [ ] pgrep failure counter — ensure the new escalation logic doesn't
+- [X] pgrep failure counter — ensure the new escalation logic doesn't
       false-positive
   ```sh
   journalctl -u racecar-watchdog --since "10 minutes ago" --no-pager | \
@@ -209,7 +209,7 @@ calls `node.get_topic_names_and_types()` in-process instead of forking
   Expected: no output (under normal operation, pgrep just works). If you
   see `pgrep(...) failed (N/5)` warnings, investigate before deploying.
 
-- [ ] Per-restart log handles close cleanly — check the parent's open FD count
+- [X] Per-restart log handles close cleanly — check the parent's open FD count
       doesn't grow over a long run
   ```sh
   WD_PID=$(pgrep -f scripts/watchdog.py)
@@ -229,7 +229,7 @@ Internal: dashboard now spins an rclpy `_RateSampler` node (`racecar_dashboard`)
 and uses BEST_EFFORT subscriptions + a deque to compute Hz, instead of
 spawning 7 parallel `ros2 topic hz` subprocesses every 3 s.
 
-- [ ] Dashboard process is alone — no orphaned `ros2 topic hz` children
+- [X] Dashboard process is alone — no orphaned `ros2 topic hz` children
   ```sh
   racecar service start dashboard
   sleep 10
@@ -237,13 +237,13 @@ spawning 7 parallel `ros2 topic hz` subprocesses every 3 s.
   ```
   Expected: **no output**. The old code accumulated these as zombies.
 
-- [ ] `racecar_dashboard` node is visible
+- [X] `racecar_dashboard` node is visible
   ```sh
   ros2 node list | grep racecar_dashboard
   ```
   Expected: `/racecar_dashboard`.
 
-- [ ] Status page renders rates correctly
+- [X] Status page renders rates correctly
   Browse to `http://racecar-neo.local:8080`. Expected: every topic in the
   rate table has a real Hz number (matching `ros2 topic hz` if you check
   in parallel). Wait a full minute on first load — the rolling window
