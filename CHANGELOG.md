@@ -6,7 +6,8 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Added
 
-- `scripts/setup_jupyter.sh` now installs two additional pip packages required by the v2 student library and the `labs/tests/test_async_core_real.ipynb` walkthrough: `ipywidgets` (live FPS / joystick / detection widgets — JupyterLab 4.x renders `ipywidgets >= 8` natively, no labextension step needed) and `pandas` (backs `telemetry_real.visualize()` reading the recorded CSV). Idempotent: each dep is import-probed under the target user first, and `pip install` only runs for the missing ones — re-runs after a successful install are silent.
+- `scripts/setup_jupyter.sh` now installs three additional pip packages required by the v2 student library and the `labs/tests/test_async_core_real.ipynb` walkthrough: `ipywidgets` (live FPS / joystick / detection widgets — JupyterLab 4.x renders `ipywidgets >= 8` natively, no labextension step needed), `pandas` (backs `telemetry_real.visualize()` reading the recorded CSV), and `matplotlib-inline<0.2` (the IPython inline matplotlib backend). Idempotent: each dep is import-probed under the target user first, and `pip install` only runs for the missing ones — re-runs after a successful install are silent. The matplotlib-inline probe is version-aware so a system that already has a stale 0.2.x installation (e.g. pulled transitively by `ipykernel` before the pin landed) gets re-resolved to 0.1.x.
+  - **Why `matplotlib-inline<0.2`:** the 0.2 line calls `matplotlib.rcParams._get(...)`, which only exists in matplotlib >= 3.10. Pi-OS bookworm/noble ship apt matplotlib 3.6.3, so on Python 3.12 (the Pi 5 default) the 0.2.x transitive blows up the first `plt.subplots()` call inside Jupyter with `AttributeError: 'RcParams' object has no attribute '_get'`. Pinning 0.1.x keeps the inline backend usable on the current apt matplotlib.
 
 ### Notes
 
