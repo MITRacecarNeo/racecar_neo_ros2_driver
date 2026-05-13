@@ -75,14 +75,25 @@ Use Raspberry Pi Imager → *Other general-purpose OS* → *Ubuntu* → *Ubuntu 
 
 Boot the Pi, find its IP (`ip neigh` from another machine, or check your router), then `ssh racecar@<ip>`.
 
-### 2. System update + git
+### 2. Silence `needrestart` so `apt full-upgrade` doesn't prompt
+
+Ubuntu Server 24.04 ships with `needrestart`, which throws an interactive "restart services?" dialog mid-`apt` if any library upgrade affects a running daemon. Configure it to auto-restart silently before the big upgrade so the rest of setup is unattended:
 
 ```sh
-sudo apt update && sudo apt -y full-upgrade
-sudo apt -y install git
+sudo apt update && sudo apt -y install needrestart git
+sudo sed -i "s/^#\$nrconf{restart} =.*/\$nrconf{restart} = 'a';/" /etc/needrestart/needrestart.conf
+sudo sed -i "s/^#\$nrconf{kernelhints} =.*/\$nrconf{kernelhints} = -1;/" /etc/needrestart/needrestart.conf
 ```
 
-### 3. Clone and run the orchestrator
+### 3. System upgrade
+
+```sh
+sudo apt -y full-upgrade
+```
+
+Largest single block of the install (~8–15 min on a fresh image at 10 MB/s). With needrestart silenced above, this runs hands-off.
+
+### 4. Clone and run the orchestrator
 
 ```sh
 mkdir -p ~/ros2_ws/src
@@ -91,9 +102,9 @@ git clone https://github.com/MITRacecarNeo/racecar_neo_ros2_driver.git
 bash racecar_neo_ros2_driver/scripts/setup_all.sh
 ```
 
-`setup_all.sh` is idempotent — re-running is safe (each phase checks for existing state and skips when already applied). It needs sudo for some phases; you'll be prompted once.
+`setup_all.sh` is idempotent — re-running is safe (each phase checks for existing state and skips when already applied). Sudo password is prompted **once** at the top of the run and cached via a background keepalive for the remaining ~45 min — you can walk away after that prompt.
 
-### 4. Apply group memberships
+### 5. Apply group memberships
 
 The setup adds your user to `dialout`, `i2c`, `spi`, `gpio`, and `video`. Group membership applies to **new login sessions only**, so:
 
@@ -103,7 +114,7 @@ ssh racecar@<ip>         # back in — groups now active
 groups                   # verify: dialout i2c spi gpio video should appear
 ```
 
-### 5. Plug in the hardware and reboot
+### 6. Plug in the hardware and reboot
 
 With the Pi powered off: connect the Maestro, both cameras, the lidar, the dot matrix (SPI), the IMU (I²C), the Coral EdgeTPU, and the EasySMX gamepad's USB dongle. Power on and:
 
@@ -120,7 +131,7 @@ racecar service status      # all 4 racecar-* units should be active+enabled
 
 Browse to `http://racecar-neo.local:8080` for the live dashboard.
 
-### 6. (Optional) Switch to AP-mode networking
+### 7. (Optional) Switch to AP-mode networking
 
 Once the wired setup works, you can untether the robot from your home WiFi by running:
 
