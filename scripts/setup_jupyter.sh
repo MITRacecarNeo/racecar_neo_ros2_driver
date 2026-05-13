@@ -18,10 +18,32 @@ fi
 # powers the live FPS / joystick / detection widgets in
 # labs/tests/test_async_core_real.ipynb. JupyterLab 4.x renders ipywidgets >= 8
 # natively (no labextension install needed).
-LIB_DEPS=(ipywidgets pandas nptyping)
+#
+# nptyping is pinned <2 because the v2 release ships an incompatible generic
+# syntax (Shape["..."]) and the student library uses the v1 form
+# NDArray[(480, 640, 3), np.uint8]; on Python 3.12 (Pi 5 default) pip resolves
+# to 2.5.0 and every annotation in camera.py / lidar.py / physics.py raises
+# InvalidArgumentsError at import. Pinning here keeps the v1 library readable
+# until a future library bump rewrites the annotations.
+LIB_DEPS=(ipywidgets pandas 'nptyping<2')
 MISSING_DEPS=()
 for dep in "${LIB_DEPS[@]}"; do
-    if ! sudo -u "$USER_NAME" python3 -c "import ${dep//-/_}" >/dev/null 2>&1; then
+    # Strip any version specifier (e.g. 'nptyping<2' -> 'nptyping') for the
+    # import probe; pip handles the version check on install.
+    mod="${dep%%[<>=!~ ]*}"
+    if ! sudo -u "$USER_NAME" python3 -c "
+import importlib, sys
+try:
+    importlib.import_module('${mod//-/_}')
+except Exception:
+    sys.exit(1)
+# nptyping 2.x installs cleanly but breaks the library's NDArray[(...)]
+# syntax; treat it as 'missing' so pip downgrades to <2.
+if '${mod}' == 'nptyping':
+    import nptyping
+    major = int(nptyping.__version__.split('.')[0])
+    sys.exit(0 if major < 2 else 1)
+" >/dev/null 2>&1; then
         MISSING_DEPS+=("$dep")
     fi
 done
