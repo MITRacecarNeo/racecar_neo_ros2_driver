@@ -33,6 +33,17 @@ ACTION=="add", SUBSYSTEM=="usb", ATTRS{idVendor}=="0c45", ATTRS{idProduct}=="057
 SUBSYSTEM=="usb", ATTRS{idVendor}=="1a6e", ATTRS{idProduct}=="089a", GROUP="plugdev", MODE="0660"
 SUBSYSTEM=="usb", ATTRS{idVendor}=="18d1", ATTRS{idProduct}=="9302", GROUP="plugdev", MODE="0660"
 
+# SPI device nodes — Ubuntu 24.04 for Pi ships /dev/spidev* as root:dialout,
+# but RPi-OS convention (and luma.led_matrix expectations) is group `spi`.
+# Match RPi-OS so student tutorials work. Group is created by setup_user_env.sh.
+SUBSYSTEM=="spidev", GROUP="spi", MODE="0660"
+
+# GPIO character device — Ubuntu 24.04 ships /dev/gpiochip* as root:root 0600,
+# which forces sudo for any gpiozero/lgpio/RPi.GPIO use. Drop it into a `gpio`
+# group with 0660 so library code works without root. Group is created by
+# setup_user_env.sh.
+SUBSYSTEM=="gpio", KERNEL=="gpiochip*", GROUP="gpio", MODE="0660"
+
 # EasySMX gamepad / Switch-Pro-spoof recovery is handled by blacklisting
 # the hid_nintendo module instead — see scripts/modprobe.d/blacklist-hid-nintendo.conf
 # and the install logic in setup_udev.sh. udev-based unbind approaches were
