@@ -196,6 +196,8 @@ class PitNode(Node):
         )
         self._pub_imu = self.create_publisher(Imu, self._imu_topic, qos)
         self._pub_mag = self.create_publisher(MagneticField, self._mag_topic, qos)
+        self._pub_imu_raw = self.create_publisher(Imu, f"{self._imu_topic}/raw", qos)
+        self._pub_mag_raw = self.create_publisher(MagneticField, f"{self._mag_topic}/raw", qos)
         self._pub_encoder = self.create_publisher(Float32, self._encoder_topic, qos)
         self._pub_voltage = self.create_publisher(Float32, self._voltage_topic, qos)
         self._pub_current = self.create_publisher(Float32, self._current_topic, qos)
@@ -335,12 +337,10 @@ class PitNode(Node):
             return
 
         stamp = self.get_clock().now().to_msg()
-        accel = transform_accel(
-            telem.accel, self._ag_order, self._ag_sign, self._accel_scale, self._accel_bias
-        )
-        gyro = transform_gyro(
-            telem.gyro, self._ag_order, self._ag_sign, self._gyro_scale, self._gyro_bias
-        )
+        raw_accel = transform_accel(telem.accel, self._ag_order, self._ag_sign, self._accel_scale, [0.0, 0.0, 0.0])
+        raw_gyro = transform_gyro(telem.gyro, self._ag_order, self._ag_sign, self._gyro_scale, [0.0, 0.0, 0.0])
+        accel = raw_accel - self._accel_bias
+        gyro = raw_gyro - self._gyro_bias
 
         imu = Imu()
         imu.header.stamp = stamp
@@ -352,6 +352,17 @@ class PitNode(Node):
         imu.angular_velocity.y = float(gyro[1])
         imu.angular_velocity.z = float(gyro[2])
         self._pub_imu.publish(imu)
+
+        imu_raw = Imu()
+        imu_raw.header.stamp = stamp
+        imu_raw.header.frame_id = self._frame
+        imu_raw.linear_acceleration.x = float(raw_accel[0])
+        imu_raw.linear_acceleration.y = float(raw_accel[1])
+        imu_raw.linear_acceleration.z = float(raw_accel[2])
+        imu_raw.angular_velocity.x = float(raw_gyro[0])
+        imu_raw.angular_velocity.y = float(raw_gyro[1])
+        imu_raw.angular_velocity.z = float(raw_gyro[2])
+        self._pub_imu_raw.publish(imu_raw)
 
         # Encoder telemetry is vehicle speed in m/s (firmware getCurrentSpeed()).
         enc = Float32()
@@ -369,10 +380,9 @@ class PitNode(Node):
         self._pub_rc.publish(rc)
 
         if self._publish_mag:
-            mag_vec = transform_mag(
-                telem.mag, self._mag_order, self._mag_sign, self._mag_scale,
-                self._mag_hard, self._mag_soft,
-            )
+            raw_mag = remap_axes(telem.mag, self._mag_order, self._mag_sign) * self._mag_scale
+            mag_vec = self._mag_soft @ (raw_mag - self._mag_hard)
+
             mag = MagneticField()
             mag.header.stamp = stamp
             mag.header.frame_id = self._frame
@@ -380,6 +390,14 @@ class PitNode(Node):
             mag.magnetic_field.y = float(mag_vec[1])
             mag.magnetic_field.z = float(mag_vec[2])
             self._pub_mag.publish(mag)
+
+            mag_raw = MagneticField()
+            mag_raw.header.stamp = stamp
+            mag_raw.header.frame_id = self._frame
+            mag_raw.magnetic_field.x = float(raw_mag[0])
+            mag_raw.magnetic_field.y = float(raw_mag[1])
+            mag_raw.magnetic_field.z = float(raw_mag[2])
+            self._pub_mag_raw.publish(mag_raw)
 
     def _close_serial(self):
         try:
