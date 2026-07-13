@@ -191,7 +191,7 @@ class MagnetometerCalibrator(Node):
         src_file = os.path.join(ws_root, 'src', 'racecar_neo_ros2_driver', 'config', 'lsm9ds1_mag_cal.yaml')
         calibration_data = {
             'magnetometer.hard_iron_bias': self.hard_iron_bias.tolist(),
-            'magnetometer.soft_iron_matrix': self.soft_iron_matrix.flatten().tolist()
+            'magnetometer.soft_iron_matrix.data': self.soft_iron_matrix.flatten().tolist()
         }
         ros2_yaml_format = {'pit_node': {'ros__parameters': calibration_data}}
         
