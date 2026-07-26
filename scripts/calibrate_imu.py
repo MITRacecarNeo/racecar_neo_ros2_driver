@@ -7,7 +7,7 @@ Author: Koneshka Dey
 import rclpy
 from rclpy.node import Node
 from rclpy.executors import SingleThreadedExecutor
-from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSDurabilityPolicy, QoSHistoryPolicy
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSDurabilityPolicy, QoSHistoryPolicy, qos_profile_sensor_data
 from sensor_msgs.msg import Imu
 import numpy as np
 import yaml
@@ -22,23 +22,6 @@ class IMUCalibrator(Node):
     def __init__(self):
         super().__init__('imu_calibrator')
         
-        # Create multiple QoS profiles to try different compatibility options (needed cause /IMU wasn't being detected for some reason)
-        self.qos_profiles = [
-            QoSProfile(
-                depth=10,
-                reliability=QoSReliabilityPolicy.BEST_EFFORT,
-                durability=QoSDurabilityPolicy.VOLATILE,
-                history=QoSHistoryPolicy.KEEP_LAST
-            ),
-            # Reliable(default)
-            QoSProfile(
-                depth=10,
-                reliability=QoSReliabilityPolicy.RELIABLE,
-                durability=QoSDurabilityPolicy.VOLATILE,
-                history=QoSHistoryPolicy.KEEP_LAST
-            ),
-            QoSProfile(depth=10)
-        ]
         self.subscription = None
         self.create_subscription_with_qos()
 
@@ -54,14 +37,14 @@ class IMUCalibrator(Node):
         self.get_logger().info('IMU Calibrator initialized. Trying to connect to /imu...')
         
     def create_subscription_with_qos(self):
-        """Subscribe to the uncalibrated raw topic"""
-        self.subscription = self.create_subscription(
-            Imu,
-            '/imu/lsm9ds1/raw',
-            self.imu_callback,
-            10
-        )
-        self.get_logger().info(f'Created subscription to /imu/raw')
+     """Subscribe to the uncalibrated raw topic using sensor data QoS"""
+     self.subscription = self.create_subscription(
+         Imu,
+         '/imu/lsm9ds1/raw',
+         self.imu_callback,
+         qos_profile_sensor_data
+     )
+     self.get_logger().info('Created subscription to /imu/lsm9ds1/raw')
         
     def imu_callback(self, msg):
         """Callback for IMU messages"""
@@ -158,7 +141,7 @@ class IMUCalibrator(Node):
         
         position_means = []
         for pos_data in all_accel_data:
-            if len(pos_data > 0):
+            if len(pos_data) > 0:
                 pos_array = np.array(pos_data)
                 position_means.append(pos_array.mean(axis=0))
     

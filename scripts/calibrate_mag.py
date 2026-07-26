@@ -5,7 +5,7 @@
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSDurabilityPolicy, QoSHistoryPolicy
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSDurabilityPolicy, QoSHistoryPolicy, qos_profile_sensor_data
 from sensor_msgs.msg import MagneticField
 import numpy as np
 import yaml
@@ -25,11 +25,11 @@ class MagnetometerCalibrator(Node):
         self.message_received = threading.Event() # Use a thread-safe event
 
         self.subscription = self.create_subscription(
-            MagneticField, 
-            '/mag/raw', 
-            self.mag_callback, 
-            10
-        )
+         MagneticField, 
+         '/mag/raw', 
+         self.mag_callback, 
+         qos_profile_sensor_data
+     )
         self.get_logger().info("Subscribed to /mag/raw.")
 
         self.mag_data = []
