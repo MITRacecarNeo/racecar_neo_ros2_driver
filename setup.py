@@ -18,6 +18,7 @@ setup(
             glob.glob('config/*.yaml')),
         ('share/' + package_name + '/scripts',
             glob.glob('scripts/*.sh') + glob.glob('scripts/*.py')),
+        ('lib/' + package_name, glob.glob('scripts/calibrate_*.py')),
         ('share/' + package_name + '/services',
             glob.glob('scripts/*.service')),
         ('share/' + package_name + '/models',
