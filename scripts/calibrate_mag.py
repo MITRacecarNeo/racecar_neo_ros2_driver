@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-3D Magnetometer Calibrator for RACECAR
+LSM9DS1 Magnetometer Calibrator for ROS2
 """
 
 import rclpy

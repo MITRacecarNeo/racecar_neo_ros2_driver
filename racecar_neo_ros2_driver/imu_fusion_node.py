@@ -39,6 +39,11 @@ class ImuFusionNode(Node):
         self.declare_parameter('source_timeout_sec', 0.25)
         self.declare_parameter('frame_id', 'imu_link')
 
+        self.declare_parameter('realsense_accel_bias', [0.0, 0.0, 0.0])
+        self.declare_parameter('realsense_gyro_bias', [0.0, 0.0, 0.0])
+        self._rs_accel_bias = np.array(self.get_parameter('realsense_accel_bias').value, float)
+        self._rs_gyro_bias = np.array(self.get_parameter('realsense_gyro_bias').value, float)
+
         self._sources = list(self.get_parameter('sources').value)
         output_topic = self.get_parameter('output_topic').value
         self._timeout = float(self.get_parameter('source_timeout_sec').value)
@@ -74,6 +79,16 @@ class ImuFusionNode(Node):
         for topic in self._sources:
             item = self._latest.get(topic)
             if item is not None and (now - item[1]) <= self._timeout:
+                msg = item[0]
+                
+                if topic == '/imu/realsense':
+                    msg.linear_acceleration.x -= float(self._rs_accel_bias[0])
+                    msg.linear_acceleration.y -= float(self._rs_accel_bias[1])
+                    msg.linear_acceleration.z -= float(self._rs_accel_bias[2])
+                    msg.angular_velocity.x -= float(self._rs_gyro_bias[0])
+                    msg.angular_velocity.y -= float(self._rs_gyro_bias[1])
+                    msg.angular_velocity.z -= float(self._rs_gyro_bias[2])
+                    
                 fresh.append(item[0])
                 active.append(topic)
 

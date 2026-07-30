@@ -1,0 +1,4 @@
+imu_fusion_node:
+  ros__parameters:
+    realsense_accel_bias: [0.0, 0.0, 0.0]
+    realsense_gyro_bias: [0.0, 0.0, 0.0]
