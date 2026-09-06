@@ -36,6 +36,7 @@ STANDALONE_SCRIPTS = [
     'setup_networking.sh',  # reconfigures wlan0; can drop SSH-over-WiFi sessions
     'setup_eth.sh',  # switches eth0 addressing mode; drops SSH sessions on eth0
     'flash_realsense_offline.sh',  # per-machine camera firmware flash (airgapped)
+    'setup_nvme.sh',  # erases the target disk; must be an explicit, typed choice
 ]
 
 ALL_SCRIPTS = PHASE_SCRIPTS + [ORCHESTRATOR] + STANDALONE_SCRIPTS

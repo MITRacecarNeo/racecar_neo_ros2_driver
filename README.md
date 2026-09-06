@@ -497,6 +497,10 @@ Bags go to `/data` when an NVMe is mounted there, and `~/logs/bags` otherwise.
 `racecar log` names an NVMe that is present but unmounted rather than silently
 falling back.
 
+A drive shipped raw has no `/data` to fall back from; `bash scripts/setup_nvme.sh`
+partitions, formats and mounts it. That script erases the target disk, so it is
+not part of `setup_all.sh`.
+
 Recording every topic pulls in `/camera/color` and `/camera/depth`, roughly
 73 MB/s against a sustained SD write near 30 MB/s. `start` refuses on an SD card
 unless you pass `--force`, because rosbag2 drops messages rather than blocking:
