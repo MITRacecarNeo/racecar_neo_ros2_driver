@@ -141,7 +141,7 @@ class _RateSampler(Node):
         diagnostic_name_to_topic = {
             'camera: color': '/camera/color',
             'camera: depth': '/camera/depth',
-            'camera: accel': '/imu/realsense',
+            'camera: gyro': '/imu/realsense',
         }
         updates = {}
         for status in msg.status:
