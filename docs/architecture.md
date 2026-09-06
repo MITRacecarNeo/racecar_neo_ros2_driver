@@ -153,31 +153,6 @@ publishes `/rc/link` from the raw widths, and `mux_node` gates on that plus
 freshness, a sustained hold, and the switch having been seen at middle. Granting
 is slow and revoking immediate: one bad frame hands the gate back.
 
-### Lidar mount correction
-
-The RPLIDAR is mounted 180 degrees yawed on the reference chassis: an object off
-the car's right nose reads on the left rear of the raw scan. Verified on
-hardware by placing an object to the right (reported at -90 degrees in the
-dashboards' convention) and in front (reported at 180 degrees); only a yaw
-explains both, since a mirrored scan would have put the front object at 0.
-
-`sllidar_node` has no angle-offset parameter and its `inverted` flag is a
-mirror, so the correction lives in `scan_rotate_node`. With `scan_rotate:=true`
-on the lidar launch, sllidar publishes `/scan_raw` and the rotator republishes
-`/scan`; without it sllidar owns `/scan` and the graph is unchanged.
-
-The rotation moves `angle_min` and `angle_max` and leaves the ranges array
-alone. That is what lets one correction serve both conventions at once:
-
-| Consumer | Reads | Effect |
-|---|---|---|
-| lab dashboards | index derived from `angle_min` | corrected |
-| `racecar-neo-library` | raw array index after `np.flip` | unaffected |
-
-Measured on a Pi 5: 27 us per scan to transform, 0.7 ms median for the extra
-publish hop, against a 100 ms scan period. `scan_rotate_node` is not in
-`watchdog.py`'s supervised list, so it is not restarted automatically.
-
 ### Lab dashboards
 
 Seven dashboards run as `racecar-*` units on ports 8081 to 8087, installed by

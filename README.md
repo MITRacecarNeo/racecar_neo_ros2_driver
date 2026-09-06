@@ -403,20 +403,6 @@ zeroes the output when `/joy` or the active source goes stale. See
 [Autonomy gate](#autonomy-gate) for the case where a transmitter does hold the
 gate.
 
-**The lidar is mounted 180 degrees out on this chassis.** An object off the
-car's right nose reads on the left rear of the raw scan, so every lidar
-dashboard steers into the wrong half of the world until it is corrected. Enable
-the correction on the lidar launch:
-
-```bash
-racecar launch lidar scan_rotate:=true
-```
-
-`sllidar_node` then publishes `/scan_raw` and `scan_rotate_node` republishes a
-corrected `/scan`. The rotation moves `angle_min` and leaves the ranges array
-alone, so the lab dashboards follow the correction and `racecar-neo-library`,
-which indexes the array directly, is unaffected. See `config/lidar.yaml`.
-
 **These are NeoRacer numbers.** The shipped YAML is tuned for a different
 chassis and lidar. Expect to retune `max_mps`, `kp`, `kd`, `lookahead` and the
 `linefollow` HSV thresholds per car.
