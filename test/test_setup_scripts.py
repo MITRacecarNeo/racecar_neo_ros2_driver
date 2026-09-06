@@ -33,6 +33,7 @@ ORCHESTRATOR = 'setup_all.sh'
 # side-effects are too disruptive to include in a one-shot install.
 STANDALONE_SCRIPTS = [
     'setup_networking.sh',  # reconfigures wlan0; can drop SSH-over-WiFi sessions
+    'setup_eth.sh',  # switches eth0 addressing mode; drops SSH sessions on eth0
     'flash_realsense_offline.sh',  # per-machine camera firmware flash (airgapped)
 ]
 
@@ -103,7 +104,7 @@ def test_no_stray_colcon_dirs_in_package():
 
 
 class TestNetworkingScript:
-    """setup_networking.sh — eth0 dual-IP + wlan0 isolated AP (standalone, not in setup_all.sh)."""
+    """setup_networking.sh: eth0 addressing + wlan0 isolated AP (standalone)."""
 
     SCRIPT = SCRIPTS_DIR / 'setup_networking.sh'
 
@@ -159,17 +160,17 @@ class TestNetworkingScript:
         assert 'RACECAR_AP_ID' in text, 'per-car SSID id not referenced'
         assert 'racecar-neo' in text, 'SSID base not referenced'
 
-    def test_eth0_static_declared_once(self):
-        # v0.7.2: the eth0 static must be declared once (via netplan
-        # `addresses:`), not also re-declared as ipv4.method/ipv4.address1 in the
-        # passthrough. The double declaration made NetworkManager reconcile the
-        # two and reset the static over and over.
-        # Match the YAML-key forms (with colon) so the explanatory comment,
-        # which names the old keys in prose, doesn't trip the check.
+    def test_eth0_delegated_to_setup_eth(self):
+        # v0.7.4: this script no longer renders its own eth0 netplan block.
+        # It used to emit a dual-IP stanza (static AND dhcp4 together), which
+        # is what made the static drop. setup_eth.sh is the only writer now,
+        # so the two paths cannot disagree about the file.
         text = self.SCRIPT.read_text()
-        assert 'ipv4.address1:' not in text, 'eth0 static double-declared (ipv4.address1)'
-        assert 'ipv4.method: "auto"' not in text, 'eth0 method double-declared in passthrough'
-        assert 'ipv4.may-fail' in text, 'eth0 must keep may-fail so the static stays if DHCP fails'
+        assert 'setup_eth.sh' in text, 'eth0 config must delegate to setup_eth.sh'
+        assert 'network:\n  version: 2' not in text, (
+            'setup_networking.sh must not render netplan YAML itself'
+        )
+        assert 'RACECAR_ETH_MODE' in text, 'eth0 mode must be parameterized'
 
     def test_loads_persisted_config(self):
         # The script must source the ~/.config/racecar/networking.env file
@@ -376,3 +377,102 @@ class TestHidNintendoBlacklist:
         # And we should unload the running module so the change applies in
         # this boot (otherwise it only takes effect on the next reboot).
         assert 'modprobe -r hid_nintendo' in text
+
+
+class TestEthScript:
+    """setup_eth.sh: eth0 in exactly one IPv4 addressing mode."""
+
+    SCRIPT = SCRIPTS_DIR / 'setup_eth.sh'
+
+    def _run(self, tmp_path, *args):
+        """Run the script in dry-run mode, isolated from the real system files."""
+        env = {k: v for k, v in os.environ.items() if not k.startswith('RACECAR_ETH')}
+        env.update({
+            'RACECAR_ETH_DRY_RUN': '1',
+            'RACECAR_ETH_NETPLAN': str(tmp_path / '99-racecar-eth0.yaml'),
+            'RACECAR_ETH_CONFIG': str(tmp_path / 'networking.conf'),
+        })
+        return subprocess.run(
+            ['bash', str(self.SCRIPT), *args],
+            capture_output=True, text=True, timeout=20, env=env,
+        )
+
+    def _render(self, tmp_path, mode, *extra):
+        result = self._run(tmp_path, mode, *extra)
+        assert result.returncode == 0, result.stderr
+        return (tmp_path / '99-racecar-eth0.yaml').read_text()
+
+    def test_exists_and_executable(self):
+        assert self.SCRIPT.is_file()
+        assert os.access(self.SCRIPT, os.X_OK)
+
+    def test_bash_syntax_clean(self):
+        result = subprocess.run(
+            ['bash', '-n', str(self.SCRIPT)],
+            capture_output=True, text=True, timeout=5,
+        )
+        assert result.returncode == 0, result.stderr
+
+    def test_static_render(self, tmp_path):
+        yaml = self._render(tmp_path, 'static')
+        assert 'dhcp4: false' in yaml
+        assert '"192.168.52.200/24"' in yaml
+        assert 'addresses:' in yaml
+
+    def test_dynamic_render(self, tmp_path):
+        yaml = self._render(tmp_path, 'dynamic')
+        assert 'dhcp4: true' in yaml
+        assert 'route-metric: 100' in yaml
+
+    def test_modes_are_mutually_exclusive(self, tmp_path):
+        # The point of v0.7.4: eth0 never carries a static address and a DHCP
+        # lease at the same time. Static must not enable dhcp4, and dynamic
+        # must not declare a fixed address.
+        static = self._render(tmp_path, 'static')
+        assert 'dhcp4: true' not in static, 'static mode must not enable DHCP'
+
+        dynamic = self._render(tmp_path, 'dynamic')
+        assert 'addresses:' not in dynamic, 'dynamic mode must not declare a static address'
+        assert 'dhcp4: false' not in dynamic
+
+    def test_ipv6_never_default_is_static_only(self, tmp_path):
+        # Router advertisements would hand eth0 a v6 default route even with no
+        # v4 gateway, so static suppresses it. Dynamic is a normally-connected
+        # mode and keeps it.
+        assert 'ipv6.never-default: "true"' in self._render(tmp_path, 'static')
+        assert 'ipv6.never-default' not in self._render(tmp_path, 'dynamic')
+
+    def test_custom_static_address(self, tmp_path):
+        yaml = self._render(tmp_path, 'static', '--addr=10.9.9.9/24')
+        assert '"10.9.9.9/24"' in yaml
+        assert '192.168.52.200' not in yaml
+
+    def test_persists_mode(self, tmp_path):
+        self._render(tmp_path, 'dynamic')
+        cfg = (tmp_path / 'networking.conf').read_text()
+        assert 'RACECAR_ETH_MODE="dynamic"' in cfg
+
+    def test_persisted_static_address_round_trips(self, tmp_path):
+        self._render(tmp_path, 'static', '--addr=172.16.4.4/24')
+        # A later bare `static` reuses the persisted address.
+        yaml = self._render(tmp_path, 'static')
+        assert '"172.16.4.4/24"' in yaml
+
+    def test_unknown_argument_errors(self, tmp_path):
+        result = self._run(tmp_path, '--bogus')
+        assert result.returncode == 2
+        assert 'unknown argument' in result.stderr
+
+    def test_default_action_is_status(self, tmp_path):
+        # status is read-only; it exits 1 on a car that currently has an
+        # address conflict, so either code is a valid outcome here.
+        result = self._run(tmp_path)
+        assert result.returncode in (0, 1), result.stderr
+        assert 'addressing' in result.stdout
+
+    def test_status_does_not_prompt_for_sudo(self, tmp_path):
+        # netplan files are root-only. A read-only status must degrade to
+        # "unreadable" rather than blocking on a password prompt.
+        result = self._run(tmp_path, 'status')
+        assert result.returncode in (0, 1)
+        assert 'password' not in result.stderr.lower()

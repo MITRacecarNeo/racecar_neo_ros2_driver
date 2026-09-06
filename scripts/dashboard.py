@@ -6,9 +6,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import logging
 from pathlib import Path
-import re
 import signal
-import subprocess
 import sys
 import threading
 import time
@@ -17,6 +15,16 @@ from diagnostic_msgs.msg import DiagnosticArray
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
+
+# Shared with scripts/diagnose.py. Both are run by path rather than imported
+# as a package, so the sibling has to be put on the path explicitly.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from sysinfo import (  # noqa: E402
+    classify_rtc as _classify_rtc,
+    read_rtc_voltage as _read_battery_voltage,
+    read_under_voltage_alarm as _read_under_voltage_alarm,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -256,54 +264,6 @@ def _read_watchdog_tail(n: int = 10, max_bytes: int = 4096):
     except OSError:
         return []
     return tail.decode(errors='replace').splitlines()[-n:]
-
-
-# RTC battery thresholds for the rechargeable backup cell (usable 2.7-3.0 V,
-# replacing the old CR2032 at 3.0-3.3 V). 2.7 V is the PCF85063 RTC's own
-# floor: below it the clock resets on next power-off regardless of chemistry,
-# so it doubles as the recharge line. OK above 2.8 V leaves a "recharge soon"
-# band before the floor. Kept in sync with TestRTC.BATT_MIN_VOLTS.
-RTC_OK_VOLTS = 2.8
-RTC_LOW_VOLTS = 2.7
-
-
-def _read_battery_voltage():
-    """Pi 5 RTC backup battery voltage in volts, or None on failure."""
-    try:
-        r = subprocess.run(
-            ['vcgencmd', 'pmic_read_adc', 'BATT_V'],
-            capture_output=True, text=True, timeout=3,
-        )
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        return None
-    if r.returncode != 0 or 'BATT_V' not in r.stdout:
-        return None
-    m = re.search(r'BATT_V\s+volt\(\d+\)=([0-9.]+)V', r.stdout)
-    return float(m.group(1)) if m else None
-
-
-def _read_under_voltage_alarm():
-    """Pi 5 PMIC sticky low-voltage alarm. True/False or None if unavailable."""
-    for h in Path('/sys/class/hwmon').glob('hwmon*'):
-        try:
-            if (h / 'name').read_text().strip() == 'rpi_volt':
-                alarm = h / 'in0_lcrit_alarm'
-                if alarm.exists():
-                    return alarm.read_text().strip() == '1'
-        except OSError:
-            continue
-    return None
-
-
-def _classify_rtc(volts):
-    """Map RTC battery voltage to (status, label) for dashboard rendering."""
-    if volts is None:
-        return ('dead', 'NO READING')
-    if volts >= RTC_OK_VOLTS:
-        return ('healthy', f'{volts:.2f} V')
-    if volts >= RTC_LOW_VOLTS:
-        return ('stale', f'{volts:.2f} V — recharge soon')
-    return ('dead', f'{volts:.2f} V — RECHARGE NOW')
 
 
 def _collect_system_health():

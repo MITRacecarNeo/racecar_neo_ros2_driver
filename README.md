@@ -11,6 +11,9 @@ This package is the v2 successor to [`racecar-neo-ros2-backend`](https://github.
 - [Quickstart (fresh Ubuntu 24.04 install)](#quickstart-fresh-ubuntu-2404-install)
 - [The `racecar` shell tool](#the-racecar-shell-tool)
 - [Networking (optional)](#networking-optional)
+- [Ethernet addressing](#ethernet-addressing)
+- [WiFi client](#wifi-client)
+- [Desktop toggle](#desktop-toggle)
 - [Web dashboard](#web-dashboard)
 - [Jupyter notebooks](#jupyter-notebooks)
 - [Manual build](#manual-build)
@@ -133,7 +136,7 @@ sudo reboot
 After reboot, `racecar-teleop.service` auto-starts and pulls the watchdog via `Wants=racecar-watchdog.service`. Verify:
 
 ```sh
-racecar status              # USB peripherals + device symlinks + running ros2 nodes
+racecar status              # full diagnostic; exits non-zero unless everything passed
 racecar service status      # all 4 racecar-* units should be active+enabled
 ```
 
@@ -187,19 +190,30 @@ racecar service stop        # default: stop teleop (watchdog follows via BindsTo
 racecar service logs teleop # journalctl -u racecar-teleop -f
 
 racecar setup all                       # run the 11-phase orchestrator
-racecar setup networking --ssid=foo     # configure eth0 dual-IP + ALFA-dongle AP
+racecar setup networking --ssid=foo     # configure eth0 addressing + ALFA-dongle AP
 racecar setup networking --show         # print persisted overrides
 
-racecar selftest --dmatrix          # run all dot matrix patterns
-racecar selftest --dmatrix=font     # just the font scroll
 racecar clear --dmatrix             # flash + clear the MAX7219 display
 racecar udev                        # re-install the udev rules
 racecar cleanup [--force]           # list / kill stale racecar processes + SHM orphans
-racecar status                      # USB peripherals + device symlinks + running ros2 nodes
+racecar status                      # full diagnostic (devices, sensors, system, network)
+racecar status --quick              # host checks only; skips the ROS sampling phase
+racecar eth status                  # eth0 addressing mode + conflict checks
+racecar wifi list                   # visible networks on wlan0
+racecar desktop status              # GNOME on/off for the next boot
 racecar help                        # full usage
 ```
 
 Tab completion is registered for subcommands; `racecar launch <TAB>` discovers launch files dynamically, `racecar service <TAB>` offers actions, etc.
+
+The dot matrix pattern sweep is no longer wrapped by a subcommand. Run it directly when bringing up the display hardware, with `dotmatrix_node` already running:
+
+```sh
+racecar launch dotmatrix                                    # in another shell
+python3 ~/ros2_ws/src/racecar_neo_ros2_driver/scripts/dmatrix_patterns.py all
+```
+
+Patterns: `all` (default), `checkerboard`, `all-on`, `sweep`, `module-id`, `font`.
 
 ## Networking (optional)
 
@@ -213,7 +227,7 @@ With no `--ssid` or saved car ID, it prompts for this car's ID and sets the SSID
 
 What it does:
 
-1. **eth0 dual-IP** via netplan; eth0 carries both a static address (default `192.168.52.200/24`) and a DHCP-assigned address. Lets you reach the robot at a known IP on a wired-only switch *and* via DHCP on a home network.
+1. **eth0 addressing** via `setup_eth.sh`; eth0 is put in exactly one IPv4 mode, static by default at `192.168.52.200/24`, so the robot is reachable at a known IP on a bare switch. See [Ethernet addressing](#ethernet-addressing).
 2. **ALFA-dongle isolated AP** via NetworkManager; the AP runs on the ALFA MT7612U dongle (pinned to `wlan1` by the udev rule), hosting its own 2.4 GHz WiFi network. Clients can SSH / browse the dashboard / use jupyter, but a NetworkManager dispatcher installs `iptables FORWARD REJECT` rules so AP clients **cannot** route through the Pi to the internet (intentional isolation; it keeps the robot's WiFi from becoming a janky general-purpose gateway). The Pi's built-in `wlan0` is left in default client mode.
 
 Tunables (persisted to `~/.config/racecar/networking.env` and replayed on every re-run):
@@ -226,6 +240,7 @@ Tunables (persisted to `~/.config/racecar/networking.env` and replayed on every 
 | `--ap-addr=CIDR` | `10.42.0.1/24` |
 | `--ap-iface=NAME` | `wlan1` (the ALFA dongle) |
 | `--eth-static=CIDR` | `192.168.52.200/24` |
+| `--eth-mode=MODE` | `static` (or `dynamic`) |
 
 Inspect / clear the saved overrides:
 
@@ -239,11 +254,82 @@ racecar setup networking --reset   # disable the wlan1 AP + clear the saved car 
 Verify after running:
 
 ```sh
-ip -br addr show eth0           # static + DHCP both present
+racecar eth status              # exactly one IPv4 address, no conflict
 iw dev wlan1 info               # type AP, your SSID, channel 6 (ALFA dongle)
 iw dev wlan0 info               # type managed (Pi built-in, client/default)
 sudo iptables -L FORWARD -n     # two REJECT rules for wlan1
 ```
+
+## Ethernet addressing
+
+eth0 holds exactly one IPv4 addressing mode. Carrying a static address and a DHCP lease at the same time is what made the static drop periodically: NetworkManager re-applies the whole IPv4 config on every lease event, and in the field the link would come back only after the cable was reseated.
+
+```sh
+racecar eth                 # or: racecar eth status
+racecar eth static          # 192.168.52.200/24, no gateway (the default)
+racecar eth dynamic         # address and default route from DHCP
+racecar eth static --addr=10.0.0.50/24
+```
+
+Static is the default because a known address is what makes a car debuggable on a bare switch. It carries no gateway or DNS, so a static car reaches the internet over `wlan0` or not at all; switch to `dynamic` when you need `apt` over the wire.
+
+`status` reports the configured mode, the live addresses, both default routes, and fails when it finds more than one global IPv4 address on eth0. The conflict check is IPv4-scoped: the link-local `fe80::` address is always present and SLAAC may add more, so counting every address would report a conflict on a healthy car.
+
+In static mode eth0 keeps its IPv6 addresses but never a default route (`ipv6.never-default`). Router advertisements would otherwise hand eth0 a v6 default route despite the absence of a v4 gateway, and since most large destinations are dual-stack a "gateway-less" car would still send most of its traffic out the wire.
+
+**Switching modes drops an SSH session arriving over eth0.** The command detects that and asks first; use the AP, `wlan0`, or an HDMI console, or pass `--force`.
+
+### Confirming the fix
+
+Making the modes mutually exclusive removes the structural cause of the drop, but that reasoning is not the same as evidence: the symptom is periodic and recovers only when the cable is reseated, so a quiet afternoon proves nothing. `racecar eth monitor` records the addresses, both default routes, carrier, operstate and NetworkManager state, logging a line whenever any of them changes plus a heartbeat every 15 minutes.
+
+```sh
+racecar eth monitor                     # foreground, Ctrl-C to stop
+racecar eth monitor --once              # one sample, for a quick look
+```
+
+For a soak measured in days, install the unit instead:
+
+```sh
+sudo cp scripts/racecar-eth-monitor.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now racecar-eth-monitor
+grep -v '\[OK\]' ~/logs/eth-monitor.log     # every state change, heartbeats hidden
+```
+
+A clean run is `START` followed by heartbeats. Any `ADDR_LOST`, `CARRIER` or `OPERSTATE` line is the event worth reading. Disable the unit once the question is settled; it is a diagnostic, not part of the running car.
+
+## WiFi client
+
+`wlan0` is the Pi's built-in Broadcom radio and the only client interface. `wlan1` is the ALFA dongle carrying the AP, and nothing in this command touches it.
+
+```sh
+racecar wifi                    # or: racecar wifi status
+racecar wifi list               # cached scan, one row per SSID
+racecar wifi list --rescan      # force a fresh scan (about ten seconds)
+racecar wifi connect <ssid>     # prompts for whatever it needs
+racecar wifi disconnect
+```
+
+`list` groups the scan by SSID and keeps the strongest signal, because a scan returns one row per BSSID: on a car parked in a lab that is 30-plus rows for about a dozen real networks. Hidden networks are collapsed into a count.
+
+`connect` brings up a saved profile as-is, whatever its security type. For a new network it asks for a passphrase, or for an identity and password on an enterprise (802.1X) network, and nothing else. Server validation is not optional: every enterprise profile gets system CA certificates plus a `domain-suffix-match` derived from the identity's realm, so credentials are never offered to an access point that cannot prove who it is. Use `--ca-cert=` and `--domain-suffix-match=` where that derivation does not fit.
+
+`disconnect` puts the device into NetworkManager's manually-disconnected state, so it will not rejoin on its own until the next `connect`.
+
+## Desktop toggle
+
+The GNOME desktop ships enabled. Headless users turn it off without removing anything:
+
+```sh
+racecar desktop             # or: racecar desktop status
+racecar desktop disable     # boot to multi-user.target
+racecar desktop enable      # boot to graphical.target
+```
+
+The boot target is the only lever and is sufficient on its own: the display manager unit is `static` (no `[Install]` section), so `systemctl enable`/`disable` on it cannot work, and `graphical.target` is what pulls it in.
+
+Changes apply on the **next boot**. There is deliberately no immediate variant, so the command can never tear down a desktop session someone is using; `status` reports a pending change when the default and active targets disagree. Packages are never removed, so the toggle works on a car with no network.
 
 ## Web dashboard
 
@@ -393,6 +479,10 @@ export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
 
 Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
 
+- **0.7.4** (2026-09-06): eth0 holds one IPv4 addressing mode, never both, via
+  `racecar eth`; new `racecar wifi` and `racecar desktop`; `racecar status` is a
+  strict whole-car diagnostic; `racecar selftest` removed. See
+  [docs/advanced-settings.md](docs/advanced-settings.md) for the non-defaults.
 - **0.7.3** (2026-09-05): LSM9DS1 and RealSense calibration utilities plus raw
   `/imu/lsm9ds1/raw` and `/mag/raw` telemetry; dashboard CPU roughly halved via
   raw subscriptions and `/diagnostics`-sourced camera rates; ROS discovery

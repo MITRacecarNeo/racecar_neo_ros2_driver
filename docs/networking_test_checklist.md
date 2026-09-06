@@ -1,6 +1,6 @@
 # v0.0.6 Networking — Test Checklist
 
-Walk through this on the actual robot to verify the eth0 dual-IP + ALFA-dongle isolated AP setup. **Run from a wired (eth0) connection or the console** — `racecar setup networking` reconfigures the AP interface and will drop SSH-over-WiFi sessions.
+Walk through this on the actual robot to verify eth0 addressing and the ALFA-dongle isolated AP. **Run from a wired (eth0) connection or the console** — `racecar setup networking` reconfigures the AP interface and will drop SSH-over-WiFi sessions.
 
 > v0.7.0 note: the AP moved from the Pi's built-in `wlan0` to the ALFA MT7612U dongle (pinned to `wlan1` by the udev rule); `wlan0` is now left in default client mode. The `[X]` marks below are from the original v0.0.6 run on `wlan0`; re-run against `wlan1` after the v0.7.0 upgrade.
 
@@ -102,11 +102,35 @@ Walk through this on the actual robot to verify the eth0 dual-IP + ALFA-dongle i
 
 ## Verify outcomes
 
-- [X] eth0 has both static + DHCP addresses
+- [X] eth0 holds exactly one IPv4 address
+  ```sh
+  racecar eth status
+  ```
+  Expected: `[ OK ] exactly one global IPv4 address`. Two addresses is the
+  dual-address state that drops the static, and the check fails on it.
+
+- [X] the address matches the configured mode
   ```sh
   ip -br addr show eth0
   ```
-  Expected: two `inet` entries — `192.168.52.200/24` (or whatever `--eth-static` you set) AND a DHCP-assigned address.
+  Expected in static mode: one `inet`, `192.168.52.200/24` (or whatever
+  `--eth-static` you set), and no default route via eth0.
+  Expected in dynamic mode: one `inet` from DHCP, plus a default route.
+
+- [X] no IPv6 default route in static mode
+  ```sh
+  ip -6 route show default dev eth0
+  ```
+  Expected: empty. Router advertisements would otherwise give eth0 a v6
+  default route despite the absence of a v4 gateway; `ipv6.never-default`
+  suppresses it.
+
+- [X] switching modes round-trips
+  ```sh
+  racecar eth dynamic && racecar eth status
+  racecar eth static  && racecar eth status
+  ```
+  Run this from the AP or the console: switching drops an SSH session on eth0.
 
 - [X] the ALFA dongle (wlan1) is in AP mode; wlan0 is a client
   ```sh
@@ -185,8 +209,39 @@ Walk through this on the actual robot to verify the eth0 dual-IP + ALFA-dongle i
 - [X] After login (still wired ideally), AP is still up
   ```sh
   iw dev wlan1 info               # should still show type AP (ALFA dongle)
-  ip -br addr show eth0           # should still show static + DHCP
+  racecar eth status              # still exactly one IPv4 address
   racecar service status          # all 4 services active=active
+  ```
+
+## WiFi client (wlan0)
+
+The client radio is separate from the AP dongle, so none of this should
+disturb `wlan1`.
+
+- [X] the scan lists one row per network
+  ```sh
+  racecar wifi list
+  ```
+  Expected: each SSID once, strongest signal kept, hidden networks collapsed
+  into a count.
+
+- [X] joining a network leaves the AP up
+  ```sh
+  racecar wifi connect <ssid>
+  iw dev wlan1 info               # still type AP
+  ```
+
+- [X] no subnet collision with the AP or eth0
+  ```sh
+  racecar wifi status
+  ```
+  Expected: no `[WARN] ... overlaps` line. A network handing out
+  `10.42.0.0/24` or `192.168.52.0/24` makes routing ambiguous.
+
+- [X] disconnect does not touch wlan1
+  ```sh
+  racecar wifi disconnect
+  iw dev wlan1 info               # still type AP
   ```
 
 ## Done

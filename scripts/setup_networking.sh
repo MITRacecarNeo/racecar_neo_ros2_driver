@@ -1,5 +1,5 @@
 #!/bin/bash
-# setup_networking.sh — configure eth0 dual-IP and an isolated AP on the ALFA
+# setup_networking.sh — configure eth0 addressing and an isolated AP on the ALFA
 # dongle for racecar.
 #
 # This script:
@@ -9,9 +9,10 @@
 #   2. Creates the racecar AP NetworkManager connection on the AP interface
 #      (WPA2 / 2.4 GHz / channel 6 / 10.42.0.1/24). The AP interface is the ALFA
 #      MT7612U dongle, pinned to wlan1 by the 99-racecar.rules udev rule.
-#   3. Writes /etc/netplan/99-racecar-eth0.yaml so eth0 carries both a static
-#      address (default 192.168.52.200/24) and a DHCP-assigned address, then
-#      runs `netplan apply`.
+#   3. Puts eth0 in a single IPv4 addressing mode by calling setup_eth.sh
+#      (static by default, at 192.168.52.200/24). Earlier versions rendered a
+#      dual-IP block here, carrying a static address and a DHCP lease at once,
+#      which is what made the static drop periodically.
 #   4. Resets the Pi's built-in wlan0 to default (client) mode, removing any AP
 #      connection a pre-v0.7.0 setup left bound to it.
 #
@@ -32,6 +33,7 @@
 #   RACECAR_AP_CHANNEL    (default: 6)
 #   RACECAR_AP_ADDR       (default: 10.42.0.1/24)
 #   RACECAR_ETH_STATIC    (default: 192.168.52.200/24)
+#   RACECAR_ETH_MODE      (default: static; or dynamic)
 #
 # All steps are idempotent — re-running is safe.
 
@@ -72,7 +74,6 @@ AP_ADDR="${RACECAR_AP_ADDR:-10.42.0.1/24}"
 ETH_STATIC_ADDR="${RACECAR_ETH_STATIC:-192.168.52.200/24}"
 
 DISPATCHER_PATH="/etc/NetworkManager/dispatcher.d/99-racecar-ap-isolate"
-NETPLAN_ETH_PATH="/etc/netplan/99-racecar-eth0.yaml"
 
 CHANGES_MADE=false
 
@@ -252,44 +253,22 @@ if [ "$CHANGES_MADE" = "true" ] || [ "$ap_state" != "activated" ]; then
     sudo nmcli connection up "$AP_CON_NAME" >/dev/null 2>&1 || true
 fi
 
-# --- 3. eth0 dual-IP via netplan ---------------------------------------------
-echo "[3/4] Configuring eth0 dual-IP (fixed static $ETH_STATIC_ADDR + DHCP)..."
-# The static is a permanent secondary address, declared once via `addresses:`
-# (netplan derives ipv4.method=auto + the address from dhcp4 + addresses). The
-# previous file ALSO re-declared ipv4.method/ipv4.address1 in the passthrough,
-# so the same address was specified twice and NetworkManager kept reconciling
-# the two, which reset the static over and over. It carries no gateway, so DHCP
-# owns the default route and the static never collides with the dynamic address.
-# may-fail lets the link finish activating on the static alone after one
-# dhcp-timeout when no DHCP server answers (instead of retrying forever), and
-# DHCP still adds its own address + default route whenever a server is present.
-TMP_NETPLAN=$(mktemp)
-cat >"$TMP_NETPLAN" <<YAML
-network:
-  version: 2
-  ethernets:
-    eth0:
-      renderer: NetworkManager
-      dhcp4: true
-      dhcp6: true
-      optional: true
-      addresses:
-      - "$ETH_STATIC_ADDR"
-      dhcp4-overrides:
-        route-metric: 100
-      networkmanager:
-        passthrough:
-          ipv4.dhcp-timeout: "15"
-          ipv4.may-fail: "true"
-YAML
-if sudo cmp -s "$TMP_NETPLAN" "$NETPLAN_ETH_PATH" 2>/dev/null; then
-    echo "  $NETPLAN_ETH_PATH already up to date."
-else
-    sudo install -m 600 -o root -g root "$TMP_NETPLAN" "$NETPLAN_ETH_PATH"
-    echo "  Wrote $NETPLAN_ETH_PATH"
-    CHANGES_MADE=true
+# --- 3. eth0 addressing mode -------------------------------------------------
+# Delegated to setup_eth.sh, which is the only writer of the eth0 netplan file.
+# This step used to render its own dual-IP block here (static AND DHCP at the
+# same time), which is what made the static address drop periodically. Keeping
+# one writer means this script and `racecar eth` cannot disagree.
+ETH_MODE="${RACECAR_ETH_MODE:-static}"
+echo "[3/4] Configuring eth0 ($ETH_MODE)..."
+SETUP_ETH="$(dirname "$0")/setup_eth.sh"
+if [ ! -x "$SETUP_ETH" ]; then
+    echo "ERROR: $SETUP_ETH not found or not executable." >&2
+    exit 1
 fi
-rm -f "$TMP_NETPLAN"
+# setup_eth.sh applies and verifies on its own, so its work is not folded into
+# CHANGES_MADE; the netplan apply below is for the AP/dispatcher changes only.
+RACECAR_ETH_STATIC="$ETH_STATIC_ADDR" bash "$SETUP_ETH" "$ETH_MODE" --force
+
 
 # Only `netplan apply` when something actually changed — it triggers a
 # NetworkManager reconfigure that briefly bounces eth0 (and on some systems
@@ -338,7 +317,7 @@ echo
 echo "=== Done ==="
 echo
 echo "Verify with:"
-echo "  ip -br addr show eth0              # static $ETH_STATIC_ADDR + DHCP"
+echo "  racecar eth status                 # one IPv4 address, no conflict"
 echo "  iw dev $AP_IFACE info              # ssid $AP_SSID, type AP, ch $AP_CHANNEL"
 echo "  iw dev wlan0 info                 # type managed (client/default)"
 echo "  sudo iptables-nft -L FORWARD -nv  # two REJECT rules with $AP_IFACE in in/out columns"

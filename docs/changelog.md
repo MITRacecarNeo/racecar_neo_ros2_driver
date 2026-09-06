@@ -4,6 +4,37 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-09-06
+
+Operator experience: one addressing mode on eth0, a WiFi client command, an optional desktop, and a `status` that actually diagnoses the car.
+
+### Added
+
+- **`racecar eth [status|static|dynamic]`** and `scripts/setup_eth.sh`, the single writer of `/etc/netplan/99-racecar-eth0.yaml`. eth0 now holds exactly one IPv4 addressing mode. Static is the default at `192.168.52.200/24` with no gateway, because a known address is what makes a car debuggable on a bare switch; `dynamic` takes the address and default route from DHCP. The mode persists as `RACECAR_ETH_MODE`, and `racecar setup networking --eth-mode=` sets it too. `status` reports the configured mode, live addresses and both default routes, and fails when it finds more than one global IPv4 address. Switching modes drops an SSH session arriving over eth0, so the command detects that and asks first; `--force` skips the prompt.
+- **`racecar wifi [status|list|connect|disconnect]`**, an `nmcli` wrapper scoped to `wlan0`. Every generated command carries `ifname wlan0` and `disconnect` targets the device rather than a connection name, so nothing here can drop the AP on `wlan1` that an operator is likely connected through. `list` groups the scan by SSID and keeps the strongest signal, since a scan returns one row per BSSID: 33 rows for 12 networks on a car parked in a lab. Enterprise networks ask for an identity and password and nothing else; every 802.1X profile gets system CA certificates and a `domain-suffix-match` derived from the identity's realm, with `--ca-cert` and `--domain-suffix-match` as overrides.
+- **`racecar desktop [status|enable|disable]`**, a reboot-scoped GNOME toggle, enabled by default. The boot target is the only lever and is sufficient on its own: the display manager unit is `static` and cannot be enabled or disabled, and `graphical.target` is what pulls it in. There is deliberately no immediate variant, so the command cannot end a desktop session someone is using, and packages are never removed, so the toggle works on a car with no network.
+- **`scripts/diagnose.py`**, behind `racecar status`. 49 checks across devices, sensors, actuators, system, services and network in roughly six seconds, against about two minutes for the notebook it replaces. Rate checks compare observed Hz against a per-topic floor rather than testing for presence, so a lidar desynced to 2 Hz fails instead of passing. The notebook's payload assertions carry over: accelerometer magnitude, pack voltage and current, 1080 lidar samples, eight RC channels. Flags: `--quick`, `--json`, `--section`, `--window`.
+- **`scripts/sysinfo.py`**, host readings shared by `dashboard.py` and `diagnose.py`: RTC thresholds and classification, the under-voltage alarm, SoC temperature, throttling flags, load, memory, disk, uptime and clock sync. The RTC thresholds in particular are the kind of constant that goes wrong quietly in two places, since a copy that drifts still passes its own tests.
+- **`scripts/wifi_scan.py`**, the scan formatter, with its own fixture-based tests for deduplication, hidden-network counting and nmcli's colon escaping.
+- **`scripts/eth_monitor.py`** and `racecar eth monitor`, with a `racecar-eth-monitor.service` unit for a multi-day soak. Records eth0's addresses, both default routes, carrier, operstate and NetworkManager state, writing a line on every change plus a periodic heartbeat so a quiet log is distinguishable from a dead logger. Carrier and operstate are sampled alongside the addresses because the reported failure recovers only when the cable is reseated, and a link wedged at the carrier level is a different fault from an address that was withdrawn. The unit is deliberately not installed by `setup_services.sh`: it exists to answer one question and should be disabled once it has.
+- **`docs/advanced-settings.md`**, a running list of settings where the shipped default differs from what an advanced user may want, each with the command to change it, the consequence, and the access path to use when changing it cuts the current connection.
+
+### Changed
+
+- **`setup_networking.sh` delegates eth0** to `setup_eth.sh` instead of rendering its own netplan block. One writer means the two paths cannot disagree about the file.
+- **`racecar status` is strict.** It exits 0 only when every requested check passed, so `WARN` and `SKIP` both count against it. The case that motivates strictness is `SKIP`: with teleop stopped, all thirteen sensor checks skip and the host checks pass, and a lenient rule would return 0 for a car running no software at all. Deselecting a section with `--quick` or `--section` is different from a check failing to run and does not affect the exit code. Checks that prove to fire on healthy cars get reclassified individually rather than silenced with a flag.
+- **`dashboard.py` imports its RTC and under-voltage collectors** from `sysinfo.py` rather than defining them.
+
+### Removed
+
+- **`racecar selftest`.** The subcommand had one target, `--dmatrix`, forwarding straight to `scripts/dmatrix_patterns.py`, while every other hardware check it implied lived in the notebook. The script stays and is still usable directly for bench work on the display; the wrapper is gone. With no actuation path, `racecar status` is entirely read-only and can never command hardware.
+
+### Fixed
+
+- **eth0 no longer carries two IPv4 addresses.** v0.7.2 removed a duplicate declaration of the static and made the symptom rarer, but left the dual stack that causes it: `dhcp4: true` alongside a static entry in `addresses:`. NetworkManager re-applies the whole IPv4 config on every lease event, and in the field the link dropped periodically and recovered only when the cable was physically reseated. The modes are now mutually exclusive. The mechanism is not proven, so one car should run `racecar eth monitor` (or the `racecar-eth-monitor.service` unit) across the reported drop interval before this is called closed.
+- **IPv6 default route in static mode.** Router advertisements handed eth0 a v6 default route even with no v4 gateway configured, so a car whose ethernet was meant to be inert still sent most of its traffic out the wire, since large destinations are dual-stack and address selection prefers v6. Static mode now sets `ipv6.never-default`, which suppresses that route and leaves SLAAC and DHCPv6 addressing alone. The kernel `accept_ra` sysctls are not the lever: they read 0 on eth0 while the routes are still `proto ra`, because NetworkManager handles RA itself.
+- **The Coral probe in `racecar status` looked on the wrong bus.** It grepped `lsusb` for `global unichip` and `google`, but the Coral moved to M.2 PCIe and appears only as `/dev/apex_0` on a PCI slot. The check had been reporting a missing accelerator on cars whose accelerator works.
+
 ## [0.7.3] - 2026-09-05
 
 Calibration pipeline, dashboard efficiency, and discovery scoping. Collects every change since v0.7.2 (2026-07-07), including PRs #26, #27, #29, #30, #31, and #32.
