@@ -584,10 +584,13 @@ class TestCompletionInstalled:
 class TestLog:
     """`racecar log` dispatches to scripts/racecar_log.py."""
 
-    def test_status_runs_without_a_recording(self):
+    def test_status_reports_a_valid_state(self):
+        # Must not assume the car is idle: a real recording is a legitimate
+        # state, and asserting 'not recording' made the suite depend on
+        # whether anyone had run `racecar log start` first.
         result = _run('log', 'status')
         assert result.returncode == 0
-        assert 'not recording' in result.stdout
+        assert 'not recording' in result.stdout or 'recording ' in result.stdout
 
     def test_help_lists_actions(self):
         result = _run('log', '--help')
