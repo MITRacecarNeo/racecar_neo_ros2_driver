@@ -57,6 +57,12 @@ off the SD card. An empty drive here is expected, not a fault.
 Every `/dev/*` path above is a udev symlink installed by
 `scripts/setup_udev.sh`, so device numbering does not shift across reboots.
 
+The two radios have separate roles and are never interchangeable. `wlan0` is
+the Pi's built-in Broadcom part and is the only client interface; `wlan1` is
+the ALFA dongle carrying the isolated AP that operators connect over. Anything
+that reconfigures a radio is pinned to one of them by name, so joining a
+network cannot disturb the AP.
+
 eth0 carries exactly one IPv4 addressing mode, written by `scripts/setup_eth.sh`
 as the single owner of `/etc/netplan/99-racecar-eth0.yaml`. Static is the
 default and carries no gateway and no IPv6 default route; dynamic takes both

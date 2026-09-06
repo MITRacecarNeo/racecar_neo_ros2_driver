@@ -1,5 +1,6 @@
 """Tests for scripts/racecar-tool.sh (the `racecar` shell function)."""
 
+import os
 from pathlib import Path
 import subprocess
 
@@ -487,6 +488,128 @@ class TestCompletionInstalled:
         )
         assert result.returncode == 0
         assert '_racecar_complete' in result.stdout
+
+
+class TestWifiCommand:
+    """`racecar wifi`: client radio on wlan0; the AP on wlan1 stays untouched."""
+
+    STUB = """#!/bin/bash
+printf '%s\\n' "$*" >> "$NMCLI_LOG"
+case "$*" in
+    "radio wifi")                         echo "${STUB_RADIO:-enabled}" ;;
+    "-t -f DEVICE device status")         echo "${STUB_DEVICES:-wlan0}" ;;
+    "-t -f NAME con show")                echo "${STUB_SAVED:-}" ;;
+    "-t -f NAME,TYPE con show") echo "${STUB_SAVED:+$STUB_SAVED:802-11-wireless}" ;;
+    *"device wifi list ifname wlan0"*) printf 'EntNet:WPA2 802.1X\\nPskNet:WPA2\\nOpenNet:\\n' ;;
+    *) : ;;
+esac
+"""
+
+    def _wifi(self, tmp_path, *args, stdin=None, **env_extra):
+        stub = tmp_path / 'nmcli'
+        stub.write_text(self.STUB)
+        stub.chmod(0o755)
+        log = tmp_path / 'nmcli.log'
+        log.touch()
+        env = dict(os.environ)
+        env.update({'NMCLI_LOG': str(log), 'RACECAR_NMCLI': str(stub)})
+        env.update(env_extra)
+        script = f'set +u; source "{TOOL}"; racecar wifi {" ".join(args)}'
+        result = subprocess.run(
+            ['bash', '-c', script], capture_output=True, text=True,
+            timeout=20, env=env, input=stdin,
+        )
+        return result, log.read_text()
+
+    def test_help_lists_actions(self, tmp_path):
+        result, _ = self._wifi(tmp_path, 'help')
+        assert result.returncode == 0
+        for action in ('status', 'list', 'connect', 'disconnect'):
+            assert action in result.stdout
+
+    def test_rejects_unknown_action(self, tmp_path):
+        result, _ = self._wifi(tmp_path, 'bogus')
+        assert result.returncode == 2
+        assert 'unknown action' in result.stderr
+
+    def test_connect_without_ssid_errors(self, tmp_path):
+        result, _ = self._wifi(tmp_path, 'connect')
+        assert result.returncode == 2
+        assert 'usage:' in result.stderr
+
+    def test_reports_disabled_radio(self, tmp_path):
+        result, _ = self._wifi(tmp_path, 'list', STUB_RADIO='disabled')
+        assert result.returncode == 3
+        assert 'rfkill' in result.stderr
+
+    def test_reports_missing_interface(self, tmp_path):
+        result, _ = self._wifi(tmp_path, 'list', STUB_DEVICES='eth0')
+        assert result.returncode == 3
+        assert 'not present' in result.stderr
+
+    def test_list_is_scoped_to_wlan0(self, tmp_path):
+        _, log = self._wifi(tmp_path, 'list')
+        scan = [ln for ln in log.splitlines() if 'device wifi list' in ln]
+        assert scan, 'no scan issued'
+        assert all('ifname wlan0' in ln for ln in scan)
+
+    def test_disconnect_targets_the_device_not_a_connection(self, tmp_path):
+        # `nmcli connection down` could match the AP profile by name and drop
+        # the link the operator is using. Disconnect must address the device.
+        result, log = self._wifi(tmp_path, 'disconnect')
+        assert result.returncode == 0, result.stderr
+        assert 'device disconnect wlan0' in log
+        assert 'connection down' not in log
+
+    def test_saved_profile_brought_up_on_wlan0(self, tmp_path):
+        _, log = self._wifi(tmp_path, 'connect', 'HomeNet', STUB_SAVED='HomeNet')
+        assert 'connection up HomeNet ifname wlan0' in log
+
+    def test_every_nmcli_call_that_names_an_interface_names_wlan0(self, tmp_path):
+        # The guard for the whole command: wlan1 carries the AP, so it must
+        # never appear in anything this command generates.
+        for args in (['list'], ['status'], ['disconnect'],
+                     ['connect', 'HomeNet']):
+            _, log = self._wifi(tmp_path, *args, STUB_SAVED='HomeNet')
+            assert 'wlan1' not in log, f'`racecar wifi {args[0]}` touched wlan1'
+
+    def test_enterprise_requires_a_verifiable_server(self, tmp_path):
+        # An identity with no realm gives nothing to match the RADIUS server
+        # against. Refuse rather than hand credentials to any access point
+        # broadcasting the SSID.
+        result, log = self._wifi(
+            tmp_path, 'connect', 'EntNet', '--identity=plainuser', stdin='pw\n')
+        assert result.returncode == 2
+        assert 'domain-suffix-match' in result.stderr
+        assert 'connection add' not in log, 'must not create an unverified profile'
+
+    def test_enterprise_profile_always_validates_the_server(self, tmp_path):
+        _, log = self._wifi(
+            tmp_path, 'connect', 'EntNet', '--identity=someone@school.edu',
+            stdin='hunter2\n')
+        add = next((ln for ln in log.splitlines() if 'connection add' in ln), '')
+        assert add, 'no profile created'
+        assert '802-1x.domain-suffix-match school.edu' in add
+        assert '802-1x.system-ca-certs yes' in add
+        assert 'ifname wlan0' in add
+
+    def test_enterprise_ca_cert_override(self, tmp_path):
+        _, log = self._wifi(
+            tmp_path, 'connect', 'EntNet', '--identity=someone@school.edu',
+            '--ca-cert=/etc/ssl/certs/ca.pem', stdin='hunter2\n')
+        add = next((ln for ln in log.splitlines() if 'connection add' in ln), '')
+        assert '802-1x.ca-cert /etc/ssl/certs/ca.pem' in add
+        assert '802-1x.domain-suffix-match school.edu' in add
+
+    def test_connect_rejects_unknown_flag(self, tmp_path):
+        result, _ = self._wifi(tmp_path, 'connect', 'PskNet', '--turbo')
+        assert result.returncode == 2
+        assert 'unknown flag' in result.stderr
+
+    def test_connect_to_invisible_network_errors(self, tmp_path):
+        result, _ = self._wifi(tmp_path, 'connect', 'NotBroadcasting')
+        assert result.returncode == 4
+        assert 'not visible' in result.stderr
 
 
 class TestEthCommand:

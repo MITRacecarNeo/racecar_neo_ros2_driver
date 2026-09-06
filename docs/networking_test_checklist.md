@@ -213,6 +213,37 @@ Walk through this on the actual robot to verify eth0 addressing and the ALFA-don
   racecar service status          # all 4 services active=active
   ```
 
+## WiFi client (wlan0)
+
+The client radio is separate from the AP dongle, so none of this should
+disturb `wlan1`.
+
+- [X] the scan lists one row per network
+  ```sh
+  racecar wifi list
+  ```
+  Expected: each SSID once, strongest signal kept, hidden networks collapsed
+  into a count.
+
+- [X] joining a network leaves the AP up
+  ```sh
+  racecar wifi connect <ssid>
+  iw dev wlan1 info               # still type AP
+  ```
+
+- [X] no subnet collision with the AP or eth0
+  ```sh
+  racecar wifi status
+  ```
+  Expected: no `[WARN] ... overlaps` line. A network handing out
+  `10.42.0.0/24` or `192.168.52.0/24` makes routing ambiguous.
+
+- [X] disconnect does not touch wlan1
+  ```sh
+  racecar wifi disconnect
+  iw dev wlan1 info               # still type AP
+  ```
+
 ## Done
 
 If every box is checked, v0.0.6 networking is verified end-to-end.

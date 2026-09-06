@@ -12,6 +12,7 @@ This package is the v2 successor to [`racecar-neo-ros2-backend`](https://github.
 - [The `racecar` shell tool](#the-racecar-shell-tool)
 - [Networking (optional)](#networking-optional)
 - [Ethernet addressing](#ethernet-addressing)
+- [WiFi client](#wifi-client)
 - [Web dashboard](#web-dashboard)
 - [Jupyter notebooks](#jupyter-notebooks)
 - [Manual build](#manual-build)
@@ -195,6 +196,7 @@ racecar clear --dmatrix             # flash + clear the MAX7219 display
 racecar udev                        # re-install the udev rules
 racecar cleanup [--force]           # list / kill stale racecar processes + SHM orphans
 racecar eth status                  # eth0 addressing mode + conflict checks
+racecar wifi list                   # visible networks on wlan0
 racecar status                      # USB peripherals + device symlinks + running ros2 nodes
 racecar help                        # full usage
 ```
@@ -293,6 +295,24 @@ grep -v '\[OK\]' ~/logs/eth-monitor.log     # every state change, heartbeats hid
 ```
 
 A clean run is `START` followed by heartbeats. Any `ADDR_LOST`, `CARRIER` or `OPERSTATE` line is the event worth reading. Disable the unit once the question is settled; it is a diagnostic, not part of the running car.
+
+## WiFi client
+
+`wlan0` is the Pi's built-in Broadcom radio and the only client interface. `wlan1` is the ALFA dongle carrying the AP, and nothing in this command touches it.
+
+```sh
+racecar wifi                    # or: racecar wifi status
+racecar wifi list               # cached scan, one row per SSID
+racecar wifi list --rescan      # force a fresh scan (about ten seconds)
+racecar wifi connect <ssid>     # prompts for whatever it needs
+racecar wifi disconnect
+```
+
+`list` groups the scan by SSID and keeps the strongest signal, because a scan returns one row per BSSID: on a car parked in a lab that is 30-plus rows for about a dozen real networks. Hidden networks are collapsed into a count.
+
+`connect` brings up a saved profile as-is, whatever its security type. For a new network it asks for a passphrase, or for an identity and password on an enterprise (802.1X) network, and nothing else. Server validation is not optional: every enterprise profile gets system CA certificates plus a `domain-suffix-match` derived from the identity's realm, so credentials are never offered to an access point that cannot prove who it is. Use `--ca-cert=` and `--domain-suffix-match=` where that derivation does not fit.
+
+`disconnect` puts the device into NetworkManager's manually-disconnected state, so it will not rejoin on its own until the next `connect`.
 
 ## Web dashboard
 
