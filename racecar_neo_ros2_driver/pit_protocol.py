@@ -37,6 +37,11 @@ PROTO_VERSION = 1
 TX_MAGIC = 0xDEADBEEF  # Teensy -> Pi
 RX_MAGIC = 0xBEEFDEAD  # Pi -> Teensy
 
+# Plausible FlySky pulse-width band, in microseconds. Channels sit near
+# 1000-2000 us; a receiver with no transmitter signal reports near 0.
+RC_PULSE_MIN_US = 900
+RC_PULSE_MAX_US = 2100
+
 # Telemetry: header(16) + timestamp(4) + volt_curr(4) + rc(16) + imu(36)
 # + encoder(4) + ekf(12) + checksum(2)
 _TX_FMT = '<IBBHIHHi2H8H9ff3fH'
@@ -113,6 +118,23 @@ class Telemetry:
     def current_a(self) -> float:
         """Battery current in amps (firmware packs mA)."""
         return self.volt_curr[1] / 1000.0
+
+    @property
+    def rc_link_up(self) -> bool:
+        """
+        Report whether every RC channel carries a plausible pulse width.
+
+        Read this, not rc_normalized, to decide whether a transmitter is
+        present. The normalization clamps into [-1, 1], which puts a dead
+        channel (near 0 us) on exactly -1.0 -- the same value a switch held at
+        its low end produces. The two are indistinguishable after the clamp, so
+        link state has to come from the raw widths.
+
+        This is a single frame's verdict. Deciding that a link is live enough
+        to hand it authority also needs freshness and a sustained hold, which
+        are stateful and belong to the consumer.
+        """
+        return all(RC_PULSE_MIN_US <= c <= RC_PULSE_MAX_US for c in self.rc)
 
     @property
     def rc_normalized(self) -> tuple:
