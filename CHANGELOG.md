@@ -30,6 +30,7 @@ Calibration pipeline, dashboard efficiency, and discovery scoping. Collects ever
 - **Compounding RealSense bias.** The bias was subtracted inside `imu_fusion_node._publish`, which re-reads the cached message on every timer tick; a source slower than the 100 Hz timer had its bias applied once per tick rather than once per message, and a stalled stream accumulated up to 25 subtractions within `source_timeout_sec`. The correction now happens in the subscription callback.
 - **Dashboard `/imu/realsense` rate.** The rate was read from the `camera: accel` diagnostic (63 Hz) while `unite_imu_method: '2'` publishes the united IMU at the gyro rate (200 Hz), under-reporting by 3.2x. It now reads `camera: gyro`.
 - **RealSense calibrator log message** named `/imu/lsm9ds1/raw` while subscribing to `/imu/realsense`.
+- **Calibration utilities were not executable.** All three were committed mode `644`, so `setup.py` installed them under `lib/` but `ros2 run racecar_neo_ros2_driver calibrate_imu.py` failed with `No executable found`. They are mode `755` now and appear in `ros2 pkg executables`.
 - **Lint backlog.** `ament_flake8` goes from 261 errors to 0 and `ament_pep257` is clean, across the calibration scripts, `pit_node.py`, `pit.launch.py`, and `dashboard.py`. `colcon test` failures drop to the RTC backup-battery hardware check.
 
 ### Known issues
