@@ -13,10 +13,10 @@ import sys
 import threading
 import time
 
+from diagnostic_msgs.msg import DiagnosticArray
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
-from diagnostic_msgs.msg import DiagnosticArray
 
 
 # ---------------------------------------------------------------------------
@@ -186,7 +186,11 @@ class _RateSampler(Node):
             )
 
     def measure_hz(self, topic: str):
-        """Return arrival rate (Hz) over the window, or rate from /diagnostics for RealSense, or None if not subscribed/no data."""
+        """Return the rate (Hz) for a topic, or None when no data.
+
+        RealSense streams are read from /diagnostics; the rest are measured
+        from arrival timestamps over the window.
+        """
         with self._lock:
             now = time.monotonic()
             if topic in self._diagnostic_rates:
