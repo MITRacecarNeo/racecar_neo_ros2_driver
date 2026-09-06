@@ -15,6 +15,9 @@ This package is the v2 successor to [`racecar-neo-ros2-backend`](https://github.
 - [WiFi client](#wifi-client)
 - [Desktop toggle](#desktop-toggle)
 - [Web dashboard](#web-dashboard)
+- [Lab dashboards](#lab-dashboards)
+- [Autonomy gate](#autonomy-gate)
+- [Bag recording](#bag-recording)
 - [Jupyter notebooks](#jupyter-notebooks)
 - [Manual build](#manual-build)
 - [Launch](#launch)
@@ -61,7 +64,7 @@ Display node subscribes:
 Safety/uptime layers (inherited from UAV Neo, shipped in v0.0.4):
 - **Mux** enforces speed/steer limits and gates commands behind controller bumpers; zeroes output on joystick disconnect (500 ms timeout).
 - **Watchdog** (`scripts/watchdog.py`) supervises 7 nodes with two-signal liveness (ROS topic + `pgrep` on the entry-point path), 30 s restart cooldown, SIGTERM to SIGKILL escalation, FastRTPS SHM orphan sweep every 60 s, Pi 5 PMIC under-voltage alarm. Hardware-aware: skips restart when the device is physically missing.
-- **Four systemd units** (`racecar-{teleop,watchdog,dashboard,jupyter}.service`) wired with `BindsTo=` so watchdog dies when teleop dies, and `Wants=` so watchdog auto-starts when teleop starts.
+- **Four core systemd units** (`racecar-{teleop,watchdog,dashboard,jupyter}.service`) wired with `BindsTo=` so watchdog dies when teleop dies, and `Wants=` so watchdog auto-starts when teleop starts. Seven more units carry the lab dashboards; they install disabled and are started one at a time.
 - **Launch wrapper** (`scripts/launch_teleop.sh`) creates `~/logs/<timestamp>/`, updates `~/logs/latest` atomically, sweeps FastRTPS SHM orphans, and `exec`s `ros2 launch` so systemd tracks the launch PID directly.
 - **Web dashboard** at `http://<robot>:8080`: 9 node cards, 9 topic-rate rows, System Health (RTC battery + Pi under-voltage alarm), watchdog log tail. Auto-refresh.
 - **JupyterLab** at `http://<robot>:8888` with PYTHONPATH/AMENT_PREFIX_PATH pre-set so `import rclpy` works in notebooks.
@@ -166,7 +169,8 @@ Eleven phases, all under `scripts/`:
 8. **`setup_realsense.sh`**: installs `realsense2_camera` (apt) + the Pi 5 IMU IIO permission fix (script, udev rule, boot service)
 9. **`setup_workspace.sh`**: clones `sllidar_ros2` and runs `colcon build --symlink-install`
 10. **`setup_jupyter.sh`**: `pip install --user jupyterlab`, creates `~/jupyter_ws/`
-11. **`setup_services.sh`**: installs and enables the four systemd units (`racecar-{teleop,watchdog,dashboard,jupyter}.service`)
+11. **`setup_services.sh`**: installs and enables the four core systemd units (`racecar-{teleop,watchdog,dashboard,jupyter}.service`)
+12. **`setup_dashboards.sh`**: clones the seven lab dashboards and installs their units, stopped and disabled
 
 Individual phase scripts can be run on their own to re-do or skip steps (e.g. `racecar setup networking` for just the networking phase, or `bash scripts/setup_udev.sh` to reinstall the udev rules after a hardware swap).
 
@@ -183,15 +187,17 @@ racecar teleop              # launch the full stack via launch_teleop.sh
 racecar launch dotmatrix    # ros2 launch racecar_neo_ros2_driver dotmatrix.launch.py
 racecar watchdog            # run the supervisor in the foreground
 
-racecar service status      # active/enabled snapshot for all 4 racecar-* units
+racecar service status      # active/enabled snapshot, core units and dashboards
 racecar service install     # drop unit files in /etc/systemd/system/ + enable
 racecar service start       # default: start teleop (watchdog follows via Wants=)
 racecar service stop        # default: stop teleop (watchdog follows via BindsTo=)
 racecar service logs teleop # journalctl -u racecar-teleop -f
+racecar service start wallfollow  # a lab dashboard; stops the other /drive publishers
 
-racecar setup all                       # run the 11-phase orchestrator
+racecar setup all                       # run the 12-phase orchestrator
 racecar setup networking --ssid=foo     # configure eth0 addressing + ALFA-dongle AP
 racecar setup networking --show         # print persisted overrides
+racecar setup dashboards                # clone the lab dashboards + install units
 
 racecar clear --dmatrix             # flash + clear the MAX7219 display
 racecar udev                        # re-install the udev rules
@@ -201,6 +207,8 @@ racecar status --quick              # host checks only; skips the ROS sampling p
 racecar eth status                  # eth0 addressing mode + conflict checks
 racecar wifi list                   # visible networks on wlan0
 racecar desktop status              # GNOME on/off for the next boot
+racecar log start lap3              # record a bag; racecar log stop to finalize
+racecar log analyze                 # summarize the newest bag
 racecar help                        # full usage
 ```
 
@@ -341,6 +349,113 @@ Once `racecar-teleop.service` is running, browse to `http://<robot>:8080` for a 
 - **Watchdog Log**: tail of `~/logs/latest/watchdog.log` so you can see restart events.
 
 Refreshes every 3 s; System Health refreshes on a slower 60 s cadence (RTC drifts on the order of weeks, not seconds).
+
+## Lab dashboards
+
+Seven browser-based labs, each its own upstream repository under the [Neobotics
+Foundation](https://github.com/Neobotics-Foundation-Inc) organization, installed
+as `racecar-*` systemd units.
+
+| Dashboard | Port | Reads | Publishes |
+|---|---|---|---|
+| `wallfollow` | 8081 | `/scan`, `/odom` | `/drive` |
+| `camlabel` | 8082 | `/camera/color` | none |
+| `pursuit` | 8083 | `/camera/color`, `/edgetpu/inference` | `/drive` |
+| `eps` | 8084 | `/scan`, `/odom` | `/drive` |
+| `smartfollow` | 8085 | `/scan`, `/odom`, `/camera/color`, `/edgetpu/inference` | `/drive` |
+| `linefollow` | 8086 | `/camera/color`, `/odom` | `/drive` |
+| `webteleop` | 8087 | `/camera/color`, `/scan`, `/odom` | `/drive` |
+
+Install (also runs as phase 12 of `setup_all.sh`):
+
+```bash
+racecar setup dashboards          # clone or fast-forward, install units
+racecar setup dashboards --update # pull only
+racecar service update            # same, from the service subcommand
+```
+
+Run one:
+
+```bash
+racecar service start wallfollow   # stops the other /drive publishers first
+racecar service status             # core and dashboards, with URLs
+racecar service logs wallfollow
+racecar service stop wallfollow
+```
+
+**One at a time.** Six of the seven publish `/drive`, and a second publisher
+fights the mux, so `racecar service start` stops the others before starting the
+one you asked for. `camlabel` only reads the camera and can run alongside any of
+them. Units install disabled; `racecar service enable <name>` makes one survive
+a reboot, and bare `racecar service enable` deliberately covers only the core
+four.
+
+**Checkouts live in `scripts/dashboards/`**, gitignored. Updates are
+`git pull --ff-only` and never `reset --hard`, so a car's tuned `wallfollow.yaml`
+survives. Nothing in a checkout is modified: the ROS distribution, unit naming
+and discovery scope are handled by rendering our own unit from the upstream
+template.
+
+**The upstream safety text does not describe this car.** Every dashboard README
+says the mux forwards `/drive` with no software deadman and the transmitter's
+SWB switch is the only gate. Here, `mux_node` requires the RB bumper held, and
+zeroes the output when `/joy` or the active source goes stale. See
+[Autonomy gate](#autonomy-gate) for the case where a transmitter does hold the
+gate.
+
+**These are NeoRacer numbers.** The shipped YAML is tuned for a different
+chassis and lidar. Expect to retune `max_mps`, `kp`, `kd`, `lookahead` and the
+`linefollow` HSV thresholds per car.
+
+## Autonomy gate
+
+By default the gamepad bumpers govern: LB for manual, RB for autonomy, neither
+or both for idle. A FlySky transmitter can hold that gate instead, which is off
+by default because not every car has one:
+
+```yaml
+# config/mux.local.yaml  (gitignored, loaded after mux.yaml)
+mux_node:
+  ros__parameters:
+    rc_authority_enable: true
+```
+
+With it enabled and a live transmitter, channel 6 (switch B) selects the mode:
+middle idle, up manual (the USB gamepad still drives; the transmitter is a gate,
+not a drive source), down autonomous. The bumpers are ignored while the
+transmitter holds the gate. With no transmitter, nothing changes.
+
+Authority is granted only when the link is fresh, every channel is inside the
+valid pulse band, it has held continuously for `rc_link_hold_sec`, and the
+switch has been seen at middle once since the grant. Any one of those failing
+revokes it immediately and hands the gate back to the bumpers.
+
+**Confirm on the bench before enabling.** Which physical switch lands on channel
+6 depends on the transmitter's channel assignment, up and down may be mirrored
+from what this assumes, and a receiver configured to emit failsafe values with
+the transmitter off would look like a live link. Wheels off the ground.
+
+## Bag recording
+
+```bash
+racecar log start lap3                     # bag: <timestamp>_lap3
+racecar log start lap3 --topics /scan /odom
+racecar log status                         # size, rate, time until full
+racecar log stop                           # SIGINT, so rosbag2 finalizes
+racecar log list
+racecar log analyze                        # newest bag: duration, per-topic rates
+racecar log config --dir=/data --storage=mcap
+```
+
+Bags go to `/data` when an NVMe is mounted there, and `~/logs/bags` otherwise.
+`racecar log` names an NVMe that is present but unmounted rather than silently
+falling back.
+
+Recording every topic pulls in `/camera/color` and `/camera/depth`, roughly
+73 MB/s against a sustained SD write near 30 MB/s. `start` refuses on an SD card
+unless you pass `--force`, because rosbag2 drops messages rather than blocking:
+the bag looks healthy until it is read. Name the topics you need, or
+`--exclude '/camera/.*'`.
 
 ## Jupyter notebooks
 
