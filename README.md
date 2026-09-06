@@ -190,8 +190,6 @@ racecar setup all                       # run the 11-phase orchestrator
 racecar setup networking --ssid=foo     # configure eth0 dual-IP + ALFA-dongle AP
 racecar setup networking --show         # print persisted overrides
 
-racecar selftest --dmatrix          # run all dot matrix patterns
-racecar selftest --dmatrix=font     # just the font scroll
 racecar clear --dmatrix             # flash + clear the MAX7219 display
 racecar udev                        # re-install the udev rules
 racecar cleanup [--force]           # list / kill stale racecar processes + SHM orphans
@@ -200,6 +198,15 @@ racecar help                        # full usage
 ```
 
 Tab completion is registered for subcommands; `racecar launch <TAB>` discovers launch files dynamically, `racecar service <TAB>` offers actions, etc.
+
+The dot matrix pattern sweep is no longer wrapped by a subcommand. Run it directly when bringing up the display hardware, with `dotmatrix_node` already running:
+
+```sh
+racecar launch dotmatrix                                    # in another shell
+python3 ~/ros2_ws/src/racecar_neo_ros2_driver/scripts/dmatrix_patterns.py all
+```
+
+Patterns: `all` (default), `checkerboard`, `all-on`, `sweep`, `module-id`, `font`.
 
 ## Networking (optional)
 

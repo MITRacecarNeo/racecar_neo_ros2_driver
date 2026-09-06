@@ -551,37 +551,6 @@ __RC_CLEANUP_HELP__
             fi
             ;;
 
-        selftest)
-            local target=""
-            local pattern="all"
-            for arg in "$@"; do
-                case "$arg" in
-                    --dmatrix|--dotmatrix) target="dmatrix" ;;
-                    --dmatrix=*|--dotmatrix=*) target="dmatrix"; pattern="${arg#*=}" ;;
-                    *) echo "racecar selftest: unknown flag '$arg'" >&2; return 2 ;;
-                esac
-            done
-            case "$target" in
-                dmatrix)
-                    # Faster than `ros2 node list` (which hangs ~15s when no
-                    # daemon is running). Look for the installed entry-point.
-                    if ! pgrep -f 'racecar_neo_ros2_driver/lib/.*dotmatrix_node' >/dev/null; then
-                        echo "racecar selftest: dotmatrix_node is not running." >&2
-                        echo "Start it first: racecar launch dotmatrix" >&2
-                        return 3
-                    fi
-                    python3 "$pkg_dir/scripts/dmatrix_patterns.py" "$pattern"
-                    ;;
-                "")
-                    cat <<'__RC_SELFTEST_HELP__' >&2
-usage: racecar selftest --dmatrix[=<pattern>]
-patterns: all (default), checkerboard, all-on, sweep, module-id, font
-__RC_SELFTEST_HELP__
-                    return 2
-                    ;;
-            esac
-            ;;
-
         status)
             echo "=== USB peripherals ==="
             lsusb | grep -iE "silicon labs|intel|global unichip|google" || echo "  (none of the expected USB devices found)"
@@ -661,14 +630,6 @@ Commands:
     cleanup             List orphaned racecar processes + FastRTPS SHM segments.
                         Defaults to a dry-run. Pass --force to actually kill/remove
                         (uses sudo for root-owned PIDs).
-    selftest            Hardware self-tests. Currently supported:
-                          racecar selftest --dmatrix             (runs all patterns)
-                          racecar selftest --dmatrix=checkerboard
-                          racecar selftest --dmatrix=all-on
-                          racecar selftest --dmatrix=sweep
-                          racecar selftest --dmatrix=module-id
-                          racecar selftest --dmatrix=font
-                        Requires dotmatrix_node to be running (racecar launch dotmatrix).
     status              Show USB peripherals, device symlinks, and running ros2 nodes.
     help                Show this message.
 
@@ -693,7 +654,7 @@ _racecar_complete() {
     local sub="${COMP_WORDS[1]:-}"
 
     if [[ $COMP_CWORD -eq 1 ]]; then
-        COMPREPLY=( $(compgen -W "build test source cd teleop launch clear udev watchdog service setup library cleanup selftest status help" -- "$cur") )
+        COMPREPLY=( $(compgen -W "build test source cd teleop launch clear udev watchdog service setup library cleanup status help" -- "$cur") )
         return
     fi
 
@@ -756,9 +717,6 @@ _racecar_complete() {
                         ;;
                 esac
             fi
-            ;;
-        selftest)
-            COMPREPLY=( $(compgen -W "--dmatrix --dmatrix=checkerboard --dmatrix=all-on --dmatrix=sweep --dmatrix=module-id --dmatrix=font" -- "$cur") )
             ;;
     esac
 }

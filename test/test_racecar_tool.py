@@ -47,7 +47,7 @@ def test_help_renders(args):
     assert 'Commands' in result.stdout
     expected = ('build', 'test', 'source', 'cd', 'teleop', 'launch',
                 'clear', 'udev', 'watchdog', 'service', 'setup', 'library',
-                'cleanup', 'selftest', 'status')
+                'cleanup', 'status')
     for sub in expected:
         assert sub in result.stdout, f'help missing "{sub}"'
 
@@ -76,22 +76,12 @@ def test_clear_rejects_unknown_flag():
     assert 'unknown flag' in result.stderr
 
 
-def test_selftest_without_target_errors():
+def test_selftest_is_gone():
+    # Removed in v0.7.4. Falls through to the unknown-command branch rather
+    # than silently doing nothing.
     result = _run('selftest')
     assert result.returncode == 2
-    assert 'usage:' in result.stderr
-    assert '--dmatrix' in result.stderr
-
-
-def test_selftest_rejects_unknown_flag():
-    result = _run('selftest', '--bogus')
-    assert result.returncode == 2
-    assert 'unknown flag' in result.stderr
-
-
-# Skipping a "dotmatrix_node is not running" test on purpose: it depends on
-# host state (whether the user has a node running) and either side of that
-# state is a valid test environment, so the assertion is unreliable.
+    assert 'unknown command' in result.stderr
 
 
 def test_cd_changes_pwd_to_package_root():
