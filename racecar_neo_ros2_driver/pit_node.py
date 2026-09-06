@@ -11,8 +11,11 @@ reader (imu_node). One node owns the serial port because only one process can:
     (imu_fusion_node blends /imu/lsm9ds1 with the RealSense /imu/realsense into
     /imu/fused, the single IMU the library reads); both topics are parameters.
 
-Encoder telemetry is republished as vehicle speed (m/s) on encoder_topic;
-battery/current and RC-channel fields are decoded but not published yet. The
+Encoder telemetry is republished as vehicle speed (m/s) on encoder_topic and,
+when publish_odom is set, wrapped as nav_msgs/Odometry on odom_topic for
+consumers that expect the standard message. Battery current and the RC
+channels are republished too, the latter both as normalized values (rc_topic)
+and as a link-up flag read from the raw widths (rc_link_topic). The
 node also forwards display state to the Teensy in each command frame: the drive
 mode (from /joy) and per-display "active" flags in SystemState, plus the
 dot-matrix bitmap (dotmatrix_topic) and LED colors (led_topic). Command values
@@ -30,6 +33,7 @@ import threading
 import time
 
 from ackermann_msgs.msg import AckermannDriveStamped
+from nav_msgs.msg import Odometry
 import numpy as np
 import rclpy
 from rclpy.executors import ExternalShutdownException
@@ -42,7 +46,7 @@ from rclpy.qos import (
 )
 from sensor_msgs.msg import Imu, Joy, MagneticField
 import serial
-from std_msgs.msg import Float32, Float32MultiArray, UInt8MultiArray
+from std_msgs.msg import Bool, Float32, Float32MultiArray, UInt8MultiArray
 
 from . import pit_protocol as pit
 from .mux_node import MuxMode, select_mode
@@ -56,6 +60,35 @@ SYS_MODE_AUTO = 2
 SYS_DOTMATRIX_ACTIVE = 0x04
 SYS_LED_ACTIVE = 0x08
 SYS_DRIVER_STARTING = 0x10
+
+# Odometry covariance sentinels. ROS convention puts -1 in the first element of
+# a block that was not estimated at all; a large finite variance marks a single
+# unestimated component inside a block that is otherwise real.
+POSE_UNESTIMATED = -1.0
+TWIST_COMPONENT_UNKNOWN = 1e6
+SPEED_VARIANCE = 1e-2
+
+
+def build_odom(speed_mps: float, frame_id: str, child_frame_id: str) -> Odometry:
+    """
+    Wrap encoder speed as Odometry with only the forward twist filled in.
+
+    The car reports speed, not pose. There is no wheelbase or steering-angle
+    calibration on this platform and /motor carries steering normalized to
+    [-1, 1] rather than radians, so heading is not integrated and angular.z is
+    not derived from the command. Pose is marked unestimated rather than
+    published as zeros, which would read as a car sitting at the origin.
+    """
+    odom = Odometry()
+    odom.header.frame_id = frame_id
+    odom.child_frame_id = child_frame_id
+    odom.twist.twist.linear.x = float(speed_mps)
+    odom.pose.covariance[0] = POSE_UNESTIMATED
+    odom.twist.covariance[0] = SPEED_VARIANCE
+    for i in (7, 14, 21, 28, 35):
+        odom.twist.covariance[i] = TWIST_COMPONENT_UNKNOWN
+    return odom
+
 
 # Display payload sizes: 8x24 monochrome bitmap, 84 RGB LED triplets.
 DOT_FRAME_LEN = 192
@@ -106,9 +139,19 @@ class PitNode(Node):
         self.declare_parameter('voltage_topic', '/battery/voltage')
         self.declare_parameter('current_topic', '/battery/current')
         self.declare_parameter('rc_topic', '/rc/channels')
+        # Link state from the raw pulse widths, before rc_normalized clamps a
+        # dead channel onto the same value as a switch held low. mux_node reads
+        # this to decide whether a transmitter may take drive authority.
+        self.declare_parameter('rc_link_topic', '/rc/link')
 
         # Encoder speed republish + display/LED command forwarding to the Teensy.
         self.declare_parameter('encoder_topic', '/encoder/speed')
+        # Odometry wrapper over the same encoder reading. Forward twist only;
+        # see build_odom for why pose is left unestimated.
+        self.declare_parameter('publish_odom', True)
+        self.declare_parameter('odom_topic', '/odom')
+        self.declare_parameter('odom_frame_id', 'odom')
+        self.declare_parameter('odom_child_frame_id', 'base_link')
         self.declare_parameter('dotmatrix_topic', '/dotmatrix/frame')
         self.declare_parameter('led_topic', '/led/pixels')
         # A display command counts as "active" (sets the SystemState flag the
@@ -154,9 +197,14 @@ class PitNode(Node):
         self._imu_topic = self.get_parameter('imu_topic').value
         self._mag_topic = self.get_parameter('mag_topic').value
         self._encoder_topic = self.get_parameter('encoder_topic').value
+        self._publish_odom = bool(self.get_parameter('publish_odom').value)
+        self._odom_topic = self.get_parameter('odom_topic').value
+        self._odom_frame = self.get_parameter('odom_frame_id').value
+        self._odom_child_frame = self.get_parameter('odom_child_frame_id').value
         self._voltage_topic = self.get_parameter('voltage_topic').value
         self._current_topic = self.get_parameter('current_topic').value
         self._rc_topic = self.get_parameter('rc_topic').value
+        self._rc_link_topic = self.get_parameter('rc_link_topic').value
         self._dotmatrix_topic = self.get_parameter('dotmatrix_topic').value
         self._led_topic = self.get_parameter('led_topic').value
         self._display_timeout = float(self.get_parameter('display_timeout_sec').value)
@@ -191,9 +239,14 @@ class PitNode(Node):
         self._pub_imu_raw = self.create_publisher(Imu, f'{self._imu_topic}/raw', qos)
         self._pub_mag_raw = self.create_publisher(MagneticField, f'{self._mag_topic}/raw', qos)
         self._pub_encoder = self.create_publisher(Float32, self._encoder_topic, qos)
+        self._pub_odom = (
+            self.create_publisher(Odometry, self._odom_topic, qos)
+            if self._publish_odom else None
+        )
         self._pub_voltage = self.create_publisher(Float32, self._voltage_topic, qos)
         self._pub_current = self.create_publisher(Float32, self._current_topic, qos)
         self._pub_rc = self.create_publisher(Float32MultiArray, self._rc_topic, qos)
+        self._pub_rc_link = self.create_publisher(Bool, self._rc_link_topic, qos)
         self.create_subscription(AckermannDriveStamped, '/motor', self._motor_cb, qos)
         self.create_subscription(UInt8MultiArray, self._dotmatrix_topic, self._dot_cb, qos)
         self.create_subscription(UInt8MultiArray, self._led_topic, self._led_cb, qos)
@@ -365,6 +418,11 @@ class PitNode(Node):
         enc.data = float(telem.encoder)
         self._pub_encoder.publish(enc)
 
+        if self._pub_odom is not None:
+            odom = build_odom(telem.encoder, self._odom_frame, self._odom_child_frame)
+            odom.header.stamp = stamp
+            self._pub_odom.publish(odom)
+
         volt = Float32()
         volt.data = float(telem.voltage_v)
         self._pub_voltage.publish(volt)
@@ -374,6 +432,9 @@ class PitNode(Node):
         rc = Float32MultiArray()
         rc.data = [float(c) for c in telem.rc_normalized]
         self._pub_rc.publish(rc)
+        rc_link = Bool()
+        rc_link.data = bool(telem.rc_link_up)
+        self._pub_rc_link.publish(rc_link)
 
         if self._publish_mag:
             raw_mag = remap_axes(telem.mag, self._mag_order, self._mag_sign) * self._mag_scale

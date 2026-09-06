@@ -83,7 +83,7 @@ Seven nodes ship in this package (`setup.py` console scripts):
 | Node | Responsibility |
 |---|---|
 | `pit_node` | Sole owner of the Teensy UART. Encodes drive commands, decodes telemetry, forwards display and LED frames. |
-| `mux_node` | Arbitrates teleop against autonomy, enforces speed and steering limits, gates on the controller, zeroes output when the joystick drops. |
+| `mux_node` | Arbitrates teleop against autonomy, enforces speed and steering limits, gates on the controller or on a live FlySky transmitter, zeroes output when the joystick drops. |
 | `throttle_node` | Scales normalised drive commands into the PWM range the hardware expects. |
 | `gamepad_node` | Maps `/joy` axes into an Ackermann drive command. |
 | `imu_fusion_node` | Merges the RealSense and LSM9DS1 IMUs into one stream; passes through when only one is live. |
@@ -138,6 +138,33 @@ so the arming gate and the 500 ms disconnect timeout stay independent of the
 mapping layer. A stale or missing `/joy` zeroes `/mux_out` regardless of what
 `/drive` is publishing.
 
+### Drive authority
+
+Two authorities can hold the gate. The gamepad bumpers hold it by default. A
+FlySky transmitter holds it instead when `rc_authority_enable` is set and the
+link is live, in which case channel 6 selects the mode and the bumpers are
+ignored; the transmitter is a gate, not a drive source, so manual mode still
+routes `/gamepad_drive`.
+
+Presence of a transmitter cannot be read from `/rc/channels`. `rc_normalized`
+clamps pulse widths into `[-1, 1]`, which puts a dead channel (near 0 us) on
+exactly `-1.0`, the same value a switch held low produces. `pit_node` therefore
+publishes `/rc/link` from the raw widths, and `mux_node` gates on that plus
+freshness, a sustained hold, and the switch having been seen at middle. Granting
+is slow and revoking immediate: one bad frame hands the gate back.
+
+### Lab dashboards
+
+Seven dashboards run as `racecar-*` units on ports 8081 to 8087, installed by
+`scripts/setup_dashboards.sh` from gitignored checkouts under
+`scripts/dashboards/`. Six publish `/drive` and so are mutually exclusive; a
+second publisher fights the mux, and `racecar service start` enforces one at a
+time. `camlabel` only reads `/camera/color` and can run alongside any of them.
+
+Units are rendered from each upstream `.service.in` rather than copied, which
+absorbs the ROS distribution, unit prefix and discovery scope on this side and
+leaves every checkout byte-identical to upstream.
+
 ## Sensing and perception
 
 Sensor nodes publish independently of the control chain; nothing in this
@@ -148,7 +175,8 @@ section can block a drive command.
                                   ├─▶ /mag              /mag/raw
                                   ├─▶ /encoder/speed
                                   ├─▶ /battery/voltage  /battery/current
-                                  └─▶ /rc/channels
+                                  ├─▶ /rc/channels  /rc/link
+                                  └─▶ /odom
 
   RealSense D435i ─ USB3 ─▶ realsense2_camera_node ─┬─▶ /camera/color
                                                     ├─▶ /camera/depth
@@ -208,6 +236,8 @@ reverts to a mode glyph (IDLE, TELEOP, AUTO) derived from gamepad state.
 | `/encoder/speed` | `std_msgs/Float32` | `pit_node` | user code |
 | `/battery/voltage`, `/battery/current` | `std_msgs/Float32` | `pit_node` | dashboard, user code |
 | `/rc/channels` | `std_msgs/Float32MultiArray` | `pit_node` | user code |
+| `/rc/link` | `std_msgs/Bool` | `pit_node` | `mux_node` |
+| `/odom` | `nav_msgs/Odometry` | `pit_node` | lab dashboards, user code |
 | `/camera/color`, `/camera/depth` | `sensor_msgs/Image` | `realsense2_camera_node` | `edgetpu_node`, user code |
 | `/scan` | `sensor_msgs/LaserScan` | `sllidar_node` | user code |
 | `/edgetpu/inference` | `vision_msgs/Detection2DArray` | `edgetpu_node` | user code |

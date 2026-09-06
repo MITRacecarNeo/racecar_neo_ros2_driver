@@ -43,3 +43,6 @@ COLCON_IGNORE
 
 # Local-only configuration overrides
 config/*.local.yaml
+
+# Upstream lab-dashboard checkouts (scripts/setup_dashboards.sh clones them)
+scripts/dashboards/

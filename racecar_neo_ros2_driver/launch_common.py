@@ -26,6 +26,9 @@ def single_node_launch(
     """
     pkg_dir = get_package_share_directory('racecar_neo_ros2_driver')
     default_cfg = os.path.join(pkg_dir, 'config', default_yaml)
+    local_cfg = os.path.join(
+        pkg_dir, 'config', default_yaml.replace('.yaml', '.local.yaml')
+    )
 
     cfg_arg = DeclareLaunchArgument(
         arg_name,
@@ -33,12 +36,20 @@ def single_node_launch(
         description=description or f'Path to {executable} config YAML',
     )
 
+    # A per-car override, applied after the shipped file so its keys win.
+    # .gitignore already reserves config/*.local.yaml; this is what reads it.
+    # Settings that differ per car (an enabled RC gate, say) go here instead of
+    # in the committed YAML, so a car never carries a dirty working tree.
+    parameters = [LaunchConfiguration(arg_name)]
+    if os.path.exists(local_cfg):
+        parameters.append(local_cfg)
+
     node_kwargs = {
         'package': package,
         'executable': executable,
         'name': node_name or executable,
         'output': 'screen',
-        'parameters': [LaunchConfiguration(arg_name)],
+        'parameters': parameters,
     }
     if remappings:
         node_kwargs['remappings'] = remappings

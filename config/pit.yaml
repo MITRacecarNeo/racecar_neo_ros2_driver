@@ -19,6 +19,20 @@ pit_node:
     # Firmware does not compute the CRC-16 yet; keep false until it does.
     require_crc: false
 
+    # RC link state, from the raw pulse widths. rc_normalized clamps a dead
+    # channel onto -1.0, the same value a switch held low gives, so presence of
+    # a transmitter cannot be read off /rc/channels. mux_node gates on this.
+    rc_link_topic: "/rc/link"
+
+    # ---- Odometry (/odom) ----
+    # Wraps the encoder speed as nav_msgs/Odometry for consumers that expect
+    # the standard message; the lab dashboards read twist.twist.linear.x.
+    # Forward twist only: pose is not integrated, so it is marked unestimated.
+    publish_odom: true
+    odom_topic: "/odom"
+    odom_frame_id: odom
+    odom_child_frame_id: base_link
+
     # ---- IMU republish (/imu/lsm9ds1, /mag) ----
     # imu_fusion_node blends /imu/lsm9ds1 with /imu/realsense into /imu/fused,
     # the single IMU the library reads.

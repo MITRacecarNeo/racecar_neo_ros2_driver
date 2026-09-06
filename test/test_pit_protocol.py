@@ -106,6 +106,44 @@ class TestDecodeTelemetry:
         assert got[6] == pytest.approx(1.0)   # 2100 us clamps
         assert len(got) == 8
 
+    def test_rc_link_up_with_a_transmitter(self):
+        t = pit.decode_telemetry(
+            _build_telemetry(rc=(1500, 2000, 1000, 1750, 1250, 1000, 2000, 1500))
+        )
+        assert t.rc_link_up is True
+
+    def test_rc_link_down_with_no_transmitter(self):
+        # A receiver with no signal reports near 0 us on every channel.
+        t = pit.decode_telemetry(_build_telemetry(rc=(0,) * 8))
+        assert t.rc_link_up is False
+
+    def test_rc_link_down_when_any_channel_is_dead(self):
+        rc = [1500] * 8
+        rc[3] = 0
+        t = pit.decode_telemetry(_build_telemetry(rc=tuple(rc)))
+        assert t.rc_link_up is False
+
+    def test_rc_link_band_edges(self):
+        lo = pit.decode_telemetry(_build_telemetry(rc=(pit.RC_PULSE_MIN_US,) * 8))
+        hi = pit.decode_telemetry(_build_telemetry(rc=(pit.RC_PULSE_MAX_US,) * 8))
+        assert lo.rc_link_up is True
+        assert hi.rc_link_up is True
+        below = pit.decode_telemetry(_build_telemetry(rc=(pit.RC_PULSE_MIN_US - 1,) * 8))
+        above = pit.decode_telemetry(_build_telemetry(rc=(pit.RC_PULSE_MAX_US + 1,) * 8))
+        assert below.rc_link_up is False
+        assert above.rc_link_up is False
+
+    def test_no_signal_is_distinguishable_from_switch_low(self):
+        """
+        Guard the regression this property exists to prevent.
+
+        rc_normalized clamps both to -1.0; rc_link_up must not.
+        """
+        dead = pit.decode_telemetry(_build_telemetry(rc=(0,) * 8))
+        low = pit.decode_telemetry(_build_telemetry(rc=(1000,) * 8))
+        assert dead.rc_normalized[5] == low.rc_normalized[5] == pytest.approx(-1.0)
+        assert dead.rc_link_up is not low.rc_link_up
+
     def test_bad_crc_flag(self):
         t = pit.decode_telemetry(_build_telemetry(good_crc=False))
         assert t.crc_ok is False

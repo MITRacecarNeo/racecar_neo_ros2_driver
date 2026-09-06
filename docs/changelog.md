@@ -4,6 +4,40 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+### Added
+
+- **`scripts/setup_nvme.sh`** partitions, formats and mounts the NVMe at `/data`, the bag root `racecar log` prefers over `~/logs/bags`. Single GPT partition, ext4 labelled `racecar-data` with the root reserve set to zero (the 5% default costs about 25 GB on a data-only disk), and an fstab entry by UUID with `noatime,nofail` plus a short device timeout, so a missing or failed drive does not strand the car at boot. Refuses a disk that carries a filesystem signature, holds a mounted partition, or backs `/`, and exits early when `/data` is already mounted. Kept out of `setup_all.sh`, since it erases a disk and wants a human confirming the target.
+
+## [0.8.0] - 2026-09-06
+
+Lab dashboards from the NeoRacer, a transmitter-held autonomy gate, and bag recording behind `racecar log`.
+
+### Added
+
+- **Seven lab dashboards** as `racecar-*` systemd units, ported from `neoracer_ros2_driver` v0.4.0 through v0.6.0: `wallfollow` (8081), `camlabel` (8082), `pursuit` (8083), `eps` (8084), `smartfollow` (8085), `linefollow` (8086), `webteleop` (8087). `scripts/setup_dashboards.sh` clones or fast-forwards the seven upstream checkouts into gitignored `scripts/dashboards/` and installs a unit for each, stopped and disabled. Nothing in a checkout is ever modified: the platform differences (ROS Jazzy rather than Humble, `racecar-` unit names, this driver's discovery scope) are absorbed by rendering our own unit from the upstream `.service.in` template. That is what keeps `git pull --ff-only` clean, so a car's tuned YAML survives an update and upstream never conflicts. The renderer checks every substitution token first and refuses to install a unit built from a template that has changed shape. A repository that fails to clone is reported and skipped, so a car with no network still finishes setup. Skip the phase with `RACECAR_DASHBOARDS=0`.
+- **`racecar service` manages the dashboards** alongside the core four. `start <name>` stops the other `/drive` publishers first, since a second publisher fights the mux; `camlabel` only reads the camera and is excluded from that rule. `enable`/`disable` take a unit name, `update` fast-forwards the checkouts, and `status` groups core against dashboards with each dashboard's URL. Tab completion covers the new units and actions.
+- **`/odom` from `pit_node`** (`nav_msgs/Odometry`, `publish_odom` in `pit.yaml`), which six of the seven dashboards read for measured speed. Forward twist only: `twist.twist.linear.x` from the encoder, with pose marked unestimated via `pose.covariance[0] = -1`. Heading is not integrated and `angular.z` is not derived, because there is no wheelbase or steering-angle calibration on this platform and `/motor` carries steering normalized to `[-1, 1]` rather than radians; a number derived from two invented constants would read as authoritative and be wrong.
+- **`/rc/link`** (`std_msgs/Bool`) from `pit_node`, backed by `pit_protocol.Telemetry.rc_link_up`. Presence of a transmitter cannot be read off `/rc/channels`: `rc_normalized` clamps into `[-1, 1]`, which puts a dead channel (near 0 us) on exactly `-1.0`, the same value a switch held low produces. Link state is read from the raw pulse widths instead, before the clamp.
+- **FlySky autonomy gate in `mux_node`**, off by default (`rc_authority_enable`). With no transmitter the bumpers govern exactly as before. Enabled and with a live transmitter, the mode channel takes the gate: middle idle, up manual (the USB gamepad drives), down autonomous, and the bumpers are ignored. Authority requires all four of a fresh link, in-band channels, a sustained hold (`rc_link_hold_sec`), and the switch seen at middle once since the grant; one bad frame revokes it. Granting is slow and revoking immediate on purpose. A frozen buffer holding a plausible mid-band constant passes the band check and is rejected by the change detector.
+- **`racecar log`**, ROS 2 bag recording and analysis. `start [name]` records to `<timestamp>_<name>` under `/data` when an NVMe is mounted there and `~/logs/bags` otherwise; `stop` sends SIGINT, which is what lets rosbag2 finalize the bag rather than leaving it unindexed; `status` reports size, rate, elapsed and time until the disk fills; `list`, `analyze` (duration, size, per-topic counts and mean rates) and `config` complete the set. Recording every topic pulls in the RealSense colour and depth streams at roughly 73 MB/s against a sustained SD write near 30 MB/s, so `start` refuses without `--force` and says what will happen. An unmounted NVMe is named rather than silently skipped.
+- **Per-car parameter overrides.** `single_node_launch` now loads `config/<name>.local.yaml` after the shipped file when it exists, so settings that differ per car live outside the committed YAML. `.gitignore` has reserved `config/*.local.yaml` since v0.5.0; nothing read it until now.
+
+### Known limitations
+
+- **The lidar-based dashboards do not steer correctly on this platform.** `wallfollow`, `eps` and `smartfollow` derive steering from `/scan` using their own angle arithmetic, which takes 0 as the car's nose and positive as its right. Measured on hardware, this chassis reports an object placed to the car's right at -90 degrees under that arithmetic, and an object placed in front at 180 degrees; a mirrored scan would have put the front object at 0, so the difference is a 180 degree yaw rather than a handedness flip. `webteleop` still drives correctly, since its input is manual, but its lidar view is rotated. `camlabel`, `pursuit` and `linefollow` read no lidar and are unaffected.
+
+  This is a missing convention rather than a defect in either codebase: nothing defines whose job it is to normalize lidar orientation, so the driver and the dashboards each assume the other has. Resolving it needs agreement with the Neobotics Foundation on where normalization belongs; the preferred direction is for the dashboards to consume the `racecar-neo-library` API, which already normalizes orientation and units for student code, rather than raw `/scan`. A correction inside this driver was prototyped and reverted, because it settles a shared convention unilaterally and would leave any unaware consumer wrong in the other direction.
+
+### Changed
+
+- **`racecar service enable` and `disable` with no unit name** cover the four core units rather than every `racecar-*` unit. Enabling every dashboard would put six `/drive` publishers on the mux at boot; dashboards are enabled by name.
+- **`setup_all.sh` runs twelve phases**, the twelfth being the lab dashboards.
+- **The linters exclude `scripts/dashboards/`** and pytest no longer recurses into it. Seven upstream repositories of third-party Python would otherwise land in a suite that reached zero lint errors in v0.7.3, and three of them ship their own `tests/` directories.
+
+### Fixed
+
+- **`package.xml` carried version 0.7.3** while `setup.py` said 0.7.4. Corrected before the 0.8.0 bump so the release history is not wrong at 0.7.4.
+
 ## [0.7.4] - 2026-09-06
 
 Operator experience: one addressing mode on eth0, a WiFi client command, an optional desktop, and a `status` that actually diagnoses the car.

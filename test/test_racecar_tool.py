@@ -143,6 +143,51 @@ class TestService:
         for action in ('install', 'start', 'stop', 'status', 'logs'):
             assert action in result.stdout
 
+    def test_status_lists_core_and_dashboards(self):
+        result = _run('service', 'status')
+        assert result.returncode == 0
+        assert 'core:' in result.stdout
+        assert 'dashboards:' in result.stdout
+        for unit in ('racecar-teleop', 'racecar-watchdog',
+                     'racecar-dashboard', 'racecar-jupyter',
+                     'racecar-wallfollow', 'racecar-camlabel',
+                     'racecar-pursuit', 'racecar-eps',
+                     'racecar-smartfollow', 'racecar-linefollow',
+                     'racecar-webteleop'):
+            assert unit in result.stdout, f'status missing {unit}'
+
+    def test_help_lists_the_dashboards_and_update(self):
+        result = _run('service', 'help')
+        assert result.returncode == 0
+        assert 'update' in result.stdout
+        for name in ('wallfollow', 'camlabel', 'pursuit', 'eps',
+                     'smartfollow', 'linefollow', 'webteleop'):
+            assert name in result.stdout
+
+    def test_help_states_the_one_at_a_time_rule(self):
+        result = _run('service', 'help')
+        assert 'one dashboard drives at a time' in result.stdout
+
+    def test_bare_enable_covers_core_units_only(self):
+        # Enabling every dashboard would put six /drive publishers on the mux
+        # at boot, so the bare form must not reach them.
+        block = TOOL.read_text().split('enable|disable)')[1].split(';;')[0]
+        assert 'core_units' in block
+        assert 'dash_units' not in block
+
+    def test_starting_a_drive_dashboard_stops_the_others(self):
+        block = TOOL.read_text().split('                start)')[1].split(';;')[0]
+        assert 'drive_units' in block
+        assert 'only one /drive publisher' in block
+
+    def test_camlabel_is_not_a_drive_publisher(self):
+        # camlabel only reads the camera, so it may run alongside a lab.
+        drive = TOOL.read_text().split('local -a drive_units=')[1].split(')')[0]
+        assert 'camlabel' not in drive
+        for name in ('wallfollow', 'pursuit', 'eps', 'smartfollow',
+                     'linefollow', 'webteleop'):
+            assert name in drive
+
     def test_rejects_unknown_action(self):
         result = _run('service', 'flambé')
         assert result.returncode == 2
@@ -496,6 +541,66 @@ class TestCompletionInstalled:
         )
         assert result.returncode == 0
         assert '_racecar_complete' in result.stdout
+
+    def _complete(self, *words):
+        line = ' '.join(words)
+        script = (
+            f'set +u; source "{TOOL}"; '
+            f'COMP_WORDS=({line}); COMP_CWORD={len(words) - 1}; '
+            '_racecar_complete; printf "%s\\n" "${COMPREPLY[@]}"'
+        )
+        return subprocess.run(
+            ['bash', '-c', script], capture_output=True, text=True, timeout=15,
+        ).stdout.split()
+
+    def test_top_level_offers_log(self):
+        assert 'log' in self._complete('racecar', '')
+
+    def test_service_actions_include_update(self):
+        assert 'update' in self._complete('racecar', 'service', '')
+
+    def test_service_units_include_dashboards(self):
+        words = self._complete('racecar', 'service', 'start', '')
+        for name in ('teleop', 'wallfollow', 'camlabel', 'webteleop'):
+            assert name in words
+
+    def test_enable_completes_unit_names(self):
+        assert 'wallfollow' in self._complete('racecar', 'service', 'enable', '')
+
+    def test_setup_offers_dashboards(self):
+        assert 'dashboards' in self._complete('racecar', 'setup', '')
+
+    def test_log_actions(self):
+        words = self._complete('racecar', 'log', '')
+        for action in ('start', 'stop', 'status', 'list', 'analyze', 'config'):
+            assert action in words
+
+    def test_log_start_flags(self):
+        words = self._complete('racecar', 'log', 'start', '')
+        for flag in ('--topics', '--dir', '--name', '--storage', '--force'):
+            assert flag in words
+
+
+class TestLog:
+    """`racecar log` dispatches to scripts/racecar_log.py."""
+
+    def test_status_reports_a_valid_state(self):
+        # Must not assume the car is idle: a real recording is a legitimate
+        # state, and asserting 'not recording' made the suite depend on
+        # whether anyone had run `racecar log start` first.
+        result = _run('log', 'status')
+        assert result.returncode == 0
+        assert 'not recording' in result.stdout or 'recording ' in result.stdout
+
+    def test_help_lists_actions(self):
+        result = _run('log', '--help')
+        assert result.returncode == 0
+        for action in ('start', 'stop', 'status', 'analyze'):
+            assert action in result.stdout
+
+    def test_top_level_help_documents_log(self):
+        result = _run('help')
+        assert 'log <action>' in result.stdout
 
 
 class TestWifiCommand:
