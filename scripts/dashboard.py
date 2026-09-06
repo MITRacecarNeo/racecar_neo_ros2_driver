@@ -13,6 +13,7 @@ import sys
 import threading
 import time
 
+from diagnostic_msgs.msg import DiagnosticArray
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
@@ -42,16 +43,21 @@ MONITORED = {
     'dotmatrix': {'topic': '/dotmatrix/pixels', 'label': 'Dot matrix', 'supervised': False},
 }
 
+# RATE_TOPICS are directly subscribed to by the dashboard
 RATE_TOPICS = [
     '/motor',
     '/mux_out',
     '/imu/fused',
-    '/imu/realsense',
     '/imu/lsm9ds1',
     '/scan',
+    '/edgetpu/inference',
+]
+# DISPLAY_RATE_TOPICS includes all topics that appear in responses
+DISPLAY_RATE_TOPICS = [
+    *RATE_TOPICS,
+    '/imu/realsense',
     '/camera/color',
     '/camera/depth',
-    '/edgetpu/inference',
 ]
 
 log = logging.getLogger('dashboard')
@@ -103,6 +109,22 @@ class _RateSampler(Node):
         self._qos = qos
         self._topics = list(topics)
         self._subs: dict = {}
+        self._diagnostic_rates = {
+            '/camera/color': None,
+            '/camera/depth': None,
+            '/imu/realsense': None,
+        }
+        self._diagnostic_last_update = {
+            '/camera/color': None,
+            '/camera/depth': None,
+            '/imu/realsense': None,
+        }
+        self._diagnostics_sub = self.create_subscription(
+            DiagnosticArray,
+            '/diagnostics',
+            self._record_diagnostics,
+            10,
+        )
 
     def _record(self, topic: str):
         now = time.monotonic()
@@ -112,6 +134,35 @@ class _RateSampler(Node):
             cutoff = now - self._window
             while dq and dq[0] < cutoff:
                 dq.popleft()
+
+    def _record_diagnostics(self, msg: DiagnosticArray):
+        """Extract color, depth, and imu rates from /diagnostics topic for RealSense."""
+        now = time.monotonic()
+        diagnostic_name_to_topic = {
+            'camera: color': '/camera/color',
+            'camera: depth': '/camera/depth',
+            'camera: gyro': '/imu/realsense',
+        }
+        updates = {}
+        for status in msg.status:
+            topic = diagnostic_name_to_topic.get(status.name.lower())
+            if topic is None:
+                continue
+            for value in status.values:
+                if value.key != 'Actual frequency (Hz)':
+                    continue
+                try:
+                    hz = float(value.value)
+                except (TypeError, ValueError):
+                    break
+                updates[topic] = hz
+                break
+        if not updates:
+            return
+        with self._lock:
+            for topic, hz in updates.items():
+                self._diagnostic_rates[topic] = hz
+                self._diagnostic_last_update[topic] = now
 
     def attach_subscriptions(self):
         """Resolve each topic's type and create a subscription. Re-runnable; idempotent."""
@@ -131,16 +182,28 @@ class _RateSampler(Node):
                 log.debug('Skipping %s: %s', topic, exc)
                 continue
             self._subs[topic] = self.create_subscription(
-                msg_cls, topic, lambda _msg, t=topic: self._record(t), self._qos,
+                msg_cls, topic, lambda _msg, t=topic: self._record(t), self._qos, raw=True
             )
 
     def measure_hz(self, topic: str):
-        """Return arrival rate (Hz) over the window, or None if not subscribed/no data."""
+        """
+        Return the rate (Hz) for a topic, or None when no data.
+
+        RealSense streams are read from /diagnostics; the rest are measured
+        from arrival timestamps over the window.
+        """
         with self._lock:
+            now = time.monotonic()
+            if topic in self._diagnostic_rates:
+                last_update = self._diagnostic_last_update[topic]
+                if last_update is None:
+                    return None
+                if now - last_update > RATE_WINDOW_SEC:
+                    return None
+                return self._diagnostic_rates[topic]
             dq = self._stamps.get(topic)
             if dq is None:
                 return None
-            now = time.monotonic()
             cutoff = now - self._window
             while dq and dq[0] < cutoff:
                 dq.popleft()
@@ -297,7 +360,7 @@ def _monitor_loop() -> None:
                 }
 
             rates = {}
-            for topic in RATE_TOPICS:
+            for topic in DISPLAY_RATE_TOPICS:
                 hz = _measure_hz(topic)
                 rates[topic] = {'hz': hz, 'stale': hz is None or hz < 0.5}
 

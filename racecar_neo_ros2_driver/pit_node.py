@@ -196,8 +196,8 @@ class PitNode(Node):
         )
         self._pub_imu = self.create_publisher(Imu, self._imu_topic, qos)
         self._pub_mag = self.create_publisher(MagneticField, self._mag_topic, qos)
-        self._pub_imu_raw = self.create_publisher(Imu, f"{self._imu_topic}/raw", qos)
-        self._pub_mag_raw = self.create_publisher(MagneticField, f"{self._mag_topic}/raw", qos)
+        self._pub_imu_raw = self.create_publisher(Imu, f'{self._imu_topic}/raw', qos)
+        self._pub_mag_raw = self.create_publisher(MagneticField, f'{self._mag_topic}/raw', qos)
         self._pub_encoder = self.create_publisher(Float32, self._encoder_topic, qos)
         self._pub_voltage = self.create_publisher(Float32, self._voltage_topic, qos)
         self._pub_current = self.create_publisher(Float32, self._current_topic, qos)
@@ -337,8 +337,12 @@ class PitNode(Node):
             return
 
         stamp = self.get_clock().now().to_msg()
-        raw_accel = transform_accel(telem.accel, self._ag_order, self._ag_sign, self._accel_scale, [0.0, 0.0, 0.0])
-        raw_gyro = transform_gyro(telem.gyro, self._ag_order, self._ag_sign, self._gyro_scale, [0.0, 0.0, 0.0])
+        raw_accel = transform_accel(
+            telem.accel, self._ag_order, self._ag_sign, self._accel_scale, [0.0, 0.0, 0.0]
+        )
+        raw_gyro = transform_gyro(
+            telem.gyro, self._ag_order, self._ag_sign, self._gyro_scale, [0.0, 0.0, 0.0]
+        )
         accel = raw_accel - self._accel_bias
         gyro = raw_gyro - self._gyro_bias
 

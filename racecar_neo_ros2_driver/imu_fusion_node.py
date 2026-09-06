@@ -39,6 +39,11 @@ class ImuFusionNode(Node):
         self.declare_parameter('source_timeout_sec', 0.25)
         self.declare_parameter('frame_id', 'imu_link')
 
+        self.declare_parameter('realsense_accel_bias', [0.0, 0.0, 0.0])
+        self.declare_parameter('realsense_gyro_bias', [0.0, 0.0, 0.0])
+        self._rs_accel_bias = np.array(self.get_parameter('realsense_accel_bias').value, float)
+        self._rs_gyro_bias = np.array(self.get_parameter('realsense_gyro_bias').value, float)
+
         self._sources = list(self.get_parameter('sources').value)
         output_topic = self.get_parameter('output_topic').value
         self._timeout = float(self.get_parameter('source_timeout_sec').value)
@@ -64,6 +69,16 @@ class ImuFusionNode(Node):
 
     def _make_cb(self, topic: str):
         def cb(msg: Imu):
+            # Correct on arrival, not on publish: _publish re-reads the cached
+            # message every timer tick, so subtracting there compounds the bias
+            # once per tick whenever the source is slower than the timer.
+            if topic == '/imu/realsense':
+                msg.linear_acceleration.x -= float(self._rs_accel_bias[0])
+                msg.linear_acceleration.y -= float(self._rs_accel_bias[1])
+                msg.linear_acceleration.z -= float(self._rs_accel_bias[2])
+                msg.angular_velocity.x -= float(self._rs_gyro_bias[0])
+                msg.angular_velocity.y -= float(self._rs_gyro_bias[1])
+                msg.angular_velocity.z -= float(self._rs_gyro_bias[2])
             self._latest[topic] = (msg, time.monotonic())
         return cb
 

@@ -6,7 +6,7 @@ package_name = 'racecar_neo_ros2_driver'
 
 setup(
     name=package_name,
-    version='0.7.2',
+    version='0.7.3',
     packages=find_packages(exclude=['test']),
     data_files=[
         ('share/ament_index/resource_index/packages',

@@ -1,11 +1,6 @@
 #!/usr/bin/env python3
-"""
-LSM9DS1 IMU calibrator for ROS2.
+"""RealSense D435i IMU calibrator for ROS2."""
 
-Author: Koneshka Dey
-"""
-
-from datetime import datetime
 import os
 import queue
 import threading
@@ -43,11 +38,11 @@ class IMUCalibrator(Node):
         """Subscribe to the uncalibrated raw topic using sensor-data QoS."""
         self.subscription = self.create_subscription(
             Imu,
-            '/imu/lsm9ds1/raw',
+            '/imu/realsense',
             self.imu_callback,
             qos_profile_sensor_data
         )
-        self.get_logger().info('Created subscription to /imu/lsm9ds1/raw')
+        self.get_logger().info('Created subscription to /imu/realsense')
 
     def imu_callback(self, msg):
         """Handle an incoming IMU message."""
@@ -220,38 +215,23 @@ class IMUCalibrator(Node):
 
     def generate_calibration_yaml(self):
         """Generate YAML calibration file."""
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
         calibration_data = {
-            'imu_model': 'lsm9ds1',
-            'calibration_date': timestamp,
-            'ros2_topic': '/imu',
-
-            'accelerometer.bias': list(map(float, self.accel_bias)),
-            'accelerometer.noise_density': 1.86e-03,
-            'accelerometer.random_walk': 4.33e-04,
-
-            'gyroscope.bias': list(map(float, self.gyro_bias)),
-            'gyroscope.noise_density': 1.87e-04,
-            'gyroscope.random_walk': 2.66e-05,
-
-            'update_rate': 100.0,
-            'temperature_bias': 0.0,
-            'temperature_scale': 1.0
+            'realsense_accel_bias': list(map(float, self.accel_bias)),
+            'realsense_gyro_bias': list(map(float, self.gyro_bias)),
         }
 
         ros2_yaml_header = {
-            'pit_node': {
+            'imu_fusion_node': {   # Targets the fusion node!
                 'ros__parameters': calibration_data
             }
         }
 
         pkg_dir = get_package_share_directory('racecar_neo_ros2_driver')
-        install_file = os.path.join(pkg_dir, 'config', 'lsm9ds1_cal.yaml')
+        install_file = os.path.join(pkg_dir, 'config', 'realsense_cal.yaml')
 
         ws_root = install_file.split('install/')[0]
         src_file = os.path.join(
-            ws_root, 'src', 'racecar_neo_ros2_driver', 'config', 'lsm9ds1_cal.yaml'
+            ws_root, 'src', 'racecar_neo_ros2_driver', 'config', 'realsense_cal.yaml'
         )
 
         try:
