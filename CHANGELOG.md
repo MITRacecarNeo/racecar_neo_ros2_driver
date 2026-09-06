@@ -4,6 +4,38 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-09-05
+
+Calibration pipeline, dashboard efficiency, and discovery scoping. Collects every change since v0.7.2 (2026-07-07), including PRs #26, #27, #29, #30, #31, and #32.
+
+### Added
+
+- **Raw IMU and magnetometer telemetry.** `pit_node` publishes `/imu/lsm9ds1/raw` and `/mag/raw` alongside the corrected `/imu/lsm9ds1` and `/mag`. The raw topics carry axis-remapped, sensitivity-scaled values with zero bias applied, which is what the calibration utilities need to fit against.
+- **LSM9DS1 calibration utilities.** `scripts/calibrate_imu.py` (6-position accelerometer and gyroscope bias) and `scripts/calibrate_mag.py` (hard- and soft-iron ellipsoid fit), ported from `racecar-neo-ros2-backend`. Both write `pit_node`-keyed YAML to the install tree and the source tree so a rebuild does not discard the result. `setup.py` installs them under `lib/` so `ros2 run racecar_neo_ros2_driver calibrate_imu.py` resolves.
+- **RealSense IMU calibration.** `scripts/calibrate_realsense_imu.py` and `config/realsense_cal.yaml`; `imu_fusion_node` declares `realsense_accel_bias` / `realsense_gyro_bias` and subtracts them from `/imu/realsense` samples. `imu_fusion.launch.py` loads the calibration file alongside `imu_fusion.yaml` and exposes both as the `imu_fusion_config` and `realsense_cal_config` launch arguments.
+- **Diagnostic-sourced camera rates on the dashboard.** `/camera/color`, `/camera/depth`, and `/imu/realsense` rates are read from the `realsense2_camera` `/diagnostics` stream instead of being measured with dedicated subscriptions.
+
+### Changed
+
+- **ROS discovery is restricted to localhost.** `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST` is exported from `launch_teleop.sh`, the dashboard / watchdog / jupyter units, and `setup_user_env.sh`. Discovery traffic no longer goes out the ALFA dongle, which was driving CPU spikes. Every node runs on the robot, so nothing on-board loses a peer. **Off-robot ROS access ends with this change**: `rviz`, `ros2 topic echo`, and remote nodes on a laptop will no longer see the robot's topics. Set the variable back to `SUBNET` in the shell if you need it for a session.
+- **Dashboard subscriptions are raw.** Rate sampling uses `raw=True`, so messages are counted without deserializing them. Measured on a Team 2 car, dashboard CPU dropped from roughly 40-50% to about 20%.
+- **RealSense default stream profiles** are `640x480x30` for depth and `640x480x60` for color, up from `640x480x15` on both.
+- **`pit.launch.py`** builds its node explicitly instead of going through `single_node_launch()`, so it can load `pit.yaml`, `lsm9ds1_cal.yaml`, and `lsm9ds1_mag_cal.yaml` together.
+- **`pit_node` bias application** computes the raw vector first and subtracts the bias from it, rather than passing the bias into `transform_accel` / `transform_gyro`. This is what makes the raw publishers possible.
+
+### Fixed
+
+- **ESC direction.** `speed_sign` in `config/pit.yaml` is `1`; it was `-1`, which drove the car backwards for a positive commanded speed.
+- **Calibration parameter loading.** The calibration utilities write YAML keyed on `pit_node`, matching the node that `pit.launch.py` actually starts.
+- **Compounding RealSense bias.** The bias was subtracted inside `imu_fusion_node._publish`, which re-reads the cached message on every timer tick; a source slower than the 100 Hz timer had its bias applied once per tick rather than once per message, and a stalled stream accumulated up to 25 subtractions within `source_timeout_sec`. The correction now happens in the subscription callback.
+- **Dashboard `/imu/realsense` rate.** The rate was read from the `camera: accel` diagnostic (63 Hz) while `unite_imu_method: '2'` publishes the united IMU at the gyro rate (200 Hz), under-reporting by 3.2x. It now reads `camera: gyro`.
+- **RealSense calibrator log message** named `/imu/lsm9ds1/raw` while subscribing to `/imu/realsense`.
+- **Lint backlog.** `ament_flake8` goes from 261 errors to 0 and `ament_pep257` is clean, across the calibration scripts, `pit_node.py`, `pit.launch.py`, and `dashboard.py`. `colcon test` failures drop to the RTC backup-battery hardware check.
+
+### Known issues
+
+- The `config/lsm9ds1_cal.yaml` and `config/lsm9ds1_mag_cal.yaml` files committed to this repo are still keyed on `imu_node`, not `pit_node`. A fresh install therefore starts `pit_node` with zero bias and an identity soft-iron matrix, silently and with no error, until `calibrate_imu.py` and `calibrate_mag.py` are run on that car.
+
 ## [0.7.2] - 2026-07-07
 
 ### Fixed

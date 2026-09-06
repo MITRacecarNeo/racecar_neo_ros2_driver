@@ -15,6 +15,8 @@ This package is the v2 successor to [`racecar-neo-ros2-backend`](https://github.
 - [Jupyter notebooks](#jupyter-notebooks)
 - [Manual build](#manual-build)
 - [Launch](#launch)
+- [Sensor calibration](#sensor-calibration)
+- [ROS discovery scope](#ros-discovery-scope)
 - [Changelog](#changelog)
 - [License](#license)
 
@@ -43,6 +45,7 @@ Sensor and ML nodes publish independently:
 - `/camera/color`, `/camera/depth` (sensor_msgs/Image): RealSense D435i color and depth streams
 - `/imu/realsense` (sensor_msgs/Imu): RealSense D435i IMU, remapped from `/camera/imu`
 - `/imu/lsm9ds1`, `/mag` (sensor_msgs/Imu, MagneticField): LSM9DS1 on the NEO-PIT board, republished from `pit_node` telemetry
+- `/imu/lsm9ds1/raw`, `/mag/raw` (sensor_msgs/Imu, MagneticField): the same telemetry axis-remapped and sensitivity-scaled but with no bias applied; the calibration utilities fit against these
 - `/imu/fused` (sensor_msgs/Imu): `imu_fusion_node` blends `/imu/realsense` and `/imu/lsm9ds1` (single-source passthrough when one is live)
 - `/scan` (sensor_msgs/LaserScan)
 - `/edgetpu/inference` (vision_msgs/Detection2DArray): `edgetpu_node` consumes `/camera/color`
@@ -57,7 +60,7 @@ Safety/uptime layers (inherited from UAV Neo, shipped in v0.0.4):
 - **Launch wrapper** (`scripts/launch_teleop.sh`) creates `~/logs/<timestamp>/`, updates `~/logs/latest` atomically, sweeps FastRTPS SHM orphans, and `exec`s `ros2 launch` so systemd tracks the launch PID directly.
 - **Web dashboard** at `http://<robot>:8080` — 10 node cards, 7 topic-rate rows, System Health (RTC battery + Pi under-voltage alarm), watchdog log tail. Auto-refresh.
 - **JupyterLab** at `http://<robot>:8888` with PYTHONPATH/AMENT_PREFIX_PATH pre-set so `import rclpy` works in notebooks.
-- **Pre-flight `colcon test` suite** (332 tests) asserting every peripheral, embedding fix commands in failure messages.
+- **Pre-flight `colcon test` suite** (367 tests) asserting every peripheral, embedding fix commands in failure messages.
 
 ## Quickstart (fresh Ubuntu 24.04 install)
 
@@ -243,7 +246,7 @@ Once `racecar-teleop.service` is running, browse to `http://<robot>:8080` for a 
 
 - **Nodes**: one card per monitored subsystem (10 total) — green when the expected topic is being advertised, red when not.
 - **System Health**: RTC backup battery voltage (green ≥ 3.0 V, yellow 2.7–3.0 V, red < 2.7 V) and the Pi 5 PMIC sticky under-voltage alarm.
-- **Topic Rates**: live Hz for `/motor`, `/mux_out`, `/imu`, `/scan`, `/camera/forward`, and `/edgetpu/inference`. Yellow when stale (< 0.5 Hz), red when missing.
+- **Topic Rates**: live Hz for `/motor`, `/mux_out`, `/imu/fused`, `/imu/lsm9ds1`, `/scan`, `/edgetpu/inference`, `/camera/color`, `/camera/depth`, and `/imu/realsense`. Yellow when stale (< 0.5 Hz), red when missing. The three RealSense rows are read from the camera's own `/diagnostics` stream; the rest are counted from raw subscriptions, which keeps the dashboard's own CPU cost near 20%.
 - **Watchdog Log**: tail of `~/logs/latest/watchdog.log` so you can see restart events.
 
 Refreshes every 3 s; System Health refreshes on a slower 60 s cadence (RTC drifts on the order of weeks, not seconds).
@@ -278,9 +281,63 @@ RealSense topics, profiles, and known issues: see [docs/realsense_topics.md](doc
 
 For boot-time startup, see [scripts/](./scripts/) for systemd units and the `setup_all.sh` idempotent installer.
 
+## Sensor calibration
+
+Bias and scale are per-board, so each car needs its own calibration run. All
+three utilities write their YAML to both the install tree and the source tree,
+so a later `colcon build` does not discard the result.
+
+```sh
+ros2 run racecar_neo_ros2_driver calibrate_imu.py         # LSM9DS1 accel + gyro bias
+ros2 run racecar_neo_ros2_driver calibrate_mag.py         # LSM9DS1 hard/soft iron
+ros2 run racecar_neo_ros2_driver calibrate_realsense_imu.py   # D435i accel + gyro bias
+```
+
+| Utility | Reads | Writes | Consumed by |
+|---|---|---|---|
+| `calibrate_imu.py` | `/imu/lsm9ds1/raw` | `config/lsm9ds1_cal.yaml` | `pit_node` |
+| `calibrate_mag.py` | `/mag/raw` | `config/lsm9ds1_mag_cal.yaml` | `pit_node` |
+| `calibrate_realsense_imu.py` | `/imu/realsense` | `config/realsense_cal.yaml` | `imu_fusion_node` |
+
+`calibrate_imu.py` walks a 6-position sequence (each axis up and down) and
+averages the gravity vector per pose. `calibrate_mag.py` needs rotation about
+all three axes and fits an ellipsoid, then plots raw against corrected samples
+so you can confirm the sphere closed up.
+
+The LSM9DS1 files committed to this repo are keyed on `imu_node`, not
+`pit_node`. Until they are re-keyed, a car that has never been calibrated runs
+`pit_node` with zero bias and an identity soft-iron matrix, with nothing logged
+to say so. Run the two LSM9DS1 utilities on every new car.
+
+## ROS discovery scope
+
+`ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST` is set in `launch_teleop.sh`, the
+dashboard / watchdog / jupyter units, and the `.bashrc` block written by
+`setup_user_env.sh`. Every node in this stack runs on the robot, so restricting
+discovery to the loopback interface costs nothing on-board and keeps discovery
+chatter off the ALFA dongle, where it was driving CPU spikes.
+
+The tradeoff: a laptop cannot see the robot's topics. `rviz`,
+`ros2 topic echo`, and remote nodes will find nothing. For a session where you
+need them, widen the range on both machines:
+
+```sh
+export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
+```
+
 ## Changelog
 
-See [CHANGELOG.md](./CHANGELOG.md).
+Full history in [CHANGELOG.md](./CHANGELOG.md). Most recent:
+
+- **0.7.3** (2026-09-05): LSM9DS1 and RealSense calibration utilities plus raw
+  `/imu/lsm9ds1/raw` and `/mag/raw` telemetry; dashboard CPU roughly halved via
+  raw subscriptions and `/diagnostics`-sourced camera rates; ROS discovery
+  restricted to localhost; RealSense defaults to 640x480 at 30 fps depth and
+  60 fps color; ESC direction corrected; flake8 and pep257 backlog cleared.
+- **0.7.2** (2026-07-07): eth0 static address reset loop fixed; the static is
+  declared once via netplan `addresses:` with no gateway.
+- **0.7.1** (2026-07-07): per-car SSID (`racecar-neo-<id>`) and an AP-disable
+  reset for golden images.
 
 ## License
 
