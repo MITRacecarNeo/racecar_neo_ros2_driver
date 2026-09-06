@@ -48,7 +48,7 @@ def test_help_renders(args):
     assert 'Commands' in result.stdout
     expected = ('build', 'test', 'source', 'cd', 'teleop', 'launch',
                 'clear', 'udev', 'watchdog', 'service', 'setup', 'library',
-                'cleanup', 'status')
+                'cleanup', 'status', 'eth', 'wifi', 'desktop')
     for sub in expected:
         assert sub in result.stdout, f'help missing "{sub}"'
 
@@ -101,13 +101,21 @@ def test_cd_changes_pwd_to_package_root():
     assert result.stdout.strip().endswith('racecar_neo_ros2_driver')
 
 
-def test_status_runs_without_error():
-    # status is read-only and idempotent; it should always succeed even with
-    # no ros2 daemon / no peripherals.
-    result = _run('status')
-    assert result.returncode == 0
-    assert 'USB peripherals' in result.stdout
-    assert 'Stable device symlinks' in result.stdout
+def test_status_dispatches_to_the_diagnostic():
+    # v0.7.4 replaced the informational status with a strict diagnostic, so
+    # the exit code now reflects the car's health: 0 when everything passed,
+    # 1 otherwise. Both are valid on real hardware, so assert the dispatch
+    # and the output shape rather than a fixed code.
+    result = _run('status', '--quick', '--section', 'devices')
+    assert result.returncode in (0, 1), result.stderr
+    assert 'DEVICES' in result.stdout
+    assert 'skipped' in result.stdout
+
+
+def test_status_forwards_flags():
+    result = _run('status', '--section', 'nonsense')
+    assert result.returncode == 2
+    assert 'unknown section' in result.stderr
 
 
 class TestService:

@@ -136,7 +136,7 @@ sudo reboot
 After reboot, `racecar-teleop.service` auto-starts and pulls the watchdog via `Wants=racecar-watchdog.service`. Verify:
 
 ```sh
-racecar status              # USB peripherals + device symlinks + running ros2 nodes
+racecar status              # full diagnostic; exits non-zero unless everything passed
 racecar service status      # all 4 racecar-* units should be active+enabled
 ```
 
@@ -196,10 +196,11 @@ racecar setup networking --show         # print persisted overrides
 racecar clear --dmatrix             # flash + clear the MAX7219 display
 racecar udev                        # re-install the udev rules
 racecar cleanup [--force]           # list / kill stale racecar processes + SHM orphans
+racecar status                      # full diagnostic (devices, sensors, system, network)
+racecar status --quick              # host checks only; skips the ROS sampling phase
 racecar eth status                  # eth0 addressing mode + conflict checks
 racecar wifi list                   # visible networks on wlan0
 racecar desktop status              # GNOME on/off for the next boot
-racecar status                      # USB peripherals + device symlinks + running ros2 nodes
 racecar help                        # full usage
 ```
 
@@ -478,6 +479,10 @@ export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
 
 Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
 
+- **0.7.4** (2026-09-06): eth0 holds one IPv4 addressing mode, never both, via
+  `racecar eth`; new `racecar wifi` and `racecar desktop`; `racecar status` is a
+  strict whole-car diagnostic; `racecar selftest` removed. See
+  [docs/advanced-settings.md](docs/advanced-settings.md) for the non-defaults.
 - **0.7.3** (2026-09-05): LSM9DS1 and RealSense calibration utilities plus raw
   `/imu/lsm9ds1/raw` and `/mag/raw` telemetry; dashboard CPU roughly halved via
   raw subscriptions and `/diagnostics`-sourced camera rates; ROS discovery

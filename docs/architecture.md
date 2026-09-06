@@ -293,6 +293,27 @@ resolve from topic advertisement; rate rows come from raw subscriptions
 read from the camera's `/diagnostics` output. System Health reports the RTC
 backup cell voltage and the sticky PMIC under-voltage alarm.
 
+`scripts/diagnose.py` is the one-shot counterpart behind `racecar status`,
+where the dashboard is the continuous view. It opens every subscription at
+once and shares a single sample window rather than measuring topics in
+sequence, and runs the host checks on a worker thread beside it, so a full
+pass costs one discovery plus one window. Checks are grouped as devices,
+sensors, actuators, system, services and network; rate checks compare observed
+Hz against a per-topic floor rather than testing for presence. It is read-only
+and never commands the hardware.
+
+The exit code is strict: 0 only when every requested check passed, so `WARN`
+and `SKIP` both count against it. Deselecting a section with `--quick` or
+`--section` is distinct from a check failing to run, and does not affect the
+result; without that distinction a car with teleop stopped would skip its
+sensor checks and still report success.
+
+`scripts/sysinfo.py` holds the host readings both consumers need: RTC
+thresholds and classification, the under-voltage alarm, SoC temperature,
+throttling flags, load, memory, disk, uptime and clock sync. It exists because
+the RTC thresholds were the kind of constant that goes wrong quietly when
+duplicated, since a drifted copy still passes its own tests.
+
 ## Configuration
 
 One YAML per node under `config/`, keyed by node name and loaded through the
@@ -333,16 +354,19 @@ racecar_neo_ros2_driver/
 ├── racecar_neo_ros2_driver/   node implementations, launch_common, pit_protocol
 ├── launch/                    one file per subsystem plus teleop composite
 ├── config/                    one YAML per node, keyed by node name
-├── scripts/                   setup phases, watchdog, dashboard, calibration,
-│                              systemd units, udev rules
+├── scripts/                   setup phases, watchdog, dashboard, diagnostic,
+│                              calibration, systemd units, udev rules
 ├── test/                      pytest suite (ament convention; not tests/)
 ├── models/                    EdgeTPU tflite model and labels
 ├── depend/                    vendored Coral debs and wheels
-└── docs/                      this file, changelog, migration and test notes
+└── docs/                      this file, changelog, advanced settings,
+                               migration and test notes
 ```
 
 `pit_protocol.py` holds the wire format for the Teensy link and carries no ROS
-dependency, so it is unit-testable without a running graph.
+dependency, so it is unit-testable without a running graph. `sysinfo.py` and
+`wifi_scan.py` are separated from their callers for the same reason: both are
+pure enough to test against fixtures without hardware.
 
 ## Known structural issues
 

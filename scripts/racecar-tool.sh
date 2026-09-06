@@ -957,24 +957,10 @@ __RC_CLEANUP_HELP__
             ;;
 
         status)
-            echo "=== USB peripherals ==="
-            lsusb | grep -iE "silicon labs|intel|global unichip|google" || echo "  (none of the expected USB devices found)"
-            echo
-            echo "=== Stable device symlinks ==="
-            for s in neo-pit-pcb lidar; do
-                if [[ -e "/dev/$s" ]]; then
-                    printf "  /dev/%-14s -> %s\n" "$s" "$(readlink -f /dev/$s)"
-                else
-                    printf "  /dev/%-14s MISSING (run: racecar udev)\n" "$s"
-                fi
-            done
-            echo
-            echo "=== ros2 nodes running ==="
-            if command -v ros2 >/dev/null; then
-                ros2 node list 2>/dev/null || echo "  (no ROS daemon / no nodes)"
-            else
-                echo "  ros2 not on PATH"
-            fi
+            # Whole-car diagnostic. Read-only: it observes topics and reads
+            # sysfs, and never commands the hardware. Exits non-zero unless
+            # every requested check passed, so it is usable from a script.
+            python3 "${RACECAR_DIAGNOSE_SCRIPT:-$pkg_dir/scripts/diagnose.py}" "$@"
             ;;
 
         help|-h|--help|"")
@@ -1060,7 +1046,14 @@ Commands:
     cleanup             List orphaned racecar processes + FastRTPS SHM segments.
                         Defaults to a dry-run. Pass --force to actually kill/remove
                         (uses sudo for root-owned PIDs).
-    status              Show USB peripherals, device symlinks, and running ros2 nodes.
+    status [flags]      Whole-car diagnostic: devices, sensors, actuators,
+                        system, services and network in one pass. Read-only.
+                        Exits non-zero unless every requested check passed.
+                          --quick             skip the ROS sampling phase
+                          --json              machine-readable output
+                          --section a,b       devices, sensors, actuators,
+                                              system, services, network
+                          --window SEC        ROS sample window (default 2.0)
     help                Show this message.
 
 Extra args are forwarded:
@@ -1129,6 +1122,9 @@ _racecar_complete() {
             ;;
         desktop)
             COMPREPLY=( $(compgen -W "status enable disable help" -- "$cur") )
+            ;;
+        status)
+            COMPREPLY=( $(compgen -W "--quick --json --section --window --help" -- "$cur") )
             ;;
         wifi)
             if [[ $COMP_CWORD -eq 2 ]]; then
