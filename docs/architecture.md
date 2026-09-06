@@ -324,9 +324,6 @@ dependency, so it is unit-testable without a running graph.
 
 ## Known structural issues
 
-- `scripts/setup_user_env.sh` writes `ROS_AUTOMATIC_DISCOVERY_RANGE` inside the
-  branch guarded by the ROS sourcing marker. A car provisioned before that line
-  existed never receives it, because the marker already matches.
 - The test suite lives in `test/`, not `tests/`. This follows the ament and
   `colcon test` convention and is a deliberate exception to the layout used
   elsewhere on this machine.

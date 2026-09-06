@@ -31,34 +31,39 @@ done
 
 BASHRC="$USER_HOME/.bashrc"
 
+# Blocks 1 and 2 hold no per-car state: every path is either fixed or resolved
+# from $HOME by the shell at runtime. Nothing in them is worth preserving, so
+# each run drops any existing copy and writes the current one. A marker-present
+# test would answer "was this ever written", not "is this current", which is how
+# the ROS_AUTOMATIC_DISCOVERY_RANGE line reached only cars imaged after v0.7.3.
+#
+# Hand edits inside a block do not survive a re-run. Personal settings belong
+# outside the markers.
+replace_block() {
+    local marker="$1"
+    if grep -qF "$marker" "$BASHRC" 2>/dev/null; then
+        sed -i "/^${marker}$/,/^$/d" "$BASHRC"
+    fi
+    printf '\n%s\n' "$marker" >> "$BASHRC"
+    cat >> "$BASHRC"
+}
+
 # Block 1: ROS2 + workspace overlay sourcing.
 SOURCE_MARKER="# RACECAR Neo - ROS2 + workspace overlay"
-if grep -qF "$SOURCE_MARKER" "$BASHRC" 2>/dev/null; then
-    echo "  $BASHRC already sources ROS2"
-else
-    cat >> "$BASHRC" <<EOF
-
-$SOURCE_MARKER
+replace_block "$SOURCE_MARKER" <<EOF
 source /opt/ros/jazzy/setup.bash
 [ -f "\$HOME/ros2_ws/install/setup.bash" ] && source "\$HOME/ros2_ws/install/setup.bash"
 export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
 EOF
-    echo "  added ROS2 sourcing to $BASHRC"
-fi
+echo "  ROS2 sourcing block written to $BASHRC"
 
 # Block 2: source the `racecar` shell tool.
 TOOL_MARKER="# RACECAR Neo - shell tool"
-if grep -qF "$TOOL_MARKER" "$BASHRC" 2>/dev/null; then
-    echo "  $BASHRC already sources racecar-tool.sh"
-else
-    cat >> "$BASHRC" <<'EOF'
-
-# RACECAR Neo - shell tool
+replace_block "$TOOL_MARKER" <<'EOF'
 [ -f "$HOME/ros2_ws/src/racecar_neo_ros2_driver/scripts/racecar-tool.sh" ] && \
     source "$HOME/ros2_ws/src/racecar_neo_ros2_driver/scripts/racecar-tool.sh"
 EOF
-    echo "  added racecar-tool source line to $BASHRC"
-fi
+echo "  racecar-tool block written to $BASHRC"
 
 # Block 3: clean up the legacy aliases (anyone who ran an earlier setup_user_env
 # still has them; the new `racecar` function replaces them).
