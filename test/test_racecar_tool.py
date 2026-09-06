@@ -518,6 +518,16 @@ class TestEthCommand:
         assert result.returncode == 0, result.stderr
         assert 'STUB called with: static --addr=10.0.0.5/24' in result.stdout
 
+    def test_monitor_dispatches_to_the_logger(self):
+        # The mutual-exclusion fix is unproven, so the logger is how it gets
+        # confirmed; --once samples and exits without looping.
+        result = _run('eth', 'monitor', '--once', '--log', '/dev/null')
+        assert result.returncode == 0, result.stderr
+        assert 'carrier=' in result.stdout
+
+    def test_monitor_listed_in_help(self):
+        assert 'monitor' in _run('eth', 'help').stdout
+
     def test_default_action_is_status(self, tmp_path):
         stub = tmp_path / 'stub_eth.sh'
         stub.write_text('#!/bin/bash\necho "STUB called with: $*"\n')

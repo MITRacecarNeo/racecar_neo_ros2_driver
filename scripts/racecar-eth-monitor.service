@@ -1,0 +1,29 @@
+[Unit]
+# Temporary diagnostic for the v0.7.4 eth0 addressing change. Deliberately
+# NOT in the unit list that setup_services.sh installs and enables: it exists
+# to gather evidence that the static address stops dropping, and should be
+# disabled once that question is settled.
+#
+# Enable for a soak:
+#   sudo cp scripts/racecar-eth-monitor.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now racecar-eth-monitor
+Description=RACECAR Neo eth0 addressing and link monitor (temporary diagnostic)
+After=network.target NetworkManager.service
+
+[Service]
+Type=exec
+User=racecar
+Group=racecar
+# No ROS environment needed; this reads sysfs, ip and nmcli only.
+ExecStart=/usr/bin/python3 /home/racecar/ros2_ws/src/racecar_neo_ros2_driver/scripts/eth_monitor.py
+Restart=always
+RestartSec=10
+Environment=HOME=/home/racecar
+WorkingDirectory=/home/racecar
+# The log is the deliverable, so keep it out of the journal's rotation.
+StandardOutput=null
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

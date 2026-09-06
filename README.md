@@ -274,6 +274,26 @@ In static mode eth0 keeps its IPv6 addresses but never a default route (`ipv6.ne
 
 **Switching modes drops an SSH session arriving over eth0.** The command detects that and asks first; use the AP, `wlan0`, or an HDMI console, or pass `--force`.
 
+### Confirming the fix
+
+Making the modes mutually exclusive removes the structural cause of the drop, but that reasoning is not the same as evidence: the symptom is periodic and recovers only when the cable is reseated, so a quiet afternoon proves nothing. `racecar eth monitor` records the addresses, both default routes, carrier, operstate and NetworkManager state, logging a line whenever any of them changes plus a heartbeat every 15 minutes.
+
+```sh
+racecar eth monitor                     # foreground, Ctrl-C to stop
+racecar eth monitor --once              # one sample, for a quick look
+```
+
+For a soak measured in days, install the unit instead:
+
+```sh
+sudo cp scripts/racecar-eth-monitor.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now racecar-eth-monitor
+grep -v '\[OK\]' ~/logs/eth-monitor.log     # every state change, heartbeats hidden
+```
+
+A clean run is `START` followed by heartbeats. Any `ADDR_LOST`, `CARRIER` or `OPERSTATE` line is the event worth reading. Disable the unit once the question is settled; it is a diagnostic, not part of the running car.
+
 ## Web dashboard
 
 Once `racecar-teleop.service` is running, browse to `http://<robot>:8080` for a live status page:

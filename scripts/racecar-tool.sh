@@ -318,6 +318,13 @@ __RC_NET_HELP__
                 static|dynamic|status)
                     bash "$eth_script" "$action" "$@"
                     ;;
+                monitor)
+                    # Foreground address/carrier logger. The mutual-exclusion
+                    # fix is structurally right but unproven, so this is what
+                    # turns that into evidence. For a multi-day soak use the
+                    # racecar-eth-monitor.service unit instead.
+                    python3 "$pkg_dir/scripts/eth_monitor.py" "$@"
+                    ;;
                 -h|--help|help)
                     cat <<'__RC_ETH_HELP__'
 usage: racecar eth [action] [flags]
@@ -326,6 +333,10 @@ actions:
   static    one fixed address (default 192.168.52.200/24), no gateway and no
             IPv6 default route; the shipped default
   dynamic   address and default route from DHCP
+  monitor   log eth0 addressing and link state until interrupted; use this to
+            confirm the static address stops dropping. Flags: --interval,
+            --heartbeat, --log, --once. For days rather than hours, enable
+            scripts/racecar-eth-monitor.service instead.
 flags:
   --addr=CIDR  static address to use; persisted for later runs
   --force      skip the confirmation when this SSH session arrives on eth0
@@ -338,7 +349,7 @@ __RC_ETH_HELP__
                     ;;
                 *)
                     echo "racecar eth: unknown action '$action'" >&2
-                    echo "actions: status, static, dynamic" >&2
+                    echo "actions: status, static, dynamic, monitor" >&2
                     return 2
                     ;;
             esac
@@ -644,6 +655,8 @@ Commands:
                           static    fixed 192.168.52.200/24, no gateway and no
                                     IPv6 default route; the shipped default
                           dynamic   address + default route from DHCP
+                          monitor   log addressing + link state to confirm the
+                                    static stops dropping
                         Flags: --addr=CIDR  --force
                         Switching modes drops an SSH session on eth0; run it
                         from the AP, wlan0, or an HDMI console.
@@ -751,7 +764,7 @@ _racecar_complete() {
             ;;
         eth)
             if [[ $COMP_CWORD -eq 2 ]]; then
-                COMPREPLY=( $(compgen -W "status static dynamic help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "status static dynamic monitor help" -- "$cur") )
             else
                 COMPREPLY=( $(compgen -W "--addr= --force --help" -- "$cur") )
             fi
