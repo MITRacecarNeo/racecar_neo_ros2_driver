@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Removed
 
-- **`transform_mag()`** in `pit_node.py`, along with its `TestTransformMag` tests. The publish path inlined the same arithmetic in v0.3.0, leaving the function reachable only from the test suite; the two copies could have drifted apart without any test noticing. Suite goes from 367 to 365.
+- **`transform_mag()`** in `pit_node.py`, along with its `TestTransformMag` tests. Introduced in v0.3.0 and left unreferenced by v0.7.3, when the publish path inlined the same arithmetic so it could reuse the intermediate for the new `/mag/raw` publisher. The helper survived only through its own tests, so the two copies of the math could have drifted apart with nothing to catch it. Suite goes from 367 to 365.
 
 ## [0.7.3] - 2026-09-05
 
