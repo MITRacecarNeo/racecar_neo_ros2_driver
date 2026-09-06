@@ -356,6 +356,15 @@ Seven browser-based labs, each its own upstream repository under the [Neobotics
 Foundation](https://github.com/Neobotics-Foundation-Inc) organization, installed
 as `racecar-*` systemd units.
 
+> **The lidar-based dashboards do not steer correctly on this platform.**
+> `wallfollow`, `eps`, and `smartfollow` derive steering from `/scan` using their
+> own angle arithmetic, and that arithmetic assumes a lidar mount this chassis
+> does not have. They will drive into the wrong half of the world. `webteleop`
+> still drives correctly (its input is manual) but its lidar view is rotated.
+> The camera-only dashboards are unaffected. See
+> [Lidar convention mismatch](#lidar-convention-mismatch).
+
+
 | Dashboard | Port | Reads | Publishes |
 |---|---|---|---|
 | `wallfollow` | 8081 | `/scan`, `/odom` | `/drive` |
@@ -383,6 +392,18 @@ racecar service logs wallfollow
 racecar service stop wallfollow
 ```
 
+**Usable today:**
+
+| Dashboard | Reads `/scan` | Status |
+|---|---|---|
+| `camlabel` (8082) | no | works |
+| `pursuit` (8083) | no | works |
+| `linefollow` (8086) | no | works |
+| `webteleop` (8087) | view only | drives correctly; lidar view rotated |
+| `wallfollow` (8081) | yes | **steers wrongly** |
+| `eps` (8084) | yes | **steers wrongly** |
+| `smartfollow` (8085) | yes | **steers wrongly** |
+
 **One at a time.** Six of the seven publish `/drive`, and a second publisher
 fights the mux, so `racecar service start` stops the others before starting the
 one you asked for. `camlabel` only reads the camera and can run alongside any of
@@ -402,6 +423,31 @@ SWB switch is the only gate. Here, `mux_node` requires the RB bumper held, and
 zeroes the output when `/joy` or the active source goes stale. See
 [Autonomy gate](#autonomy-gate) for the case where a transmitter does hold the
 gate.
+
+### Lidar convention mismatch
+
+The dashboards read `/scan` directly and do their own angle arithmetic, taking
+0 as the car's nose and positive as its right. On this chassis that assumption
+does not hold: measured on hardware, an object placed to the car's right is
+reported by their arithmetic at -90 degrees (their left), and an object placed
+in front at 180 degrees (behind them). A mirrored scan would have put the front
+object at 0, so the difference is a 180 degree yaw, not a handedness flip.
+
+This is not a bug in either codebase. It is a missing convention: nothing
+defines whose job it is to normalize lidar orientation, so the driver and the
+dashboards each assume the other has done it. `racecar-neo-library` resolves the
+same question for student code, in `real/lidar_real.py`, by normalizing on the
+way in.
+
+Fixing it needs agreement with the Neobotics Foundation on where normalization
+belongs. The preferred direction is for the dashboards to consume the library
+API rather than raw `/scan`, so orientation and units are normalized once for
+every consumer. Correcting `/scan` inside this driver was prototyped and
+reverted: it works, but it settles a shared convention unilaterally, and any car
+running an unaware consumer would then be wrong in the other direction.
+
+Until then, treat `wallfollow`, `eps`, and `smartfollow` as installed but not
+functional on this platform.
 
 **These are NeoRacer numbers.** The shipped YAML is tuned for a different
 chassis and lidar. Expect to retune `max_mps`, `kp`, `kd`, `lookahead` and the
