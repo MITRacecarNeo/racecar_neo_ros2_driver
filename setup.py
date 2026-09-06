@@ -40,6 +40,7 @@ setup(
             'mux_node = racecar_neo_ros2_driver.mux_node:main',
             'throttle_node = racecar_neo_ros2_driver.throttle_node:main',
             'pit_node = racecar_neo_ros2_driver.pit_node:main',
+            'scan_rotate_node = racecar_neo_ros2_driver.scan_rotate_node:main',
         ],
     },
 )

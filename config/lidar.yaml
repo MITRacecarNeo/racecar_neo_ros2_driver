@@ -12,3 +12,30 @@ sllidar_node:
     # Override if your LIDAR ships with a different default: "Standard",
     # "Express", "Boost", "Stability", "DenseBoost" (model-dependent).
     scan_mode: ""
+
+# Corrects a lidar whose mount is yawed relative to the chassis. Only used when
+# the lidar launch is given scan_rotate:=true; without it sllidar publishes
+# /scan directly and this block is inert.
+#
+# The RPLIDAR on the reference car is mounted 180 degrees out: an object off the
+# car's right nose reads on the left rear of the raw scan. Verified on hardware
+# by placing an object to the right (reported at -90 deg in the dashboards'
+# convention) and in front (reported at 180 deg). Only a 180 degree yaw explains
+# both; a mirror would have put the front object at 0. sllidar has no angle
+# offset parameter, and its `inverted` flag is a mirror, so it cannot do this.
+#
+# The rotation moves angle_min and angle_max and leaves the ranges array alone.
+# Consumers that derive an index from angle_min (the lab dashboards) follow the
+# correction; consumers that index the array directly (racecar-neo-library, via
+# np.flip in real/lidar_real.py) are unaffected and need no change. Measured
+# cost on a Pi 5: 27 us per scan to transform, 0.7 ms median for the extra
+# publish hop, against a 100 ms scan period.
+#
+# The one caveat: a 180 degree correction puts angle_min at 0 and angle_max at
+# 2pi, outside the conventional [-pi, pi]. That is legal, but a consumer that
+# assumes the conventional range will need to normalize.
+scan_rotate_node:
+  ros__parameters:
+    rotate_deg: 180.0
+    input_topic: "/scan_raw"
+    output_topic: "/scan"
