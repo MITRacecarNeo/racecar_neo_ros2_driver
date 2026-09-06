@@ -1,6 +1,6 @@
 # racecar_neo_ros2_driver
 
-ROS2 driver for the **MIT RACECAR Neo v2** — a 1:14-scale autonomous Ackermann-steering racing robot.
+ROS2 driver for the **MIT RACECAR Neo v2**: a 1:14-scale autonomous Ackermann-steering racing robot.
 
 This package is the v2 successor to [`racecar-neo-ros2-backend`](https://github.com/MITRacecarNeo/racecar-neo-ros2-backend), with the safety, uptime, and recovery infrastructure ported from [`uav_neo_ros2_driver`](https://github.com/MITUavNeo/uav_neo_ros2_driver). For the full feature catalog of the patterns being inherited, see [docs/features.md](https://github.com/MITUavNeo/uav_neo_ros2_driver/blob/main/docs/features.md) in the UAV Neo repo.
 
@@ -28,8 +28,8 @@ This package is the v2 successor to [`racecar-neo-ros2-backend`](https://github.
 | 2D LIDAR | RPLIDAR A3-class | UART (`/dev/lidar`) |
 | Gamepad | Switch Pro / EasySMX | USB HID (`/dev/input/event*` or `/dev/input/js*`) |
 | Motor / steering / IMU / power | NEO-PIT PCB (Teensy 4.1; LSM9DS1 + INA226 + hall encoder onboard) | UART (`/dev/neo-pit-pcb`) |
-| ML inference | Coral EdgeTPU | USB |
-| Display | MAX7219 dot matrix (3 cascaded) | SPI (`/dev/spidev0.0`) |
+| ML inference | Coral Edge TPU M.2 (Apex) | PCIe (`/dev/apex_0`) |
+| Display | MAX7219 dot matrix (3 cascaded) | driven by the Teensy; frames sent over the NEO-PIT UART |
 
 All `/dev/*` paths are stable udev symlinks installed by `scripts/setup_udev.sh`, so devices won't shift between `ttyACM0` and `ttyACM1` across reboots.
 
@@ -51,27 +51,30 @@ Sensor and ML nodes publish independently:
 - `/edgetpu/inference` (vision_msgs/Detection2DArray): `edgetpu_node` consumes `/camera/color`
 
 Display node subscribes:
-- `/dotmatrix/text` (std_msgs/String) — renders user messages; falls back to a mode glyph (IDLE / TELEOP / AUTO) tied to the gamepad state
+- `/dotmatrix/text` (std_msgs/String): renders user messages; falls back to a mode glyph (IDLE / TELEOP / AUTO) tied to the gamepad state
 
 Safety/uptime layers (inherited from UAV Neo, shipped in v0.0.4):
 - **Mux** enforces speed/steer limits and gates commands behind controller bumpers; zeroes output on joystick disconnect (500 ms timeout).
-- **Watchdog** (`scripts/watchdog.py`) supervises 8 nodes with two-signal liveness (ROS topic + `pgrep` on the entry-point path), 30 s restart cooldown, SIGTERM → SIGKILL escalation, FastRTPS SHM orphan sweep every 60 s, Pi 5 PMIC under-voltage alarm. Hardware-aware: skips restart when the device is physically missing.
+- **Watchdog** (`scripts/watchdog.py`) supervises 7 nodes with two-signal liveness (ROS topic + `pgrep` on the entry-point path), 30 s restart cooldown, SIGTERM to SIGKILL escalation, FastRTPS SHM orphan sweep every 60 s, Pi 5 PMIC under-voltage alarm. Hardware-aware: skips restart when the device is physically missing.
 - **Four systemd units** (`racecar-{teleop,watchdog,dashboard,jupyter}.service`) wired with `BindsTo=` so watchdog dies when teleop dies, and `Wants=` so watchdog auto-starts when teleop starts.
 - **Launch wrapper** (`scripts/launch_teleop.sh`) creates `~/logs/<timestamp>/`, updates `~/logs/latest` atomically, sweeps FastRTPS SHM orphans, and `exec`s `ros2 launch` so systemd tracks the launch PID directly.
-- **Web dashboard** at `http://<robot>:8080` — 10 node cards, 7 topic-rate rows, System Health (RTC battery + Pi under-voltage alarm), watchdog log tail. Auto-refresh.
+- **Web dashboard** at `http://<robot>:8080`: 9 node cards, 9 topic-rate rows, System Health (RTC battery + Pi under-voltage alarm), watchdog log tail. Auto-refresh.
 - **JupyterLab** at `http://<robot>:8888` with PYTHONPATH/AMENT_PREFIX_PATH pre-set so `import rclpy` works in notebooks.
 - **Pre-flight `colcon test` suite** (367 tests) asserting every peripheral, embedding fix commands in failure messages.
 
+Node responsibilities, the full topic reference, launch composition, and the
+calibration data flow are in [docs/architecture.md](./docs/architecture.md).
+
 ## Quickstart (fresh Ubuntu 24.04 install)
 
-Target: Raspberry Pi 5 running **Ubuntu Server 24.04 LTS for arm64** (Noble). ROS2 Jazzy is the only supported distro for this driver — older Ubuntu releases (22.04 Jammy) are **not** supported because Jazzy doesn't install there.
+Target: Raspberry Pi 5 running **Ubuntu Server 24.04 LTS for arm64** (Noble). ROS2 Jazzy is the only supported distro for this driver; older Ubuntu releases (22.04 Jammy) are **not** supported because Jazzy doesn't install there.
 
 ### 1. Image the SD card / NVMe
 
-Use Raspberry Pi Imager → *Other general-purpose OS* → *Ubuntu* → *Ubuntu Server 24.04 LTS (64-bit)*. Before writing, click the gear icon and pre-set:
+Use Raspberry Pi Imager -> *Other general-purpose OS* -> *Ubuntu* -> *Ubuntu Server 24.04 LTS (64-bit)*. Before writing, click the gear icon and pre-set:
 
 - **Hostname**: `racecar-neo` (matches what the systemd services + dashboard expect)
-- **Username**: `racecar` (the `racecar` shell tool, udev groups, and service unit `User=` are all hard-coded to this name — don't change it)
+- **Username**: `racecar` (the `racecar` shell tool, udev groups, and service unit `User=` are all hard-coded to this name; don't change it)
 - **Password**: your choice
 - **Wireless LAN**: your home/lab SSID (only needed for the initial setup; later replaced by the AP via `racecar setup networking`)
 - **SSH**: enabled, password auth
@@ -94,7 +97,7 @@ sudo sed -i "s/^#\$nrconf{kernelhints} =.*/\$nrconf{kernelhints} = -1;/" /etc/ne
 sudo apt -y full-upgrade
 ```
 
-Largest single block of the install (~8–15 min on a fresh image at 10 MB/s). With needrestart silenced above, this runs hands-off.
+Largest single block of the install (~8-15 min on a fresh image at 10 MB/s). With needrestart silenced above, this runs hands-off.
 
 ### 4. Clone and run the orchestrator
 
@@ -105,7 +108,7 @@ git clone https://github.com/MITRacecarNeo/racecar_neo_ros2_driver.git
 bash racecar_neo_ros2_driver/scripts/setup_all.sh
 ```
 
-`setup_all.sh` is idempotent — re-running is safe (each phase checks for existing state and skips when already applied). Sudo password is prompted **once** at the top of the run and cached via a background keepalive for the remaining ~45 min — you can walk away after that prompt.
+`setup_all.sh` is idempotent; re-running is safe (each phase checks for existing state and skips when already applied). Sudo password is prompted **once** at the top of the run and cached via a background keepalive for the remaining ~45 min; you can walk away after that prompt.
 
 ### 5. Apply group memberships
 
@@ -119,7 +122,7 @@ groups                   # verify: dialout i2c spi gpio video should appear
 
 ### 6. Plug in the hardware and reboot
 
-With the Pi powered off: connect the Maestro, the RealSense camera, the lidar, the dot matrix (SPI), the IMU (I²C), the Coral EdgeTPU, and the EasySMX gamepad's USB dongle. Power on and:
+With the Pi powered off: connect the NEO-PIT PCB (motor, steering, IMU, and the dot matrix chain all hang off it), the RealSense camera, the lidar, the Coral Edge TPU M.2 card, and the EasySMX gamepad's USB dongle. Power on and:
 
 ```sh
 sudo reboot
@@ -142,7 +145,7 @@ Once the wired setup works, you can untether the robot from your home WiFi by ru
 racecar setup networking --ssid=racecar-neo-1 --psk='your-password'
 ```
 
-This brings up an isolated AP on the ALFA dongle (`wlan1`) and configures eth0 with both a static IP and DHCP. See [Networking (optional)](#networking-optional). **Run this from a wired (eth0) session or directly on the console** — it reconfigures the AP interface and will drop SSH-over-WiFi.
+This brings up an isolated AP on the ALFA dongle (`wlan1`) and configures eth0 with both a static IP and DHCP. See [Networking (optional)](#networking-optional). **Run this from a wired (eth0) session or directly on the console**; it reconfigures the AP interface and will drop SSH-over-WiFi.
 
 ### What `setup_all.sh` actually does
 
@@ -198,7 +201,7 @@ Tab completion is registered for subcommands; `racecar launch <TAB>` discovers l
 
 ## Networking (optional)
 
-`scripts/setup_networking.sh` configures two things and is **not** invoked by `setup_all.sh` — it's a separate step because it reconfigures the AP interface and would drop SSH-over-WiFi sessions during a fresh install. Run it from a wired (eth0) session or directly on the console:
+`scripts/setup_networking.sh` configures two things and is **not** invoked by `setup_all.sh`; it's a separate step because it reconfigures the AP interface and would drop SSH-over-WiFi sessions during a fresh install. Run it from a wired (eth0) session or directly on the console:
 
 ```sh
 racecar setup networking --psk='your-password'
@@ -208,8 +211,8 @@ With no `--ssid` or saved car ID, it prompts for this car's ID and sets the SSID
 
 What it does:
 
-1. **eth0 dual-IP** via netplan — eth0 carries both a static address (default `192.168.52.200/24`) and a DHCP-assigned address. Lets you reach the robot at a known IP on a wired-only switch *and* via DHCP on a home network.
-2. **ALFA-dongle isolated AP** via NetworkManager — the AP runs on the ALFA MT7612U dongle (pinned to `wlan1` by the udev rule), hosting its own 2.4 GHz WiFi network. Clients can SSH / browse the dashboard / use jupyter, but a NetworkManager dispatcher installs `iptables FORWARD REJECT` rules so AP clients **cannot** route through the Pi to the internet (intentional isolation — keeps the robot's WiFi from becoming a janky general-purpose gateway). The Pi's built-in `wlan0` is left in default client mode.
+1. **eth0 dual-IP** via netplan; eth0 carries both a static address (default `192.168.52.200/24`) and a DHCP-assigned address. Lets you reach the robot at a known IP on a wired-only switch *and* via DHCP on a home network.
+2. **ALFA-dongle isolated AP** via NetworkManager; the AP runs on the ALFA MT7612U dongle (pinned to `wlan1` by the udev rule), hosting its own 2.4 GHz WiFi network. Clients can SSH / browse the dashboard / use jupyter, but a NetworkManager dispatcher installs `iptables FORWARD REJECT` rules so AP clients **cannot** route through the Pi to the internet (intentional isolation; it keeps the robot's WiFi from becoming a janky general-purpose gateway). The Pi's built-in `wlan0` is left in default client mode.
 
 Tunables (persisted to `~/.config/racecar/networking.env` and replayed on every re-run):
 
@@ -244,8 +247,8 @@ sudo iptables -L FORWARD -n     # two REJECT rules for wlan1
 
 Once `racecar-teleop.service` is running, browse to `http://<robot>:8080` for a live status page:
 
-- **Nodes**: one card per monitored subsystem (10 total) — green when the expected topic is being advertised, red when not.
-- **System Health**: RTC backup battery voltage (green ≥ 3.0 V, yellow 2.7–3.0 V, red < 2.7 V) and the Pi 5 PMIC sticky under-voltage alarm.
+- **Nodes**: one card per monitored subsystem (9 total): green when the expected topic is being advertised, red when not.
+- **System Health**: RTC backup battery voltage (green >= 3.0 V, yellow 2.7-3.0 V, red < 2.7 V) and the Pi 5 PMIC sticky under-voltage alarm.
 - **Topic Rates**: live Hz for `/motor`, `/mux_out`, `/imu/fused`, `/imu/lsm9ds1`, `/scan`, `/edgetpu/inference`, `/camera/color`, `/camera/depth`, and `/imu/realsense`. Yellow when stale (< 0.5 Hz), red when missing. The three RealSense rows are read from the camera's own `/diagnostics` stream; the rest are counted from raw subscriptions, which keeps the dashboard's own CPU cost near 20%.
 - **Watchdog Log**: tail of `~/logs/latest/watchdog.log` so you can see restart events.
 
@@ -253,7 +256,7 @@ Refreshes every 3 s; System Health refreshes on a slower 60 s cadence (RTC drift
 
 ## Jupyter notebooks
 
-`http://<robot>:8888/lab` — JupyterLab with `import rclpy` working out of the box. Notebooks land in `~/jupyter_ws/`. No token / password by default (the systemd unit assumes the robot's network is trusted).
+`http://<robot>:8888/lab`: JupyterLab with `import rclpy` working out of the box. Notebooks land in `~/jupyter_ws/`. No token / password by default (the systemd unit assumes the robot's network is trusted).
 
 ## Manual build
 
@@ -327,7 +330,7 @@ export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
 
 ## Changelog
 
-Full history in [CHANGELOG.md](./CHANGELOG.md). Most recent:
+Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
 
 - **0.7.3** (2026-09-05): LSM9DS1 and RealSense calibration utilities plus raw
   `/imu/lsm9ds1/raw` and `/mag/raw` telemetry; dashboard CPU roughly halved via
@@ -341,4 +344,4 @@ Full history in [CHANGELOG.md](./CHANGELOG.md). Most recent:
 
 ## License
 
-GPLv3 — see [LICENSE](./LICENSE).
+GPLv3; see [LICENSE](./LICENSE).

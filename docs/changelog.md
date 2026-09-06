@@ -33,6 +33,12 @@ Calibration pipeline, dashboard efficiency, and discovery scoping. Collects ever
 - **Calibration utilities were not executable.** All three were committed mode `644`, so `setup.py` installed them under `lib/` but `ros2 run racecar_neo_ros2_driver calibrate_imu.py` failed with `No executable found`. They are mode `755` now and appear in `ros2 pkg executables`.
 - **Lint backlog.** `ament_flake8` goes from 261 errors to 0 and `ament_pep257` is clean, across the calibration scripts, `pit_node.py`, `pit.launch.py`, and `dashboard.py`. `colcon test` failures drop to the RTC backup-battery hardware check.
 
+### Documentation
+
+- **`docs/architecture.md`** added: node inventory, control and sensing pipelines as diagrams, full topic reference with message types and consumers, launch composition, systemd process model, configuration map, and calibration data flow.
+- **Changelog moved** from `CHANGELOG.md` to `docs/changelog.md`; the README link follows it.
+- **README corrections.** The hardware table listed the Coral as USB (it moved to M.2 PCIe in v0.6.0) and the dot matrix as Pi SPI (`/dev/spidev0.0`); the display is driven by the Teensy, with frames sent over the NEO-PIT UART. Watchdog node count corrected from 8 to 7 and dashboard cards from 10 to 9, both verified against `watchdog.py` and `dashboard.py`.
+
 ### Known issues
 
 - The `config/lsm9ds1_cal.yaml` and `config/lsm9ds1_mag_cal.yaml` files committed to this repo are still keyed on `imu_node`, not `pit_node`. A fresh install therefore starts `pit_node` with zero bias and an identity soft-iron matrix, silently and with no error, until `calibrate_imu.py` and `calibrate_mag.py` are run on that car.
