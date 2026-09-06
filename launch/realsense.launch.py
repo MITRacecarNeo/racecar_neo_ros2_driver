@@ -83,8 +83,8 @@ def generate_launch_description():
                     # Filters. Decimation off so depth stays 640x480 (matches
                     # the color frame and the library's depth API shape).
                     'decimation_filter.enable': 'false',
-                    'spatial_filter.enable': 'true',
-                    'temporal_filter.enable': 'true',
+                    'spatial_filter.enable': 'false',
+                    'temporal_filter.enable': 'false',
                     # Point cloud
                     'pointcloud.enable':
                         LaunchConfiguration('pointcloud_enable'),
