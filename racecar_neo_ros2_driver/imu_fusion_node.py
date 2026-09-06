@@ -69,6 +69,16 @@ class ImuFusionNode(Node):
 
     def _make_cb(self, topic: str):
         def cb(msg: Imu):
+            # Correct on arrival, not on publish: _publish re-reads the cached
+            # message every timer tick, so subtracting there compounds the bias
+            # once per tick whenever the source is slower than the timer.
+            if topic == '/imu/realsense':
+                msg.linear_acceleration.x -= float(self._rs_accel_bias[0])
+                msg.linear_acceleration.y -= float(self._rs_accel_bias[1])
+                msg.linear_acceleration.z -= float(self._rs_accel_bias[2])
+                msg.angular_velocity.x -= float(self._rs_gyro_bias[0])
+                msg.angular_velocity.y -= float(self._rs_gyro_bias[1])
+                msg.angular_velocity.z -= float(self._rs_gyro_bias[2])
             self._latest[topic] = (msg, time.monotonic())
         return cb
 
@@ -79,16 +89,6 @@ class ImuFusionNode(Node):
         for topic in self._sources:
             item = self._latest.get(topic)
             if item is not None and (now - item[1]) <= self._timeout:
-                msg = item[0]
-                
-                if topic == '/imu/realsense':
-                    msg.linear_acceleration.x -= float(self._rs_accel_bias[0])
-                    msg.linear_acceleration.y -= float(self._rs_accel_bias[1])
-                    msg.linear_acceleration.z -= float(self._rs_accel_bias[2])
-                    msg.angular_velocity.x -= float(self._rs_gyro_bias[0])
-                    msg.angular_velocity.y -= float(self._rs_gyro_bias[1])
-                    msg.angular_velocity.z -= float(self._rs_gyro_bias[2])
-                    
                 fresh.append(item[0])
                 active.append(topic)
 
