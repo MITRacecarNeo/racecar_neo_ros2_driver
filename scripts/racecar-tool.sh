@@ -84,15 +84,43 @@ racecar() {
         service)
             local action="${1:-status}"
             shift || true
-            local -a units=("racecar-teleop" "racecar-watchdog"
-                            "racecar-dashboard" "racecar-jupyter")
+            local -a core_units=("racecar-teleop" "racecar-watchdog"
+                                 "racecar-dashboard" "racecar-jupyter")
+            # Lab dashboards, installed by setup_dashboards.sh. Every one but
+            # camlabel publishes /drive; a second publisher fights the mux, so
+            # starting one stops the others.
+            local -a dash_units=("racecar-wallfollow" "racecar-camlabel"
+                                 "racecar-pursuit" "racecar-eps"
+                                 "racecar-smartfollow" "racecar-linefollow"
+                                 "racecar-webteleop")
+            local -a drive_units=("racecar-wallfollow" "racecar-pursuit"
+                                  "racecar-eps" "racecar-smartfollow"
+                                  "racecar-linefollow" "racecar-webteleop")
+            local -a units=("${core_units[@]}" "${dash_units[@]}")
             case "$action" in
                 install)
                     bash "$pkg_dir/scripts/setup_services.sh"
+                    # Units only: the checkouts are cloned by
+                    # `racecar setup dashboards`, which needs the network.
+                    bash "$pkg_dir/scripts/setup_dashboards.sh" --units-only
+                    ;;
+                update)
+                    bash "$pkg_dir/scripts/setup_dashboards.sh" --update
                     ;;
                 start)
                     if [[ -n "$1" ]]; then
-                        sudo systemctl start "racecar-$1"
+                        local target="racecar-$1" u
+                        # Only one /drive publisher at a time. Stop the others
+                        # first rather than letting them fight the mux.
+                        for u in "${drive_units[@]}"; do
+                            [[ "$u" == "$target" ]] && continue
+                            if [[ " ${drive_units[*]} " == *" $target "* ]] \
+                               && systemctl is-active --quiet "$u"; then
+                                echo "  stopping $u (only one /drive publisher)"
+                                sudo systemctl stop "$u"
+                            fi
+                        done
+                        sudo systemctl start "$target"
                     else
                         # Start teleop; BindsTo pulls watchdog with it.
                         sudo systemctl start racecar-teleop
@@ -113,37 +141,63 @@ racecar() {
                     fi
                     ;;
                 enable|disable)
-                    for u in "${units[@]}"; do
-                        sudo systemctl "$action" "$u"
-                    done
+                    if [[ -n "$1" ]]; then
+                        sudo systemctl "$action" "racecar-$1"
+                    else
+                        # Bare form is the core stack only. Enabling every
+                        # dashboard would put six /drive publishers on the mux
+                        # at boot; dashboards are enabled by name.
+                        for u in "${core_units[@]}"; do
+                            sudo systemctl "$action" "$u"
+                        done
+                    fi
                     ;;
                 logs)
                     local unit="${1:-teleop}"
                     sudo journalctl -u "racecar-$unit" -f
                     ;;
                 status|"")
-                    for u in "${units[@]}"; do
-                        local state
+                    local u state enabled port
+                    echo "core:"
+                    for u in "${core_units[@]}"; do
                         state=$(systemctl is-active "$u" 2>&1 || true)
-                        local enabled
                         enabled=$(systemctl is-enabled "$u" 2>&1 || true)
                         printf "  %-22s  active=%-12s enabled=%s\n" \
                             "$u" "$state" "$enabled"
+                    done
+                    echo "dashboards:"
+                    for u in "${dash_units[@]}"; do
+                        if [[ ! -f "/etc/systemd/system/$u.service" ]]; then
+                            printf "  %-22s  not installed\n" "$u"
+                            continue
+                        fi
+                        state=$(systemctl is-active "$u" 2>&1 || true)
+                        enabled=$(systemctl is-enabled "$u" 2>&1 || true)
+                        port=$(sed -n 's/.*(port \([0-9]*\)).*/\1/p' \
+                            "/etc/systemd/system/$u.service" 2>/dev/null | head -1)
+                        printf "  %-22s  active=%-12s enabled=%-10s %s\n" \
+                            "$u" "$state" "$enabled" \
+                            "${port:+http://$(hostname).local:$port}"
                     done
                     ;;
                 -h|--help|help)
                     cat <<'__RC_SVC_HELP__'
 usage: racecar service <action> [unit]
 actions:
-  install        Drop unit files in /etc/systemd/system/ + daemon-reload + enable
-  start [name]   Start racecar-<name>; default = teleop (watchdog follows via BindsTo)
-  stop [name]    Stop racecar-<name>; default = teleop
-  restart [name] Restart racecar-<name>; default = teleop
-  enable         Enable all racecar-* units (auto-start on boot)
-  disable        Disable all racecar-* units
-  logs [name]    journalctl -u racecar-<name> -f; default = teleop
-  status         active/enabled snapshot for all units (default)
-units: teleop, watchdog, dashboard, jupyter
+  install         Drop core unit files + dashboard units; daemon-reload
+  update          Fast-forward the dashboard checkouts and re-render their units
+  start [name]    Start racecar-<name>; default = teleop (watchdog follows via BindsTo).
+                  Starting a lab dashboard stops the other /drive publishers first.
+  stop [name]     Stop racecar-<name>; default = teleop
+  restart [name]  Restart racecar-<name>; default = teleop
+  enable [name]   Enable one unit, or with no name the four core units
+  disable [name]  Disable one unit, or with no name the four core units
+  logs [name]     journalctl -u racecar-<name> -f; default = teleop
+  status          active/enabled snapshot, core and dashboards (default)
+core units: teleop, watchdog, dashboard, jupyter
+dashboards: wallfollow(8081) camlabel(8082) pursuit(8083) eps(8084)
+            smartfollow(8085) linefollow(8086) webteleop(8087)
+Only one dashboard drives at a time; camlabel is read-only and can run alongside.
 __RC_SVC_HELP__
                     ;;
                 *)
@@ -159,11 +213,16 @@ __RC_SVC_HELP__
             case "$phase" in
                 "")
                     echo "usage: racecar setup <phase>" >&2
-                    echo "  phases: all, networking, realsense" >&2
+                    echo "  phases: all, networking, realsense, dashboards" >&2
                     return 2
                     ;;
                 all)
                     bash "$pkg_dir/scripts/setup_all.sh" "$@"
+                    ;;
+                dashboards)
+                    # Clones or fast-forwards the seven lab-dashboard checkouts
+                    # and installs their units, stopped and disabled.
+                    bash "$pkg_dir/scripts/setup_dashboards.sh" "$@"
                     ;;
                 realsense)
                     # Offline per-machine firmware flash for airgapped fleet units.
@@ -300,7 +359,7 @@ __RC_NET_HELP__
                     ;;
                 *)
                     echo "racecar setup: unknown phase '$phase'" >&2
-                    echo "  phases: all, networking, realsense" >&2
+                    echo "  phases: all, networking, realsense, dashboards" >&2
                     return 2
                     ;;
             esac
@@ -956,6 +1015,12 @@ __RC_CLEANUP_HELP__
             fi
             ;;
 
+        log)
+            # ROS 2 bag recording and analysis. Thin wrapper: the work and its
+            # tests live in scripts/racecar_log.py.
+            python3 "${RACECAR_LOG_SCRIPT:-$pkg_dir/scripts/racecar_log.py}" "$@"
+            ;;
+
         status)
             # Whole-car diagnostic. Read-only: it observes topics and reads
             # sysfs, and never commands the hardware. Exits non-zero unless
@@ -1024,6 +1089,11 @@ Commands:
                                            --eth-mode=static|dynamic
                                            --show
                                            --reset (disable the wlan1 AP + clear saved ID)
+                          dashboards   — clone or fast-forward the seven lab dashboards
+                                         and install their units (stopped, disabled).
+                                         Flags: --update (pull only)
+                                                --units-only (no network)
+                                         Skip with RACECAR_DASHBOARDS=0.
                           realsense    — flash D435i firmware from the locally-staged
                                          image (offline; for airgapped units). Reads
                                          /opt/racecar/firmware; idempotent. Flags:
@@ -1035,9 +1105,14 @@ Commands:
                           stop [name]          default: teleop
                           restart [name]       default: teleop
                           enable|disable       all units
+                          update               ff-only pull the dashboard checkouts
                           logs [name]          journalctl -f for racecar-<name>
                           status               active/enabled summary (default)
-                        Units: teleop, watchdog, dashboard, jupyter
+                        Core units: teleop, watchdog, dashboard, jupyter
+                        Dashboards: wallfollow, camlabel, pursuit, eps,
+                                    smartfollow, linefollow, webteleop
+                        Starting a dashboard stops the other /drive publishers.
+                        Bare enable/disable covers the core units only.
     library <action>    Manage racecar_student.pth in user site-packages.
                           --select <folder>   point at ~/jupyter_ws/<folder>/library
                           --list              show valid folders in ~/jupyter_ws
@@ -1054,6 +1129,24 @@ Commands:
                           --section a,b       devices, sensors, actuators,
                                               system, services, network
                           --window SEC        ROS sample window (default 2.0)
+    log <action>        Record and analyze ROS 2 bags. Actions:
+                          start [name]        record; bag is <timestamp>_<name>
+                                                --topics A B    default: all
+                                                --exclude REGEX
+                                                --dir PATH      default: /data,
+                                                                else ~/logs/bags
+                                                --name NAME     full bag name
+                                                --storage mcap|sqlite3
+                                                --force         record anyway when
+                                                                the rate outruns the disk
+                          stop                SIGINT, so rosbag2 finalizes the bag
+                          status [--json]     size, rate, elapsed, time until full
+                          list                recorded bags, newest first
+                          analyze [bag]       duration, size, per-topic counts and
+                                              rates; defaults to the newest bag
+                          config              show or set persisted defaults
+                        Recording every topic pulls in the camera streams, which
+                        outrun an SD card; start says so before it begins.
     help                Show this message.
 
 Extra args are forwarded:
@@ -1077,7 +1170,7 @@ _racecar_complete() {
     local sub="${COMP_WORDS[1]:-}"
 
     if [[ $COMP_CWORD -eq 1 ]]; then
-        COMPREPLY=( $(compgen -W "build test source cd teleop launch clear udev watchdog service setup eth wifi desktop library cleanup status help" -- "$cur") )
+        COMPREPLY=( $(compgen -W "build test source cd teleop launch clear udev watchdog service setup eth wifi desktop library log cleanup status help" -- "$cur") )
         return
     fi
 
@@ -1126,6 +1219,29 @@ _racecar_complete() {
         status)
             COMPREPLY=( $(compgen -W "--quick --json --section --window --help" -- "$cur") )
             ;;
+        log)
+            if [[ $COMP_CWORD -eq 2 ]]; then
+                COMPREPLY=( $(compgen -W "start stop status list analyze config help" -- "$cur") )
+            else
+                case "${COMP_WORDS[2]}" in
+                    start)
+                        COMPREPLY=( $(compgen -W "--topics --exclude --dir --name --storage --force --help" -- "$cur") )
+                        ;;
+                    stop)
+                        COMPREPLY=( $(compgen -W "--timeout --help" -- "$cur") )
+                        ;;
+                    status|analyze)
+                        COMPREPLY=( $(compgen -W "--json --help" -- "$cur") )
+                        ;;
+                    config)
+                        COMPREPLY=( $(compgen -W "--topics --dir --storage --reset --help" -- "$cur") )
+                        ;;
+                    list)
+                        COMPREPLY=( $(compgen -W "--dir --help" -- "$cur") )
+                        ;;
+                esac
+            fi
+            ;;
         wifi)
             if [[ $COMP_CWORD -eq 2 ]]; then
                 COMPREPLY=( $(compgen -W "status list connect disconnect help" -- "$cur") )
@@ -1151,21 +1267,23 @@ _racecar_complete() {
             ;;
         setup)
             if [[ $COMP_CWORD -eq 2 ]]; then
-                COMPREPLY=( $(compgen -W "all networking realsense" -- "$cur") )
+                COMPREPLY=( $(compgen -W "all networking realsense dashboards" -- "$cur") )
             elif [[ "${COMP_WORDS[2]}" == "networking" ]]; then
                 COMPREPLY=( $(compgen -W "--ssid= --psk= --channel= --ap-addr= --eth-static= --eth-mode= --show --reset --help" -- "$cur") )
+            elif [[ "${COMP_WORDS[2]}" == "dashboards" ]]; then
+                COMPREPLY=( $(compgen -W "--update --units-only --help" -- "$cur") )
             elif [[ "${COMP_WORDS[2]}" == "realsense" ]]; then
                 COMPREPLY=( $(compgen -W "--check --force --version --serial --fw-dir --help" -- "$cur") )
             fi
             ;;
         service)
             if [[ $COMP_CWORD -eq 2 ]]; then
-                COMPREPLY=( $(compgen -W "install start stop restart enable disable logs status help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "install update start stop restart enable disable logs status help" -- "$cur") )
             elif [[ $COMP_CWORD -eq 3 ]]; then
                 local action="${COMP_WORDS[2]}"
                 case "$action" in
-                    start|stop|restart|logs)
-                        COMPREPLY=( $(compgen -W "teleop watchdog dashboard jupyter" -- "$cur") )
+                    start|stop|restart|logs|enable|disable)
+                        COMPREPLY=( $(compgen -W "teleop watchdog dashboard jupyter wallfollow camlabel pursuit eps smartfollow linefollow webteleop" -- "$cur") )
                         ;;
                 esac
             fi
