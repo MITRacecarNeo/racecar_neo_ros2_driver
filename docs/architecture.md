@@ -31,6 +31,17 @@ and Python edits take effect without a rebuild.
 `sllidar_ros2` is cloned as a sibling package by `scripts/setup_workspace.sh`
 rather than vendored.
 
+Boot-level state is reconciled by `scripts/setup_raspi_config.sh`: I2C and SPI,
+the serial console, the RTC backup-cell trickle charge, and four bootloader
+EEPROM keys. `PSU_MAX_CURRENT=5000` is load-bearing; a BEC-fed car never
+negotiates USB-PD, so without it the firmware caps total USB peripheral current
+at 600 mA and the camera, lidar, and dongle cannot all run.
+
+Storage: root runs from the SD card. The PCIe lane is split by an ASMedia
+ASM1182e switch between the Coral Edge TPU and an NVMe drive; the NVMe is
+present but deliberately unpartitioned, reserved for a planned migration of root
+off the SD card. An empty drive here is expected, not a fault.
+
 ## Hardware topology
 
 | Subsystem | Component | Interface | Owning node |

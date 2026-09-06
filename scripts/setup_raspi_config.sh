@@ -1,5 +1,6 @@
 #!/bin/bash
-# raspi-config flags consolidated in one place:
+# Boot-level configuration consolidated in one place: raspi-config flags, the
+# boot config.txt dtparams, and the bootloader EEPROM.
 #   I2C   (do_i2c 0)        : required by the LSM9DS1 IMU (bus 1)
 #   SPI   (do_spi 0)        : legacy MAX7219 path; the display now hangs
 #                             off the Teensy, but SPI stays enabled for
@@ -79,4 +80,55 @@ else
     echo "  RTC trickle charge: enabled at ${RTC_VCHG_UV} uV"
 fi
 
-echo "  raspi-config flags applied (reboot required for boot-config changes to take effect)."
+# Bootloader EEPROM. A car fed from a BEC never negotiates USB-PD, so the
+# firmware cannot learn what the supply can deliver, assumes 3 A, and caps total
+# USB peripheral current at 600 mA. That starves the RealSense, lidar and
+# dongle. PSU_MAX_CURRENT lifts the budget to 1.6 A; the rest keep cars
+# identical. Nothing is written when every key already matches.
+#
+# Set RACECAR_EEPROM=0 to skip. Changes apply on the next boot.
+EEPROM_KEYS=(
+    "PSU_MAX_CURRENT=5000"
+    "POWER_OFF_ON_HALT=1"
+    "BOOT_UART=1"
+    "BOOT_ORDER=0xf461"
+)
+
+if [ "${RACECAR_EEPROM:-1}" = "0" ]; then
+    echo "  bootloader EEPROM: skipped (RACECAR_EEPROM=0)"
+elif ! command -v rpi-eeprom-config >/dev/null; then
+    echo "  bootloader EEPROM: rpi-eeprom-config not found; skipping"
+else
+    EE_CUR="$(mktemp)"
+    EE_NEW="$(mktemp)"
+    rpi-eeprom-config > "$EE_CUR"      # read needs no root; only --apply does
+    cp "$EE_CUR" "$EE_NEW"
+    ee_changed=0
+    for kv in "${EEPROM_KEYS[@]}"; do
+        k="${kv%%=*}"
+        if grep -qE "^${k}=" "$EE_NEW"; then
+            if ! grep -qxF "$kv" "$EE_NEW"; then
+                sed -i -E "s|^${k}=.*|${kv}|" "$EE_NEW"
+                ee_changed=1
+            fi
+        elif grep -q '^\[all\]' "$EE_NEW"; then
+            sed -i "0,/^\[all\]/s//[all]\n${kv}/" "$EE_NEW"
+            ee_changed=1
+        else
+            printf '%s\n' "$kv" >> "$EE_NEW"
+            ee_changed=1
+        fi
+    done
+    if [ "$ee_changed" = "0" ]; then
+        echo "  bootloader EEPROM: already matches"
+    else
+        echo "  bootloader EEPROM: applying"
+        diff -u "$EE_CUR" "$EE_NEW" | sed -n '/^[+-][^+-]/s/^/      /p' || true
+        sudo rpi-eeprom-config --apply "$EE_NEW"
+        echo "  bootloader EEPROM: staged (takes effect on next boot)"
+    fi
+    rm "$EE_CUR"
+    rm "$EE_NEW"
+fi
+
+echo "  boot configuration applied (reboot required for the changes to take effect)."

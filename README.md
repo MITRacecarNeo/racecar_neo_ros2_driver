@@ -17,6 +17,7 @@ This package is the v2 successor to [`racecar-neo-ros2-backend`](https://github.
 - [Launch](#launch)
 - [Sensor calibration](#sensor-calibration)
 - [RTC backup cell](#rtc-backup-cell)
+- [Bootloader EEPROM](#bootloader-eeprom)
 - [ROS discovery scope](#ros-discovery-scope)
 - [Changelog](#changelog)
 - [License](#license)
@@ -155,7 +156,7 @@ Eleven phases, all under `scripts/`:
 1. **`setup_ros2.sh`**: ROS2 Jazzy apt repo + message/driver packages
 2. **`setup_dev_tools.sh`**: build tools, Python hardware libs (`smbus` / `serial` / `spidev`)
 3. **`setup_user_env.sh`**: joins `dialout` / `i2c` / `spi` / `gpio` / `video` groups; sources ROS2 + the `racecar` shell tool in `.bashrc`
-4. **`setup_raspi_config.sh`**: `raspi-config` flags: enable I2C, enable SPI, disable serial console (frees the GPIO UART / `ttyAMA0` for the NEO-PIT link), and enable RTC backup-cell trickle charging (`RTC_VCHG_UV=0` skips it; see [RTC backup cell](#rtc-backup-cell))
+4. **`setup_raspi_config.sh`**: boot-level configuration: enable I2C, enable SPI, disable serial console (frees the GPIO UART / `ttyAMA0` for the NEO-PIT link), enable RTC backup-cell trickle charging (`RTC_VCHG_UV=0` skips it; see [RTC backup cell](#rtc-backup-cell)), and reconcile the bootloader EEPROM (`RACECAR_EEPROM=0` skips it; see [Bootloader EEPROM](#bootloader-eeprom))
 5. **`setup_udev.sh`**: installs `/etc/udev/rules.d/99-racecar.rules` (stable `/dev/neo-pit-pcb`, `/dev/lidar`)
 6. **`setup_dotmatrix.sh`**: `pip install --user luma.led_matrix`
 7. **`setup_coral.sh`**: installs `libedgetpu1-std`, `tflite_runtime`, `pycoral` from vendored `depend/` artifacts
@@ -339,6 +340,38 @@ Only enable charging for a **rechargeable** cell. Forcing charge current into a
 primary CR2032 can make it vent or leak. If a car has a non-rechargeable cell
 fitted, run the phase with `RTC_VCHG_UV=0 bash scripts/setup_raspi_config.sh`
 and swap the cell before enabling it.
+
+## Bootloader EEPROM
+
+`setup_raspi_config.sh` reconciles four bootloader settings, writing only when
+one differs and leaving any other key untouched:
+
+| Setting | Value | Reason |
+|---|---|---|
+| `PSU_MAX_CURRENT` | `5000` | Raises the total USB peripheral budget from 600 mA to 1.6 A |
+| `POWER_OFF_ON_HALT` | `1` | `shutdown` cuts power instead of idling |
+| `BOOT_UART` | `1` | Bootloader diagnostics on the UART |
+| `BOOT_ORDER` | `0xf461` | SD, then NVMe, then USB, then repeat |
+
+`PSU_MAX_CURRENT` is the one that matters most. The Pi 5 learns what its supply
+can deliver by negotiating over USB-PD, and a car powered from a BEC on the 5 V
+rail never negotiates at all. Left alone the firmware assumes a 3 A supply and
+caps *total* USB peripheral current at 600 mA, which is not enough for the
+RealSense D435i, the lidar, and the ALFA dongle together. Symptoms are
+peripherals failing to enumerate or dropping out under load, which reads like a
+hardware fault.
+
+Confirm the negotiation actually came up empty on a given car with:
+
+```sh
+od -An -tx4 --endian=big /proc/device-tree/chosen/power/usbpd_power_data_objects
+od -An -tu4 --endian=big /proc/device-tree/chosen/power/max_current
+```
+
+All-zero PD objects mean no negotiation happened; `max_current` should still
+read `5000` because the EEPROM forced it.
+
+Changes take effect on the next boot. `RACECAR_EEPROM=0` skips the whole step.
 
 ## ROS discovery scope
 
