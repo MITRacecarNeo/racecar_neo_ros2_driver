@@ -25,6 +25,7 @@ PHASE_SCRIPTS = [
     'setup_workspace.sh',
     'setup_jupyter.sh',
     'setup_services.sh',
+    'setup_dashboards.sh',
 ]
 ORCHESTRATOR = 'setup_all.sh'
 
@@ -476,3 +477,70 @@ class TestEthScript:
         result = self._run(tmp_path, 'status')
         assert result.returncode in (0, 1)
         assert 'password' not in result.stderr.lower()
+
+
+class TestDashboardScript:
+    """setup_dashboards.sh renders our own units from the upstream templates."""
+
+    SCRIPT = SCRIPTS_DIR / 'setup_dashboards.sh'
+
+    @pytest.fixture(scope='class')
+    def text(self):
+        return self.SCRIPT.read_text()
+
+    def test_pulls_are_fast_forward_only(self, text):
+        # A diverged checkout means someone edited it; losing that is worse
+        # than skipping the update.
+        assert '--ff-only' in text
+        assert 'reset --hard' not in text
+
+    def test_never_enables_or_starts(self, text):
+        # Six of seven publish /drive; enabling them all would put six
+        # publishers on the mux at boot.
+        assert 'systemctl enable' not in text
+        assert 'systemctl start' not in text
+
+    def test_renders_jazzy_not_humble(self, text):
+        assert '/opt/ros/humble|/opt/ros/jazzy' in text
+
+    def test_injects_the_discovery_scope(self, text):
+        assert 'ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST' in text
+
+    def test_renames_units_to_the_racecar_prefix(self, text):
+        assert 'racecar-${unit#neoracer-}' in text
+
+    def test_verifies_every_substitution_token(self, text):
+        # A template that stops carrying a token has changed shape upstream;
+        # installing the result anyway would point the unit at the wrong ROS.
+        for token in ('@DIR@', '/opt/ros/humble', 'Environment=HOME='):
+            assert token in text
+
+    def test_clone_failure_is_not_fatal(self, text):
+        assert 'fetch_repo "$repo" || true' in text
+
+    def test_units_only_skips_the_network(self, text):
+        assert '--units-only' in text
+        assert 'MODE="units"' in text
+
+    def test_env_var_skips_the_phase(self, text):
+        assert 'RACECAR_DASHBOARDS' in text
+
+    def test_all_seven_repositories(self, text):
+        for repo in ('wallfollow', 'camlabel', 'pursuit', 'eps',
+                     'smartfollow', 'linefollow', 'teleop'):
+            assert f'{repo}_dashboard' in text
+
+    def test_checkouts_are_gitignored(self):
+        gitignore = (SCRIPTS_DIR.parent / '.gitignore').read_text()
+        assert 'scripts/dashboards/' in gitignore
+
+    def test_linters_exclude_the_checkouts(self):
+        flake8 = (SCRIPTS_DIR.parent / 'test' / 'test_flake8.py').read_text()
+        pep257 = (SCRIPTS_DIR.parent / 'test' / 'test_pep257.py').read_text()
+        assert 'dashboards' in flake8
+        assert 'dashboards' in pep257
+
+    def test_pytest_does_not_collect_the_checkouts(self):
+        cfg = (SCRIPTS_DIR.parent / 'setup.cfg').read_text()
+        assert 'norecursedirs' in cfg
+        assert 'scripts/dashboards' in cfg
