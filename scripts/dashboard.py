@@ -186,7 +186,8 @@ class _RateSampler(Node):
             )
 
     def measure_hz(self, topic: str):
-        """Return the rate (Hz) for a topic, or None when no data.
+        """
+        Return the rate (Hz) for a topic, or None when no data.
 
         RealSense streams are read from /diagnostics; the rest are measured
         from arrival timestamps over the window.

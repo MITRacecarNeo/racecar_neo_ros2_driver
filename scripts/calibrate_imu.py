@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""LSM9DS1 IMU calibrator for ROS2.
+"""
+LSM9DS1 IMU calibrator for ROS2.
 
 Author: Koneshka Dey
 """
