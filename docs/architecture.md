@@ -324,10 +324,6 @@ dependency, so it is unit-testable without a running graph.
 
 ## Known structural issues
 
-- `transform_mag()` in `pit_node.py` is no longer called by the publish path,
-  which inlines the same arithmetic. The function survives only through
-  `test/test_pit_node.py`, so the two implementations can diverge without any
-  test noticing.
 - `scripts/setup_user_env.sh` writes `ROS_AUTOMATIC_DISCOVERY_RANGE` inside the
   branch guarded by the ROS sourcing marker. A car provisioned before that line
   existed never receives it, because the marker already matches.

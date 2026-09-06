@@ -62,7 +62,7 @@ Safety/uptime layers (inherited from UAV Neo, shipped in v0.0.4):
 - **Launch wrapper** (`scripts/launch_teleop.sh`) creates `~/logs/<timestamp>/`, updates `~/logs/latest` atomically, sweeps FastRTPS SHM orphans, and `exec`s `ros2 launch` so systemd tracks the launch PID directly.
 - **Web dashboard** at `http://<robot>:8080`: 9 node cards, 9 topic-rate rows, System Health (RTC battery + Pi under-voltage alarm), watchdog log tail. Auto-refresh.
 - **JupyterLab** at `http://<robot>:8888` with PYTHONPATH/AMENT_PREFIX_PATH pre-set so `import rclpy` works in notebooks.
-- **Pre-flight `colcon test` suite** (367 tests) asserting every peripheral, embedding fix commands in failure messages.
+- **Pre-flight `colcon test` suite** (365 tests) asserting every peripheral, embedding fix commands in failure messages.
 
 Node responsibilities, the full topic reference, launch composition, and the
 calibration data flow are in [docs/architecture.md](./docs/architecture.md).

@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+### Removed
+
+- **`transform_mag()`** in `pit_node.py`, along with its `TestTransformMag` tests. The publish path inlined the same arithmetic in v0.3.0, leaving the function reachable only from the test suite; the two copies could have drifted apart without any test noticing. Suite goes from 367 to 365.
+
 ## [0.7.3] - 2026-09-05
 
 Calibration pipeline, dashboard efficiency, and discovery scoping. Collects every change since v0.7.2 (2026-07-07), including PRs #26, #27, #29, #30, #31, and #32.
