@@ -145,6 +145,11 @@ and sensitivity-scaled with zero bias applied. The calibration utilities fit
 against the raw topics, which is why they must exist before a car can be
 calibrated.
 
+A parameter file whose top-level key names no running node is ignored without
+warning. Both LSM9DS1 files were keyed on `imu_node` from v0.3.0 until v0.7.3
+and silently contributed nothing; they are keyed on `pit_node` now. When adding
+a calibration file, confirm the key matches the node the launch file starts.
+
 `imu_fusion_node` averages accelerometer and gyroscope vectors when both
 sources are fresh within `source_timeout_sec`, and passes a single source
 through untouched when only one is. RealSense bias correction is applied in the
@@ -308,10 +313,6 @@ dependency, so it is unit-testable without a running graph.
 
 ## Known structural issues
 
-- `config/lsm9ds1_cal.yaml` and `config/lsm9ds1_mag_cal.yaml` are committed
-  keyed on `imu_node`, but `pit.launch.py` feeds them to `pit_node`. An
-  uncalibrated car therefore starts with zero bias and an identity soft-iron
-  matrix, with nothing logged to say so.
 - `transform_mag()` in `pit_node.py` is no longer called by the publish path,
   which inlines the same arithmetic. The function survives only through
   `test/test_pit_node.py`, so the two implementations can diverge without any

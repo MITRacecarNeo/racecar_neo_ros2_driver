@@ -1,4 +1,9 @@
-imu_node:
+# LSM9DS1 hard- and soft-iron correction, consumed by pit_node via
+# pit.launch.py. Regenerate per car with:
+#   ros2 run racecar_neo_ros2_driver calibrate_mag.py
+#
+# Identity soft-iron and zero hard-iron are the uncalibrated defaults.
+pit_node:
   ros__parameters:
     magnetometer.hard_iron_bias: [0.0, 0.0, 0.0]
     magnetometer.soft_iron_matrix.data:

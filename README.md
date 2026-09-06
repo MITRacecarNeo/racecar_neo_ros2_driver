@@ -16,6 +16,7 @@ This package is the v2 successor to [`racecar-neo-ros2-backend`](https://github.
 - [Manual build](#manual-build)
 - [Launch](#launch)
 - [Sensor calibration](#sensor-calibration)
+- [RTC backup cell](#rtc-backup-cell)
 - [ROS discovery scope](#ros-discovery-scope)
 - [Changelog](#changelog)
 - [License](#license)
@@ -154,7 +155,7 @@ Eleven phases, all under `scripts/`:
 1. **`setup_ros2.sh`**: ROS2 Jazzy apt repo + message/driver packages
 2. **`setup_dev_tools.sh`**: build tools, Python hardware libs (`smbus` / `serial` / `spidev`)
 3. **`setup_user_env.sh`**: joins `dialout` / `i2c` / `spi` / `gpio` / `video` groups; sources ROS2 + the `racecar` shell tool in `.bashrc`
-4. **`setup_raspi_config.sh`**: `raspi-config` flags: enable I2C, enable SPI, disable serial console (frees the GPIO UART / `ttyAMA0` for the NEO-PIT link)
+4. **`setup_raspi_config.sh`**: `raspi-config` flags: enable I2C, enable SPI, disable serial console (frees the GPIO UART / `ttyAMA0` for the NEO-PIT link), and enable RTC backup-cell trickle charging (`RTC_VCHG_UV=0` skips it; see [RTC backup cell](#rtc-backup-cell))
 5. **`setup_udev.sh`**: installs `/etc/udev/rules.d/99-racecar.rules` (stable `/dev/neo-pit-pcb`, `/dev/lidar`)
 6. **`setup_dotmatrix.sh`**: `pip install --user luma.led_matrix`
 7. **`setup_coral.sh`**: installs `libedgetpu1-std`, `tflite_runtime`, `pycoral` from vendored `depend/` artifacts
@@ -307,10 +308,37 @@ averages the gravity vector per pose. `calibrate_mag.py` needs rotation about
 all three axes and fits an ellipsoid, then plots raw against corrected samples
 so you can confirm the sphere closed up.
 
-The LSM9DS1 files committed to this repo are keyed on `imu_node`, not
-`pit_node`. Until they are re-keyed, a car that has never been calibrated runs
-`pit_node` with zero bias and an identity soft-iron matrix, with nothing logged
-to say so. Run the two LSM9DS1 utilities on every new car.
+A car that has never been calibrated runs with zero bias and an identity
+soft-iron matrix, and nothing is logged to say so, so run the two LSM9DS1
+utilities on every new car. Note that ROS ignores a parameter file whose
+top-level key names no running node, without warning; if a calibration appears
+to have no effect, check that the key matches the node the launch file starts.
+
+## RTC backup cell
+
+The Pi 5 keeps its clock running across power loss from a coin cell on the
+board's RTC connector. Charging of that cell is **disabled by default**, so
+without the setting below it drains until the clock resets on every power cut
+and `racecar test` fails `TestRTC`.
+
+`setup_raspi_config.sh` writes:
+
+```
+dtparam=rtc_bbat_vchg=3000000
+```
+
+3.0 V suits the official Raspberry Pi RTC Battery (an ML2032). The setting
+takes effect on the next boot; check it with:
+
+```sh
+cat /sys/class/rtc/rtc0/charging_voltage    # expect 3000000
+cat /sys/class/rtc/rtc0/battery_voltage     # climbs over the following days
+```
+
+Only enable charging for a **rechargeable** cell. Forcing charge current into a
+primary CR2032 can make it vent or leak. If a car has a non-rechargeable cell
+fitted, run the phase with `RTC_VCHG_UV=0 bash scripts/setup_raspi_config.sh`
+and swap the cell before enabling it.
 
 ## ROS discovery scope
 
