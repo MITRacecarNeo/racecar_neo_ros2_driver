@@ -16,10 +16,7 @@ from racecar_neo_ros2_driver.pit_node import (
     SYS_MODE_MASK,
     transform_accel,
     transform_gyro,
-    transform_mag,
 )
-
-_IDENTITY = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
 
 
 class TestSystemStateBits:
@@ -79,22 +76,3 @@ class TestTransformGyro:
             [180.0, 0.0, 0.0], [0, 1, 2], [1.0, 1.0, 1.0], np.pi / 180.0, [0.0, 0.0, 0.0]
         )
         assert np.allclose(out, [np.pi, 0.0, 0.0])
-
-
-class TestTransformMag:
-    def test_microtesla_to_tesla(self):
-        out = transform_mag(
-            [50.0, 0.0, 0.0], [0, 1, 2], [1.0, 1.0, 1.0], 1e-6,
-            [0.0, 0.0, 0.0], _IDENTITY,
-        )
-        assert np.allclose(out, [50e-6, 0.0, 0.0])
-
-    def test_hard_and_soft_iron(self):
-        # Hard-iron offset removed, then a soft-iron scale on x.
-        soft = [2.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
-        out = transform_mag(
-            [3.0, 1.0, 0.0], [0, 1, 2], [1.0, 1.0, 1.0], 1.0,
-            [1.0, 0.0, 0.0], soft,
-        )
-        # (3-1)*2 = 4 on x; (1-0)*1 = 1 on y.
-        assert np.allclose(out, [4.0, 1.0, 0.0])

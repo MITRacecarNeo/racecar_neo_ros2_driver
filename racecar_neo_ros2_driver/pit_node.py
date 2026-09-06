@@ -88,14 +88,6 @@ def transform_gyro(raw, order, sign, scale, bias) -> np.ndarray:
     return remap_axes(raw, order, sign) * scale - np.asarray(bias, dtype=float)
 
 
-def transform_mag(raw, order, sign, scale, hard_iron, soft_iron) -> np.ndarray:
-    """Raw mag to Tesla in the body frame, hard/soft-iron corrected."""
-    tesla = remap_axes(raw, order, sign) * scale
-    return np.asarray(soft_iron, dtype=float).reshape(3, 3) @ (
-        tesla - np.asarray(hard_iron, dtype=float)
-    )
-
-
 class PitNode(Node):
     def __init__(self):
         super().__init__('pit_node')
