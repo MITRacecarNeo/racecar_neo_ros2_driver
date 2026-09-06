@@ -57,6 +57,15 @@ off the SD card. An empty drive here is expected, not a fault.
 Every `/dev/*` path above is a udev symlink installed by
 `scripts/setup_udev.sh`, so device numbering does not shift across reboots.
 
+eth0 carries exactly one IPv4 addressing mode, written by `scripts/setup_eth.sh`
+as the single owner of `/etc/netplan/99-racecar-eth0.yaml`. Static is the
+default and carries no gateway and no IPv6 default route; dynamic takes both
+from DHCP. The modes are mutually exclusive because holding a static address
+and a DHCP lease together is what made the static drop: NetworkManager
+re-applies the whole IPv4 config for an interface on every lease event.
+`setup_networking.sh` delegates to the same writer, so the two paths cannot
+disagree about the file.
+
 The Pi drives no display bus directly. `dotmatrix_node` rasterises frames in
 software and hands them to `pit_node`, which forwards them to the Teensy; the
 Teensy owns the MAX7219 chain.

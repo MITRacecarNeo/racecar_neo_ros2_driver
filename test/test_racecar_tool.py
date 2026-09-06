@@ -487,3 +487,47 @@ class TestCompletionInstalled:
         )
         assert result.returncode == 0
         assert '_racecar_complete' in result.stdout
+
+
+class TestEthCommand:
+    """`racecar eth`: eth0 addressing mode; static or DHCP, never both."""
+
+    def test_help_lists_actions(self):
+        result = _run('eth', 'help')
+        assert result.returncode == 0
+        for action in ('status', 'static', 'dynamic'):
+            assert action in result.stdout
+
+    def test_rejects_unknown_action(self):
+        result = _run('eth', 'sideways')
+        assert result.returncode == 2
+        assert 'unknown action' in result.stderr
+
+    def test_dispatches_to_setup_eth_script(self, tmp_path):
+        # Stub the script so the test never touches netplan.
+        stub = tmp_path / 'stub_eth.sh'
+        stub.write_text('#!/bin/bash\necho "STUB called with: $*"\n')
+        stub.chmod(0o755)
+        script = (
+            f'set +u; export RACECAR_ETH_SCRIPT="{stub}"; '
+            f'source "{TOOL}"; racecar eth static --addr=10.0.0.5/24'
+        )
+        result = subprocess.run(
+            ['bash', '-c', script], capture_output=True, text=True, timeout=15,
+        )
+        assert result.returncode == 0, result.stderr
+        assert 'STUB called with: static --addr=10.0.0.5/24' in result.stdout
+
+    def test_default_action_is_status(self, tmp_path):
+        stub = tmp_path / 'stub_eth.sh'
+        stub.write_text('#!/bin/bash\necho "STUB called with: $*"\n')
+        stub.chmod(0o755)
+        script = (
+            f'set +u; export RACECAR_ETH_SCRIPT="{stub}"; '
+            f'source "{TOOL}"; racecar eth'
+        )
+        result = subprocess.run(
+            ['bash', '-c', script], capture_output=True, text=True, timeout=15,
+        )
+        assert result.returncode == 0, result.stderr
+        assert 'STUB called with: status' in result.stdout

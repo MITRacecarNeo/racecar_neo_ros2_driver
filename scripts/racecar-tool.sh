@@ -211,6 +211,7 @@ __RC_SVC_HELP__
                             --ap-addr)     vals[RACECAR_AP_ADDR]="$val";    vals_changed=1 ;;
                             --ap-iface)    vals[RACECAR_AP_IFACE]="$val";   vals_changed=1 ;;
                             --eth-static)  vals[RACECAR_ETH_STATIC]="$val"; vals_changed=1 ;;
+                            --eth-mode)    vals[RACECAR_ETH_MODE]="$val";   vals_changed=1 ;;
                             --show)        action="show" ;;
                             --reset)       action="reset" ;;
                             --help|-h)     action="help" ;;
@@ -226,10 +227,13 @@ __RC_SVC_HELP__
 usage: racecar setup networking [--ssid=NAME] [--psk=PASS]
                                 [--channel=N] [--ap-addr=CIDR]
                                 [--ap-iface=NAME] [--eth-static=CIDR]
+                                [--eth-mode=static|dynamic]
                                 [--show] [--reset]
 Persists any --flag values to ~/.config/racecar/networking.env and then
-runs scripts/setup_networking.sh (eth0 dual-IP + ALFA-dongle isolated AP).
+runs scripts/setup_networking.sh (eth0 addressing + ALFA-dongle isolated AP).
   --ap-iface=NAME  AP interface (default wlan1, the ALFA dongle)
+  --eth-mode=      eth0 addressing: static (default) or dynamic. Same setting
+                   as `racecar eth`; eth0 never holds both at once.
   --show   print current persisted overrides and exit
   --reset  disable the wlan1 AP (down + delete the connection) and clear the
            saved car ID/overrides; eth0 is left unchanged. Use before imaging.
@@ -274,7 +278,7 @@ __RC_NET_HELP__
                         : > "$cfg_file"
                         chmod 600 "$cfg_file"
                         echo "# racecar networking overrides — managed by 'racecar setup networking'" >> "$cfg_file"
-                        for k in RACECAR_AP_SSID RACECAR_AP_ID RACECAR_AP_PSK RACECAR_AP_CHANNEL RACECAR_AP_ADDR RACECAR_AP_IFACE RACECAR_ETH_STATIC; do
+                        for k in RACECAR_AP_SSID RACECAR_AP_ID RACECAR_AP_PSK RACECAR_AP_CHANNEL RACECAR_AP_ADDR RACECAR_AP_IFACE RACECAR_ETH_STATIC RACECAR_ETH_MODE; do
                             if [[ -n "${vals[$k]:-}" ]]; then
                                 printf '%s="%s"\n' "$k" "${vals[$k]}" >> "$cfg_file"
                             fi
@@ -297,6 +301,44 @@ __RC_NET_HELP__
                 *)
                     echo "racecar setup: unknown phase '$phase'" >&2
                     echo "  phases: all, networking, realsense" >&2
+                    return 2
+                    ;;
+            esac
+            ;;
+
+        eth)
+            # eth0 addressing mode. Static (the default) or DHCP, never both:
+            # carrying a static address and a lease together is what makes the
+            # static drop. All the logic lives in setup_eth.sh so this command
+            # and setup_networking.sh cannot disagree about the netplan file.
+            local eth_script="${RACECAR_ETH_SCRIPT:-$pkg_dir/scripts/setup_eth.sh}"
+            local action="${1:-status}"
+            shift || true
+            case "$action" in
+                static|dynamic|status)
+                    bash "$eth_script" "$action" "$@"
+                    ;;
+                -h|--help|help)
+                    cat <<'__RC_ETH_HELP__'
+usage: racecar eth [action] [flags]
+actions:
+  status    configured mode, live addresses, routes, conflict checks (default)
+  static    one fixed address (default 192.168.52.200/24), no gateway and no
+            IPv6 default route; the shipped default
+  dynamic   address and default route from DHCP
+flags:
+  --addr=CIDR  static address to use; persisted for later runs
+  --force      skip the confirmation when this SSH session arrives on eth0
+eth0 holds one IPv4 addressing mode at a time. Static is the default because a
+known address is what makes a car debuggable on a bare switch; it carries no
+gateway, so a static car reaches the internet over wlan0 or not at all.
+WARNING: switching modes drops an SSH session arriving over eth0. Run it from
+the AP (wlan1), wlan0, or an HDMI console.
+__RC_ETH_HELP__
+                    ;;
+                *)
+                    echo "racecar eth: unknown action '$action'" >&2
+                    echo "actions: status, static, dynamic" >&2
                     return 2
                     ;;
             esac
@@ -596,9 +638,18 @@ Commands:
     watchdog            Run the node watchdog (restart-on-failure supervisor).
                         Monitors control + sensor nodes; logs to
                         ~/logs/latest/watchdog.log. Assumes teleop runs separately.
+    eth [action]        eth0 addressing mode; static or DHCP, never both.
+                          status    configured mode, live addresses, routes,
+                                    and conflict checks (default)
+                          static    fixed 192.168.52.200/24, no gateway and no
+                                    IPv6 default route; the shipped default
+                          dynamic   address + default route from DHCP
+                        Flags: --addr=CIDR  --force
+                        Switching modes drops an SSH session on eth0; run it
+                        from the AP, wlan0, or an HDMI console.
     setup <phase>       Run a setup script. Phases:
                           all          — setup_all.sh (the 11-phase orchestrator)
-                          networking   — eth0 dual-IP + ALFA-dongle isolated AP.
+                          networking   — eth0 addressing + ALFA-dongle isolated AP.
                                          Prompts for this car's ID (SSID
                                          racecar-neo-<id>) when none is set.
                                          Flags persist to ~/.config/racecar/networking.env:
@@ -606,6 +657,7 @@ Commands:
                                            --ap-addr=CIDR (default 10.42.0.1/24)
                                            --ap-iface=NAME (default wlan1, the ALFA dongle)
                                            --eth-static=CIDR (default 192.168.52.200/24)
+                                           --eth-mode=static|dynamic
                                            --show
                                            --reset (disable the wlan1 AP + clear saved ID)
                           realsense    — flash D435i firmware from the locally-staged
@@ -654,7 +706,7 @@ _racecar_complete() {
     local sub="${COMP_WORDS[1]:-}"
 
     if [[ $COMP_CWORD -eq 1 ]]; then
-        COMPREPLY=( $(compgen -W "build test source cd teleop launch clear udev watchdog service setup library cleanup status help" -- "$cur") )
+        COMPREPLY=( $(compgen -W "build test source cd teleop launch clear udev watchdog service setup eth library cleanup status help" -- "$cur") )
         return
     fi
 
@@ -697,11 +749,18 @@ _racecar_complete() {
                 COMPREPLY=( $(compgen -W "--select --select= --list --reset --status --help" -- "$cur") )
             fi
             ;;
+        eth)
+            if [[ $COMP_CWORD -eq 2 ]]; then
+                COMPREPLY=( $(compgen -W "status static dynamic help" -- "$cur") )
+            else
+                COMPREPLY=( $(compgen -W "--addr= --force --help" -- "$cur") )
+            fi
+            ;;
         setup)
             if [[ $COMP_CWORD -eq 2 ]]; then
                 COMPREPLY=( $(compgen -W "all networking realsense" -- "$cur") )
             elif [[ "${COMP_WORDS[2]}" == "networking" ]]; then
-                COMPREPLY=( $(compgen -W "--ssid= --psk= --channel= --ap-addr= --eth-static= --show --reset --help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "--ssid= --psk= --channel= --ap-addr= --eth-static= --eth-mode= --show --reset --help" -- "$cur") )
             elif [[ "${COMP_WORDS[2]}" == "realsense" ]]; then
                 COMPREPLY=( $(compgen -W "--check --force --version --serial --fw-dir --help" -- "$cur") )
             fi
