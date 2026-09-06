@@ -1,10 +1,12 @@
 #!/bin/bash
 # raspi-config flags consolidated in one place:
-#   I2C   (do_i2c 0)        — required by the LSM9DS1 IMU (bus 1)
-#   SPI   (do_spi 0)        — required by the MAX7219 dot matrix
-#   serial console off      — frees the Pi's UART pins for future modules and
+#   I2C   (do_i2c 0)        : required by the LSM9DS1 IMU (bus 1)
+#   SPI   (do_spi 0)        : legacy MAX7219 path; the display now hangs
+#                             off the Teensy, but SPI stays enabled for
+#                             bench use of the old driver
+#   serial console off      : frees the Pi's UART pins for future modules and
 #                              stops getty from grabbing /dev/serial0
-#   serial hw on            — keeps the underlying hardware UART available
+#   serial hw on            : keeps the underlying hardware UART available
 #
 # Idempotent: raspi-config nonint do_* is a no-op if already in the requested
 # state. Safe to re-run.
@@ -12,13 +14,21 @@
 # Ubuntu's raspi-config fork lacks the do_serial_cons / do_serial_hw split that
 # upstream Raspberry Pi OS ships; it only has the older combined do_serial. We
 # feature-detect and fall back. The 'DTOVERLAY[warn]: no matching platform
-# found' that do_i2c / do_spi emit on Ubuntu is benign — the dtparam edits
+# found' that do_i2c / do_spi emit on Ubuntu is benign; the dtparam edits
 # still take effect (verify with ls /dev/i2c-1 /dev/spidev0.0 after reboot).
 set -eo pipefail
 
 if ! command -v raspi-config >/dev/null; then
     echo "raspi-config not found; skipping (likely not a Raspberry Pi OS install)."
     exit 0
+fi
+
+if [ -f /boot/firmware/config.txt ]; then
+    CONFIG_TXT=/boot/firmware/config.txt
+    CMDLINE_TXT=/boot/firmware/cmdline.txt
+else
+    CONFIG_TXT=/boot/config.txt
+    CMDLINE_TXT=/boot/cmdline.txt
 fi
 
 if grep -q '^do_serial_cons\b' /usr/bin/raspi-config; then
@@ -43,17 +53,30 @@ else
     # ourselves via enable_uart=1 in config.txt. Belt-and-suspenders sed to
     # scrub stray console= entries from cmdline.txt in case do_serial missed it.
     sudo raspi-config nonint do_serial 1 1
-    if [ -f /boot/firmware/config.txt ]; then
-        CONFIG_TXT=/boot/firmware/config.txt
-        CMDLINE_TXT=/boot/firmware/cmdline.txt
-    else
-        CONFIG_TXT=/boot/config.txt
-        CMDLINE_TXT=/boot/cmdline.txt
-    fi
     if ! grep -qE '^enable_uart=1' "$CONFIG_TXT"; then
         echo "enable_uart=1" | sudo tee -a "$CONFIG_TXT" >/dev/null
     fi
     sudo sed -i -E 's/console=(serial0|ttyAMA0|ttyS0),[0-9]+ ?//g' "$CMDLINE_TXT"
+fi
+
+# RTC backup cell trickle charge. The Pi 5 RTC sits in the PMIC and ships with
+# charging off, so the cell drains until the clock stops surviving a power cut.
+# 3.0 V suits the official Raspberry Pi RTC battery (ML2032).
+#
+# Only enable this for a RECHARGEABLE cell. Pushing charge current into a
+# primary CR2032 can make it vent or leak. Set RTC_VCHG_UV=0 to skip.
+RTC_VCHG_UV="${RTC_VCHG_UV:-3000000}"
+
+if [ "$RTC_VCHG_UV" = "0" ]; then
+    echo "  RTC trickle charge: skipped (RTC_VCHG_UV=0)"
+elif grep -qE "^dtparam=rtc_bbat_vchg=${RTC_VCHG_UV}\s*$" "$CONFIG_TXT"; then
+    echo "  RTC trickle charge: already ${RTC_VCHG_UV} uV"
+elif grep -qE '^dtparam=rtc_bbat_vchg=' "$CONFIG_TXT"; then
+    sudo sed -i -E "s/^dtparam=rtc_bbat_vchg=.*/dtparam=rtc_bbat_vchg=${RTC_VCHG_UV}/" "$CONFIG_TXT"
+    echo "  RTC trickle charge: updated to ${RTC_VCHG_UV} uV"
+else
+    echo "dtparam=rtc_bbat_vchg=${RTC_VCHG_UV}" | sudo tee -a "$CONFIG_TXT" >/dev/null
+    echo "  RTC trickle charge: enabled at ${RTC_VCHG_UV} uV"
 fi
 
 echo "  raspi-config flags applied (reboot required for boot-config changes to take effect)."
