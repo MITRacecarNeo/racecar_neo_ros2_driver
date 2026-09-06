@@ -4,10 +4,6 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
-### Removed
-
-- **`transform_mag()`** in `pit_node.py`, along with its `TestTransformMag` tests. Introduced in v0.3.0 and left unreferenced by v0.7.3, when the publish path inlined the same arithmetic so it could reuse the intermediate for the new `/mag/raw` publisher. The helper survived only through its own tests, so the two copies of the math could have drifted apart with nothing to catch it. Suite goes from 367 to 365.
-
 ## [0.7.3] - 2026-09-05
 
 Calibration pipeline, dashboard efficiency, and discovery scoping. Collects every change since v0.7.2 (2026-07-07), including PRs #26, #27, #29, #30, #31, and #32.
@@ -38,7 +34,12 @@ Calibration pipeline, dashboard efficiency, and discovery scoping. Collects ever
 - **Dashboard `/imu/realsense` rate.** The rate was read from the `camera: accel` diagnostic (63 Hz) while `unite_imu_method: '2'` publishes the united IMU at the gyro rate (200 Hz), under-reporting by 3.2x. It now reads `camera: gyro`.
 - **RealSense calibrator log message** named `/imu/lsm9ds1/raw` while subscribing to `/imu/realsense`.
 - **Calibration utilities were not executable.** All three were committed mode `644`, so `setup.py` installed them under `lib/` but `ros2 run racecar_neo_ros2_driver calibrate_imu.py` failed with `No executable found`. They are mode `755` now and appear in `ros2 pkg executables`.
+- **`.bashrc` blocks now reconcile instead of skipping.** `setup_user_env.sh` guarded both managed blocks on "is the marker present", which answers whether the block was ever written rather than whether it is current. Any line added to a block therefore reached only cars imaged afterwards, silently, while the phase reported success; `ROS_AUTOMATIC_DISCOVERY_RANGE` was the first line to hit this. The blocks hold no per-car state (every path is fixed or resolved from `$HOME` at runtime), so each run now drops any existing copy and writes the current one. Hand edits inside a block do not survive; personal settings belong outside the markers.
 - **Lint backlog.** `ament_flake8` goes from 261 errors to 0 and `ament_pep257` is clean, across the calibration scripts, `pit_node.py`, `pit.launch.py`, and `dashboard.py`. `colcon test` failures drop to the RTC backup-battery hardware check.
+
+### Removed
+
+- **`transform_mag()`** in `pit_node.py`, along with its `TestTransformMag` tests. Introduced in v0.3.0 and left unreferenced when the publish path inlined the same arithmetic to reuse the intermediate for the new `/mag/raw` publisher. The helper survived only through its own tests, so the two copies of the math could have drifted apart with nothing to catch it. Suite goes from 367 to 365.
 
 ### Documentation
 
