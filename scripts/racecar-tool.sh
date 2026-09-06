@@ -1019,6 +1019,12 @@ Commands:
                           disconnect          drop the wlan0 link
                         Enterprise networks ask only for an identity and
                         password; server validation is always on.
+    desktop [action]    GNOME desktop toggle; enabled by default.
+                          status    default + active boot target, display
+                                    manager, pending reboot (default)
+                          enable    boot to the desktop
+                          disable   boot headless
+                        Applies on the next boot; never ends a running session.
     setup <phase>       Run a setup script. Phases:
                           all          — setup_all.sh (the 11-phase orchestrator)
                           networking   — eth0 addressing + ALFA-dongle isolated AP.
@@ -1078,7 +1084,7 @@ _racecar_complete() {
     local sub="${COMP_WORDS[1]:-}"
 
     if [[ $COMP_CWORD -eq 1 ]]; then
-        COMPREPLY=( $(compgen -W "build test source cd teleop launch clear udev watchdog service setup eth wifi library cleanup status help" -- "$cur") )
+        COMPREPLY=( $(compgen -W "build test source cd teleop launch clear udev watchdog service setup eth wifi desktop library cleanup status help" -- "$cur") )
         return
     fi
 
@@ -1120,6 +1126,9 @@ _racecar_complete() {
             else
                 COMPREPLY=( $(compgen -W "--select --select= --list --reset --status --help" -- "$cur") )
             fi
+            ;;
+        desktop)
+            COMPREPLY=( $(compgen -W "status enable disable help" -- "$cur") )
             ;;
         wifi)
             if [[ $COMP_CWORD -eq 2 ]]; then

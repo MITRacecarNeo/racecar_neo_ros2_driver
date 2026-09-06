@@ -13,6 +13,7 @@ This package is the v2 successor to [`racecar-neo-ros2-backend`](https://github.
 - [Networking (optional)](#networking-optional)
 - [Ethernet addressing](#ethernet-addressing)
 - [WiFi client](#wifi-client)
+- [Desktop toggle](#desktop-toggle)
 - [Web dashboard](#web-dashboard)
 - [Jupyter notebooks](#jupyter-notebooks)
 - [Manual build](#manual-build)
@@ -197,6 +198,7 @@ racecar udev                        # re-install the udev rules
 racecar cleanup [--force]           # list / kill stale racecar processes + SHM orphans
 racecar eth status                  # eth0 addressing mode + conflict checks
 racecar wifi list                   # visible networks on wlan0
+racecar desktop status              # GNOME on/off for the next boot
 racecar status                      # USB peripherals + device symlinks + running ros2 nodes
 racecar help                        # full usage
 ```
@@ -313,6 +315,20 @@ racecar wifi disconnect
 `connect` brings up a saved profile as-is, whatever its security type. For a new network it asks for a passphrase, or for an identity and password on an enterprise (802.1X) network, and nothing else. Server validation is not optional: every enterprise profile gets system CA certificates plus a `domain-suffix-match` derived from the identity's realm, so credentials are never offered to an access point that cannot prove who it is. Use `--ca-cert=` and `--domain-suffix-match=` where that derivation does not fit.
 
 `disconnect` puts the device into NetworkManager's manually-disconnected state, so it will not rejoin on its own until the next `connect`.
+
+## Desktop toggle
+
+The GNOME desktop ships enabled. Headless users turn it off without removing anything:
+
+```sh
+racecar desktop             # or: racecar desktop status
+racecar desktop disable     # boot to multi-user.target
+racecar desktop enable      # boot to graphical.target
+```
+
+The boot target is the only lever and is sufficient on its own: the display manager unit is `static` (no `[Install]` section), so `systemctl enable`/`disable` on it cannot work, and `graphical.target` is what pulls it in.
+
+Changes apply on the **next boot**. There is deliberately no immediate variant, so the command can never tear down a desktop session someone is using; `status` reports a pending change when the default and active targets disagree. Packages are never removed, so the toggle works on a car with no network.
 
 ## Web dashboard
 

@@ -261,6 +261,13 @@ racecar-jupyter.service     (independent, port 8888)
 `Wants=` pulls the watchdog up when teleop starts; `BindsTo=` takes it down
 when teleop stops, so the supervisor never outlives the thing it supervises.
 
+The default systemd target selects whether the GNOME session starts. It ships
+as `graphical.target` and `racecar desktop` switches it to `multi-user.target`
+for headless operation. The target is the only lever: the display manager unit
+is `static`, so it cannot be enabled or disabled, and `graphical.target` is
+what pulls it in. The change is reboot-scoped by design, so it can never tear
+down a session in use, and no packages are removed.
+
 `racecar-teleop.service` executes `scripts/launch_teleop.sh`, which creates
 `~/logs/<timestamp>/`, repoints the `~/logs/latest` symlink atomically, sweeps
 FastRTPS shared-memory orphans, sets `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`,

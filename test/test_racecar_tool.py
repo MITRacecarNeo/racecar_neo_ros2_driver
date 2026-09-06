@@ -612,6 +612,124 @@ esac
         assert 'not visible' in result.stderr
 
 
+class TestDesktopCommand:
+    """`racecar desktop`: reboot-scoped GNOME toggle, enabled by default."""
+
+    STUB = """#!/bin/bash
+printf '%s\\n' "$*" >> "$SCTL_LOG"
+case "$*" in
+    "get-default")   echo "${STUB_DEFAULT:-graphical.target}" ;;
+    "is-active graphical.target")
+        [ "${STUB_ACTIVE:-graphical}" = "graphical" ] && exit 0 || exit 3 ;;
+    "show display-manager.service -p Id --value") echo "${STUB_DM-gdm.service}" ;;
+    "is-active gdm.service") echo active ;;
+    *) : ;;
+esac
+"""
+
+    def _desktop(self, tmp_path, *args, **env_extra):
+        stub = tmp_path / 'systemctl'
+        stub.write_text(self.STUB)
+        stub.chmod(0o755)
+        log = tmp_path / 'systemctl.log'
+        log.touch()
+        env = dict(os.environ)
+        env.update({
+            'SCTL_LOG': str(log),
+            'RACECAR_SYSTEMCTL': str(stub),
+            'RACECAR_SUDO': '',  # enable/disable are sudo-gated in real use
+        })
+        env.update(env_extra)
+        script = f'set +u; source "{TOOL}"; racecar desktop {" ".join(args)}'
+        result = subprocess.run(
+            ['bash', '-c', script], capture_output=True, text=True,
+            timeout=20, env=env,
+        )
+        return result, log.read_text()
+
+    def test_help_lists_actions(self, tmp_path):
+        result, _ = self._desktop(tmp_path, 'help')
+        assert result.returncode == 0
+        for action in ('status', 'enable', 'disable'):
+            assert action in result.stdout
+
+    def test_rejects_unknown_action(self, tmp_path):
+        result, _ = self._desktop(tmp_path, 'sideways')
+        assert result.returncode == 2
+        assert 'unknown action' in result.stderr
+
+    def test_status_is_the_default_action(self, tmp_path):
+        result, _ = self._desktop(tmp_path)
+        assert result.returncode == 0, result.stderr
+        assert 'default target' in result.stdout
+
+    def test_status_reports_enabled(self, tmp_path):
+        result, _ = self._desktop(tmp_path, 'status', STUB_DEFAULT='graphical.target')
+        assert 'Desktop is enabled' in result.stdout
+
+    def test_status_reports_disabled(self, tmp_path):
+        result, _ = self._desktop(
+            tmp_path, 'status', STUB_DEFAULT='multi-user.target', STUB_ACTIVE='multi')
+        assert 'Desktop is disabled' in result.stdout
+
+    def test_status_reports_pending_reboot(self, tmp_path):
+        # Default says headless but the graphical target is still running:
+        # the change is real but has not taken effect yet.
+        result, _ = self._desktop(
+            tmp_path, 'status', STUB_DEFAULT='multi-user.target', STUB_ACTIVE='graphical')
+        assert 'Pending' in result.stdout
+        assert 'reboot' in result.stdout.lower()
+
+    def test_status_without_a_display_manager(self, tmp_path):
+        result, _ = self._desktop(tmp_path, 'status', STUB_DM='')
+        assert 'none installed' in result.stdout
+
+    def test_disable_sets_multi_user_target(self, tmp_path):
+        result, log = self._desktop(
+            tmp_path, 'disable', STUB_DEFAULT='graphical.target')
+        assert result.returncode == 0, result.stderr
+        assert 'set-default multi-user.target' in log
+
+    def test_enable_sets_graphical_target(self, tmp_path):
+        result, log = self._desktop(
+            tmp_path, 'enable', STUB_DEFAULT='multi-user.target')
+        assert result.returncode == 0, result.stderr
+        assert 'set-default graphical.target' in log
+
+    def test_toggle_announces_the_reboot_requirement(self, tmp_path):
+        result, _ = self._desktop(
+            tmp_path, 'disable', STUB_DEFAULT='graphical.target')
+        assert 'next boot' in result.stdout or 'after a reboot' in result.stdout
+
+    def test_toggle_is_idempotent(self, tmp_path):
+        result, log = self._desktop(
+            tmp_path, 'enable', STUB_DEFAULT='graphical.target')
+        assert result.returncode == 0
+        assert 'already' in result.stdout
+        assert 'set-default' not in log, 'no write when already in the target state'
+
+    def test_never_isolates_a_target(self, tmp_path):
+        # The toggle is reboot-scoped on purpose: isolating would tear down
+        # the session of whoever is sitting at the machine.
+        for args, env in (
+            (['enable'], {'STUB_DEFAULT': 'multi-user.target'}),
+            (['disable'], {'STUB_DEFAULT': 'graphical.target'}),
+        ):
+            _, log = self._desktop(tmp_path, *args, **env)
+            assert 'isolate' not in log
+
+    def test_never_tries_to_enable_the_display_manager(self, tmp_path):
+        # gdm.service is `static` (no [Install] section), so enable/disable on
+        # it always fails. graphical.target is what pulls it in.
+        for args, env in (
+            (['enable'], {'STUB_DEFAULT': 'multi-user.target'}),
+            (['disable'], {'STUB_DEFAULT': 'graphical.target'}),
+        ):
+            _, log = self._desktop(tmp_path, *args, **env)
+            assert 'enable gdm' not in log
+            assert 'disable gdm' not in log
+
+
 class TestEthCommand:
     """`racecar eth`: eth0 addressing mode; static or DHCP, never both."""
 
