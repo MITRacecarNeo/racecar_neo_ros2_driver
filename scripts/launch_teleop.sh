@@ -54,6 +54,10 @@ done
 export ROS_LOG_DIR="$LOG_DIR"
 export ROS_HOME="$LOG_DIR"
 
+# Restrict to localhost to reduce ROS2 discovery overhead 
+# because all the nodes are on the same machine already.
+export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
+
 # ---------------------------------------------------------------------------
 # Source ROS2 + workspace overlay
 # ---------------------------------------------------------------------------

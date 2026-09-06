@@ -41,6 +41,7 @@ else
 $SOURCE_MARKER
 source /opt/ros/jazzy/setup.bash
 [ -f "\$HOME/ros2_ws/install/setup.bash" ] && source "\$HOME/ros2_ws/install/setup.bash"
+export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
 EOF
     echo "  added ROS2 sourcing to $BASHRC"
 fi

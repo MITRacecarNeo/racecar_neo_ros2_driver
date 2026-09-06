@@ -24,6 +24,7 @@ Environment=HOME=/home/racecar
 Environment=PYTHONPATH=/opt/ros/jazzy/lib/python3.12/site-packages:/home/racecar/ros2_ws/install/racecar_neo_ros2_driver/lib/python3.12/site-packages
 Environment=AMENT_PREFIX_PATH=/home/racecar/ros2_ws/install/racecar_neo_ros2_driver:/opt/ros/jazzy
 Environment=LD_LIBRARY_PATH=/opt/ros/jazzy/lib/aarch64-linux-gnu:/opt/ros/jazzy/lib
+Environment=ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
 WorkingDirectory=/home/racecar/jupyter_ws
 
 [Install]

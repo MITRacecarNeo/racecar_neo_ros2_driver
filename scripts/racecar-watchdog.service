@@ -15,6 +15,7 @@ ExecStart=/bin/bash -c '\
 Restart=on-failure
 RestartSec=5
 Environment=HOME=/home/racecar
+Environment=ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
 WorkingDirectory=/home/racecar/ros2_ws
 
 [Install]
