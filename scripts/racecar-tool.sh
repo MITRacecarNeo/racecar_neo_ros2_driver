@@ -415,12 +415,9 @@ __RC_ETH_HELP__
             ;;
 
         wifi)
-            # Client radio only. wlan0 is the Pi's built-in Broadcom part;
-            # wlan1 carries the AP that operators are often connected over. So
-            # every nmcli call here is pinned to wlan0, and `disconnect`
-            # targets the device rather than a connection name that could
-            # match the AP profile. Nothing this command does should be able
-            # to drop the link its own operator is using.
+            # Client radio only: every nmcli call is pinned to wlan0, and
+            # disconnect targets the device rather than a connection name that
+            # could match the AP profile on wlan1 an operator is connected over.
             local wifi_iface="${RACECAR_WIFI_IFACE:-wlan0}"
             local wifi_nmcli="${RACECAR_NMCLI:-nmcli}"
             local action="${1:-status}"
@@ -467,6 +464,24 @@ __RC_WIFI_HELP__
                 echo "The client radio is the Pi's built-in adapter; wlan1 is the AP dongle." >&2
                 return 3
             fi
+
+            # Check polkit before prompting, and only for the actions that
+            # change state; status and list read fine unauthorized.
+            # See docs/troubleshooting.md, "NetworkManager authorization".
+            case "$action" in
+                connect|disconnect)
+                    local net_perm
+                    local nm_control="org.freedesktop.NetworkManager.network-control"
+                    net_perm=$($wifi_nmcli -t general permissions 2>/dev/null |
+                        awk -F: -v a="$nm_control" '$1 == a { print $2; exit }')
+                    if [[ -n "$net_perm" && "$net_perm" != "yes" ]]; then
+                        echo "racecar wifi: this account may not control networking (polkit says '$net_perm')." >&2
+                        echo "Install the rule that grants it, then retry:" >&2
+                        echo "  bash $pkg_dir/scripts/setup_user_env.sh" >&2
+                        return 5
+                    fi
+                    ;;
+            esac
 
             case "$action" in
                 list)
@@ -667,18 +682,9 @@ __RC_WIFI_COLLIDE__
             ;;
 
         desktop)
-            # The GNOME desktop ships enabled; headless users turn it off.
-            #
-            # The boot target is the only lever, and it is sufficient on its
-            # own. The display manager unit is `static` (no [Install] section),
-            # so `systemctl enable`/`disable` on it cannot work, and it is
-            # pulled in by graphical.target rather than by its own enablement.
-            # Booting to multi-user.target therefore never starts it.
-            #
-            # Deliberately reboot-scoped: there is no --now or `isolate`
-            # variant, so this can never tear down a desktop session out from
-            # under whoever is sitting at it. Packages are left installed, so
-            # the toggle is reversible on a car with no network.
+            # The boot target is the only lever, and reboot-scoped on purpose
+            # so this cannot drop a live desktop session.
+            # See docs/troubleshooting.md, "Desktop toggle scope".
             local action="${1:-status}"
             shift || true
             local sctl="${RACECAR_SYSTEMCTL:-systemctl}"

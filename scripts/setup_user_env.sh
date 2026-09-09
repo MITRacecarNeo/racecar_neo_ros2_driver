@@ -1,8 +1,9 @@
 #!/bin/bash
-# Add the invoking user to hardware groups, source ROS2 in .bashrc, and install
-# convenience aliases.
+# Add the invoking user to hardware groups, grant NetworkManager control,
+# source ROS2 in .bashrc, and install convenience aliases.
 set -eo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 USER_NAME="${SUDO_USER:-$USER}"
 USER_HOME="$(getent passwd "$USER_NAME" | cut -d: -f6)"
 
@@ -29,16 +30,34 @@ for grp in dialout i2c spi gpio video; do
     fi
 done
 
+# polkit rule: NetworkManager control from a terminal. Group membership covers
+# the hardware but not NetworkManager, which asks polkit instead.
+# See docs/troubleshooting.md, "NetworkManager authorization".
+POLKIT_SRC="${SCRIPT_DIR}/polkit/49-racecar-network.rules"
+POLKIT_DST="/etc/polkit-1/rules.d/49-racecar-network.rules"
+if [ ! -f "$POLKIT_SRC" ]; then
+    echo "Missing $POLKIT_SRC" >&2
+    exit 1
+fi
+if [ ! -d /etc/polkit-1/rules.d ]; then
+    # polkit older than 0.106 reads .pkla files instead and has no rules.d.
+    # No RACECAR image ships one, so name it rather than install a file the
+    # local polkit will never read.
+    echo "  WARNING: /etc/polkit-1/rules.d does not exist; skipping the" >&2
+    echo "           NetworkManager polkit rule. 'racecar wifi connect' will" >&2
+    echo "           need sudo on this system." >&2
+elif sudo cmp -s "$POLKIT_SRC" "$POLKIT_DST" 2>/dev/null; then
+    echo "  $POLKIT_DST already up to date"
+else
+    sudo install -m 0644 -o root -g root "$POLKIT_SRC" "$POLKIT_DST"
+    echo "  installed $POLKIT_DST"
+fi
+
 BASHRC="$USER_HOME/.bashrc"
 
-# Blocks 1 and 2 hold no per-car state: every path is either fixed or resolved
-# from $HOME by the shell at runtime. Nothing in them is worth preserving, so
-# each run drops any existing copy and writes the current one. A marker-present
-# test would answer "was this ever written", not "is this current", which is how
-# the ROS_AUTOMATIC_DISCOVERY_RANGE line reached only cars imaged after v0.7.3.
-#
-# Hand edits inside a block do not survive a re-run. Personal settings belong
-# outside the markers.
+# Each run rewrites its blocks rather than testing for a marker, so hand edits
+# inside a block do not survive; personal settings belong outside the markers.
+# See docs/troubleshooting.md, "Shell block rewriting".
 replace_block() {
     local marker="$1"
     if grep -qF "$marker" "$BASHRC" 2>/dev/null; then

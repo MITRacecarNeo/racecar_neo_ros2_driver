@@ -613,6 +613,8 @@ case "$*" in
     "-t -f DEVICE device status")         echo "${STUB_DEVICES:-wlan0}" ;;
     "-t -f NAME con show")                echo "${STUB_SAVED:-}" ;;
     "-t -f NAME,TYPE con show") echo "${STUB_SAVED:+$STUB_SAVED:802-11-wireless}" ;;
+    "-t general permissions")
+        echo "org.freedesktop.NetworkManager.network-control:${STUB_PERM:-yes}" ;;
     *"device wifi list ifname wlan0"*) printf 'EntNet:WPA2 802.1X\\nPskNet:WPA2\\nOpenNet:\\n' ;;
     *) : ;;
 esac
@@ -723,6 +725,33 @@ esac
         result, _ = self._wifi(tmp_path, 'connect', 'NotBroadcasting')
         assert result.returncode == 4
         assert 'not visible' in result.stderr
+
+    @pytest.mark.parametrize('action', ['connect', 'disconnect'])
+    def test_unauthorized_networking_is_named_not_left_to_nmcli(
+            self, tmp_path, action):
+        # Without the polkit rule, nmcli fails at the activation call with
+        # "Not authorized to control networking" and no remedy. Catch it
+        # before anything is prompted for or changed.
+        args = [action] + (['HomeNet'] if action == 'connect' else [])
+        result, log = self._wifi(
+            tmp_path, *args, STUB_SAVED='HomeNet', STUB_PERM='auth')
+        assert result.returncode == 5
+        assert 'may not control networking' in result.stderr
+        assert 'setup_user_env.sh' in result.stderr
+        assert 'connection up' not in log
+        assert 'device disconnect' not in log
+
+    def test_authorization_is_not_checked_for_read_only_actions(self, tmp_path):
+        # status and list read fine without the permission; refusing them
+        # would hide the very diagnosis an unauthorized car needs.
+        for args in (['status'], ['list']):
+            result, _ = self._wifi(tmp_path, *args, STUB_PERM='auth')
+            assert result.returncode == 0, f'`racecar wifi {args[0]}`: {result.stderr}'
+
+    def test_authorized_connect_proceeds(self, tmp_path):
+        _, log = self._wifi(
+            tmp_path, 'connect', 'HomeNet', STUB_SAVED='HomeNet', STUB_PERM='yes')
+        assert 'connection up HomeNet ifname wlan0' in log
 
 
 class TestDesktopCommand:

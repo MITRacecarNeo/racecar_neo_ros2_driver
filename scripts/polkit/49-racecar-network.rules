@@ -1,0 +1,21 @@
+// RACECAR Neo - NetworkManager control without an interactive polkit prompt.
+//
+// Installed to /etc/polkit-1/rules.d/ by scripts/setup_user_env.sh. The 49-
+// prefix sorts ahead of polkit's own 50-default.rules, which is what lets
+// this answer first.
+//
+// Why the grant exists and what it costs: docs/troubleshooting.md,
+// "NetworkManager authorization".
+
+polkit.addRule(function (action, subject) {
+    var allowed = [
+        "org.freedesktop.NetworkManager.network-control",
+        "org.freedesktop.NetworkManager.enable-disable-wifi",
+        "org.freedesktop.NetworkManager.wifi.scan",
+        "org.freedesktop.NetworkManager.settings.modify.own",
+        "org.freedesktop.NetworkManager.settings.modify.system"
+    ];
+    if (allowed.indexOf(action.id) !== -1 && subject.isInGroup("sudo")) {
+        return polkit.Result.YES;
+    }
+});

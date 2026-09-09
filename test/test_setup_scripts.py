@@ -282,6 +282,47 @@ class TestSystemdServices:
         assert 'watchdog.py' in text
 
 
+class TestNetworkPolkitRule:
+    """The polkit rule that lets `racecar wifi connect` work over SSH."""
+
+    RULE_FILE = SCRIPTS_DIR / 'polkit' / '49-racecar-network.rules'
+    INSTALLER = SCRIPTS_DIR / 'setup_user_env.sh'
+
+    @pytest.fixture
+    def text(self):
+        return self.RULE_FILE.read_text()
+
+    def test_rule_file_exists(self):
+        assert self.RULE_FILE.is_file(), f'{self.RULE_FILE} missing'
+
+    def test_sorts_ahead_of_the_polkit_default(self):
+        # 50-default.rules answers "auth" for network-control. A rule that
+        # sorts after it never gets asked.
+        prefix = int(self.RULE_FILE.name.split('-')[0])
+        assert prefix < 50, 'rule must sort before polkit 50-default.rules'
+
+    @pytest.mark.parametrize('action_id', [
+        'org.freedesktop.NetworkManager.network-control',
+        'org.freedesktop.NetworkManager.enable-disable-wifi',
+        'org.freedesktop.NetworkManager.wifi.scan',
+        'org.freedesktop.NetworkManager.settings.modify.own',
+        'org.freedesktop.NetworkManager.settings.modify.system',
+    ])
+    def test_grants_the_actions_the_wifi_command_needs(self, text, action_id):
+        assert f'"{action_id}"' in text, f'{action_id} not granted'
+
+    def test_grant_is_scoped_to_a_group_and_an_action_list(self, text):
+        # An unconditional YES would hand every polkit action on the car to
+        # anyone, NetworkManager or not.
+        assert 'subject.isInGroup("sudo")' in text
+        assert 'indexOf(action.id)' in text
+
+    def test_installed_by_setup_user_env(self):
+        text = self.INSTALLER.read_text()
+        assert 'polkit/49-racecar-network.rules' in text
+        assert '/etc/polkit-1/rules.d/49-racecar-network.rules' in text
+
+
 class TestUdevRules:
     """The 99-racecar.rules file ships with the package and binds each peripheral."""
 
