@@ -17,6 +17,7 @@ comment in the source can point here instead of carrying the full account.
 - [RealSense firmware flash privileges](#realsense-firmware-flash-privileges)
 - [raspi-config on Ubuntu](#raspi-config-on-ubuntu)
 - [Lab dashboard checkouts](#lab-dashboard-checkouts)
+- [Boot brownout with ethernet attached](#boot-brownout-with-ethernet-attached)
 
 ## Diagnostic rate checks
 
@@ -225,9 +226,58 @@ emit on Ubuntu is benign. The dtparam edits still take effect; verify with
 
 `scripts/setup_dashboards.sh`.
 
-The seven dashboards are separate upstream repositories built for the
-NeoRacer. Nothing in a checkout is ever modified: the platform differences
-(ROS Jazzy rather than Humble, `racecar-` unit names, this driver's discovery
-scope) are absorbed by rendering our own unit from the upstream `.service.in`
-template. That is what keeps `git pull --ff-only` clean, so a tuned YAML
-survives an update and upstream never conflicts.
+The three dashboards are forks under MITRacecarNeo of Neobotics Foundation
+repositories built for the NeoRacer. The forks carry this platform's lidar
+convention, ports and branding, so unlike the four unforked dashboards that
+v0.8.0 shipped they can be corrected at the source.
+
+The unit is still rendered from the checkout's `.service.in` rather than
+copied. A fork synced from Neobotics upstream comes back carrying Humble and
+the neoracer names, and rendering is what keeps that car working instead of
+pointing a unit at a ROS that is not installed. `unit_name` strips either
+project's prefix so both land on the same `racecar-<name>.service`.
+
+Updates are `git pull --ff-only` and never `reset --hard`, so a car's tuned
+YAML survives.
+
+## Boot brownout with ethernet attached
+
+Symptom, seen 2026-09-09: after the pack died, the car failed to boot three
+times in a row with the ethernet cable attached, and booted normally once the
+cable was pulled.
+
+Not a network fault. The supply was out of spec and the ethernet PHY was the
+last straw.
+
+Evidence:
+
+- `EXT5V` measured 4.61 V. The Pi 5 wants 5 V and tolerates 4.75 V; below that
+  the PMIC asserts its undervoltage alarm.
+- Every boot, failed and successful, logged `hwmon hwmon4: Undervoltage
+  detected!` about four seconds in.
+- The three failed boots lasted 21, 21 and 28 seconds and their journals end
+  mid-line with no shutdown sequence. That is a brownout reset, not a hang or a
+  service timeout; a hang would leave a wait-online timeout and a reached-target
+  line, and a clean reboot would leave a shutdown transaction.
+- Boot `-1` ends on `device (wlan1): Activation: successful` at 09:17:25. The
+  ALFA dongle starting to transmit is a current step, and the rail collapsed at
+  that instant. The successful boot brought the same AP up at 19 seconds and
+  held.
+- The pack's final boot before the cut logged 15 undervoltage events against
+  one for every boot since, which is the decline that preceded it.
+
+Read the ethernet cable as margin, not cause. The Pi 5 gigabit PHY draws a few
+hundred milliwatts once linked; removing it left just enough headroom for the
+AP to come up. A car whose supply is in spec carries both without trouble.
+
+`PSU_MAX_CURRENT=5000` in the bootloader EEPROM, set by
+`scripts/setup_raspi_config.sh`, is an aggravating factor here. It tells the
+firmware the supply can deliver 5 A so that USB peripherals are not capped at
+600 mA, which is correct for a healthy BEC feed that cannot negotiate USB-PD.
+On a sagging pack it removes the last guard: the firmware permits a draw the
+supply cannot sustain. Do not lower it to work around a weak battery; fix the
+supply.
+
+`racecar status` reports this condition already, under `throttling` and
+`under-voltage` in the SYSTEM section. Treat any measurement taken while those
+are set as suspect, since a throttled car also reads low on every topic rate.

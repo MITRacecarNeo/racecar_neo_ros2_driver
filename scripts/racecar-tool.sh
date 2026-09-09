@@ -86,16 +86,13 @@ racecar() {
             shift || true
             local -a core_units=("racecar-teleop" "racecar-watchdog"
                                  "racecar-dashboard" "racecar-jupyter")
-            # Lab dashboards, installed by setup_dashboards.sh. Every one but
-            # camlabel publishes /drive; a second publisher fights the mux, so
-            # starting one stops the others.
-            local -a dash_units=("racecar-wallfollow" "racecar-camlabel"
-                                 "racecar-pursuit" "racecar-eps"
-                                 "racecar-smartfollow" "racecar-linefollow"
-                                 "racecar-webteleop")
-            local -a drive_units=("racecar-wallfollow" "racecar-pursuit"
-                                  "racecar-eps" "racecar-smartfollow"
-                                  "racecar-linefollow" "racecar-webteleop")
+            # Lab dashboards, installed by setup_dashboards.sh. All three
+            # publish /drive; a second publisher fights the mux, so starting
+            # one stops the others.
+            local -a dash_units=("racecar-webteleop" "racecar-linefollow"
+                                 "racecar-wallfollow")
+            local -a drive_units=("racecar-webteleop" "racecar-linefollow"
+                                  "racecar-wallfollow")
             local -a units=("${core_units[@]}" "${dash_units[@]}")
             case "$action" in
                 install)
@@ -145,8 +142,8 @@ racecar() {
                         sudo systemctl "$action" "racecar-$1"
                     else
                         # Bare form is the core stack only. Enabling every
-                        # dashboard would put six /drive publishers on the mux
-                        # at boot; dashboards are enabled by name.
+                        # dashboard would put three /drive publishers on the
+                        # mux at boot; dashboards are enabled by name.
                         for u in "${core_units[@]}"; do
                             sudo systemctl "$action" "$u"
                         done
@@ -195,9 +192,9 @@ actions:
   logs [name]     journalctl -u racecar-<name> -f; default = teleop
   status          active/enabled snapshot, core and dashboards (default)
 core units: teleop, watchdog, dashboard, jupyter
-dashboards: wallfollow(8081) camlabel(8082) pursuit(8083) eps(8084)
-            smartfollow(8085) linefollow(8086) webteleop(8087)
-Only one dashboard drives at a time; camlabel is read-only and can run alongside.
+dashboards: webteleop(8081) linefollow(8082) wallfollow(8083)
+All three publish /drive, so only one runs at a time; starting one stops
+the others.
 __RC_SVC_HELP__
                     ;;
                 *)

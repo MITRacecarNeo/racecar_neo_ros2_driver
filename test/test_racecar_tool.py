@@ -150,27 +150,25 @@ class TestService:
         assert 'dashboards:' in result.stdout
         for unit in ('racecar-teleop', 'racecar-watchdog',
                      'racecar-dashboard', 'racecar-jupyter',
-                     'racecar-wallfollow', 'racecar-camlabel',
-                     'racecar-pursuit', 'racecar-eps',
-                     'racecar-smartfollow', 'racecar-linefollow',
-                     'racecar-webteleop'):
+                     'racecar-webteleop', 'racecar-linefollow',
+                     'racecar-wallfollow'):
             assert unit in result.stdout, f'status missing {unit}'
 
     def test_help_lists_the_dashboards_and_update(self):
         result = _run('service', 'help')
         assert result.returncode == 0
         assert 'update' in result.stdout
-        for name in ('wallfollow', 'camlabel', 'pursuit', 'eps',
-                     'smartfollow', 'linefollow', 'webteleop'):
-            assert name in result.stdout
+        for name, port in (('webteleop', '8081'), ('linefollow', '8082'),
+                           ('wallfollow', '8083')):
+            assert f'{name}({port})' in result.stdout
 
     def test_help_states_the_one_at_a_time_rule(self):
         result = _run('service', 'help')
-        assert 'one dashboard drives at a time' in result.stdout
+        assert 'only one runs at a time' in result.stdout
 
     def test_bare_enable_covers_core_units_only(self):
-        # Enabling every dashboard would put six /drive publishers on the mux
-        # at boot, so the bare form must not reach them.
+        # Enabling every dashboard would put three /drive publishers on the
+        # mux at boot, so the bare form must not reach them.
         block = TOOL.read_text().split('enable|disable)')[1].split(';;')[0]
         assert 'core_units' in block
         assert 'dash_units' not in block
@@ -180,13 +178,17 @@ class TestService:
         assert 'drive_units' in block
         assert 'only one /drive publisher' in block
 
-    def test_camlabel_is_not_a_drive_publisher(self):
-        # camlabel only reads the camera, so it may run alongside a lab.
-        drive = TOOL.read_text().split('local -a drive_units=')[1].split(')')[0]
-        assert 'camlabel' not in drive
-        for name in ('wallfollow', 'pursuit', 'eps', 'smartfollow',
-                     'linefollow', 'webteleop'):
-            assert name in drive
+    def test_every_dashboard_is_a_drive_publisher(self):
+        # All three steer, so none may run alongside another. The retired
+        # camlabel was the only read-only one.
+        text = TOOL.read_text()
+        drive = text.split('local -a drive_units=')[1].split('local -a units=')[0]
+        dash = text.split('local -a dash_units=')[1].split('local -a drive_units=')[0]
+        for name in ('webteleop', 'linefollow', 'wallfollow'):
+            assert name in drive, f'{name} missing from drive_units'
+            assert name in dash, f'{name} missing from dash_units'
+        for gone in ('camlabel', 'pursuit', 'eps', 'smartfollow'):
+            assert gone not in dash, f'{gone} is no longer shipped'
 
     def test_rejects_unknown_action(self):
         result = _run('service', 'flambé')

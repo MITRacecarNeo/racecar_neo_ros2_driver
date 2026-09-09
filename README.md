@@ -64,7 +64,7 @@ Display node subscribes:
 Safety/uptime layers (inherited from UAV Neo, shipped in v0.0.4):
 - **Mux** enforces speed/steer limits and gates commands behind controller bumpers; zeroes output on joystick disconnect (500 ms timeout).
 - **Watchdog** (`scripts/watchdog.py`) supervises 7 nodes with two-signal liveness (ROS topic + `pgrep` on the entry-point path), 30 s restart cooldown, SIGTERM to SIGKILL escalation, FastRTPS SHM orphan sweep every 60 s, Pi 5 PMIC under-voltage alarm. Hardware-aware: skips restart when the device is physically missing.
-- **Four core systemd units** (`racecar-{teleop,watchdog,dashboard,jupyter}.service`) wired with `BindsTo=` so watchdog dies when teleop dies, and `Wants=` so watchdog auto-starts when teleop starts. Seven more units carry the lab dashboards; they install disabled and are started one at a time.
+- **Four core systemd units** (`racecar-{teleop,watchdog,dashboard,jupyter}.service`) wired with `BindsTo=` so watchdog dies when teleop dies, and `Wants=` so watchdog auto-starts when teleop starts. Three more units carry the lab dashboards; they install disabled and are started one at a time.
 - **Launch wrapper** (`scripts/launch_teleop.sh`) creates `~/logs/<timestamp>/`, updates `~/logs/latest` atomically, sweeps FastRTPS SHM orphans, and `exec`s `ros2 launch` so systemd tracks the launch PID directly.
 - **Web dashboard** at `http://<robot>:8080`: 9 node cards, 9 topic-rate rows, System Health (RTC battery + Pi under-voltage alarm), watchdog log tail. Auto-refresh.
 - **JupyterLab** at `http://<robot>:8888` with PYTHONPATH/AMENT_PREFIX_PATH pre-set so `import rclpy` works in notebooks.
@@ -173,8 +173,8 @@ Twelve phases, all under `scripts/`:
 9. **`setup_workspace.sh`**: clones `sllidar_ros2` and runs `colcon build --symlink-install`
 10. **`setup_jupyter.sh`**: `pip install --user jupyterlab`, creates `~/jupyter_ws/`
 11. **`setup_services.sh`**: installs and enables the four core systemd units (`racecar-{teleop,watchdog,dashboard,jupyter}.service`)
-12. **`setup_dashboards.sh`**: clones or fast-forwards the seven lab-dashboard checkouts into `scripts/dashboards/` and installs a stopped, disabled `racecar-*` unit for each (`RACECAR_DASHBOARDS=0` skips it)
-12. **`setup_dashboards.sh`**: clones the seven lab dashboards and installs their units, stopped and disabled
+12. **`setup_dashboards.sh`**: clones or fast-forwards the three lab-dashboard checkouts into `scripts/dashboards/` and installs a stopped, disabled `racecar-*` unit for each (`RACECAR_DASHBOARDS=0` skips it)
+12. **`setup_dashboards.sh`**: clones the three lab dashboards and installs their units, stopped and disabled
 
 Individual phase scripts can be run on their own to re-do or skip steps (e.g. `racecar setup networking` for just the networking phase, or `bash scripts/setup_udev.sh` to reinstall the udev rules after a hardware swap).
 
@@ -374,28 +374,19 @@ Refreshes every 3 s; System Health refreshes on a slower 60 s cadence (RTC drift
 
 ## Lab dashboards
 
-Seven browser-based labs, each its own upstream repository under the [Neobotics
-Foundation](https://github.com/Neobotics-Foundation-Inc) organization, installed
-as `racecar-*` systemd units.
-
-> **The lidar-based dashboards do not steer correctly on this platform.**
-> `wallfollow`, `eps`, and `smartfollow` derive steering from `/scan` using their
-> own angle arithmetic, and that arithmetic assumes a lidar mount this chassis
-> does not have. They will drive into the wrong half of the world. `webteleop`
-> still drives correctly (its input is manual) but its lidar view is rotated.
-> The camera-only dashboards are unaffected. See
-> [Lidar convention mismatch](#lidar-convention-mismatch).
-
+Three browser-based labs, each a fork under the
+[MITRacecarNeo](https://github.com/MITRacecarNeo) organization of the
+corresponding [Neobotics
+Foundation](https://github.com/Neobotics-Foundation-Inc) repository, installed
+as `racecar-*` systemd units. The forks carry this platform's lidar convention,
+ports and branding; the four dashboards that shipped in v0.8.0 and were never
+forked (`camlabel`, `pursuit`, `eps`, `smartfollow`) are no longer installed.
 
 | Dashboard | Port | Reads | Publishes |
 |---|---|---|---|
-| `wallfollow` | 8081 | `/scan`, `/odom` | `/drive` |
-| `camlabel` | 8082 | `/camera/color` | none |
-| `pursuit` | 8083 | `/camera/color`, `/edgetpu/inference` | `/drive` |
-| `eps` | 8084 | `/scan`, `/odom` | `/drive` |
-| `smartfollow` | 8085 | `/scan`, `/odom`, `/camera/color`, `/edgetpu/inference` | `/drive` |
-| `linefollow` | 8086 | `/camera/color`, `/odom` | `/drive` |
-| `webteleop` | 8087 | `/camera/color`, `/scan`, `/odom` | `/drive` |
+| `webteleop` | 8081 | `/camera/color`, `/scan`, `/odom` | `/drive` |
+| `linefollow` | 8082 | `/camera/color`, `/odom` | `/drive` |
+| `wallfollow` | 8083 | `/scan`, `/odom` | `/drive` |
 
 Install (also runs as phase 12 of `setup_all.sh`):
 
@@ -414,30 +405,17 @@ racecar service logs wallfollow
 racecar service stop wallfollow
 ```
 
-**Usable today:**
-
-| Dashboard | Reads `/scan` | Status |
-|---|---|---|
-| `camlabel` (8082) | no | works |
-| `pursuit` (8083) | no | works |
-| `linefollow` (8086) | no | works |
-| `webteleop` (8087) | view only | drives correctly; lidar view rotated |
-| `wallfollow` (8081) | yes | **steers wrongly** |
-| `eps` (8084) | yes | **steers wrongly** |
-| `smartfollow` (8085) | yes | **steers wrongly** |
-
-**One at a time.** Six of the seven publish `/drive`, and a second publisher
-fights the mux, so `racecar service start` stops the others before starting the
-one you asked for. `camlabel` only reads the camera and can run alongside any of
-them. Units install disabled; `racecar service enable <name>` makes one survive
-a reboot, and bare `racecar service enable` deliberately covers only the core
-four.
+**One at a time.** All three publish `/drive`, and a second publisher fights the
+mux, so `racecar service start` stops the others before starting the one you
+asked for. Units install disabled; `racecar service enable <name>` makes one
+survive a reboot, and bare `racecar service enable` deliberately covers only the
+core four.
 
 **Checkouts live in `scripts/dashboards/`**, gitignored. Updates are
 `git pull --ff-only` and never `reset --hard`, so a car's tuned `wallfollow.yaml`
-survives. Nothing in a checkout is modified: the ROS distribution, unit naming
-and discovery scope are handled by rendering our own unit from the upstream
-template.
+survives. The unit is still rendered from the checkout's template rather than
+copied, so a car keeps working if a fork is later synced from Neobotics
+upstream and comes back carrying Humble and the neoracer names.
 
 **The upstream safety text does not describe this car.** Every dashboard README
 says the mux forwards `/drive` with no software deadman and the transmitter's
@@ -446,30 +424,39 @@ zeroes the output when `/joy` or the active source goes stale. See
 [Autonomy gate](#autonomy-gate) for the case where a transmitter does hold the
 gate.
 
-### Lidar convention mismatch
+### Lidar convention
 
-The dashboards read `/scan` directly and do their own angle arithmetic, taking
-0 as the car's nose and positive as its right. On this chassis that assumption
-does not hold: measured on hardware, an object placed to the car's right is
-reported by their arithmetic at -90 degrees (their left), and an object placed
-in front at 180 degrees (behind them). A mirrored scan would have put the front
-object at 0, so the difference is a 180 degree yaw, not a handedness flip.
+`wallfollow` reads `/scan` and does its own angle arithmetic in the student
+convention: 0 is the car's nose, positive is its right. The RACECAR Neo mounts
+its RPLIDAR facing aft over a 360 degree sweep of 1080 points, so the nose sits
+at the raw 180 degree edge; the neoracer read 0 there over a 270 degree sweep.
+Measured on hardware, an object in front reports at raw 180 and one off the
+car's right at raw +90, which is a 180 degree yaw rather than a handedness
+flip.
 
-This is not a bug in either codebase. It is a missing convention: nothing
-defines whose job it is to normalize lidar orientation, so the driver and the
-dashboards each assume the other has done it. `racecar-neo-library` resolves the
-same question for student code, in `real/lidar_real.py`, by normalizing on the
-way in.
+The fork carries `LIDAR_MOUNT_YAW_DEG` in `wallfollow.py` for that offset:
 
-Fixing it needs agreement with the Neobotics Foundation on where normalization
-belongs. The preferred direction is for the dashboards to consume the library
-API rather than raw `/scan`, so orientation and units are normalized once for
-every consumer. Correcting `/scan` inside this driver was prototyped and
-reverted: it works, but it settles a shared convention unilaterally, and any car
-running an unaware consumer would then be wrong in the other direction.
+```
+student_deg = LIDAR_MOUNT_YAW_DEG - raw_deg
+```
 
-Until then, treat `wallfollow`, `eps`, and `smartfollow` as installed but not
-functional on this platform.
+Ray indices come from the message's own `angle_min` and `angle_increment` and
+wrap modulo the point count, so the 360 degree scan and a 270 degree one both
+work, and a forward-facing lidar needs only `LIDAR_MOUNT_YAW_DEG = 0.0`.
+`tests/test_wallfollow.py` exercises both patterns without a lidar attached.
+
+This settles the convention for the fork only. The question of where
+normalization belongs for every consumer is still open with the Neobotics
+Foundation; the preferred direction remains for the dashboards to consume the
+`racecar-neo-library` API, which normalizes orientation and units once, rather
+than raw `/scan`.
+
+### Branding
+
+The three forks carry the RACECAR Neo mark, wordmark and palette rather than
+the Neobotics set, so a dashboard on screen names the vehicle it drives. The
+source art is in [docs/img/](docs/img/); the crimson-to-orange gradient
+(`#A01936` to `#EC8B48`) and the wordmark ink (`#231F20`) are sampled from it.
 
 **These are NeoRacer numbers.** The shipped YAML is tuned for a different
 chassis and lidar. Expect to retune `max_mps`, `kp`, `kd`, `lookahead` and the

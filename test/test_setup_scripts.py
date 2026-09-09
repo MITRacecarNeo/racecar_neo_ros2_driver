@@ -537,7 +537,7 @@ class TestDashboardScript:
         assert 'reset --hard' not in text
 
     def test_never_enables_or_starts(self, text):
-        # Six of seven publish /drive; enabling them all would put six
+        # All three publish /drive; enabling them all would put three
         # publishers on the mux at boot.
         assert 'systemctl enable' not in text
         assert 'systemctl start' not in text
@@ -549,13 +549,20 @@ class TestDashboardScript:
         assert 'ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST' in text
 
     def test_renames_units_to_the_racecar_prefix(self, text):
-        assert 'racecar-${unit#neoracer-}' in text
+        # Either project's prefix comes off, so a fork and a fork synced from
+        # Neobotics upstream land on the same racecar-<name>.service.
+        assert 'unit_name()' in text
+        assert 'base="${base#neoracer-}"' in text
+        assert 'base="${base#racecar-}"' in text
 
     def test_verifies_every_substitution_token(self, text):
-        # A template that stops carrying a token has changed shape upstream;
-        # installing the result anyway would point the unit at the wrong ROS.
-        for token in ('@DIR@', '/opt/ros/humble', 'Environment=HOME='):
+        # A template that stops carrying a token has changed shape; installing
+        # the result anyway would point the unit at the wrong directory.
+        for token in ('@DIR@', 'Environment=HOME='):
             assert token in text
+        # The ROS overlay may read humble (upstream) or jazzy (the forks), but
+        # one of them has to be there to rewrite.
+        assert '/opt/ros/(humble|jazzy)' in text
 
     def test_clone_failure_is_not_fatal(self, text):
         assert 'fetch_repo "$repo" || true' in text
@@ -567,10 +574,17 @@ class TestDashboardScript:
     def test_env_var_skips_the_phase(self, text):
         assert 'RACECAR_DASHBOARDS' in text
 
-    def test_all_seven_repositories(self, text):
-        for repo in ('wallfollow', 'camlabel', 'pursuit', 'eps',
-                     'smartfollow', 'linefollow', 'teleop'):
+    def test_the_three_forked_repositories(self, text):
+        for repo in ('teleop', 'linefollow', 'wallfollow'):
             assert f'{repo}_dashboard' in text
+        for gone in ('camlabel', 'pursuit', 'eps', 'smartfollow'):
+            assert f'{gone}_dashboard' not in text
+
+    def test_clones_from_the_racecar_org(self, text):
+        # The forks carry this platform's lidar convention, ports and
+        # branding; the Neobotics originals do not.
+        assert 'github.com/MITRacecarNeo' in text
+        assert 'Neobotics-Foundation-Inc' not in text
 
     def test_checkouts_are_gitignored(self):
         gitignore = (SCRIPTS_DIR.parent / '.gitignore').read_text()

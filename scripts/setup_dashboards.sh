@@ -1,9 +1,10 @@
 #!/bin/bash
 # Install the lab dashboards as racecar-* systemd units.
 #
-# The seven dashboards are separate upstream repositories. Nothing in a
-# checkout is ever modified; platform differences are absorbed by rendering our
-# own unit from their .service.in template.
+# Three dashboards, forked into MITRacecarNeo and carrying this platform's
+# lidar convention, ports and branding. The unit is still rendered from the
+# checkout's .service.in rather than copied, so a car keeps working if a fork
+# is later synced from Neobotics upstream.
 # See docs/troubleshooting.md, "Lab dashboard checkouts".
 #
 # Usage:
@@ -11,25 +12,21 @@
 #   setup_dashboards.sh --update       ff-only update only, then re-render units
 #   setup_dashboards.sh --units-only   re-render from existing checkouts; no network
 #
-# Units install stopped and disabled. Each dashboard publishes /drive, and six
-# of the seven fight the mux if a second one runs, so enabling is per unit and
-# deliberate: `racecar service enable wallfollow`.
+# Units install stopped and disabled. All three publish /drive and fight the
+# mux if a second one runs, so enabling is per unit and deliberate:
+# `racecar service enable wallfollow`.
 #
 # Set RACECAR_DASHBOARDS=0 to skip entirely.
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DASH_DIR="$SCRIPT_DIR/dashboards"
-ORG_URL="https://github.com/Neobotics-Foundation-Inc"
+ORG_URL="https://github.com/MITRacecarNeo"
 
 REPOS=(
-    wallfollow_dashboard
-    camlabel_dashboard
-    pursuit_dashboard
-    eps_dashboard
-    smartfollow_dashboard
-    linefollow_dashboard
     teleop_dashboard
+    linefollow_dashboard
+    wallfollow_dashboard
 )
 
 MODE="install"
@@ -79,24 +76,43 @@ fetch_repo() {
     fi
 }
 
-# Rewrite the upstream template for this platform. Every substitution is
-# checked first: a template that stops carrying one of these tokens has changed
-# shape upstream, and silently installing the result would point the unit at
-# the wrong ROS or the wrong directory.
+# Render the checkout's template for this platform. The forks already target
+# Jazzy and carry this platform's names, so the substitutions below are a
+# no-op on them; they stay because a fork synced from Neobotics upstream comes
+# back carrying Humble and the neoracer names, and rendering is what keeps
+# that car working rather than pointing a unit at a ROS that is not installed.
+#
+# The two required tokens are checked first: without @DIR@ the unit would run
+# from the wrong directory, and Environment=HOME= is the anchor the discovery
+# line is appended after. A template missing either has changed shape enough
+# that installing the result would be a guess.
 render_unit() {
     local src="$1" dir="$2" token
-    for token in '@DIR@' '/opt/ros/humble' 'Environment=HOME='; do
+    for token in '@DIR@' 'Environment=HOME='; do
         if ! grep -qF -- "$token" "$src"; then
-            echo "  $(basename "$src"): expected '$token' not found; upstream changed" >&2
+            echo "  $(basename "$src"): expected '$token' not found; template changed" >&2
             return 1
         fi
     done
+    if ! grep -qE '/opt/ros/(humble|jazzy)' "$src"; then
+        echo "  $(basename "$src"): no ROS overlay to rewrite; template changed" >&2
+        return 1
+    fi
     sed -e "s|@DIR@|$dir|g" \
         -e "s|/opt/ros/humble|/opt/ros/jazzy|g" \
         -e "s|^Description=Neoracer |Description=RACECAR Neo |" \
         -e "s|^After=neoracer-|After=racecar-|" \
         -e "/^Environment=HOME=/a Environment=ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST" \
         "$src"
+}
+
+# Unit name from the template's filename, with either project's prefix taken
+# off so a fork and an upstream sync land on the same racecar-<name>.service.
+unit_name() {
+    local base="$1"
+    base="${base#neoracer-}"
+    base="${base#racecar-}"
+    printf 'racecar-%s' "$base"
 }
 
 install_unit() {
@@ -108,8 +124,7 @@ install_unit() {
         failed+=("$repo (no unit template)")
         return 1
     fi
-    unit="$(basename "$src" .in)"
-    unit="racecar-${unit#neoracer-}"
+    unit="$(unit_name "$(basename "$src" .service.in)").service"
 
     rendered="$(mktemp)"
     if ! render_unit "$src" "$dir" >"$rendered"; then
@@ -158,7 +173,7 @@ for repo in "${REPOS[@]}"; do
     [[ -d "$DASH_DIR/$repo" ]] || continue
     src="$(find "$DASH_DIR/$repo" -maxdepth 1 -name '*.service.in' | head -1)"
     [[ -n "$src" ]] || continue
-    name="$(basename "$src" .service.in)"; name="${name#neoracer-}"
+    name="$(unit_name "$(basename "$src" .service.in)")"; name="${name#racecar-}"
     port="$(sed -n 's/.*(port \([0-9]*\)).*/\1/p' "$src" | head -1)"
     summary+="$(printf '  racecar service start %-12s http://%s:%s' \
         "$name" "$(hostname).local" "${port:-?}")"$'\n'

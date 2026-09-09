@@ -165,15 +165,23 @@ is slow and revoking immediate: one bad frame hands the gate back.
 
 ### Lab dashboards
 
-Seven dashboards run as `racecar-*` units on ports 8081 to 8087, installed by
+Three dashboards run as `racecar-*` units, installed by
 `scripts/setup_dashboards.sh` from gitignored checkouts under
-`scripts/dashboards/`. Six publish `/drive` and so are mutually exclusive; a
-second publisher fights the mux, and `racecar service start` enforces one at a
-time. `camlabel` only reads `/camera/color` and can run alongside any of them.
+`scripts/dashboards/`: `webteleop` on 8081, `linefollow` on 8082 and
+`wallfollow` on 8083, continuing from the driver's own dashboard on 8080. All
+three publish `/drive` and so are mutually exclusive; a second publisher fights
+the mux, and `racecar service start` enforces one at a time.
 
-Units are rendered from each upstream `.service.in` rather than copied, which
-absorbs the ROS distribution, unit prefix and discovery scope on this side and
-leaves every checkout byte-identical to upstream.
+Each is a fork under MITRacecarNeo of the corresponding Neobotics Foundation
+repository. Forking is what lets the lidar convention, the ports and the
+branding be corrected at the source rather than worked around at install time.
+`wallfollow` reads `/scan` in the student convention and carries
+`LIDAR_MOUNT_YAW_DEG` for this chassis's aft-facing mount; see
+docs/troubleshooting.md, "Lab dashboard checkouts".
+
+Units are still rendered from each checkout's `.service.in` rather than copied,
+so a fork synced from Neobotics upstream keeps working: the ROS distribution,
+unit prefix and discovery scope are absorbed on this side either way.
 
 ## Sensing and perception
 
