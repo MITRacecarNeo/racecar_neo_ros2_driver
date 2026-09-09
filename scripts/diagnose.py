@@ -2,20 +2,17 @@
 """
 Whole-car diagnostic pass behind `racecar status`.
 
-Replaces `test_async_core_real.ipynb` for the "is this car healthy" question.
-The notebook is the behavioural spec, but its structure is the slow part:
-fifteen sections, each opening its own fixed 8 to 30 second window, run one
-after another. Nothing about the checks requires that, so every subscription
-is opened at once and shares a single sample window, and the host checks run
-on a worker thread beside it.
+Every subscription opens at once and shares one sample window, with the host
+checks on a worker thread beside it, so a pass costs one discovery plus one
+window rather than a window per section.
 
-Strict by design: the exit code is 0 only when every requested check passed.
-A car with teleop stopped skips its sensor checks, and a skip is not a pass;
-a readiness check that returned 0 for a car running no software would be
-worse than no check at all. Deselecting a section with --quick or --section
-is different from a check failing to run, and does not affect the exit code.
+Strict by design: the exit code is 0 only when every requested check passed,
+so WARN and SKIP both count against it. Deselecting a section with --quick or
+--section is distinct from a check failing to run and does not affect it.
 
 Read-only. Nothing here commands the hardware.
+
+Rate-check tuning and the measurement costs behind it: docs/troubleshooting.md.
 """
 
 from __future__ import annotations
@@ -41,8 +38,20 @@ OK, WARN, FAIL, SKIP = 'OK', 'WARN', 'FAIL', 'SKIP'
 
 SECTIONS = ('devices', 'sensors', 'actuators', 'system', 'services', 'network')
 
-DEFAULT_WINDOW = 2.0
+# Shorter windows measure the PIT stream's clumping rather than its rate.
+# See docs/troubleshooting.md, "Diagnostic rate checks".
+DEFAULT_WINDOW = 5.0
 DISCOVERY_TIMEOUT = 6.0
+
+# RealSense reports its own per-stream rates here, so they need no
+# subscription. See docs/troubleshooting.md, "Diagnostic rate checks".
+DIAGNOSTICS_TOPIC = '/diagnostics'
+REALSENSE_DIAGNOSTIC_NAMES = {
+    'camera: color': '/camera/color',
+    'camera: depth': '/camera/depth',
+    'camera: gyro': '/imu/realsense',
+}
+DIAGNOSTIC_RATE_KEY = 'Actual frequency (Hz)'
 
 
 @dataclass
@@ -70,31 +79,33 @@ class TopicSpec:
         return self.nominal * self.floor_frac
 
 
-# Nominal rates come from configuration where one is declared and from
-# measurement on a running car where it is not. The Teensy telemetry frame
-# carries six topics at one rate; mux.yaml sets 50 Hz for the drive chain and
-# imu_fusion.yaml sets 100 Hz for the fused IMU.
-#
-# The two camera streams are the exception to the 80 percent floor. They are
-# configured for 60 and 30 fps but deliver roughly 25 and 12; that shortfall
-# is a known issue tracked separately. Keying their floor to the configured
-# rate would fail every car on every run for a condition already accepted, so
-# nominal here is the observed rate and the gap is reported as detail.
+# Nominal rates come from configuration where one is declared (mux.yaml sets
+# 50 Hz for the drive chain, imu_fusion.yaml 100 Hz for the fused IMU) and
+# from measurement on a running car otherwise. The PIT floor is wider than the
+# default because the Teensy frame rate moves with load, and the camera and
+# lidar nominals were corrected in v0.8.1.
+# See docs/troubleshooting.md, "Diagnostic rate checks".
+PIT_FLOOR_FRAC = 0.65
+PIT_NOTE = 'shared Teensy frame; rate varies with load'
+
 SENSOR_TOPICS = [
-    TopicSpec('/camera/color', 'RealSense color', 25.0, 0.5, 'configured 60, gap tracked'),
-    TopicSpec('/camera/depth', 'RealSense depth', 12.0, 0.5, 'configured 30, gap tracked'),
-    TopicSpec('/imu/realsense', 'RealSense IMU', 200.0),
-    TopicSpec('/scan', 'RPLIDAR', 8.0),
-    TopicSpec('/imu/lsm9ds1', 'PIT IMU', 136.0),
-    TopicSpec('/mag', 'PIT magnetometer', 136.0),
+    TopicSpec('/camera/color', 'RealSense color', 60.0, 0.8, 'from /diagnostics'),
+    TopicSpec('/camera/depth', 'RealSense depth', 30.0, 0.8, 'from /diagnostics'),
+    TopicSpec('/imu/realsense', 'RealSense IMU', 200.0, 0.8, 'from /diagnostics'),
+    TopicSpec('/scan', 'RPLIDAR', 7.2),
+    TopicSpec('/imu/lsm9ds1', 'PIT IMU', 136.0, PIT_FLOOR_FRAC, PIT_NOTE),
+    TopicSpec('/mag', 'PIT magnetometer', 136.0, PIT_FLOOR_FRAC, PIT_NOTE),
     TopicSpec('/imu/fused', 'Fused IMU', 100.0),
-    TopicSpec('/encoder/speed', 'Encoder', 136.0),
-    TopicSpec('/battery/voltage', 'Pack voltage', 136.0),
-    TopicSpec('/battery/current', 'Pack current', 136.0),
-    TopicSpec('/rc/channels', 'FlySky RC', 136.0),
+    TopicSpec('/encoder/speed', 'Encoder', 136.0, PIT_FLOOR_FRAC, PIT_NOTE),
+    TopicSpec('/battery/voltage', 'Pack voltage', 136.0, PIT_FLOOR_FRAC, PIT_NOTE),
+    TopicSpec('/battery/current', 'Pack current', 136.0, PIT_FLOOR_FRAC, PIT_NOTE),
+    TopicSpec('/rc/channels', 'FlySky RC', 136.0, PIT_FLOOR_FRAC, PIT_NOTE),
     TopicSpec('/edgetpu/inference', 'Coral inference', 17.0),
     TopicSpec('/joy', 'Gamepad', 16.0),
 ]
+
+# Rates read off /diagnostics rather than counted here.
+DIAGNOSTIC_SOURCED = set(REALSENSE_DIAGNOSTIC_NAMES.values())
 
 ACTUATOR_TOPICS = [
     TopicSpec('/motor', 'Throttle output', 50.0),
@@ -387,6 +398,23 @@ class RosResult:
     elapsed: float = 0.0
     present: set = field(default_factory=set)
     values: dict = field(default_factory=dict)
+    reported: dict = field(default_factory=dict)
+
+
+def _read_diagnostic_rates(msg, into: dict) -> None:
+    """Pull the RealSense per-stream rates out of one DiagnosticArray."""
+    for status in msg.status:
+        topic = REALSENSE_DIAGNOSTIC_NAMES.get(status.name.lower())
+        if topic is None:
+            continue
+        for value in status.values:
+            if value.key != DIAGNOSTIC_RATE_KEY:
+                continue
+            try:
+                into[topic] = float(value.value)
+            except (TypeError, ValueError):
+                pass
+            break
 
 
 def sample_ros(window: float, specs: list[TopicSpec]) -> RosResult:
@@ -433,26 +461,46 @@ def sample_ros(window: float, specs: list[TopicSpec]) -> RosResult:
             result.reason = 'no racecar topics on the graph'
             return result
 
-        counts = {t: 0 for t in result.present}
+        # Subscribing to the RealSense streams would cost 40 percent of the
+        # PIT rate this same window is measuring; one DiagnosticArray at 1 Hz
+        # costs nothing. See docs/troubleshooting.md, "Diagnostic rate checks".
+        counted = sorted(result.present - DIAGNOSTIC_SOURCED)
+        counts = {t: 0 for t in counted}
         latest: dict = {}
+        reported: dict = {}
         qos = QoSProfile(depth=10)
         qos.reliability = QoSReliabilityPolicy.BEST_EFFORT
         qos.durability = QoSDurabilityPolicy.VOLATILE
+
+        # Raw throughout, value topics included: deserialising inside the
+        # window depressed the lidar rate it was measuring. Only the last
+        # buffer is kept, decoded once the clock stops.
+        raw_latest: dict = {}
+        msg_classes: dict = {}
 
         def make_cb(topic: str, keep: bool):
             def cb(msg):
                 counts[topic] += 1
                 if keep:
-                    latest[topic] = msg
+                    raw_latest[topic] = msg
             return cb
 
-        for topic in sorted(result.present):
+        for topic in counted:
             type_str = names[topic][0]
             pkg, _, cls = type_str.split('/')
             msg_cls = getattr(importlib.import_module(f'{pkg}.msg'), cls)
-            keep = topic in VALUE_TOPICS
+            msg_classes[topic] = msg_cls
             node.create_subscription(
-                msg_cls, topic, make_cb(topic, keep), qos, raw=not keep)
+                msg_cls, topic, make_cb(topic, topic in VALUE_TOPICS), qos, raw=True)
+
+        if result.present & DIAGNOSTIC_SOURCED:
+            try:
+                from diagnostic_msgs.msg import DiagnosticArray
+                node.create_subscription(
+                    DiagnosticArray, DIAGNOSTICS_TOPIC,
+                    lambda msg: _read_diagnostic_rates(msg, reported), qos)
+            except Exception:  # noqa: BLE001 - fall through to "no rate"
+                pass
 
         # Let subscriptions match their publishers before the clock starts,
         # otherwise the first tenth of the window is counted as silence.
@@ -466,8 +514,19 @@ def sample_ros(window: float, specs: list[TopicSpec]) -> RosResult:
         while time.monotonic() - start < window:
             rclpy.spin_once(node, timeout_sec=0.01)
         result.elapsed = time.monotonic() - start
+
+        # Window closed, so decoding no longer lands on any rate. A payload
+        # that will not decode is dropped and its value check reports missing.
+        from rclpy.serialization import deserialize_message
+        for topic, buf in raw_latest.items():
+            try:
+                latest[topic] = deserialize_message(buf, msg_classes[topic])
+            except Exception:  # noqa: BLE001
+                pass
+
         result.counts = dict(counts)
         result.values = latest
+        result.reported = dict(reported)
         result.available = True
     except Exception as exc:  # noqa: BLE001
         result.reason = f'{exc.__class__.__name__}: {exc}'
@@ -491,7 +550,17 @@ def rate_checks(group: str, specs: list[TopicSpec], ros: RosResult) -> list[Chec
         if spec.topic not in ros.present:
             out.append(Check(group, spec.label, FAIL, f'{spec.topic} not published'))
             continue
-        hz = ros.counts.get(spec.topic, 0) / ros.elapsed if ros.elapsed else 0.0
+        if spec.topic in DIAGNOSTIC_SOURCED:
+            # The publisher reports its own rate. Its absence means the
+            # DiagnosticArray never arrived, not that the stream is dead, so
+            # say which one failed rather than reporting 0 Hz.
+            if spec.topic not in ros.reported:
+                out.append(Check(group, spec.label, WARN,
+                                 f'no rate on {DIAGNOSTICS_TOPIC}'))
+                continue
+            hz = ros.reported[spec.topic]
+        else:
+            hz = ros.counts.get(spec.topic, 0) / ros.elapsed if ros.elapsed else 0.0
         detail = f'{hz:.1f} Hz (floor {spec.floor:.1f})'
         if spec.note:
             detail += f'; {spec.note}'
