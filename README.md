@@ -72,6 +72,9 @@ Safety/uptime layers (inherited from UAV Neo, shipped in v0.0.4):
 
 Node responsibilities, the full topic reference, launch composition, and the
 calibration data flow are in [docs/architecture.md](./docs/architecture.md).
+Failure modes that shaped the code, and the reasoning behind choices that look
+arbitrary at the call site, are in
+[docs/troubleshooting.md](./docs/troubleshooting.md).
 
 ## Quickstart (fresh Ubuntu 24.04 install)
 
@@ -157,11 +160,11 @@ This brings up an isolated AP on the ALFA dongle (`wlan1`) and configures eth0 w
 
 ### What `setup_all.sh` actually does
 
-Eleven phases, all under `scripts/`:
+Twelve phases, all under `scripts/`:
 
 1. **`setup_ros2.sh`**: ROS2 Jazzy apt repo + message/driver packages
 2. **`setup_dev_tools.sh`**: build tools, Python hardware libs (`smbus` / `serial` / `spidev`)
-3. **`setup_user_env.sh`**: joins `dialout` / `i2c` / `spi` / `gpio` / `video` groups; sources ROS2 + the `racecar` shell tool in `.bashrc`
+3. **`setup_user_env.sh`**: joins `dialout` / `i2c` / `spi` / `gpio` / `video` groups; installs `/etc/polkit-1/rules.d/49-racecar-network.rules` so `racecar wifi` can control NetworkManager from a terminal; sources ROS2 + the `racecar` shell tool in `.bashrc`
 4. **`setup_raspi_config.sh`**: boot-level configuration: enable I2C, enable SPI, disable serial console (frees the GPIO UART / `ttyAMA0` for the NEO-PIT link), enable RTC backup-cell trickle charging (`RTC_VCHG_UV=0` skips it; see [RTC backup cell](#rtc-backup-cell)), and reconcile the bootloader EEPROM (`RACECAR_EEPROM=0` skips it; see [Bootloader EEPROM](#bootloader-eeprom))
 5. **`setup_udev.sh`**: installs `/etc/udev/rules.d/99-racecar.rules` (stable `/dev/neo-pit-pcb`, `/dev/lidar`)
 6. **`setup_dotmatrix.sh`**: `pip install --user luma.led_matrix`
@@ -170,6 +173,7 @@ Eleven phases, all under `scripts/`:
 9. **`setup_workspace.sh`**: clones `sllidar_ros2` and runs `colcon build --symlink-install`
 10. **`setup_jupyter.sh`**: `pip install --user jupyterlab`, creates `~/jupyter_ws/`
 11. **`setup_services.sh`**: installs and enables the four core systemd units (`racecar-{teleop,watchdog,dashboard,jupyter}.service`)
+12. **`setup_dashboards.sh`**: clones or fast-forwards the seven lab-dashboard checkouts into `scripts/dashboards/` and installs a stopped, disabled `racecar-*` unit for each (`RACECAR_DASHBOARDS=0` skips it)
 12. **`setup_dashboards.sh`**: clones the seven lab dashboards and installs their units, stopped and disabled
 
 Individual phase scripts can be run on their own to re-do or skip steps (e.g. `racecar setup networking` for just the networking phase, or `bash scripts/setup_udev.sh` to reinstall the udev rules after a hardware swap).
@@ -324,6 +328,24 @@ racecar wifi disconnect
 `connect` brings up a saved profile as-is, whatever its security type. For a new network it asks for a passphrase, or for an identity and password on an enterprise (802.1X) network, and nothing else. Server validation is not optional: every enterprise profile gets system CA certificates plus a `domain-suffix-match` derived from the identity's realm, so credentials are never offered to an access point that cannot prove who it is. Use `--ca-cert=` and `--domain-suffix-match=` where that derivation does not fit.
 
 `disconnect` puts the device into NetworkManager's manually-disconnected state, so it will not rejoin on its own until the next `connect`.
+
+### Networking authorization
+
+NetworkManager asks polkit before it activates a connection or edits a profile, and polkit can only collect a password through an agent. An SSH session has none, so on a car whose polkit still carries the stock policy, `connect` and `disconnect` fail inside `nmcli`:
+
+```
+Error: Connection activation failed: Not authorized to control networking.
+```
+
+`setup_user_env.sh` installs `/etc/polkit-1/rules.d/49-racecar-network.rules`, which answers those NetworkManager actions with an unconditional yes for the `sudo` group. Cars imaged before v0.8.1 need one run to pick it up:
+
+```sh
+bash ~/ros2_ws/src/racecar_neo_ros2_driver/scripts/setup_user_env.sh
+```
+
+The rule takes effect as soon as it lands; polkit re-reads `rules.d` on change, and neither NetworkManager nor a login is restarted. `racecar wifi connect` checks the permission before it prompts, so an unprovisioned car names this remedy rather than failing at the activation call.
+
+The grant covers five NetworkManager actions and nothing else. Members of the `sudo` group can already reach the same operations through `sudo nmcli`; what the rule removes is the password on those actions, which means anyone holding an unlocked shell on the car can change its networking. That is the intended trade for a shared lab robot driven from a terminal.
 
 ## Desktop toggle
 
@@ -532,7 +554,7 @@ racecar launch edgetpu
 racecar launch dotmatrix
 ```
 
-RealSense topics, profiles, and known issues: see [docs/realsense_topics.md](docs/realsense_topics.md).
+RealSense topics, profiles, and known issues: see [docs/specifics/realsense_topics.md](docs/specifics/realsense_topics.md).
 
 
 For boot-time startup, see [scripts/](./scripts/) for systemd units and the `setup_all.sh` idempotent installer.

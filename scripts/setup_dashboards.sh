@@ -1,12 +1,10 @@
 #!/bin/bash
 # Install the lab dashboards as racecar-* systemd units.
 #
-# The seven dashboards are separate upstream repositories built for the
-# NeoRacer. Nothing in a checkout is ever modified: the platform differences
-# (ROS Jazzy rather than Humble, racecar-* unit names, this driver's discovery
-# scope) are absorbed by rendering our own unit from their .service.in
-# template. That is what keeps `git pull --ff-only` clean, so a student's tuned
-# YAML survives an update and upstream never conflicts.
+# The seven dashboards are separate upstream repositories. Nothing in a
+# checkout is ever modified; platform differences are absorbed by rendering our
+# own unit from their .service.in template.
+# See docs/troubleshooting.md, "Lab dashboard checkouts".
 #
 # Usage:
 #   setup_dashboards.sh                clone or ff-only update, then install units

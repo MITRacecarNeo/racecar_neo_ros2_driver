@@ -63,6 +63,16 @@ the ALFA dongle carrying the isolated AP that operators connect over. Anything
 that reconfigures a radio is pinned to one of them by name, so joining a
 network cannot disturb the AP.
 
+Every radio change goes through NetworkManager, which gates activation and
+profile edits behind polkit. polkit collects a password through an agent and an
+SSH session has none, so the stock `auth` policy makes those operations
+unreachable from a terminal on a headless car.
+`scripts/polkit/49-racecar-network.rules`, installed by
+`scripts/setup_user_env.sh`, answers the five actions `racecar wifi` and the
+networking setup scripts need with yes for the `sudo` group. The setup scripts
+call `sudo nmcli` and so were never gated; `racecar wifi` runs as the user and
+was.
+
 eth0 carries exactly one IPv4 addressing mode, written by `scripts/setup_eth.sh`
 as the single owner of `/etc/netplan/99-racecar-eth0.yaml`. Static is the
 default and carries no gateway and no IPv6 default route; dynamic takes both
@@ -332,6 +342,20 @@ sensors, actuators, system, services and network; rate checks compare observed
 Hz against a per-topic floor rather than testing for presence. It is read-only
 and never commands the hardware.
 
+What that shared window costs is itself a measurement problem, and through
+v0.8.0 it was the largest source of error in the sensor section. Counting a
+topic means receiving it, so the tool competes with the car for the same CPU;
+`pit_node` reads the Teensy on a Python thread and gives up throughput under
+that competition. Two subscriptions dominated the bill: the RealSense colour
+and depth streams, worth 40 percent of the PIT telemetry rate when measured
+A/B on hardware, and `/scan`, which was deserialised on arrival for its value
+check at 1080 ranges and 1080 intensities a message. Both are avoidable. The
+RealSense rates are read from `/diagnostics` as the dashboard already reads
+them, and every subscription is raw, with the one buffer a value check needs
+deserialised after the clock stops. The window is 5 seconds because the PIT
+stream arrives in clumps: measured against it, a 2 second window carries a
+standard deviation of 32 Hz on a 136 Hz signal and a 5 second window 3.1.
+
 The exit code is strict: 0 only when every requested check passed, so `WARN`
 and `SKIP` both count against it. Deselecting a section with `--quick` or
 `--section` is distinct from a check failing to run, and does not affect the
@@ -385,12 +409,12 @@ racecar_neo_ros2_driver/
 ├── launch/                    one file per subsystem plus teleop composite
 ├── config/                    one YAML per node, keyed by node name
 ├── scripts/                   setup phases, watchdog, dashboard, diagnostic,
-│                              calibration, systemd units, udev rules
+│                              calibration, systemd units, udev and polkit rules
 ├── test/                      pytest suite (ament convention; not tests/)
 ├── models/                    EdgeTPU tflite model and labels
 ├── depend/                    vendored Coral debs and wheels
-└── docs/                      this file, changelog, advanced settings,
-                               migration and test notes
+└── docs/                      this file, changelog, troubleshooting, advanced
+                               settings, migration and test notes
 ```
 
 `pit_protocol.py` holds the wire format for the Teensy link and carries no ROS

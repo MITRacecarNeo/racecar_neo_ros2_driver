@@ -14,27 +14,12 @@ if ! command -v "$USER_HOME/.local/bin/jupyter" >/dev/null 2>&1; then
 fi
 
 # Student-library runtime deps for the v2 racecar-neo library / labs:
-#   - ipywidgets: live FPS / joystick / detection widgets in
-#     labs/tests/test_async_core_real.ipynb. JupyterLab 4.x renders
-#     ipywidgets >= 8 natively (no labextension install needed).
-#   - pandas: backs telemetry_real.visualize() reading the recorded CSV.
-#   - matplotlib-inline<0.2: matplotlib-inline 0.2.x calls
-#     matplotlib.rcParams._get(...), which only exists in matplotlib >= 3.10.
-#     Pi-OS bookworm/noble ship apt matplotlib 3.6.3, so on Py3.12 the
-#     transitive 0.2.x release (pulled in by ipykernel) breaks plt.subplots()
-#     inside Jupyter with AttributeError: 'RcParams' object has no attribute
-#     '_get'. Pinning <0.2 here keeps the IPython inline backend usable until
-#     someone upgrades apt matplotlib or rebases on a newer Python image.
-#
-# Not installed: nptyping. Earlier v0.0.8 drafts pinned nptyping<2 because
-# the v1 library used the deprecated NDArray[(480, 640, 3), np.uint8] form
-# (the v2 nptyping release replaced it with Shape["..."]). On Py3.12 both
-# nptyping 1.x and 2.x are broken: 2.x raises InvalidArgumentsError at the
-# class def, and 1.x triggers a runaway typing._type_repr recursion that
-# adds ~30 s to a cold import. MITUavNeo/uav-neo-library hit the same wall
-# and resolved it by dropping nptyping entirely — they ship a 2-line inline
-# NDArray stub in every module that needs the syntax. The racecar-neo v2
-# library v1.2.0 mirrors that pattern, so nptyping is not a dep here.
+#   - ipywidgets: live FPS / joystick / detection widgets in the lab notebooks
+#   - pandas: backs telemetry_real.visualize() reading the recorded CSV
+#   - matplotlib-inline<0.2: 0.2.x breaks plt.subplots() on the apt matplotlib
+#     these images ship
+# nptyping is deliberately absent. Both pins and the omission are explained in
+# docs/troubleshooting.md, "Jupyter dependency pins".
 LIB_DEPS=(ipywidgets pandas 'matplotlib-inline<0.2')
 MISSING_DEPS=()
 for dep in "${LIB_DEPS[@]}"; do
