@@ -581,6 +581,21 @@ class TestDashboardScript:
         for gone in ('camlabel', 'pursuit', 'eps', 'smartfollow'):
             assert f'{gone}_dashboard' not in text
 
+    def test_clones_the_platform_branch(self, text):
+        # The forks' default branch is the Neobotics original: upstream
+        # ports, neoracer unit names, Humble paths, forward-facing lidar.
+        # Cloning it would install the wrong dashboards on a fresh car.
+        assert 'BRANCH="${RACECAR_DASHBOARD_BRANCH:-racecar-neo}"' in text
+        assert '--branch "$BRANCH"' in text
+
+    def test_pull_names_the_remote_branch(self, text):
+        # A checkout made before the clone set tracking has no upstream, so
+        # a bare `git pull` fails with 'no tracking information'.
+        assert 'pull --ff-only --quiet origin "$BRANCH"' in text
+
+    def test_a_checkout_on_another_branch_is_left_alone(self, text):
+        assert "not '$BRANCH'; left alone" in text
+
     def test_pins_the_dashboard_version(self, text):
         # The dashboards track the driver's release rather than a count of
         # their own, the same way the RealSense firmware target is pinned.

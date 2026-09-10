@@ -29,6 +29,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DASH_DIR="$SCRIPT_DIR/dashboards"
 ORG_URL="https://github.com/MITRacecarNeo"
 
+# The platform work lives on this branch, not on the forks' default. Cloning
+# the default gets the Neobotics original: upstream ports, neoracer unit
+# names, Humble paths and the forward-facing lidar convention. Clone the
+# branch explicitly rather than relying on the fork's default-branch setting,
+# which is a GitHub setting this script cannot see.
+BRANCH="${RACECAR_DASHBOARD_BRANCH:-racecar-neo}"
+
 REPOS=(
     teleop_dashboard
     linefollow_dashboard
@@ -96,19 +103,30 @@ fetch_repo() {
     # of its assignments take effect, so a single one would build dir
     # from the caller's repo rather than from $1.
     local repo="$1"
-    local dir="$DASH_DIR/$repo"
+    local dir="$DASH_DIR/$repo" on
     if [[ -d "$dir/.git" ]]; then
-        if git -C "$dir" pull --ff-only --quiet 2>/dev/null; then
+        on="$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+        if [[ "$on" != "$BRANCH" ]]; then
+            # Someone put this checkout somewhere deliberately. Say so and
+            # leave it: switching branches under them would lose the reason.
+            echo "  $repo: on '$on', not '$BRANCH'; left alone" >&2
+            failed+=("$repo (branch $on)")
+            return 1
+        fi
+        # Name the remote branch: the branch is created by the clone below
+        # with tracking, but a checkout made before this script did that has
+        # no upstream and would fail with 'no tracking information'.
+        if git -C "$dir" pull --ff-only --quiet origin "$BRANCH" 2>/dev/null; then
             echo "  $repo: up to date"
         else
             echo "  $repo: could not fast-forward (local changes?); left alone" >&2
             failed+=("$repo (pull)")
         fi
     else
-        if git clone --quiet "$ORG_URL/$repo.git" "$dir" 2>/dev/null; then
-            echo "  $repo: cloned"
+        if git clone --quiet --branch "$BRANCH" "$ORG_URL/$repo.git" "$dir" 2>/dev/null; then
+            echo "  $repo: cloned ($BRANCH)"
         else
-            echo "  $repo: clone failed; retry once the network is back" >&2
+            echo "  $repo: clone of '$BRANCH' failed; is the branch pushed?" >&2
             failed+=("$repo (clone)")
             return 1
         fi
@@ -195,7 +213,7 @@ install_unit() {
 
 if [[ "$MODE" != "units" ]]; then
     mkdir -p "$DASH_DIR"
-    echo "==> Lab dashboard checkouts in $DASH_DIR"
+    echo "==> Lab dashboard checkouts in $DASH_DIR ($BRANCH)"
     for repo in "${REPOS[@]}"; do
         fetch_repo "$repo" || true
     done

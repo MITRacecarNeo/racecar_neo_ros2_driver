@@ -403,6 +403,11 @@ the driver pins and `racecar setup realsense` reconciles:
   wallfollow_dashboard: 0.8.1
 ```
 
+The checkouts track the `racecar-neo` branch, not the forks' default: the
+default is still the Neobotics original, with upstream ports, neoracer unit
+names and the forward-facing lidar convention. `setup_dashboards.sh` clones
+that branch by name; `RACECAR_DASHBOARD_BRANCH` overrides it.
+
 A mismatch is reported and the install continues; the units still work, and
 which release to run is your call. `racecar setup dashboards --update`
 fast-forwards. `RACECAR_DASHBOARD_VERSION` pins a different release.

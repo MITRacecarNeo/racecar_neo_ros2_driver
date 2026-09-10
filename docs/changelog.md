@@ -35,6 +35,15 @@ All notable changes to this project will be documented in this file. The format 
   configured rate are published in `/diagnostics`. `0` restores per-frame
   inference. `diagnose.py`'s nominal for `/edgetpu/inference` moves from 17.0
   to 15.0 to match, and a test ties the two together so they cannot drift.
+- **`setup_dashboards.sh` clones the `racecar-neo` branch explicitly.** The
+  forks' default branch is still the Neobotics original: upstream ports,
+  neoracer unit names, Humble paths and the forward-facing lidar convention.
+  A fresh car ran `git clone` with no branch and got that, so none of the
+  platform work was reachable by `racecar setup dashboards`. The clone now
+  names the branch and sets tracking, the pull names `origin <branch>` so a
+  checkout made before tracking existed still fast-forwards, and a checkout
+  someone has deliberately put on another branch is reported and left alone
+  rather than switched underneath them. `RACECAR_DASHBOARD_BRANCH` overrides.
 - **Each dashboard checkout carries a `VERSION` tracking this driver's
   release**, plus `docs/changelog.md` and `docs/architecture.md`, and a README
   Contents entry pointing at them. `setup_dashboards.sh` pins
