@@ -3,26 +3,11 @@
 #
 # Usage: setup_eth.sh <static|dynamic|status> [--addr=CIDR] [--force]
 #
-# eth0 previously carried a static address and a DHCP lease at the same time.
-# NetworkManager reconciles the whole IPv4 config for an interface on every
-# lease event, so the static was repeatedly torn down and re-added; in the
-# field the link drops periodically and comes back only after the cable is
-# physically reseated. The two modes are now mutually exclusive, and this
-# script is the only writer of the netplan file, so setup_networking.sh and
-# `racecar eth` cannot disagree about what eth0 should look like.
-#
-# Static is the default because a known address is what makes a car
-# debuggable on a bare switch. It carries no gateway or DNS in either address
-# family, so a static car has no route out over ethernet and reaches the
-# internet over wlan0 or not at all.
-#
-# IPv6 keeps its addresses but never a default route in static mode. Router
-# advertisements would otherwise hand eth0 a v6 default route even with no v4
-# gateway configured, and since most large destinations are dual-stack a
-# static car would send most of its traffic out an interface the design
-# treats as inert. ipv6.never-default suppresses that route and nothing else.
-# The kernel accept_ra sysctls are not the lever: they read 0 on eth0 while
-# the routes are still proto ra, because NetworkManager handles RA itself.
+# The two modes are mutually exclusive, and this script is the only writer of
+# the netplan file. Static is the default and carries no gateway or DNS in
+# either address family; IPv6 keeps its addresses but never a default route.
+# Why each of those, and the dual-address fault they fix:
+# docs/troubleshooting.md, "eth0 addressing".
 #
 # Idempotent: the netplan file is written only when the rendered content
 # differs, and `netplan apply` runs only when something changed.

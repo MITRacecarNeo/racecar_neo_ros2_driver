@@ -7,14 +7,13 @@
 #
 # M.2 / PCIe (Coral Apex, PCI 1ac1:089a), auto-selected when the card is on the
 # bus:
-#   - gasket/apex kernel driver via DKMS (depend/gasket-dkms_*.deb): the feranick
-#     fork built for kernel 6.8+, plus a patch that falls back from MSI-X to MSI
-#     (scripts/gasket-msi-fallback.patch).
-#   - coral-msi device-tree overlay (scripts/coral-msi.dts): routes the Pi 5
-#     external PCIe MSIs to pcie1's own controller, which has enough vectors.
-#     Without it apex fails with "Couldn't initialize interrupts: -28".
-#   - apex access group for non-root /dev/apex_0.
+#   - gasket/apex kernel driver via DKMS (depend/gasket-dkms_*.deb), patched by
+#     scripts/gasket-msi-fallback.patch
+#   - coral-msi device-tree overlay (scripts/coral-msi.dts)
+#   - apex access group for non-root /dev/apex_0
 #   Requires a reboot (overlay + auto-load take effect at boot).
+#   What the patch and overlay are for: docs/troubleshooting.md,
+#   "Coral M.2 interrupts".
 #
 # USB accelerator (1a6e:089a / 18d1:9302):
 #   - non-root access via the racecar udev rules (scripts/udev/99-racecar.rules,

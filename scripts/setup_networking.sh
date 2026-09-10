@@ -10,9 +10,8 @@
 #      (WPA2 / 2.4 GHz / channel 6 / 10.42.0.1/24). The AP interface is the ALFA
 #      MT7612U dongle, pinned to wlan1 by the 99-racecar.rules udev rule.
 #   3. Puts eth0 in a single IPv4 addressing mode by calling setup_eth.sh
-#      (static by default, at 192.168.52.200/24). Earlier versions rendered a
-#      dual-IP block here, carrying a static address and a DHCP lease at once,
-#      which is what made the static drop periodically.
+#      (static by default, at 192.168.52.200/24), which is the only writer of
+#      the netplan file. See docs/troubleshooting.md, "eth0 addressing".
 #   4. Resets the Pi's built-in wlan0 to default (client) mode, removing any AP
 #      connection a pre-v0.7.0 setup left bound to it.
 #
@@ -161,16 +160,9 @@ else
 fi
 rm -f "$TMP_DISPATCHER"
 
-# The dispatcher is socket-activated by NetworkManager-dispatcher.service.
-# That service is shipped enabled by default on Ubuntu Server but is often
-# disabled on Desktop / Raspberry Pi OS images. Without it the dispatcher
-# script is never invoked and the iptables isolation rules silently never
-# apply (exactly the failure mode v0.0.6 hit on first install).
-#
-# The service is Type=simple with no RemainAfterExit, so it shows "inactive"
-# whenever no script is currently running — `is-active` is the wrong probe.
-# `is-enabled` is the property we actually care about: will systemd start it
-# the next time NM emits a connection event?
+# Without this service the dispatcher never runs and the isolation rules
+# silently never apply. `is-enabled` is the probe, not `is-active`.
+# See docs/troubleshooting.md, "AP isolation dispatcher".
 if ! systemctl is-enabled --quiet NetworkManager-dispatcher.service; then
     echo "  Enabling NetworkManager-dispatcher.service..."
     sudo systemctl enable --now NetworkManager-dispatcher.service

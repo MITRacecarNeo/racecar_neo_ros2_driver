@@ -54,24 +54,49 @@ class TestTopicSpecs:
         assert spec.floor == pytest.approx(80.0)
 
     def test_sensors_default_to_eighty_percent(self, diag):
+        pit = {'/imu/lsm9ds1', '/mag', '/encoder/speed', '/battery/voltage',
+               '/battery/current', '/rc/channels'}
         for spec in diag.SENSOR_TOPICS:
-            if 'camera' in spec.topic:
+            if spec.topic in pit:
                 continue
             assert spec.floor_frac == 0.8, f'{spec.topic} should use the 80% floor'
 
-    def test_camera_streams_use_the_fifty_percent_floor(self, diag):
-        cams = [s for s in diag.SENSOR_TOPICS if 'camera' in s.topic]
-        assert len(cams) == 2
-        for spec in cams:
-            assert spec.floor_frac == 0.5
+    def test_pit_topics_carry_the_wider_floor(self, diag):
+        # The six topics off the Teensy telemetry frame slow under graph load,
+        # so their floor leaves room for it. A halved frame rate (68 Hz) must
+        # still fail, or the check stops meaning anything.
+        pit = [s for s in diag.SENSOR_TOPICS
+               if s.nominal == 136.0 and 'Teensy' in s.note]
+        assert len(pit) == 6
+        for spec in pit:
+            assert spec.floor_frac == diag.PIT_FLOOR_FRAC
+            assert spec.floor < 90.0, 'floor must pass a car delivering 90 Hz'
+            assert spec.floor > 68.0, 'floor must still catch a halved frame rate'
 
-    def test_camera_nominal_is_the_observed_rate_not_the_configured_one(self, diag):
-        # Keying the floor to the configured 60/30 would fail every car for a
-        # shortfall that is already tracked, so nominal is what the camera
-        # actually delivers and the gap is carried in the note instead.
-        colour = next(s for s in diag.SENSOR_TOPICS if s.topic == '/camera/color')
-        assert colour.nominal < 60
-        assert 'tracked' in colour.note
+    def test_lidar_nominal_matches_the_delivered_rate(self, diag):
+        # 8.0 through v0.8.0 put the floor at 6.4 on a lidar delivering 7.2.
+        scan = next(s for s in diag.SENSOR_TOPICS if s.topic == '/scan')
+        assert scan.nominal == pytest.approx(7.2)
+        assert scan.floor < 6.2, 'an ordinary dip must not fail a healthy lidar'
+        assert scan.floor > 2.0, 'a lidar desynced to 2 Hz must still fail'
+
+    def test_camera_nominal_is_the_configured_rate(self, diag):
+        # Until v0.8.1 these were declared at 25 and 12 against a note calling
+        # the gap a hardware shortfall. /diagnostics reports the camera node
+        # delivering 59.0 and 29.6 against targets of 60 and 30; the shortfall
+        # was this tool's own subscription cost.
+        by_topic = {s.topic: s for s in diag.SENSOR_TOPICS}
+        assert by_topic['/camera/color'].nominal == 60.0
+        assert by_topic['/camera/depth'].nominal == 30.0
+
+    def test_realsense_rates_come_from_diagnostics(self, diag):
+        # Subscribing to the two image streams cost 40% of the PIT telemetry
+        # rate, which the PIT topics were then failed for.
+        assert diag.DIAGNOSTIC_SOURCED == {
+            '/camera/color', '/camera/depth', '/imu/realsense'}
+        for topic in diag.DIAGNOSTIC_SOURCED:
+            spec = next(s for s in diag.SENSOR_TOPICS if s.topic == topic)
+            assert 'diagnostics' in spec.note
 
     def test_every_notebook_topic_is_covered(self, diag):
         covered = {s.topic for s in diag.SENSOR_TOPICS + diag.ACTUATOR_TOPICS}
@@ -128,6 +153,87 @@ class TestRateChecks:
         spec = diag.TopicSpec('/t', 'T', 10.0, 0.5, 'configured 60, gap tracked')
         ros = self._ros(diag, {'/t': 40})
         assert 'gap tracked' in diag.rate_checks('sensors', [spec], ros)[0].detail
+
+    def test_diagnostic_sourced_topic_uses_the_reported_rate(self, diag):
+        # /camera/color is never counted here, so a zero count must not read
+        # as a dead stream.
+        spec = next(s for s in diag.SENSOR_TOPICS if s.topic == '/camera/color')
+        ros = diag.RosResult(
+            available=True, counts={}, elapsed=5.0,
+            present={'/camera/color'}, reported={'/camera/color': 59.0})
+        check = diag.rate_checks('sensors', [spec], ros)[0]
+        assert check.status == diag.OK
+        assert '59.0 Hz' in check.detail
+
+    def test_diagnostic_sourced_topic_below_floor_fails(self, diag):
+        spec = next(s for s in diag.SENSOR_TOPICS if s.topic == '/camera/depth')
+        ros = diag.RosResult(
+            available=True, counts={}, elapsed=5.0,
+            present={'/camera/depth'}, reported={'/camera/depth': 12.0})
+        assert diag.rate_checks('sensors', [spec], ros)[0].status == diag.FAIL
+
+    def test_missing_diagnostic_rate_warns_rather_than_reading_zero(self, diag):
+        # A DiagnosticArray that never arrived says nothing about the camera.
+        spec = next(s for s in diag.SENSOR_TOPICS if s.topic == '/camera/color')
+        ros = diag.RosResult(
+            available=True, counts={}, elapsed=5.0,
+            present={'/camera/color'}, reported={})
+        check = diag.rate_checks('sensors', [spec], ros)[0]
+        assert check.status == diag.WARN
+        assert '/diagnostics' in check.detail
+
+
+class TestSampleWindow:
+    def test_window_is_long_enough_for_the_pit_stream(self, diag):
+        # At 2.0 s the PIT stream measured to a standard deviation of 32 Hz on
+        # a ~136 Hz signal, which is what produced the spurious failures.
+        assert diag.DEFAULT_WINDOW >= 5.0
+
+    def test_diagnostic_names_cover_every_diagnostic_sourced_topic(self, diag):
+        assert set(diag.REALSENSE_DIAGNOSTIC_NAMES.values()) == diag.DIAGNOSTIC_SOURCED
+
+    def test_diagnostic_parser_extracts_the_actual_frequency(self, diag):
+        class _Value:
+            def __init__(self, key, value):
+                self.key, self.value = key, value
+
+        class _Status:
+            def __init__(self, name, values):
+                self.name, self.values = name, values
+
+        class _Msg:
+            def __init__(self, status):
+                self.status = status
+
+        msg = _Msg([
+            _Status('camera: color', [
+                _Value('Target frequency (Hz)', '60.0'),
+                _Value('Actual frequency (Hz)', '59.4'),
+            ]),
+            _Status('camera: Temperatures', [_Value('Asic Temperature', '54')]),
+        ])
+        out = {}
+        diag._read_diagnostic_rates(msg, out)
+        assert out == {'/camera/color': pytest.approx(59.4)}
+
+    def test_diagnostic_parser_ignores_an_unparsable_rate(self, diag):
+        class _Value:
+            def __init__(self, key, value):
+                self.key, self.value = key, value
+
+        class _Status:
+            def __init__(self, name, values):
+                self.name, self.values = name, values
+
+        class _Msg:
+            def __init__(self, status):
+                self.status = status
+
+        out = {}
+        diag._read_diagnostic_rates(
+            _Msg([_Status('camera: depth',
+                          [_Value('Actual frequency (Hz)', 'n/a')])]), out)
+        assert out == {}
 
 
 class TestValueChecks:

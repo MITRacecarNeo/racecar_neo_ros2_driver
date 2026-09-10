@@ -2,17 +2,29 @@ edgetpu_node:
   ros__parameters:
     # Paths are resolved against the package share dir if relative.
     # Compile new .tflite models with `edgetpu_compiler` (x86 only) before use.
-    model_path: "models/efficientdet_lite0_generic_edgetpu.tflite"
-    labels_path: "models/labels.txt"
+    # EfficientDet-Lite0 320x320, post-training quantized and EdgeTPU
+    # compiled, trained on COCO: 90 classes, from google-coral/test_data.
+    # The car-only single-class model it replaced is still in models/ as
+    # efficientdet_lite0_generic_edgetpu.tflite with labels.txt.
+    model_path: "models/efficientdet_lite0_320_coco_edgetpu.tflite"
+    labels_path: "models/coco_labels.txt"
 
-    # Minimum confidence (0..1) to keep a detection.
-    score_threshold: 0.5
+    # Minimum confidence (0..1) to keep a detection. 0.4 is the Coral
+    # examples' default and what this model was evaluated at; 0.5 left an
+    # ordinary indoor scene reporting nothing at all.
+    score_threshold: 0.4
 
     # Cap detections per frame; 0 = no limit.
     max_detections: 0
 
     # RealSense color stream.
     image_topic: "/camera/color"
+
+    # Inference rate, independent of the camera's 60 fps. Nothing downstream
+    # reads detections faster than a dashboard draws them, so the frames above
+    # this were TPU time and current spent on results nobody saw. 0 = infer on
+    # every frame.
+    inference_rate_hz: 15.0
 
     # Heartbeat + stale-input watchdog.
     diagnostics_period_sec: 1.0

@@ -63,6 +63,16 @@ the ALFA dongle carrying the isolated AP that operators connect over. Anything
 that reconfigures a radio is pinned to one of them by name, so joining a
 network cannot disturb the AP.
 
+Every radio change goes through NetworkManager, which gates activation and
+profile edits behind polkit. polkit collects a password through an agent and an
+SSH session has none, so the stock `auth` policy makes those operations
+unreachable from a terminal on a headless car.
+`scripts/polkit/49-racecar-network.rules`, installed by
+`scripts/setup_user_env.sh`, answers the five actions `racecar wifi` and the
+networking setup scripts need with yes for the `sudo` group. The setup scripts
+call `sudo nmcli` and so were never gated; `racecar wifi` runs as the user and
+was.
+
 eth0 carries exactly one IPv4 addressing mode, written by `scripts/setup_eth.sh`
 as the single owner of `/etc/netplan/99-racecar-eth0.yaml`. Static is the
 default and carries no gateway and no IPv6 default route; dynamic takes both
@@ -155,15 +165,52 @@ is slow and revoking immediate: one bad frame hands the gate back.
 
 ### Lab dashboards
 
-Seven dashboards run as `racecar-*` units on ports 8081 to 8087, installed by
+Three dashboards run as `racecar-*` units, installed by
 `scripts/setup_dashboards.sh` from gitignored checkouts under
-`scripts/dashboards/`. Six publish `/drive` and so are mutually exclusive; a
-second publisher fights the mux, and `racecar service start` enforces one at a
-time. `camlabel` only reads `/camera/color` and can run alongside any of them.
+`scripts/dashboards/`: `webteleop` on 8081, `linefollow` on 8082 and
+`wallfollow` on 8083, continuing from the driver's own dashboard on 8080. All
+three publish `/drive` and so are mutually exclusive; a second publisher fights
+the mux, and `racecar service start` enforces one at a time.
 
-Units are rendered from each upstream `.service.in` rather than copied, which
-absorbs the ROS distribution, unit prefix and discovery scope on this side and
-leaves every checkout byte-identical to upstream.
+Each is a fork under MITRacecarNeo of the corresponding Neobotics Foundation
+repository. Forking is what lets the lidar convention, the ports and the
+branding be corrected at the source rather than worked around at install time.
+`wallfollow` reads `/scan` in the student convention and carries
+`LIDAR_MOUNT_YAW_DEG` for this chassis's aft-facing mount; see
+docs/troubleshooting.md, "Lab dashboard checkouts".
+
+`webteleop` is the only one that reads the depth stream. It subscribes to
+`/camera/depth` alongside `/camera/color` and serves each as its own JPEG
+endpoint, `/frame` and `/depth`, on independent browser-side pull loops, so a
+congested link or a missing depth stream costs that view its frame rate and
+leaves the other alone. Both are rate limited to `PREVIEW_RATE_HZ` and resized
+to `preview_width` before encoding; depth is resized nearest neighbour, since
+averaging a valid reading against a zero invents a surface halfway to a hole
+in the depth image. `_colorize_depth` is what turns metres into the preview,
+and it is a module function rather than a method so the ramp can be tested
+without a node.
+
+`edgetpu_node` infers at `inference_rate_hz` (15) rather than at the
+camera's 60 fps: nothing downstream reads detections faster than a dashboard
+draws them. Frames above the rate are dropped before the decode, so the saving
+is the whole decode-resize-invoke path, and the stale-input watchdog still
+stamps every frame so it reports on the camera rather than on the gate.
+`diagnose.py`'s nominal for the topic tracks the same number.
+
+Each checkout carries `VERSION`, `docs/changelog.md` and
+`docs/architecture.md`. The version tracks this driver's release rather than
+counting on its own, and `setup_dashboards.sh` reports a checkout that does
+not match the version it pins; the code layout stays flat, so a fork synced
+from Neobotics upstream still merges.
+
+The palette is one system across the three: orange on the dark surfaces,
+ember on the light ones, crimson reserved for stop and fault. The split
+follows contrast rather than preference; the measurements and the role table
+are in the README, "Branding".
+
+Units are still rendered from each checkout's `.service.in` rather than copied,
+so a fork synced from Neobotics upstream keeps working: the ROS distribution,
+unit prefix and discovery scope are absorbed on this side either way.
 
 ## Sensing and perception
 
@@ -332,6 +379,20 @@ sensors, actuators, system, services and network; rate checks compare observed
 Hz against a per-topic floor rather than testing for presence. It is read-only
 and never commands the hardware.
 
+What that shared window costs is itself a measurement problem, and through
+v0.8.0 it was the largest source of error in the sensor section. Counting a
+topic means receiving it, so the tool competes with the car for the same CPU;
+`pit_node` reads the Teensy on a Python thread and gives up throughput under
+that competition. Two subscriptions dominated the bill: the RealSense colour
+and depth streams, worth 40 percent of the PIT telemetry rate when measured
+A/B on hardware, and `/scan`, which was deserialised on arrival for its value
+check at 1080 ranges and 1080 intensities a message. Both are avoidable. The
+RealSense rates are read from `/diagnostics` as the dashboard already reads
+them, and every subscription is raw, with the one buffer a value check needs
+deserialised after the clock stops. The window is 5 seconds because the PIT
+stream arrives in clumps: measured against it, a 2 second window carries a
+standard deviation of 32 Hz on a 136 Hz signal and a 5 second window 3.1.
+
 The exit code is strict: 0 only when every requested check passed, so `WARN`
 and `SKIP` both count against it. Deselecting a section with `--quick` or
 `--section` is distinct from a check failing to run, and does not affect the
@@ -385,12 +446,12 @@ racecar_neo_ros2_driver/
 ├── launch/                    one file per subsystem plus teleop composite
 ├── config/                    one YAML per node, keyed by node name
 ├── scripts/                   setup phases, watchdog, dashboard, diagnostic,
-│                              calibration, systemd units, udev rules
+│                              calibration, systemd units, udev and polkit rules
 ├── test/                      pytest suite (ament convention; not tests/)
 ├── models/                    EdgeTPU tflite model and labels
 ├── depend/                    vendored Coral debs and wheels
-└── docs/                      this file, changelog, advanced settings,
-                               migration and test notes
+└── docs/                      this file, changelog, troubleshooting, advanced
+                               settings, migration and test notes
 ```
 
 `pit_protocol.py` holds the wire format for the Teensy link and carries no ROS

@@ -7,6 +7,7 @@ syntax errors, and the orchestrator forgetting to call a phase script.
 
 import os
 from pathlib import Path
+import re
 import subprocess
 
 import pytest
@@ -282,6 +283,47 @@ class TestSystemdServices:
         assert 'watchdog.py' in text
 
 
+class TestNetworkPolkitRule:
+    """The polkit rule that lets `racecar wifi connect` work over SSH."""
+
+    RULE_FILE = SCRIPTS_DIR / 'polkit' / '49-racecar-network.rules'
+    INSTALLER = SCRIPTS_DIR / 'setup_user_env.sh'
+
+    @pytest.fixture
+    def text(self):
+        return self.RULE_FILE.read_text()
+
+    def test_rule_file_exists(self):
+        assert self.RULE_FILE.is_file(), f'{self.RULE_FILE} missing'
+
+    def test_sorts_ahead_of_the_polkit_default(self):
+        # 50-default.rules answers "auth" for network-control. A rule that
+        # sorts after it never gets asked.
+        prefix = int(self.RULE_FILE.name.split('-')[0])
+        assert prefix < 50, 'rule must sort before polkit 50-default.rules'
+
+    @pytest.mark.parametrize('action_id', [
+        'org.freedesktop.NetworkManager.network-control',
+        'org.freedesktop.NetworkManager.enable-disable-wifi',
+        'org.freedesktop.NetworkManager.wifi.scan',
+        'org.freedesktop.NetworkManager.settings.modify.own',
+        'org.freedesktop.NetworkManager.settings.modify.system',
+    ])
+    def test_grants_the_actions_the_wifi_command_needs(self, text, action_id):
+        assert f'"{action_id}"' in text, f'{action_id} not granted'
+
+    def test_grant_is_scoped_to_a_group_and_an_action_list(self, text):
+        # An unconditional YES would hand every polkit action on the car to
+        # anyone, NetworkManager or not.
+        assert 'subject.isInGroup("sudo")' in text
+        assert 'indexOf(action.id)' in text
+
+    def test_installed_by_setup_user_env(self):
+        text = self.INSTALLER.read_text()
+        assert 'polkit/49-racecar-network.rules' in text
+        assert '/etc/polkit-1/rules.d/49-racecar-network.rules' in text
+
+
 class TestUdevRules:
     """The 99-racecar.rules file ships with the package and binds each peripheral."""
 
@@ -496,7 +538,7 @@ class TestDashboardScript:
         assert 'reset --hard' not in text
 
     def test_never_enables_or_starts(self, text):
-        # Six of seven publish /drive; enabling them all would put six
+        # All three publish /drive; enabling them all would put three
         # publishers on the mux at boot.
         assert 'systemctl enable' not in text
         assert 'systemctl start' not in text
@@ -508,13 +550,20 @@ class TestDashboardScript:
         assert 'ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST' in text
 
     def test_renames_units_to_the_racecar_prefix(self, text):
-        assert 'racecar-${unit#neoracer-}' in text
+        # Either project's prefix comes off, so a fork and a fork synced from
+        # Neobotics upstream land on the same racecar-<name>.service.
+        assert 'unit_name()' in text
+        assert 'base="${base#neoracer-}"' in text
+        assert 'base="${base#racecar-}"' in text
 
     def test_verifies_every_substitution_token(self, text):
-        # A template that stops carrying a token has changed shape upstream;
-        # installing the result anyway would point the unit at the wrong ROS.
-        for token in ('@DIR@', '/opt/ros/humble', 'Environment=HOME='):
+        # A template that stops carrying a token has changed shape; installing
+        # the result anyway would point the unit at the wrong directory.
+        for token in ('@DIR@', 'Environment=HOME='):
             assert token in text
+        # The ROS overlay may read humble (upstream) or jazzy (the forks), but
+        # one of them has to be there to rewrite.
+        assert '/opt/ros/(humble|jazzy)' in text
 
     def test_clone_failure_is_not_fatal(self, text):
         assert 'fetch_repo "$repo" || true' in text
@@ -526,10 +575,100 @@ class TestDashboardScript:
     def test_env_var_skips_the_phase(self, text):
         assert 'RACECAR_DASHBOARDS' in text
 
-    def test_all_seven_repositories(self, text):
-        for repo in ('wallfollow', 'camlabel', 'pursuit', 'eps',
-                     'smartfollow', 'linefollow', 'teleop'):
+    def test_the_three_forked_repositories(self, text):
+        for repo in ('teleop', 'linefollow', 'wallfollow'):
             assert f'{repo}_dashboard' in text
+        for gone in ('camlabel', 'pursuit', 'eps', 'smartfollow'):
+            assert f'{gone}_dashboard' not in text
+
+    def test_clones_the_platform_branch(self, text):
+        # The forks' default branch is the Neobotics original: upstream
+        # ports, neoracer unit names, Humble paths, forward-facing lidar.
+        # Cloning it would install the wrong dashboards on a fresh car.
+        assert 'BRANCH="${RACECAR_DASHBOARD_BRANCH:-racecar-neo}"' in text
+        assert '--branch "$BRANCH"' in text
+
+    def test_pull_names_the_remote_branch(self, text):
+        # A checkout made before the clone set tracking has no upstream, so
+        # a bare `git pull` fails with 'no tracking information'.
+        assert 'pull --ff-only --quiet origin "$BRANCH"' in text
+
+    def test_a_checkout_on_another_branch_is_left_alone(self, text):
+        assert "not '$BRANCH'; left alone" in text
+
+    def test_pins_the_dashboard_version(self, text):
+        # The dashboards track the driver's release rather than a count of
+        # their own, the same way the RealSense firmware target is pinned.
+        assert 'DASHBOARD_VERSION="${RACECAR_DASHBOARD_VERSION:-' in text
+
+    def test_the_pin_matches_the_driver_version(self, text):
+        """The whole point of the pin is that it names this release."""
+        pinned = re.search(r'DASHBOARD_VERSION="\$\{RACECAR_DASHBOARD_VERSION:-([^}]+)\}"', text)
+        assert pinned, 'no pinned dashboard version'
+        setup_py = (SCRIPTS_DIR.parent / 'setup.py').read_text()
+        driver = re.search(r"version='([^']+)'", setup_py)
+        assert driver, 'no version in setup.py'
+        assert pinned.group(1) == driver.group(1)
+
+    def test_a_version_mismatch_is_not_fatal(self, text):
+        # A car mid-upgrade should still end up with working units; which
+        # release to run is the operator's call, not the script's.
+        assert 'mismatched+=' in text
+        assert 'exit 1' not in text.split('check_version()')[1].split('}')[0]
+
+    def test_a_failed_install_is_not_reported_as_success(self, text):
+        # install_unit runs under `|| true`, which suppresses errexit for its
+        # whole body, so the install has to be tested explicitly.
+        assert 'elif sudo install -m 0644' in text
+        assert 'install failed' in text
+
+    def test_a_failed_daemon_reload_still_reaches_the_summary(self, text):
+        assert 'if sudo systemctl daemon-reload; then' in text
+
+    def _check_version(self, tmp_path, contents, pinned='0.8.1'):
+        """Run the shipped check_version() against a throwaway checkout."""
+        text = self.SCRIPT.read_text()
+        body = text.split('check_version() {', 1)[1].split('\n}\n', 1)[0]
+        repo = tmp_path / 'teleop_dashboard'
+        repo.mkdir()
+        if contents is not None:
+            (repo / 'VERSION').write_text(contents)
+        script = (
+            f'DASH_DIR={tmp_path}\n'
+            f'DASHBOARD_VERSION={pinned}\n'
+            'mismatched=()\n'
+            'check_version() {' + body + '\n}\n'
+            'check_version teleop_dashboard\n'
+            'printf "MISMATCHED:%s\\n" "${mismatched[*]}"\n'
+        )
+        return subprocess.run(['bash', '-c', script], capture_output=True, text=True)
+
+    def test_a_matching_checkout_passes(self, tmp_path):
+        r = self._check_version(tmp_path, '0.8.1\n')
+        assert 'teleop_dashboard: 0.8.1' in r.stdout
+        assert 'MISMATCHED:\n' in r.stdout
+
+    def test_a_stale_checkout_is_named(self, tmp_path):
+        r = self._check_version(tmp_path, '0.8.0\n')
+        assert 'driver pins 0.8.1' in r.stderr
+        assert '0.8.0' in r.stdout.split('MISMATCHED:')[1]
+
+    def test_a_checkout_with_no_version_is_caught(self, tmp_path):
+        # The pre-0.8.1 checkout is exactly what the check exists to find, so
+        # a missing file must not read as a pass.
+        r = self._check_version(tmp_path, None)
+        assert 'no VERSION' in r.stderr
+        assert 'no VERSION' in r.stdout.split('MISMATCHED:')[1]
+
+    def test_trailing_whitespace_in_version_is_tolerated(self, tmp_path):
+        r = self._check_version(tmp_path, '  0.8.1  \n\n')
+        assert 'MISMATCHED:\n' in r.stdout
+
+    def test_clones_from_the_racecar_org(self, text):
+        # The forks carry this platform's lidar convention, ports and
+        # branding; the Neobotics originals do not.
+        assert 'github.com/MITRacecarNeo' in text
+        assert 'Neobotics-Foundation-Inc' not in text
 
     def test_checkouts_are_gitignored(self):
         gitignore = (SCRIPTS_DIR.parent / '.gitignore').read_text()

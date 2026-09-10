@@ -86,16 +86,13 @@ racecar() {
             shift || true
             local -a core_units=("racecar-teleop" "racecar-watchdog"
                                  "racecar-dashboard" "racecar-jupyter")
-            # Lab dashboards, installed by setup_dashboards.sh. Every one but
-            # camlabel publishes /drive; a second publisher fights the mux, so
-            # starting one stops the others.
-            local -a dash_units=("racecar-wallfollow" "racecar-camlabel"
-                                 "racecar-pursuit" "racecar-eps"
-                                 "racecar-smartfollow" "racecar-linefollow"
-                                 "racecar-webteleop")
-            local -a drive_units=("racecar-wallfollow" "racecar-pursuit"
-                                  "racecar-eps" "racecar-smartfollow"
-                                  "racecar-linefollow" "racecar-webteleop")
+            # Lab dashboards, installed by setup_dashboards.sh. All three
+            # publish /drive; a second publisher fights the mux, so starting
+            # one stops the others.
+            local -a dash_units=("racecar-webteleop" "racecar-linefollow"
+                                 "racecar-wallfollow")
+            local -a drive_units=("racecar-webteleop" "racecar-linefollow"
+                                  "racecar-wallfollow")
             local -a units=("${core_units[@]}" "${dash_units[@]}")
             case "$action" in
                 install)
@@ -145,8 +142,8 @@ racecar() {
                         sudo systemctl "$action" "racecar-$1"
                     else
                         # Bare form is the core stack only. Enabling every
-                        # dashboard would put six /drive publishers on the mux
-                        # at boot; dashboards are enabled by name.
+                        # dashboard would put three /drive publishers on the
+                        # mux at boot; dashboards are enabled by name.
                         for u in "${core_units[@]}"; do
                             sudo systemctl "$action" "$u"
                         done
@@ -195,9 +192,9 @@ actions:
   logs [name]     journalctl -u racecar-<name> -f; default = teleop
   status          active/enabled snapshot, core and dashboards (default)
 core units: teleop, watchdog, dashboard, jupyter
-dashboards: wallfollow(8081) camlabel(8082) pursuit(8083) eps(8084)
-            smartfollow(8085) linefollow(8086) webteleop(8087)
-Only one dashboard drives at a time; camlabel is read-only and can run alongside.
+dashboards: webteleop(8081) linefollow(8082) wallfollow(8083)
+All three publish /drive, so only one runs at a time; starting one stops
+the others.
 __RC_SVC_HELP__
                     ;;
                 *)
@@ -415,12 +412,9 @@ __RC_ETH_HELP__
             ;;
 
         wifi)
-            # Client radio only. wlan0 is the Pi's built-in Broadcom part;
-            # wlan1 carries the AP that operators are often connected over. So
-            # every nmcli call here is pinned to wlan0, and `disconnect`
-            # targets the device rather than a connection name that could
-            # match the AP profile. Nothing this command does should be able
-            # to drop the link its own operator is using.
+            # Client radio only: every nmcli call is pinned to wlan0, and
+            # disconnect targets the device rather than a connection name that
+            # could match the AP profile on wlan1 an operator is connected over.
             local wifi_iface="${RACECAR_WIFI_IFACE:-wlan0}"
             local wifi_nmcli="${RACECAR_NMCLI:-nmcli}"
             local action="${1:-status}"
@@ -431,13 +425,14 @@ __RC_ETH_HELP__
                     cat <<'__RC_WIFI_HELP__'
 usage: racecar wifi [action] [args]
 actions:
-  status              link state, SSID, addresses and DNS for wlan0 (default)
+  status              link state, SSID, addresses, DNS and whether the
+                      link returns after a reboot (default)
   list [--rescan]     visible networks, one row per SSID, strongest first.
                       Reads the cached scan; --rescan forces a fresh one
                       (about ten seconds).
   connect <ssid>      join a network. Brings up a saved profile as-is, or
                       creates one. Prompts for what it needs.
-  disconnect          drop the wlan0 link
+  disconnect          drop the wlan0 link until the next connect
 connect flags:
   --identity=USER     account for an enterprise (802.1X) network
   --psk=PASS          passphrase for scripted use; note that it lands in
@@ -445,6 +440,9 @@ connect flags:
   --ca-cert=PATH      override the CA certificate for an enterprise network
   --domain-suffix-match=DOMAIN
                       override the RADIUS server suffix to require
+A joined network is made to survive a reboot: connect sets the profile's
+autoconnect and clears any device-level block left by an earlier disconnect.
+`racecar wifi status` says which network comes back.
 Enterprise networks ask for an identity and password and nothing else. Server
 validation is always on: profiles get system CA certificates plus a
 domain-suffix-match derived from the identity's realm, so credentials are
@@ -467,6 +465,24 @@ __RC_WIFI_HELP__
                 echo "The client radio is the Pi's built-in adapter; wlan1 is the AP dongle." >&2
                 return 3
             fi
+
+            # Check polkit before prompting, and only for the actions that
+            # change state; status and list read fine unauthorized.
+            # See docs/troubleshooting.md, "NetworkManager authorization".
+            case "$action" in
+                connect|disconnect)
+                    local net_perm
+                    local nm_control="org.freedesktop.NetworkManager.network-control"
+                    net_perm=$($wifi_nmcli -t general permissions 2>/dev/null |
+                        awk -F: -v a="$nm_control" '$1 == a { print $2; exit }')
+                    if [[ -n "$net_perm" && "$net_perm" != "yes" ]]; then
+                        echo "racecar wifi: this account may not control networking (polkit says '$net_perm')." >&2
+                        echo "Install the rule that grants it, then retry:" >&2
+                        echo "  bash $pkg_dir/scripts/setup_user_env.sh" >&2
+                        return 5
+                    fi
+                    ;;
+            esac
 
             case "$action" in
                 list)
@@ -512,20 +528,35 @@ __RC_WIFI_HELP__
                     if $wifi_nmcli -t -f NAME con show 2>/dev/null | grep -qx "$ssid"; then
                         echo "Using the saved profile '$ssid'."
                         $wifi_nmcli connection up "$ssid" ifname "$wifi_iface" || return $?
+
+                    # NetworkManager rejoins at boot only when the profile
+                    # carries connection.autoconnect and the device is not
+                    # still blocked by an earlier `racecar wifi disconnect`.
+                    # Neither is guaranteed: the flag nmcli writes depends on
+                    # the creation path, and the GNOME network menu clears it
+                    # when someone disconnects from the desktop.
+                    # See docs/troubleshooting.md, "WiFi persistence".
+                    $wifi_nmcli device set "$wifi_iface" autoconnect yes >/dev/null 2>&1 || true
+                    $wifi_nmcli connection modify "$ssid" \
+                        connection.autoconnect yes >/dev/null 2>&1 || true
                         racecar wifi status
                         return 0
                     fi
 
-                    # Otherwise read the security type off the scan.
+                    # Otherwise read the security type off the scan. An open
+                    # network reports an empty SECURITY field, which is not
+                    # the same as an absent SSID, so the match carries a
+                    # marker rather than being tested for emptiness.
                     local security
                     security=$($wifi_nmcli -t -f SSID,SECURITY device wifi list \
                         ifname "$wifi_iface" 2>/dev/null |
-                        awk -F: -v s="$ssid" '$1 == s { print $2; exit }')
+                        awk -F: -v s="$ssid" '$1 == s { print "seen:" $2; exit }')
                     if [[ -z "$security" ]]; then
                         echo "racecar wifi: '$ssid' is not visible on $wifi_iface." >&2
                         echo "Run 'racecar wifi list --rescan' to refresh the scan." >&2
                         return 4
                     fi
+                    security="${security#seen:}"
 
                     if [[ "$security" == *802.1X* ]]; then
                         if [[ -z "$identity" ]]; then
@@ -562,6 +593,7 @@ __RC_WIFI_HELP__
                             802-1x.identity "$identity"
                             802-1x.password "$eap_pw"
                             802-1x.domain-suffix-match "$domain_match"
+                            connection.autoconnect yes
                         )
                         if [[ -n "$ca_cert" ]]; then
                             add_args+=(802-1x.ca-cert "$ca_cert")
@@ -584,6 +616,17 @@ __RC_WIFI_HELP__
                                 ifname "$wifi_iface" || return $?
                         fi
                     fi
+
+                    # NetworkManager rejoins at boot only when the profile
+                    # carries connection.autoconnect and the device is not
+                    # still blocked by an earlier `racecar wifi disconnect`.
+                    # Neither is guaranteed: the flag nmcli writes depends on
+                    # the creation path, and the GNOME network menu clears it
+                    # when someone disconnects from the desktop.
+                    # See docs/troubleshooting.md, "WiFi persistence".
+                    $wifi_nmcli device set "$wifi_iface" autoconnect yes >/dev/null 2>&1 || true
+                    $wifi_nmcli connection modify "$ssid" \
+                        connection.autoconnect yes >/dev/null 2>&1 || true
                     racecar wifi status
                     ;;
 
@@ -608,6 +651,28 @@ __RC_WIFI_DISC__
                         ifname "$wifi_iface" 2>/dev/null |
                         awk -F: '$1 == "yes" { print $2 " (" $3 "%)"; exit }')
                     [[ -n "$cur_ssid" ]] && echo "  network:    $cur_ssid"
+
+                    # Whether this survives a reboot is two separate flags, and
+                    # a car that looks connected can still come back with no
+                    # link. Report the answer rather than the flags.
+                    local act_con prof_auto dev_auto boot_note
+                    act_con=$($wifi_nmcli -g GENERAL.CONNECTION device show "$wifi_iface" 2>/dev/null | head -1)
+                    dev_auto=$($wifi_nmcli -g GENERAL.AUTOCONNECT device show "$wifi_iface" 2>/dev/null | head -1)
+                    if [[ -n "$act_con" && "$act_con" != "--" ]]; then
+                        prof_auto=$($wifi_nmcli -g connection.autoconnect con show "$act_con" 2>/dev/null)
+                        if [[ "$prof_auto" != "yes" ]]; then
+                            boot_note="will NOT rejoin ('$act_con' autoconnect is off)"
+                        elif [[ "$dev_auto" == "no" ]]; then
+                            boot_note="will NOT rejoin ($wifi_iface is blocked; reconnect to clear)"
+                        else
+                            boot_note="rejoins '$act_con'"
+                        fi
+                    elif [[ "$dev_auto" == "no" ]]; then
+                        boot_note="disconnected on purpose; will not rejoin on its own"
+                    else
+                        boot_note="no saved network active"
+                    fi
+                    echo "  after boot: $boot_note"
 
                     local ip4 gw dns
                     ip4=$($wifi_nmcli -t -f IP4.ADDRESS device show "$wifi_iface" 2>/dev/null |
@@ -667,18 +732,9 @@ __RC_WIFI_COLLIDE__
             ;;
 
         desktop)
-            # The GNOME desktop ships enabled; headless users turn it off.
-            #
-            # The boot target is the only lever, and it is sufficient on its
-            # own. The display manager unit is `static` (no [Install] section),
-            # so `systemctl enable`/`disable` on it cannot work, and it is
-            # pulled in by graphical.target rather than by its own enablement.
-            # Booting to multi-user.target therefore never starts it.
-            #
-            # Deliberately reboot-scoped: there is no --now or `isolate`
-            # variant, so this can never tear down a desktop session out from
-            # under whoever is sitting at it. Packages are left installed, so
-            # the toggle is reversible on a car with no network.
+            # The boot target is the only lever, and reboot-scoped on purpose
+            # so this cannot drop a live desktop session.
+            # See docs/troubleshooting.md, "Desktop toggle scope".
             local action="${1:-status}"
             shift || true
             local sctl="${RACECAR_SYSTEMCTL:-systemctl}"

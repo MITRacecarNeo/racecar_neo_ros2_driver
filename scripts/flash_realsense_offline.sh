@@ -75,15 +75,9 @@ if [ -z "$RS_LIB" ]; then
     RS_LIB="${LD_LIBRARY_PATH:-/opt/ros/jazzy/lib/$(uname -m)-linux-gnu:/opt/ros/jazzy/lib}"
 fi
 
-# Enumeration and post-flash verify run as the invoking user: the normal 0b3a
-# device is reachable via the video/plugdev groups, and gating them behind sudo
-# breaks in any no-TTY context (sudo blocks on the password prompt, emits no
-# device output, and looks like "no camera"). The script sourced the ROS overlay
-# above, so LD_LIBRARY_PATH is already set for these in-process calls.
-#
-# Only the flash itself needs root (it writes the device, and DFU re-enumerates
-# as 8086:0adb which udev grants no user access). sudo strips LD_*, so the lib
-# path is passed explicitly via env there.
+# Only the flash itself runs as root; enumeration and verify stay unprivileged.
+# sudo strips LD_*, so the library path is passed explicitly here.
+# See docs/troubleshooting.md, "RealSense firmware flash privileges".
 flash_rs() { sudo env "LD_LIBRARY_PATH=$RS_LIB" "$@"; }
 
 echo "=== RealSense offline firmware flash ==="

@@ -2,16 +2,10 @@
 """
 Record eth0's addressing and link state so an address drop can be caught.
 
-v0.7.4 made the two IPv4 addressing modes mutually exclusive, which removes
-the structural cause of the static address disappearing. That reasoning is
-sound but unproven: the reported symptom is periodic and recovers only when
-the cable is reseated, so a passing afternoon says nothing. This logger is
-what turns "should be fixed" into evidence.
-
-Recovery needing a physical reseat is the reason carrier and operstate are
-sampled alongside the addresses. A link that is wedged at the carrier level
-is a different failure from an address that was withdrawn, and the two are
-indistinguishable if only the address list is recorded.
+Carrier and operstate are sampled alongside the addresses, because a link
+wedged at the carrier level is a different failure from an address that was
+withdrawn and the two are indistinguishable from the address list alone.
+What this logger is evidence for: docs/troubleshooting.md, "eth0 addressing".
 
 Writes a line whenever the observed state changes, plus a periodic heartbeat
 so a quiet log is distinguishable from a dead logger. Runs for days at a few

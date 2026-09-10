@@ -150,27 +150,25 @@ class TestService:
         assert 'dashboards:' in result.stdout
         for unit in ('racecar-teleop', 'racecar-watchdog',
                      'racecar-dashboard', 'racecar-jupyter',
-                     'racecar-wallfollow', 'racecar-camlabel',
-                     'racecar-pursuit', 'racecar-eps',
-                     'racecar-smartfollow', 'racecar-linefollow',
-                     'racecar-webteleop'):
+                     'racecar-webteleop', 'racecar-linefollow',
+                     'racecar-wallfollow'):
             assert unit in result.stdout, f'status missing {unit}'
 
     def test_help_lists_the_dashboards_and_update(self):
         result = _run('service', 'help')
         assert result.returncode == 0
         assert 'update' in result.stdout
-        for name in ('wallfollow', 'camlabel', 'pursuit', 'eps',
-                     'smartfollow', 'linefollow', 'webteleop'):
-            assert name in result.stdout
+        for name, port in (('webteleop', '8081'), ('linefollow', '8082'),
+                           ('wallfollow', '8083')):
+            assert f'{name}({port})' in result.stdout
 
     def test_help_states_the_one_at_a_time_rule(self):
         result = _run('service', 'help')
-        assert 'one dashboard drives at a time' in result.stdout
+        assert 'only one runs at a time' in result.stdout
 
     def test_bare_enable_covers_core_units_only(self):
-        # Enabling every dashboard would put six /drive publishers on the mux
-        # at boot, so the bare form must not reach them.
+        # Enabling every dashboard would put three /drive publishers on the
+        # mux at boot, so the bare form must not reach them.
         block = TOOL.read_text().split('enable|disable)')[1].split(';;')[0]
         assert 'core_units' in block
         assert 'dash_units' not in block
@@ -180,13 +178,17 @@ class TestService:
         assert 'drive_units' in block
         assert 'only one /drive publisher' in block
 
-    def test_camlabel_is_not_a_drive_publisher(self):
-        # camlabel only reads the camera, so it may run alongside a lab.
-        drive = TOOL.read_text().split('local -a drive_units=')[1].split(')')[0]
-        assert 'camlabel' not in drive
-        for name in ('wallfollow', 'pursuit', 'eps', 'smartfollow',
-                     'linefollow', 'webteleop'):
-            assert name in drive
+    def test_every_dashboard_is_a_drive_publisher(self):
+        # All three steer, so none may run alongside another. The retired
+        # camlabel was the only read-only one.
+        text = TOOL.read_text()
+        drive = text.split('local -a drive_units=')[1].split('local -a units=')[0]
+        dash = text.split('local -a dash_units=')[1].split('local -a drive_units=')[0]
+        for name in ('webteleop', 'linefollow', 'wallfollow'):
+            assert name in drive, f'{name} missing from drive_units'
+            assert name in dash, f'{name} missing from dash_units'
+        for gone in ('camlabel', 'pursuit', 'eps', 'smartfollow'):
+            assert gone not in dash, f'{gone} is no longer shipped'
 
     def test_rejects_unknown_action(self):
         result = _run('service', 'flambé')
@@ -613,6 +615,11 @@ case "$*" in
     "-t -f DEVICE device status")         echo "${STUB_DEVICES:-wlan0}" ;;
     "-t -f NAME con show")                echo "${STUB_SAVED:-}" ;;
     "-t -f NAME,TYPE con show") echo "${STUB_SAVED:+$STUB_SAVED:802-11-wireless}" ;;
+    "-t general permissions")
+        echo "org.freedesktop.NetworkManager.network-control:${STUB_PERM:-yes}" ;;
+    "-g GENERAL.CONNECTION device show wlan0") echo "${STUB_ACTIVE_CON:-}" ;;
+    "-g GENERAL.AUTOCONNECT device show wlan0") echo "${STUB_DEV_AUTO:-yes}" ;;
+    "-g connection.autoconnect con show "*) echo "${STUB_PROF_AUTO:-yes}" ;;
     *"device wifi list ifname wlan0"*) printf 'EntNet:WPA2 802.1X\\nPskNet:WPA2\\nOpenNet:\\n' ;;
     *) : ;;
 esac
@@ -719,10 +726,97 @@ esac
         assert result.returncode == 2
         assert 'unknown flag' in result.stderr
 
+    @pytest.mark.parametrize('args,saved', [
+        (['connect', 'HomeNet'], 'HomeNet'),   # saved profile
+        (['connect', 'PskNet', '--psk=hunter2'], ''),
+        (['connect', 'OpenNet'], ''),
+    ])
+    def test_connect_makes_the_network_survive_a_reboot(self, tmp_path, args, saved):
+        # The reported bug: the car joined a network, rebooted, and came back
+        # with no link. NetworkManager needs the profile flag set and the
+        # device unblocked, and nmcli guarantees neither.
+        _, log = self._wifi(tmp_path, *args, STUB_SAVED=saved)
+        ssid = args[1]
+        assert f'connection modify {ssid} connection.autoconnect yes' in log, \
+            'profile autoconnect not asserted'
+        assert 'device set wlan0 autoconnect yes' in log, \
+            'device autoconnect block not cleared'
+
+    def test_enterprise_profile_is_created_with_autoconnect(self, tmp_path):
+        _, log = self._wifi(
+            tmp_path, 'connect', 'EntNet', '--identity=someone@school.edu',
+            stdin='hunter2\n')
+        add = next((ln for ln in log.splitlines() if 'connection add' in ln), '')
+        assert 'connection.autoconnect yes' in add
+
+    def test_persistence_never_touches_the_ap_radio(self, tmp_path):
+        _, log = self._wifi(tmp_path, 'connect', 'HomeNet', STUB_SAVED='HomeNet')
+        assert 'wlan1' not in log
+
+    def test_status_reports_that_the_link_returns(self, tmp_path):
+        result, _ = self._wifi(tmp_path, 'status', STUB_ACTIVE_CON='HomeNet',
+                               STUB_PROF_AUTO='yes', STUB_DEV_AUTO='yes')
+        assert "after boot: rejoins 'HomeNet'" in result.stdout
+
+    def test_status_names_a_profile_that_will_not_return(self, tmp_path):
+        result, _ = self._wifi(tmp_path, 'status', STUB_ACTIVE_CON='HomeNet',
+                               STUB_PROF_AUTO='no', STUB_DEV_AUTO='yes')
+        assert 'will NOT rejoin' in result.stdout
+        assert 'autoconnect is off' in result.stdout
+
+    def test_status_names_a_blocked_device(self, tmp_path):
+        # Connected now, but a prior disconnect left the device blocked.
+        result, _ = self._wifi(tmp_path, 'status', STUB_ACTIVE_CON='HomeNet',
+                               STUB_PROF_AUTO='yes', STUB_DEV_AUTO='no')
+        assert 'will NOT rejoin' in result.stdout
+        assert 'blocked' in result.stdout
+
+    def test_status_after_a_deliberate_disconnect(self, tmp_path):
+        result, _ = self._wifi(tmp_path, 'status', STUB_ACTIVE_CON='',
+                               STUB_DEV_AUTO='no')
+        assert 'disconnected on purpose' in result.stdout
+
+    def test_open_network_is_not_mistaken_for_an_absent_one(self, tmp_path):
+        # nmcli reports an empty SECURITY field for an open network. Testing
+        # that for emptiness made the "not visible" guard swallow every open
+        # SSID and left the open-network branch unreachable.
+        result, log = self._wifi(tmp_path, 'connect', 'OpenNet')
+        assert result.returncode == 0, result.stderr
+        assert 'not visible' not in result.stderr
+        assert 'device wifi connect OpenNet ifname wlan0' in log
+        assert 'password' not in log, 'an open network must not be given a psk'
+
     def test_connect_to_invisible_network_errors(self, tmp_path):
         result, _ = self._wifi(tmp_path, 'connect', 'NotBroadcasting')
         assert result.returncode == 4
         assert 'not visible' in result.stderr
+
+    @pytest.mark.parametrize('action', ['connect', 'disconnect'])
+    def test_unauthorized_networking_is_named_not_left_to_nmcli(
+            self, tmp_path, action):
+        # Without the polkit rule, nmcli fails at the activation call with
+        # "Not authorized to control networking" and no remedy. Catch it
+        # before anything is prompted for or changed.
+        args = [action] + (['HomeNet'] if action == 'connect' else [])
+        result, log = self._wifi(
+            tmp_path, *args, STUB_SAVED='HomeNet', STUB_PERM='auth')
+        assert result.returncode == 5
+        assert 'may not control networking' in result.stderr
+        assert 'setup_user_env.sh' in result.stderr
+        assert 'connection up' not in log
+        assert 'device disconnect' not in log
+
+    def test_authorization_is_not_checked_for_read_only_actions(self, tmp_path):
+        # status and list read fine without the permission; refusing them
+        # would hide the very diagnosis an unauthorized car needs.
+        for args in (['status'], ['list']):
+            result, _ = self._wifi(tmp_path, *args, STUB_PERM='auth')
+            assert result.returncode == 0, f'`racecar wifi {args[0]}`: {result.stderr}'
+
+    def test_authorized_connect_proceeds(self, tmp_path):
+        _, log = self._wifi(
+            tmp_path, 'connect', 'HomeNet', STUB_SAVED='HomeNet', STUB_PERM='yes')
+        assert 'connection up HomeNet ifname wlan0' in log
 
 
 class TestDesktopCommand:

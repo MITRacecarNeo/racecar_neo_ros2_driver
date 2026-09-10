@@ -12,11 +12,9 @@
 # Idempotent: raspi-config nonint do_* is a no-op if already in the requested
 # state. Safe to re-run.
 #
-# Ubuntu's raspi-config fork lacks the do_serial_cons / do_serial_hw split that
-# upstream Raspberry Pi OS ships; it only has the older combined do_serial. We
-# feature-detect and fall back. The 'DTOVERLAY[warn]: no matching platform
-# found' that do_i2c / do_spi emit on Ubuntu is benign; the dtparam edits
-# still take effect (verify with ls /dev/i2c-1 /dev/spidev0.0 after reboot).
+# Ubuntu's raspi-config fork differs from upstream Raspberry Pi OS, so the
+# serial calls feature-detect and fall back, and do_i2c / do_spi emit a benign
+# DTOVERLAY warning. See docs/troubleshooting.md, "raspi-config on Ubuntu".
 set -eo pipefail
 
 if ! command -v raspi-config >/dev/null; then
