@@ -617,6 +617,9 @@ case "$*" in
     "-t -f NAME,TYPE con show") echo "${STUB_SAVED:+$STUB_SAVED:802-11-wireless}" ;;
     "-t general permissions")
         echo "org.freedesktop.NetworkManager.network-control:${STUB_PERM:-yes}" ;;
+    "-g GENERAL.CONNECTION device show wlan0") echo "${STUB_ACTIVE_CON:-}" ;;
+    "-g GENERAL.AUTOCONNECT device show wlan0") echo "${STUB_DEV_AUTO:-yes}" ;;
+    "-g connection.autoconnect con show "*) echo "${STUB_PROF_AUTO:-yes}" ;;
     *"device wifi list ifname wlan0"*) printf 'EntNet:WPA2 802.1X\\nPskNet:WPA2\\nOpenNet:\\n' ;;
     *) : ;;
 esac
@@ -722,6 +725,66 @@ esac
         result, _ = self._wifi(tmp_path, 'connect', 'PskNet', '--turbo')
         assert result.returncode == 2
         assert 'unknown flag' in result.stderr
+
+    @pytest.mark.parametrize('args,saved', [
+        (['connect', 'HomeNet'], 'HomeNet'),   # saved profile
+        (['connect', 'PskNet', '--psk=hunter2'], ''),
+        (['connect', 'OpenNet'], ''),
+    ])
+    def test_connect_makes_the_network_survive_a_reboot(self, tmp_path, args, saved):
+        # The reported bug: the car joined a network, rebooted, and came back
+        # with no link. NetworkManager needs the profile flag set and the
+        # device unblocked, and nmcli guarantees neither.
+        _, log = self._wifi(tmp_path, *args, STUB_SAVED=saved)
+        ssid = args[1]
+        assert f'connection modify {ssid} connection.autoconnect yes' in log, \
+            'profile autoconnect not asserted'
+        assert 'device set wlan0 autoconnect yes' in log, \
+            'device autoconnect block not cleared'
+
+    def test_enterprise_profile_is_created_with_autoconnect(self, tmp_path):
+        _, log = self._wifi(
+            tmp_path, 'connect', 'EntNet', '--identity=someone@school.edu',
+            stdin='hunter2\n')
+        add = next((ln for ln in log.splitlines() if 'connection add' in ln), '')
+        assert 'connection.autoconnect yes' in add
+
+    def test_persistence_never_touches_the_ap_radio(self, tmp_path):
+        _, log = self._wifi(tmp_path, 'connect', 'HomeNet', STUB_SAVED='HomeNet')
+        assert 'wlan1' not in log
+
+    def test_status_reports_that_the_link_returns(self, tmp_path):
+        result, _ = self._wifi(tmp_path, 'status', STUB_ACTIVE_CON='HomeNet',
+                               STUB_PROF_AUTO='yes', STUB_DEV_AUTO='yes')
+        assert "after boot: rejoins 'HomeNet'" in result.stdout
+
+    def test_status_names_a_profile_that_will_not_return(self, tmp_path):
+        result, _ = self._wifi(tmp_path, 'status', STUB_ACTIVE_CON='HomeNet',
+                               STUB_PROF_AUTO='no', STUB_DEV_AUTO='yes')
+        assert 'will NOT rejoin' in result.stdout
+        assert 'autoconnect is off' in result.stdout
+
+    def test_status_names_a_blocked_device(self, tmp_path):
+        # Connected now, but a prior disconnect left the device blocked.
+        result, _ = self._wifi(tmp_path, 'status', STUB_ACTIVE_CON='HomeNet',
+                               STUB_PROF_AUTO='yes', STUB_DEV_AUTO='no')
+        assert 'will NOT rejoin' in result.stdout
+        assert 'blocked' in result.stdout
+
+    def test_status_after_a_deliberate_disconnect(self, tmp_path):
+        result, _ = self._wifi(tmp_path, 'status', STUB_ACTIVE_CON='',
+                               STUB_DEV_AUTO='no')
+        assert 'disconnected on purpose' in result.stdout
+
+    def test_open_network_is_not_mistaken_for_an_absent_one(self, tmp_path):
+        # nmcli reports an empty SECURITY field for an open network. Testing
+        # that for emptiness made the "not visible" guard swallow every open
+        # SSID and left the open-network branch unreachable.
+        result, log = self._wifi(tmp_path, 'connect', 'OpenNet')
+        assert result.returncode == 0, result.stderr
+        assert 'not visible' not in result.stderr
+        assert 'device wifi connect OpenNet ifname wlan0' in log
+        assert 'password' not in log, 'an open network must not be given a psk'
 
     def test_connect_to_invisible_network_errors(self, tmp_path):
         result, _ = self._wifi(tmp_path, 'connect', 'NotBroadcasting')

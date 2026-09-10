@@ -329,6 +329,8 @@ racecar wifi disconnect
 
 `disconnect` puts the device into NetworkManager's manually-disconnected state, so it will not rejoin on its own until the next `connect`.
 
+A joined network survives a reboot. Two flags decide that and `nmcli` guarantees neither, so `connect` sets both: `connection.autoconnect` on the profile, which is the part that persists, and the device's own autoconnect flag, which `disconnect` clears. `racecar wifi status` reports the outcome on its `after boot` line, since a car that reads `connected` can still come back with no link.
+
 ### Networking authorization
 
 NetworkManager asks polkit before it activates a connection or edits a profile, and polkit can only collect a password through an agent. An SSH session has none, so on a car whose polkit still carries the stock policy, `connect` and `disconnect` fail inside `nmcli`:

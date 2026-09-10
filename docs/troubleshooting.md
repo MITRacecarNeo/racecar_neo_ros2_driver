@@ -17,6 +17,7 @@ comment in the source can point here instead of carrying the full account.
 - [RealSense firmware flash privileges](#realsense-firmware-flash-privileges)
 - [raspi-config on Ubuntu](#raspi-config-on-ubuntu)
 - [Lab dashboard checkouts](#lab-dashboard-checkouts)
+- [WiFi persistence](#wifi-persistence)
 - [Boot brownout with ethernet attached](#boot-brownout-with-ethernet-attached)
 
 ## Diagnostic rate checks
@@ -239,6 +240,38 @@ project's prefix so both land on the same `racecar-<name>.service`.
 
 Updates are `git pull --ff-only` and never `reset --hard`, so a car's tuned
 YAML survives.
+
+## WiFi persistence
+
+`scripts/racecar-tool.sh`: the `wifi connect` and `wifi status` actions.
+
+A car joined a network, rebooted, and came back with no wlan0 link, so the
+connect had to be repeated every session.
+
+Two separate flags decide whether NetworkManager rejoins at boot, and nothing
+guaranteed either one:
+
+- `connection.autoconnect` on the profile. This is what survives a reboot, and
+  it was `no` on the affected profile. The tool never set it, relying on
+  whatever default nmcli picks for the creation path; the GNOME network menu
+  also writes `no` here when someone disconnects from the desktop, which a car
+  booting to `graphical.target` makes easy to hit.
+- The device's own autoconnect flag. `nmcli device disconnect`, which
+  `racecar wifi disconnect` runs, sets it false so the car does not
+  immediately rejoin. That is intended and is runtime-only, cleared at boot,
+  but nothing cleared it on a later connect either.
+
+`connect` now sets both on every path, and creates enterprise profiles with
+`connection.autoconnect yes` rather than correcting them afterwards.
+`racecar wifi status` reports the result as one line, because a car that reads
+"connected" can still be one reboot from no link.
+
+Note when testing this by hand: `nmcli device disconnect` leaves the device in
+NetworkManager's user-requested disconnected state, and NM will not
+auto-activate out of it however the flags are set, until something activates a
+connection explicitly. That state does not survive a reboot, so a
+disconnect-then-wait test says nothing about boot behaviour. The profile flag
+is the part that persists.
 
 ## Boot brownout with ethernet attached
 
