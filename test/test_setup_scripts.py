@@ -7,6 +7,7 @@ syntax errors, and the orchestrator forgetting to call a phase script.
 
 import os
 from pathlib import Path
+import re
 import subprocess
 
 import pytest
@@ -579,6 +580,74 @@ class TestDashboardScript:
             assert f'{repo}_dashboard' in text
         for gone in ('camlabel', 'pursuit', 'eps', 'smartfollow'):
             assert f'{gone}_dashboard' not in text
+
+    def test_pins_the_dashboard_version(self, text):
+        # The dashboards track the driver's release rather than a count of
+        # their own, the same way the RealSense firmware target is pinned.
+        assert 'DASHBOARD_VERSION="${RACECAR_DASHBOARD_VERSION:-' in text
+
+    def test_the_pin_matches_the_driver_version(self, text):
+        """The whole point of the pin is that it names this release."""
+        pinned = re.search(r'DASHBOARD_VERSION="\$\{RACECAR_DASHBOARD_VERSION:-([^}]+)\}"', text)
+        assert pinned, 'no pinned dashboard version'
+        setup_py = (SCRIPTS_DIR.parent / 'setup.py').read_text()
+        driver = re.search(r"version='([^']+)'", setup_py)
+        assert driver, 'no version in setup.py'
+        assert pinned.group(1) == driver.group(1)
+
+    def test_a_version_mismatch_is_not_fatal(self, text):
+        # A car mid-upgrade should still end up with working units; which
+        # release to run is the operator's call, not the script's.
+        assert 'mismatched+=' in text
+        assert 'exit 1' not in text.split('check_version()')[1].split('}')[0]
+
+    def test_a_failed_install_is_not_reported_as_success(self, text):
+        # install_unit runs under `|| true`, which suppresses errexit for its
+        # whole body, so the install has to be tested explicitly.
+        assert 'elif sudo install -m 0644' in text
+        assert 'install failed' in text
+
+    def test_a_failed_daemon_reload_still_reaches_the_summary(self, text):
+        assert 'if sudo systemctl daemon-reload; then' in text
+
+    def _check_version(self, tmp_path, contents, pinned='0.8.1'):
+        """Run the shipped check_version() against a throwaway checkout."""
+        text = self.SCRIPT.read_text()
+        body = text.split('check_version() {', 1)[1].split('\n}\n', 1)[0]
+        repo = tmp_path / 'teleop_dashboard'
+        repo.mkdir()
+        if contents is not None:
+            (repo / 'VERSION').write_text(contents)
+        script = (
+            f'DASH_DIR={tmp_path}\n'
+            f'DASHBOARD_VERSION={pinned}\n'
+            'mismatched=()\n'
+            'check_version() {' + body + '\n}\n'
+            'check_version teleop_dashboard\n'
+            'printf "MISMATCHED:%s\\n" "${mismatched[*]}"\n'
+        )
+        return subprocess.run(['bash', '-c', script], capture_output=True, text=True)
+
+    def test_a_matching_checkout_passes(self, tmp_path):
+        r = self._check_version(tmp_path, '0.8.1\n')
+        assert 'teleop_dashboard: 0.8.1' in r.stdout
+        assert 'MISMATCHED:\n' in r.stdout
+
+    def test_a_stale_checkout_is_named(self, tmp_path):
+        r = self._check_version(tmp_path, '0.8.0\n')
+        assert 'driver pins 0.8.1' in r.stderr
+        assert '0.8.0' in r.stdout.split('MISMATCHED:')[1]
+
+    def test_a_checkout_with_no_version_is_caught(self, tmp_path):
+        # The pre-0.8.1 checkout is exactly what the check exists to find, so
+        # a missing file must not read as a pass.
+        r = self._check_version(tmp_path, None)
+        assert 'no VERSION' in r.stderr
+        assert 'no VERSION' in r.stdout.split('MISMATCHED:')[1]
+
+    def test_trailing_whitespace_in_version_is_tolerated(self, tmp_path):
+        r = self._check_version(tmp_path, '  0.8.1  \n\n')
+        assert 'MISMATCHED:\n' in r.stdout
 
     def test_clones_from_the_racecar_org(self, text):
         # The forks carry this platform's lidar convention, ports and

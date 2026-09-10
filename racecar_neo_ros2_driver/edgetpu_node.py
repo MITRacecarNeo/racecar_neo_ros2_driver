@@ -1,15 +1,22 @@
 """
 Coral EdgeTPU object-detection node.
 
-Subscribes to /camera/forward, resizes each frame to the model's input shape,
+Subscribes to the colour camera topic, resizes each frame to the model's input shape,
 runs inference on the USB EdgeTPU, and publishes
 vision_msgs/Detection2DArray on /edgetpu/inference plus a per-second
 diagnostic_msgs/DiagnosticArray on /diagnostics.
+
+Inference is rate limited by inference_rate_hz, independently of the camera.
+The colour stream runs at 60 fps and nothing downstream consumes detections
+faster than the dashboards draw them, so inferring on every frame spent TPU
+time and current for results nobody read. Frames above the rate are dropped
+before the decode, which is where the cost is.
 
 Numpy-only image path — no cv_bridge or cv2 dependency.
 """
 
 import os
+import re
 import time
 
 from ament_index_python.packages import get_package_share_directory
@@ -48,7 +55,7 @@ def image_msg_to_rgb(msg: Image) -> np.ndarray:
     Decode a sensor_msgs/Image into an (H, W, 3) uint8 RGB array.
 
     Supports rgb8 / bgr8 encodings only; the RealSense color stream on
-    /camera/forward publishes rgb8.
+    /camera/color publishes rgb8.
     """
     if msg.encoding not in ('rgb8', 'bgr8'):
         raise ValueError(f'Unsupported image encoding: {msg.encoding}')
@@ -64,17 +71,63 @@ def resize_rgb(rgb: np.ndarray, target_w: int, target_h: int) -> np.ndarray:
     return np.asarray(pil.resize((target_w, target_h), PILImage.BILINEAR))
 
 
+# TFLite's detection postprocess emits four outputs in a fixed order, boxes,
+# classes, scores, count, but get_output_details() does not report them in
+# that order and two of them share the shape (1, N). The export encodes the
+# true order in the tensor name suffix, reversed, so :3 is boxes and :0 is
+# count. This is the same order pycoral's detect.get_objects() assumes.
+_ROLE_BY_NAME_SUFFIX = {3: 'boxes', 2: 'classes', 1: 'scores', 0: 'count'}
+
+
+def roles_from_names(output_details):
+    """
+    Match output tensors to roles by their name suffix.
+
+    Returns (boxes, scores, classes, count) indices, or None when the names
+    do not parse or the shapes disagree with the roles they name.
+    """
+    roles = {}
+    for i, od in enumerate(output_details):
+        m = re.search(r':(\d+)$', od.get('name', ''))
+        if not m:
+            return None
+        role = _ROLE_BY_NAME_SUFFIX.get(int(m.group(1)))
+        if role is None or role in roles:
+            return None
+        roles[role] = i
+    if set(roles) != set(_ROLE_BY_NAME_SUFFIX.values()):
+        return None
+    # A name is only worth trusting when the shape agrees with it.
+    if tuple(output_details[roles['boxes']]['shape'])[-1:] != (4,):
+        return None
+    if tuple(output_details[roles['count']]['shape']) != (1,):
+        return None
+    if len(tuple(output_details[roles['scores']]['shape'])) != 2:
+        return None
+    if len(tuple(output_details[roles['classes']]['shape'])) != 2:
+        return None
+    return roles['boxes'], roles['scores'], roles['classes'], roles['count']
+
+
 def map_output_tensors(output_details):
     """
     Match an SSD-style model's output tensors to (boxes, scores, classes, count) indices.
 
-    EfficientDet-Lite and other SSD-family models have four outputs but the
-    order is not standardized. Identify them by shape:
+    EfficientDet-Lite and other SSD-family models have four outputs but
+    get_output_details() does not order them consistently: this repository's
+    two models report them in different orders. Prefer the name suffix, which
+    distinguishes scores from classes; fall back to shape when a model does
+    not carry the standard names, where the two (1, N) tensors can only be
+    told apart by position:
       - boxes:   (1, N, 4)
       - scores:  (1, N)
-      - classes: (1, N) — same shape as scores; whichever comes second
+      - classes: (1, N), same shape as scores; whichever comes second
       - count:   (1,)
     """
+    named = roles_from_names(output_details)
+    if named is not None:
+        return named
+
     idx_boxes = idx_scores = idx_classes = idx_count = None
     for i, od in enumerate(output_details):
         shape = tuple(od['shape'])
@@ -102,7 +155,8 @@ class EdgeTPUNode(Node):
         self.declare_parameter('labels_path', '')
         self.declare_parameter('score_threshold', 0.5)
         self.declare_parameter('max_detections', 0)
-        self.declare_parameter('image_topic', '/camera/forward')
+        self.declare_parameter('image_topic', '/camera/color')
+        self.declare_parameter('inference_rate_hz', 15.0)
         self.declare_parameter('diagnostics_period_sec', 1.0)
         self.declare_parameter('image_timeout_sec', 5.0)
 
@@ -111,6 +165,9 @@ class EdgeTPUNode(Node):
         self._score_threshold = self.get_parameter('score_threshold').value
         self._max_detections = self.get_parameter('max_detections').value
         image_topic = self.get_parameter('image_topic').value
+        rate_hz = float(self.get_parameter('inference_rate_hz').value)
+        # 0 disables the cap and infers on every frame.
+        self._inference_period = 1.0 / rate_hz if rate_hz > 0 else 0.0
         diag_period = self.get_parameter('diagnostics_period_sec').value
         self._image_timeout = self.get_parameter('image_timeout_sec').value
 
@@ -166,7 +223,10 @@ class EdgeTPUNode(Node):
         self._last_inference_ms = 0.0
         self._avg_inference_ms = 0.0
         self._last_image_time = None
+        self._last_inference_at = 0.0
+        self._frames_dropped = 0
         self._tpu_ok = True
+        self._scores_checked = False
 
         self._det_pub = self.create_publisher(
             Detection2DArray, '/edgetpu/inference', 10
@@ -184,7 +244,13 @@ class EdgeTPUNode(Node):
         )
 
     def _image_cb(self, msg: Image):
+        # Stamped for every frame, before the rate gate: the stale-input
+        # watchdog is asking whether the camera is alive, not whether this
+        # node chose to infer.
         self._last_image_time = self.get_clock().now()
+
+        if self._rate_limited():
+            return
 
         try:
             rgb = image_msg_to_rgb(msg)
@@ -217,6 +283,7 @@ class EdgeTPUNode(Node):
         scores = self._interpreter.get_tensor(
             self._output_details[self._idx_scores]['index']
         ).flatten()
+        self._check_scores_look_like_scores(scores)
         boxes = self._interpreter.get_tensor(
             self._output_details[self._idx_boxes]['index']
         ).reshape(-1, 4)
@@ -274,6 +341,41 @@ class EdgeTPUNode(Node):
         self._detection_count += n_det
         self._det_pub.publish(det_array)
 
+    def _rate_limited(self, now=None):
+        """
+        Report whether this frame falls inside the inference interval.
+
+        Counts the drop and returns True when it does. Called before the
+        decode, so a dropped frame costs nothing but the callback.
+        """
+        if not self._inference_period:
+            return False
+        now = time.monotonic() if now is None else now
+        if now - self._last_inference_at < self._inference_period:
+            self._frames_dropped += 1
+            return True
+        self._last_inference_at = now
+        return False
+
+    def _check_scores_look_like_scores(self, scores):
+        """
+        Warn once if the scores tensor does not hold confidences.
+
+        Confidences are in [0, 1]; class ids are not. A model whose outputs
+        defeat both mappings would otherwise threshold on the class id and
+        label every box with its confidence, silently.
+        """
+        if self._scores_checked or not len(scores):
+            return
+        self._scores_checked = True
+        if float(scores.max()) > 1.0 or float(scores.min()) < 0.0:
+            self.get_logger().error(
+                'Scores tensor holds values outside [0, 1] '
+                f'(min {scores.min():.3f}, max {scores.max():.3f}); scores and '
+                'classes are probably swapped for this model. Check the output '
+                'tensor names against map_output_tensors().'
+            )
+
     def _publish_diagnostics(self):
         msg = DiagnosticArray()
         msg.header.stamp = self.get_clock().now().to_msg()
@@ -304,6 +406,10 @@ class EdgeTPUNode(Node):
             KeyValue(key='avg_inference_ms', value=f'{self._avg_inference_ms:.1f}'),
             KeyValue(key='model_input', value=f'{self._model_w}x{self._model_h}'),
             KeyValue(key='score_threshold', value=str(self._score_threshold)),
+            KeyValue(key='inference_rate_hz',
+                     value=f'{1.0 / self._inference_period:.1f}'
+                           if self._inference_period else 'uncapped'),
+            KeyValue(key='frames_dropped', value=str(self._frames_dropped)),
             KeyValue(key='tpu_ok', value=str(self._tpu_ok)),
         ]
         msg.status.append(status)

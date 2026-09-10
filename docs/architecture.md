@@ -190,6 +190,19 @@ in the depth image. `_colorize_depth` is what turns metres into the preview,
 and it is a module function rather than a method so the ramp can be tested
 without a node.
 
+`edgetpu_node` infers at `inference_rate_hz` (15) rather than at the
+camera's 60 fps: nothing downstream reads detections faster than a dashboard
+draws them. Frames above the rate are dropped before the decode, so the saving
+is the whole decode-resize-invoke path, and the stale-input watchdog still
+stamps every frame so it reports on the camera rather than on the gate.
+`diagnose.py`'s nominal for the topic tracks the same number.
+
+Each checkout carries `VERSION`, `docs/changelog.md` and
+`docs/architecture.md`. The version tracks this driver's release rather than
+counting on its own, and `setup_dashboards.sh` reports a checkout that does
+not match the version it pins; the code layout stays flat, so a fork synced
+from Neobotics upstream still merges.
+
 The palette is one system across the three: orange on the dark surfaces,
 ember on the light ones, crimson reserved for stop and fault. The split
 follows contrast rather than preference; the measurements and the role table

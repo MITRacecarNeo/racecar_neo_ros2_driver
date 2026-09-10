@@ -100,7 +100,8 @@ SENSOR_TOPICS = [
     TopicSpec('/battery/voltage', 'Pack voltage', 136.0, PIT_FLOOR_FRAC, PIT_NOTE),
     TopicSpec('/battery/current', 'Pack current', 136.0, PIT_FLOOR_FRAC, PIT_NOTE),
     TopicSpec('/rc/channels', 'FlySky RC', 136.0, PIT_FLOOR_FRAC, PIT_NOTE),
-    TopicSpec('/edgetpu/inference', 'Coral inference', 17.0),
+    # Capped by edgetpu_node's inference_rate_hz, not by the camera.
+    TopicSpec('/edgetpu/inference', 'Coral inference', 15.0),
     TopicSpec('/joy', 'Gamepad', 16.0),
 ]
 

@@ -16,6 +16,12 @@
 # mux if a second one runs, so enabling is per unit and deliberate:
 # `racecar service enable wallfollow`.
 #
+# Each checkout carries a VERSION tracking this driver's release rather than a
+# count of its own, the same way the RealSense firmware target is pinned here
+# and reconciled by `racecar setup realsense`. A mismatch is reported and the
+# install continues: a car mid-upgrade should still end up with working units,
+# and the operator is the one who decides whether to fast-forward.
+#
 # Set RACECAR_DASHBOARDS=0 to skip entirely.
 set -eo pipefail
 
@@ -29,13 +35,18 @@ REPOS=(
     wallfollow_dashboard
 )
 
+# The dashboard release this driver was tested against. Bump with the driver's
+# own version in setup.py and package.xml; the three checkouts are tagged to
+# match.
+DASHBOARD_VERSION="${RACECAR_DASHBOARD_VERSION:-0.8.1}"
+
 MODE="install"
 case "${1:-}" in
     "")            MODE="install" ;;
     --update)      MODE="update" ;;
     --units-only)  MODE="units" ;;
     -h|--help)
-        sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+        sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
         exit 0
         ;;
     *)
@@ -50,14 +61,42 @@ if [[ "${RACECAR_DASHBOARDS:-1}" == "0" ]]; then
 fi
 
 failed=()
+mismatched=()
 changed=0
+
+# Compare a checkout's VERSION against the pinned one. A checkout with no
+# VERSION predates the file and is reported as such rather than passed over,
+# since that is exactly the stale checkout the check exists to catch.
+check_version() {
+    # Two statements: bash expands every word of a `local` before any
+    # of its assignments take effect, so a single one would build dir
+    # from the caller's repo rather than from $1.
+    local repo="$1" found
+    local dir="$DASH_DIR/$repo"
+    if [[ ! -f "$dir/VERSION" ]]; then
+        echo "  $repo: no VERSION (pre-$DASHBOARD_VERSION checkout)" >&2
+        mismatched+=("$repo (no VERSION)")
+        return
+    fi
+    found="$(tr -d '[:space:]' <"$dir/VERSION")"
+    if [[ "$found" == "$DASHBOARD_VERSION" ]]; then
+        echo "  $repo: $found"
+    else
+        echo "  $repo: $found, driver pins $DASHBOARD_VERSION" >&2
+        mismatched+=("$repo ($found)")
+    fi
+}
 
 # Clone a missing checkout, or fast-forward an existing one. Never reset: a
 # diverged checkout means someone edited it, and losing that is worse than
 # skipping the update. A failure here is reported and skipped, so a car with no
 # network still finishes setup.
 fetch_repo() {
-    local repo="$1" dir="$DASH_DIR/$repo"
+    # Two statements: bash expands every word of a `local` before any
+    # of its assignments take effect, so a single one would build dir
+    # from the caller's repo rather than from $1.
+    local repo="$1"
+    local dir="$DASH_DIR/$repo"
     if [[ -d "$dir/.git" ]]; then
         if git -C "$dir" pull --ff-only --quiet 2>/dev/null; then
             echo "  $repo: up to date"
@@ -116,7 +155,11 @@ unit_name() {
 }
 
 install_unit() {
-    local repo="$1" dir="$DASH_DIR/$repo"
+    # Two statements: bash expands every word of a `local` before any
+    # of its assignments take effect, so a single one would build dir
+    # from the caller's repo rather than from $1.
+    local repo="$1"
+    local dir="$DASH_DIR/$repo"
     local src unit rendered
     src="$(find "$dir" -maxdepth 1 -name '*.service.in' | head -1)"
     if [[ -z "$src" ]]; then
@@ -135,10 +178,17 @@ install_unit() {
 
     if cmp -s "$rendered" "/etc/systemd/system/$unit"; then
         echo "  $unit: already up to date"
-    else
-        sudo install -m 0644 "$rendered" "/etc/systemd/system/$unit"
+    elif sudo install -m 0644 "$rendered" "/etc/systemd/system/$unit"; then
         echo "  $unit: installed"
         changed=1
+    else
+        # This function is called under `|| true`, which suppresses errexit
+        # for its whole body: without testing the install, the next line
+        # reported success on a car where it had just failed.
+        echo "  $unit: install failed (sudo?)" >&2
+        failed+=("$repo (install)")
+        rm -f "$rendered"
+        return 1
     fi
     rm -f "$rendered"
 }
@@ -152,6 +202,13 @@ if [[ "$MODE" != "units" ]]; then
     echo
 fi
 
+echo "==> Dashboard versions (driver pins $DASHBOARD_VERSION)"
+for repo in "${REPOS[@]}"; do
+    [[ -d "$DASH_DIR/$repo" ]] || continue
+    check_version "$repo"
+done
+echo
+
 if [[ "$MODE" == "update" ]] || [[ "$MODE" == "install" ]] || [[ "$MODE" == "units" ]]; then
     echo "==> Rendering and installing units"
     for repo in "${REPOS[@]}"; do
@@ -161,8 +218,14 @@ if [[ "$MODE" == "update" ]] || [[ "$MODE" == "install" ]] || [[ "$MODE" == "uni
 fi
 
 if [[ $changed -eq 1 ]]; then
-    sudo systemctl daemon-reload
-    echo "  systemctl daemon-reload"
+    # Not fatal: the units are on disk either way, and aborting here would
+    # skip the summary that says what state the car was left in.
+    if sudo systemctl daemon-reload; then
+        echo "  systemctl daemon-reload"
+    else
+        echo "  systemctl daemon-reload failed; run it by hand" >&2
+        failed+=("daemon-reload")
+    fi
 fi
 
 installed=0
@@ -187,6 +250,14 @@ if [[ $installed -eq 0 ]]; then
 else
     echo "$installed dashboards installed, stopped and disabled. One at a time:"
     printf '%s' "$summary"
+fi
+
+if [[ ${#mismatched[@]} -gt 0 ]]; then
+    echo
+    echo "Not at $DASHBOARD_VERSION: ${mismatched[*]}"
+    echo "The units are installed and will run. To bring a checkout up:"
+    echo "  racecar setup dashboards --update"
+    echo "Set RACECAR_DASHBOARD_VERSION to pin a different release."
 fi
 
 if [[ ${#failed[@]} -gt 0 ]]; then

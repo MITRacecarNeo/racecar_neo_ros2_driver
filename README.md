@@ -385,9 +385,27 @@ forked (`camlabel`, `pursuit`, `eps`, `smartfollow`) are no longer installed.
 
 | Dashboard | Port | Reads | Publishes |
 |---|---|---|---|
-| `webteleop` | 8081 | `/camera/color`, `/camera/depth`, `/scan`, `/odom` | `/drive` |
+| `webteleop` | 8081 | `/camera/color`, `/camera/depth`, `/scan`, `/odom`, `/edgetpu/inference` | `/drive` |
+
 | `linefollow` | 8082 | `/camera/color`, `/odom` | `/drive` |
 | `wallfollow` | 8083 | `/scan`, `/odom` | `/drive` |
+
+Each checkout carries a `VERSION` tracking this driver's release rather than
+a count of its own, so a dashboard reading `0.8.1` is the one this release was
+tested against. `setup_dashboards.sh` pins the expected version and reports a
+checkout that does not match, the same shape as the RealSense firmware target
+the driver pins and `racecar setup realsense` reconciles:
+
+```
+==> Dashboard versions (driver pins 0.8.1)
+  teleop_dashboard: 0.8.1
+  linefollow_dashboard: 0.7.9, driver pins 0.8.1
+  wallfollow_dashboard: 0.8.1
+```
+
+A mismatch is reported and the install continues; the units still work, and
+which release to run is your call. `racecar setup dashboards --update`
+fast-forwards. `RACECAR_DASHBOARD_VERSION` pins a different release.
 
 Install (also runs as phase 12 of `setup_all.sh`):
 
