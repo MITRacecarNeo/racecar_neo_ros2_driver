@@ -690,6 +690,14 @@ export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
 
 Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
 
+- **0.8.1** (2026-09-10): EfficientDet-Lite0 on COCO as the default detection
+  model, with inference capped at 15 Hz; a detections overlay and the depth
+  stream on `webteleop`, whose lidar view was 180 degrees out; the dashboard
+  palette led by orange and split by contrast; each dashboard checkout carries
+  a `VERSION` this driver pins and `setup_dashboards.sh` verifies.
+- **0.8.0** (2026-09-06): three lab dashboards as `racecar-*` units, a
+  transmitter-held autonomy gate, bag recording behind `racecar log`, `/odom`
+  and `/rc/link` from `pit_node`.
 - **0.7.4** (2026-09-06): eth0 holds one IPv4 addressing mode, never both, via
   `racecar eth`; new `racecar wifi` and `racecar desktop`; `racecar status` is a
   strict whole-car diagnostic; `racecar selftest` removed. See
