@@ -179,6 +179,22 @@ branding be corrected at the source rather than worked around at install time.
 `LIDAR_MOUNT_YAW_DEG` for this chassis's aft-facing mount; see
 docs/troubleshooting.md, "Lab dashboard checkouts".
 
+`webteleop` is the only one that reads the depth stream. It subscribes to
+`/camera/depth` alongside `/camera/color` and serves each as its own JPEG
+endpoint, `/frame` and `/depth`, on independent browser-side pull loops, so a
+congested link or a missing depth stream costs that view its frame rate and
+leaves the other alone. Both are rate limited to `PREVIEW_RATE_HZ` and resized
+to `preview_width` before encoding; depth is resized nearest neighbour, since
+averaging a valid reading against a zero invents a surface halfway to a hole
+in the depth image. `_colorize_depth` is what turns metres into the preview,
+and it is a module function rather than a method so the ramp can be tested
+without a node.
+
+The palette is one system across the three: orange on the dark surfaces,
+ember on the light ones, crimson reserved for stop and fault. The split
+follows contrast rather than preference; the measurements and the role table
+are in the README, "Branding".
+
 Units are still rendered from each checkout's `.service.in` rather than copied,
 so a fork synced from Neobotics upstream keeps working: the ROS distribution,
 unit prefix and discovery scope are absorbed on this side either way.

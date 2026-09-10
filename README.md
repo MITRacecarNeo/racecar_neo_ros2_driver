@@ -174,7 +174,6 @@ Twelve phases, all under `scripts/`:
 10. **`setup_jupyter.sh`**: `pip install --user jupyterlab`, creates `~/jupyter_ws/`
 11. **`setup_services.sh`**: installs and enables the four core systemd units (`racecar-{teleop,watchdog,dashboard,jupyter}.service`)
 12. **`setup_dashboards.sh`**: clones or fast-forwards the three lab-dashboard checkouts into `scripts/dashboards/` and installs a stopped, disabled `racecar-*` unit for each (`RACECAR_DASHBOARDS=0` skips it)
-12. **`setup_dashboards.sh`**: clones the three lab dashboards and installs their units, stopped and disabled
 
 Individual phase scripts can be run on their own to re-do or skip steps (e.g. `racecar setup networking` for just the networking phase, or `bash scripts/setup_udev.sh` to reinstall the udev rules after a hardware swap).
 
@@ -386,7 +385,7 @@ forked (`camlabel`, `pursuit`, `eps`, `smartfollow`) are no longer installed.
 
 | Dashboard | Port | Reads | Publishes |
 |---|---|---|---|
-| `webteleop` | 8081 | `/camera/color`, `/scan`, `/odom` | `/drive` |
+| `webteleop` | 8081 | `/camera/color`, `/camera/depth`, `/scan`, `/odom` | `/drive` |
 | `linefollow` | 8082 | `/camera/color`, `/odom` | `/drive` |
 | `wallfollow` | 8083 | `/scan`, `/odom` | `/drive` |
 
@@ -459,6 +458,24 @@ The three forks carry the RACECAR Neo mark, wordmark and palette rather than
 the Neobotics set, so a dashboard on screen names the vehicle it drives. The
 source art is in [docs/img/](docs/img/); the crimson-to-orange gradient
 (`#A01936` to `#EC8B48`) and the wordmark ink (`#231F20`) are sampled from it.
+
+Orange leads. The two ends of the gradient are near inverses in contrast, so
+neither can stand in for the other: crimson reaches 7.8:1 on white and 2.1:1
+on tarmac, orange 2.5:1 on white and 6.5:1 on tarmac. Each is used only where
+it is legible, which splits the palette by role rather than by taste:
+
+| Role | Light surface | Dark surface |
+|---|---|---|
+| Brand rule, wordmark, live dot | ember `#A55312` | orange `#EC8B48` |
+| Interactive: buttons, sliders, focus | ember `#A55312` | orange `#EC8B48` |
+| Plot traces and overlays | n/a, plots are always dark | orange `#EC8B48` |
+| Stop, fault, line lost | crimson `#A01936` | crimson lifted to `#E4525A` |
+
+Ember is the same 26 degree hue as the brand orange held down to L 0.36, so
+the light surfaces read as the same colour family at 5.5:1 rather than as a
+second accent. Crimson is reserved: on a dashboard that drives a real car one
+colour should mean stop and nothing else, so the state box now reads ember
+while moving and crimson only on a fault, where it used to be red for both.
 
 **These are NeoRacer numbers.** The shipped YAML is tuned for a different
 chassis and lidar. Expect to retune `max_mps`, `kp`, `kd`, `lookahead` and the
