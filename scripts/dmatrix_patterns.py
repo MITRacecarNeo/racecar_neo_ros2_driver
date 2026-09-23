@@ -14,7 +14,6 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String, UInt8MultiArray
 
-
 HEIGHT = 8
 
 
@@ -105,8 +104,7 @@ def run_module_id(node, width, cascaded, duration_s):
 def run_font_scroll(node, duration_s):
     # 6-char chunks in TINY_FONT render at 23-24 px static, filling all
     # three cascaded modules of the 24-px viewport with no scrolling.
-    chunks = ['ABCDEF', 'GHIJKL', 'MNOPQR',
-              'STUVWX', 'YZ0123', '456789']
+    chunks = ['ABCDEF', 'GHIJKL', 'MNOPQR', 'STUVWX', 'YZ0123', '456789']
     node.get_logger().info('font chunks (A-Z 0-9) for %.1fs' % duration_s)
     per_chunk = max(0.7, duration_s / len(chunks))
     deadline = time.monotonic() + duration_s
@@ -133,15 +131,19 @@ PATTERNS = {
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        'pattern', choices=sorted(PATTERNS) + ['all'],
+        'pattern',
+        choices=sorted(PATTERNS) + ['all'],
         help='Which pattern to run, or "all" to run each in sequence',
     )
-    parser.add_argument('--width', type=int, default=24,
-                        help='Display width in pixels (default 24 = 3 modules)')
-    parser.add_argument('--cascaded', type=int, default=3,
-                        help='Cascaded module count (used by module-id pattern)')
-    parser.add_argument('--duration', type=float, default=4.0,
-                        help='Seconds to run each pattern (default 4)')
+    parser.add_argument(
+        '--width', type=int, default=24, help='Display width in pixels (default 24 = 3 modules)'
+    )
+    parser.add_argument(
+        '--cascaded', type=int, default=3, help='Cascaded module count (used by module-id pattern)'
+    )
+    parser.add_argument(
+        '--duration', type=float, default=4.0, help='Seconds to run each pattern (default 4)'
+    )
     args = parser.parse_args(argv)
 
     rclpy.init()

@@ -192,9 +192,7 @@ class EdgeTPUNode(Node):
         if not tpus:
             self.get_logger().fatal('No EdgeTPU device detected')
             raise SystemExit(1)
-        self.get_logger().info(
-            f'EdgeTPU found: {tpus[0]["type"]} at {tpus[0]["path"]}'
-        )
+        self.get_logger().info(f'EdgeTPU found: {tpus[0]["type"]} at {tpus[0]["path"]}')
 
         # The M.2 Apex is bound at boot and loads on the first try; no USB
         # firmware-enumeration retry needed.
@@ -228,20 +226,12 @@ class EdgeTPUNode(Node):
         self._tpu_ok = True
         self._scores_checked = False
 
-        self._det_pub = self.create_publisher(
-            Detection2DArray, '/edgetpu/inference', 10
-        )
-        self._diag_pub = self.create_publisher(
-            DiagnosticArray, '/diagnostics', 10
-        )
-        self.create_subscription(
-            Image, image_topic, self._image_cb, qos_profile_sensor_data
-        )
+        self._det_pub = self.create_publisher(Detection2DArray, '/edgetpu/inference', 10)
+        self._diag_pub = self.create_publisher(DiagnosticArray, '/diagnostics', 10)
+        self.create_subscription(Image, image_topic, self._image_cb, qos_profile_sensor_data)
         self.create_timer(diag_period, self._publish_diagnostics)
 
-        self.get_logger().info(
-            f'Subscribed to {image_topic}, publishing /edgetpu/inference'
-        )
+        self.get_logger().info(f'Subscribed to {image_topic}, publishing /edgetpu/inference')
 
     def _image_cb(self, msg: Image):
         # Stamped for every frame, before the rate gate: the stale-input
@@ -289,16 +279,20 @@ class EdgeTPUNode(Node):
         ).reshape(-1, 4)
 
         if self._idx_classes is not None:
-            classes = self._interpreter.get_tensor(
-                self._output_details[self._idx_classes]['index']
-            ).flatten().astype(int)
+            classes = (
+                self._interpreter.get_tensor(self._output_details[self._idx_classes]['index'])
+                .flatten()
+                .astype(int)
+            )
         else:
             classes = np.zeros(len(scores), dtype=int)
 
         if self._idx_count is not None:
-            count = int(self._interpreter.get_tensor(
-                self._output_details[self._idx_count]['index']
-            ).flatten()[0])
+            count = int(
+                self._interpreter.get_tensor(
+                    self._output_details[self._idx_count]['index']
+                ).flatten()[0]
+            )
         else:
             count = len(scores)
 
@@ -406,9 +400,12 @@ class EdgeTPUNode(Node):
             KeyValue(key='avg_inference_ms', value=f'{self._avg_inference_ms:.1f}'),
             KeyValue(key='model_input', value=f'{self._model_w}x{self._model_h}'),
             KeyValue(key='score_threshold', value=str(self._score_threshold)),
-            KeyValue(key='inference_rate_hz',
-                     value=f'{1.0 / self._inference_period:.1f}'
-                           if self._inference_period else 'uncapped'),
+            KeyValue(
+                key='inference_rate_hz',
+                value=(
+                    f'{1.0 / self._inference_period:.1f}' if self._inference_period else 'uncapped'
+                ),
+            ),
             KeyValue(key='frames_dropped', value=str(self._frames_dropped)),
             KeyValue(key='tpu_ok', value=str(self._tpu_ok)),
         ]

@@ -20,7 +20,6 @@ from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReli
 from sensor_msgs.msg import Joy
 from std_msgs.msg import String, UInt8MultiArray
 
-
 # Local copy of TINY_FONT with a more legible diagonal-stroke 'N' (luma's stock
 # glyph reads as a notched pillar on an 8-px-tall matrix), so "MAN" is clear.
 TINY_FONT = list(_LUMA_TINY_FONT)
@@ -125,16 +124,17 @@ def decode_pixel_array(data, expected_height: int, expected_width: int):
         )
     rows = []
     for r in range(expected_height):
-        start = r * expected_width
-        chunk = values[start:start + expected_width] if start < len(values) else []
+        start, end = r * expected_width, (r + 1) * expected_width
+        chunk = values[start:end] if start < len(values) else []
         if len(chunk) < expected_width:
             chunk = chunk + [0] * (expected_width - len(chunk))
         rows.append(''.join('X' if v else '.' for v in chunk))
     return rows
 
 
-def scroll_offset(elapsed: float, total_width: int, viewport_width: int,
-                  scroll_period_s: float) -> int:
+def scroll_offset(
+    elapsed: float, total_width: int, viewport_width: int, scroll_period_s: float
+) -> int:
     """Pixel offset for a left-scrolling message; 0 when it fits the viewport."""
     if total_width <= viewport_width or scroll_period_s <= 0:
         return 0
@@ -147,7 +147,7 @@ class DotMatrixNode(Node):
     def __init__(self):
         super().__init__('dotmatrix_node')
 
-        self.declare_parameter('cascaded', 3)          # 8-px modules -> width
+        self.declare_parameter('cascaded', 3)  # 8-px modules -> width
         self.declare_parameter('refresh_rate_hz', 15.0)
         self.declare_parameter('scroll_period_sec', 4.0)
         self.declare_parameter('pixels_timeout_sec', 5.0)
@@ -175,8 +175,8 @@ class DotMatrixNode(Node):
         label_region_x = 8
         label_region_w = self._width - label_region_x
         self._label_origin = {
-            mode: label_region_x + max(0, (label_region_w - rendered_text_width(
-                mode_label(mode), self._font)) // 2)
+            mode: label_region_x
+            + max(0, (label_region_w - rendered_text_width(mode_label(mode), self._font)) // 2)
             for mode in MuxMode
         }
 
@@ -199,9 +199,7 @@ class DotMatrixNode(Node):
             UInt8MultiArray, self.get_parameter('frame_topic').value, qos
         )
         self.create_subscription(String, '/dotmatrix/text', self._text_cb, qos)
-        self.create_subscription(
-            UInt8MultiArray, '/dotmatrix/pixels', self._pixels_cb, qos
-        )
+        self.create_subscription(UInt8MultiArray, '/dotmatrix/pixels', self._pixels_cb, qos)
         self.create_subscription(Joy, '/joy', self._joy_cb, qos)
         self.create_timer(1.0 / refresh_rate, self._render)
 
@@ -238,8 +236,7 @@ class DotMatrixNode(Node):
     def _to_frame(self, img) -> list:
         """Flatten a width x height 1-bit image to a row-major 0/1 list."""
         px = img.load()
-        return [1 if px[c, r] else 0
-                for r in range(self._height) for c in range(self._width)]
+        return [1 if px[c, r] else 0 for r in range(self._height) for c in range(self._width)]
 
     def _rows_to_frame(self, rows) -> list:
         frame = []
@@ -251,8 +248,12 @@ class DotMatrixNode(Node):
 
     def _text_frame(self, message: str) -> list:
         width = rendered_text_width(message, self._font)
-        offset = 0 if width <= self._width else scroll_offset(
-            time.monotonic() - self._text_start, width, self._width, self._scroll_period
+        offset = (
+            0
+            if width <= self._width
+            else scroll_offset(
+                time.monotonic() - self._text_start, width, self._width, self._scroll_period
+            )
         )
         img, draw = self._new_image()
         text(draw, (-offset, 1), message, fill='white', font=self._font)

@@ -57,15 +57,23 @@ class State:
 
     def key(self) -> tuple:
         """Fields that constitute a change worth logging."""
-        return (tuple(self.v4), self.v6_default, self.carrier,
-                self.operstate, self.nm_state, self.v4_default)
+        return (
+            tuple(self.v4),
+            self.v6_default,
+            self.carrier,
+            self.operstate,
+            self.nm_state,
+            self.v4_default,
+        )
 
     def render(self) -> str:
         addrs = ','.join(self.v4) if self.v4 else 'NONE'
-        return (f'v4={addrs} v4_default={self.v4_default or "none"} '
-                f'v6_default={"yes" if self.v6_default else "no"} '
-                f'carrier={self.carrier} operstate={self.operstate} '
-                f'nm={self.nm_state}')
+        return (
+            f'v4={addrs} v4_default={self.v4_default or "none"} '
+            f'v6_default={"yes" if self.v6_default else "no"} '
+            f'carrier={self.carrier} operstate={self.operstate} '
+            f'nm={self.nm_state}'
+        )
 
 
 def sample(iface: str) -> State:
@@ -80,8 +88,7 @@ def sample(iface: str) -> State:
         parts = v4def.split()
         st.v4_default = parts[2] if len(parts) > 2 else 'yes'
 
-    st.v6_default = bool(
-        _run(['ip', '-6', 'route', 'show', 'default', 'dev', iface]).strip())
+    st.v6_default = bool(_run(['ip', '-6', 'route', 'show', 'default', 'dev', iface]).strip())
 
     st.carrier = _read(f'/sys/class/net/{iface}/carrier')
     st.operstate = _read(f'/sys/class/net/{iface}/operstate')
@@ -135,13 +142,17 @@ def write(log: Path, tag: str, state: State) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     ap.add_argument('--iface', default='eth0')
-    ap.add_argument('--interval', type=float, default=5.0,
-                    help='seconds between samples (default 5)')
-    ap.add_argument('--heartbeat', type=float, default=900.0,
-                    help='seconds between heartbeat lines when nothing changes')
+    ap.add_argument(
+        '--interval', type=float, default=5.0, help='seconds between samples (default 5)'
+    )
+    ap.add_argument(
+        '--heartbeat',
+        type=float,
+        default=900.0,
+        help='seconds between heartbeat lines when nothing changes',
+    )
     ap.add_argument('--log', type=Path, default=DEFAULT_LOG)
-    ap.add_argument('--once', action='store_true',
-                    help='sample once, print, and exit')
+    ap.add_argument('--once', action='store_true', help='sample once, print, and exit')
     args = ap.parse_args()
 
     if args.once:

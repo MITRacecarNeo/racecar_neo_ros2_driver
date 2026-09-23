@@ -42,10 +42,7 @@ class IMUCalibrator(Node):
     def create_subscription_with_qos(self):
         """Subscribe to the uncalibrated raw topic using sensor-data QoS."""
         self.subscription = self.create_subscription(
-            Imu,
-            '/imu/lsm9ds1/raw',
-            self.imu_callback,
-            qos_profile_sensor_data
+            Imu, '/imu/lsm9ds1/raw', self.imu_callback, qos_profile_sensor_data
         )
         self.get_logger().info('Created subscription to /imu/lsm9ds1/raw')
 
@@ -59,14 +56,10 @@ class IMUCalibrator(Node):
             accel = [
                 msg.linear_acceleration.x,
                 msg.linear_acceleration.y,
-                msg.linear_acceleration.z
+                msg.linear_acceleration.z,
             ]
 
-            gyro = [
-                msg.angular_velocity.x,
-                msg.angular_velocity.y,
-                msg.angular_velocity.z
-            ]
+            gyro = [msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z]
 
             self.accel_queue.put(accel)
             self.gyro_queue.put(gyro)
@@ -193,7 +186,7 @@ class IMUCalibrator(Node):
                 ('Y+', 'Y-axis pointing up (right side up)'),
                 ('Y-', 'Y-axis pointing down (left side up)'),
                 ('Z+', 'Z-axis pointing up (top face up)'),
-                ('Z-', 'Z-axis pointing down (bottom face up)')
+                ('Z-', 'Z-axis pointing down (bottom face up)'),
             ]
 
             all_accel_data = []
@@ -226,25 +219,18 @@ class IMUCalibrator(Node):
             'imu_model': 'lsm9ds1',
             'calibration_date': timestamp,
             'ros2_topic': '/imu',
-
             'accelerometer.bias': list(map(float, self.accel_bias)),
             'accelerometer.noise_density': 1.86e-03,
             'accelerometer.random_walk': 4.33e-04,
-
             'gyroscope.bias': list(map(float, self.gyro_bias)),
             'gyroscope.noise_density': 1.87e-04,
             'gyroscope.random_walk': 2.66e-05,
-
             'update_rate': 100.0,
             'temperature_bias': 0.0,
-            'temperature_scale': 1.0
+            'temperature_scale': 1.0,
         }
 
-        ros2_yaml_header = {
-            'pit_node': {
-                'ros__parameters': calibration_data
-            }
-        }
+        ros2_yaml_header = {'pit_node': {'ros__parameters': calibration_data}}
 
         pkg_dir = get_package_share_directory('racecar_neo_ros2_driver')
         install_file = os.path.join(pkg_dir, 'config', 'lsm9ds1_cal.yaml')
@@ -265,8 +251,7 @@ class IMUCalibrator(Node):
             self.get_logger().info('CALIBRATION COMPLETED')
             self.get_logger().info('=' * 60)
             self.get_logger().info(
-                f'Calibration saved to: {install_file} '
-                f'and permanent source file: {src_file}'
+                f'Calibration saved to: {install_file} ' f'and permanent source file: {src_file}'
             )
 
             self.get_logger().info('\nCalibration Results:')

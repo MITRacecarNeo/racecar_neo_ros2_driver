@@ -68,9 +68,7 @@ class TestRemap:
 
 class TestTransformAccel:
     def test_bias_and_scale(self):
-        out = transform_accel(
-            [9.81, 0.0, 0.0], [0, 1, 2], [1.0, 1.0, 1.0], 1.0, [0.81, 0.0, 0.0]
-        )
+        out = transform_accel([9.81, 0.0, 0.0], [0, 1, 2], [1.0, 1.0, 1.0], 1.0, [0.81, 0.0, 0.0])
         assert np.allclose(out, [9.0, 0.0, 0.0])
 
 

@@ -26,7 +26,6 @@ from sysinfo import (  # noqa: E402
     read_under_voltage_alarm as _read_under_voltage_alarm,
 )
 
-
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -45,8 +44,7 @@ MONITORED = {
     'gamepad': {'topic': '/gamepad_drive', 'label': 'Gamepad', 'supervised': True},
     'imu_fusion': {'topic': '/imu/fused', 'label': 'IMU fusion', 'supervised': True},
     'lidar': {'topic': '/scan', 'label': 'RPLIDAR', 'supervised': True},
-    'realsense': {
-        'topic': '/camera/color', 'label': 'RealSense D435i', 'supervised': True},
+    'realsense': {'topic': '/camera/color', 'label': 'RealSense D435i', 'supervised': True},
     'edgetpu': {'topic': '/edgetpu/inference', 'label': 'Coral EdgeTPU', 'supervised': False},
     'dotmatrix': {'topic': '/dotmatrix/pixels', 'label': 'Dot matrix', 'supervised': False},
 }
@@ -412,6 +410,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     global _monitor_running, _sampler

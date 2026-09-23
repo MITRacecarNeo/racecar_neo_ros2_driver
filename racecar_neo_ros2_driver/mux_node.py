@@ -135,11 +135,7 @@ def joy_is_centered(axes, threshold: float = 0.2, ignore_axes=()) -> bool:
     so they must be excluded from the arming check or the mux never arms.
     """
     ignore = set(ignore_axes)
-    return all(
-        abs(float(a)) < threshold
-        for i, a in enumerate(axes)
-        if i not in ignore
-    )
+    return all(abs(float(a)) < threshold for i, a in enumerate(axes) if i not in ignore)
 
 
 class MuxNode(Node):
@@ -159,7 +155,7 @@ class MuxNode(Node):
         # and rc_link_up is the least-verified part of this path. Enable per
         # car once the mode channel has been confirmed on the bench.
         self.declare_parameter('rc_authority_enable', False)
-        self.declare_parameter('rc_mode_channel', 5)     # 0-indexed; FlySky CH6
+        self.declare_parameter('rc_mode_channel', 5)  # 0-indexed; FlySky CH6
         self.declare_parameter('rc_mode_deadband', 0.35)
         self.declare_parameter('rc_timeout_sec', 0.5)
         self.declare_parameter('rc_link_hold_sec', 1.0)
@@ -211,12 +207,8 @@ class MuxNode(Node):
         self._pub = self.create_publisher(AckermannDriveStamped, '/mux_out', qos)
 
         self.create_subscription(Joy, '/joy', self._joy_cb, qos)
-        self.create_subscription(
-            AckermannDriveStamped, '/gamepad_drive', self._gamepad_cb, qos
-        )
-        self.create_subscription(
-            AckermannDriveStamped, '/drive', self._auto_cb, qos
-        )
+        self.create_subscription(AckermannDriveStamped, '/gamepad_drive', self._gamepad_cb, qos)
+        self.create_subscription(AckermannDriveStamped, '/drive', self._auto_cb, qos)
 
         # Subscribed only when enabled, so a car with the feature off carries
         # no extra subscriptions and behaves exactly as it did before.
@@ -278,7 +270,8 @@ class MuxNode(Node):
         if held != self._rc_held:
             self._rc_held = held
             self.get_logger().info(
-                'RC transmitter holds the drive gate' if held
+                'RC transmitter holds the drive gate'
+                if held
                 else 'RC transmitter released the drive gate'
             )
         return held
@@ -302,7 +295,9 @@ class MuxNode(Node):
         if not self._armed:
             grace_elapsed = (now - self._boot_time) >= self._startup_grace
             if grace_elapsed and joy_is_centered(
-                joy.axes, self._arm_threshold, self._arm_ignore_axes,
+                joy.axes,
+                self._arm_threshold,
+                self._arm_ignore_axes,
             ):
                 self._armed = True
                 self.get_logger().info('Mux armed')
@@ -333,10 +328,7 @@ class MuxNode(Node):
             ):
                 out = self._latest_gamepad
         elif mode == MuxMode.AUTONOMY:
-            if (
-                self._latest_auto is not None
-                and (now - self._auto_stamp) <= self._cmd_timeout
-            ):
+            if self._latest_auto is not None and (now - self._auto_stamp) <= self._cmd_timeout:
                 out = self._latest_auto
 
         if mode != self._last_mode:

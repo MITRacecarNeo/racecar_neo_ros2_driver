@@ -14,19 +14,21 @@ _spec.loader.exec_module(wifi_scan)
 
 # Shape of a real scan on a car parked in a lab: the same access point
 # repeated across BSSIDs, several hidden networks, mixed security fields.
-FIXTURE = '\n'.join([
-    'Duck:100:WPA2:',
-    ':100:WPA2 802.1X:',
-    'FBISurveillanceVan:100:WPA2:',
-    'Duck:72:WPA2:',
-    ':88:WPA2:',
-    'xfinitywifi:100::',
-    'eduroam:97:WPA2 802.1X:*',
-    'Duck:64:WPA2:',
-    'FBISurveillanceVan:81:WPA2:',
-    ':40:WPA1 WPA2 802.1X:',
-    'vandv:52:WPA2:',
-])
+FIXTURE = '\n'.join(
+    [
+        'Duck:100:WPA2:',
+        ':100:WPA2 802.1X:',
+        'FBISurveillanceVan:100:WPA2:',
+        'Duck:72:WPA2:',
+        ':88:WPA2:',
+        'xfinitywifi:100::',
+        'eduroam:97:WPA2 802.1X:*',
+        'Duck:64:WPA2:',
+        'FBISurveillanceVan:81:WPA2:',
+        ':40:WPA1 WPA2 802.1X:',
+        'vandv:52:WPA2:',
+    ]
+)
 
 
 class TestSplitNmcli:

@@ -24,6 +24,7 @@ def dashboard():
 
 def test_script_exists_and_executable():
     import os
+
     assert SCRIPT.is_file()
     assert os.access(SCRIPT, os.X_OK)
 
@@ -31,16 +32,24 @@ def test_script_exists_and_executable():
 def test_py_compile_clean():
     result = subprocess.run(
         ['python3', '-m', 'py_compile', str(SCRIPT)],
-        capture_output=True, text=True, timeout=5,
+        capture_output=True,
+        text=True,
+        timeout=5,
     )
     assert result.returncode == 0, result.stderr
 
 
 class TestMonitoredAndRateTopics:
     EXPECTED_NODES = {
-        'pit', 'throttle', 'mux', 'gamepad',
-        'imu_fusion', 'lidar', 'realsense',
-        'edgetpu', 'dotmatrix',
+        'pit',
+        'throttle',
+        'mux',
+        'gamepad',
+        'imu_fusion',
+        'lidar',
+        'realsense',
+        'edgetpu',
+        'dotmatrix',
     }
 
     def test_monitored_covers_all_subsystems(self, dashboard):
@@ -71,8 +80,15 @@ class TestGetStatus:
     def test_returns_dict_with_required_keys(self, dashboard):
         # get_status() is always callable; returns the cached snapshot.
         snapshot = dashboard.get_status()
-        for key in ('timestamp', 'nodes', 'node_list', 'topic_list',
-                    'rates', 'watchdog_log', 'log_dir'):
+        for key in (
+            'timestamp',
+            'nodes',
+            'node_list',
+            'topic_list',
+            'rates',
+            'watchdog_log',
+            'log_dir',
+        ):
             assert key in snapshot
 
     def test_status_is_json_serializable(self, dashboard):

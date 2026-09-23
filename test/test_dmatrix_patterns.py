@@ -81,6 +81,4 @@ class TestModuleId:
 
 class TestPatternRegistry:
     def test_registry_lists_expected_patterns(self, patterns):
-        assert set(patterns.PATTERNS) == {
-            'checkerboard', 'all-on', 'sweep', 'module-id', 'font'
-        }
+        assert set(patterns.PATTERNS) == {'checkerboard', 'all-on', 'sweep', 'module-id', 'font'}

@@ -41,7 +41,9 @@ def read_rtc_voltage() -> float | None:
     try:
         r = subprocess.run(
             ['vcgencmd', 'pmic_read_adc', 'BATT_V'],
-            capture_output=True, text=True, timeout=3,
+            capture_output=True,
+            text=True,
+            timeout=3,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return None
@@ -92,7 +94,9 @@ def read_throttled() -> tuple[int | None, list[str]]:
     try:
         r = subprocess.run(
             ['vcgencmd', 'get_throttled'],
-            capture_output=True, text=True, timeout=3,
+            capture_output=True,
+            text=True,
+            timeout=3,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return (None, [])
@@ -116,10 +120,16 @@ def read_loadavg() -> tuple[float, float, float] | None:
 def cpu_count() -> int:
     """Return the number of online CPUs, or 1 when it cannot be determined."""
     try:
-        return len([
-            line for line in Path('/proc/cpuinfo').read_text().splitlines()
-            if line.startswith('processor')
-        ]) or 1
+        return (
+            len(
+                [
+                    line
+                    for line in Path('/proc/cpuinfo').read_text().splitlines()
+                    if line.startswith('processor')
+                ]
+            )
+            or 1
+        )
     except OSError:
         return 1
 
@@ -147,10 +157,11 @@ def read_disk(path: str = '/') -> dict[str, int] | None:
     """Return filesystem usage for `path` in GiB, plus percent used."""
     try:
         import shutil
+
         total, used, free = shutil.disk_usage(path)
     except OSError:
         return None
-    gib = 1024 ** 3
+    gib = 1024**3
     return {
         'total': total // gib,
         'used': used // gib,
@@ -172,7 +183,9 @@ def ntp_synchronized() -> bool | None:
     try:
         r = subprocess.run(
             ['timedatectl', 'show', '-p', 'NTPSynchronized', '--value'],
-            capture_output=True, text=True, timeout=3,
+            capture_output=True,
+            text=True,
+            timeout=3,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return None

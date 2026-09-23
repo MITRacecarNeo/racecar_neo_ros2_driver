@@ -37,10 +37,7 @@ class IMUCalibrator(Node):
     def create_subscription_with_qos(self):
         """Subscribe to the uncalibrated raw topic using sensor-data QoS."""
         self.subscription = self.create_subscription(
-            Imu,
-            '/imu/realsense',
-            self.imu_callback,
-            qos_profile_sensor_data
+            Imu, '/imu/realsense', self.imu_callback, qos_profile_sensor_data
         )
         self.get_logger().info('Created subscription to /imu/realsense')
 
@@ -54,14 +51,10 @@ class IMUCalibrator(Node):
             accel = [
                 msg.linear_acceleration.x,
                 msg.linear_acceleration.y,
-                msg.linear_acceleration.z
+                msg.linear_acceleration.z,
             ]
 
-            gyro = [
-                msg.angular_velocity.x,
-                msg.angular_velocity.y,
-                msg.angular_velocity.z
-            ]
+            gyro = [msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z]
 
             self.accel_queue.put(accel)
             self.gyro_queue.put(gyro)
@@ -188,7 +181,7 @@ class IMUCalibrator(Node):
                 ('Y+', 'Y-axis pointing up (right side up)'),
                 ('Y-', 'Y-axis pointing down (left side up)'),
                 ('Z+', 'Z-axis pointing up (top face up)'),
-                ('Z-', 'Z-axis pointing down (bottom face up)')
+                ('Z-', 'Z-axis pointing down (bottom face up)'),
             ]
 
             all_accel_data = []
@@ -221,9 +214,7 @@ class IMUCalibrator(Node):
         }
 
         ros2_yaml_header = {
-            'imu_fusion_node': {   # Targets the fusion node!
-                'ros__parameters': calibration_data
-            }
+            'imu_fusion_node': {'ros__parameters': calibration_data}  # Targets the fusion node!
         }
 
         pkg_dir = get_package_share_directory('racecar_neo_ros2_driver')
@@ -245,8 +236,7 @@ class IMUCalibrator(Node):
             self.get_logger().info('CALIBRATION COMPLETED')
             self.get_logger().info('=' * 60)
             self.get_logger().info(
-                f'Calibration saved to: {install_file} '
-                f'and permanent source file: {src_file}'
+                f'Calibration saved to: {install_file} ' f'and permanent source file: {src_file}'
             )
 
             self.get_logger().info('\nCalibration Results:')

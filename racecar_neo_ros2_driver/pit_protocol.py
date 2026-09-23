@@ -198,9 +198,20 @@ def encode_command(
     led_bytes = bytes(led or b'')[:LED_LEN].ljust(LED_LEN, b'\x00')
 
     body_wo_crc = (
-        struct.pack('<BBHIHHff', PROTO_VERSION, 0, RX_BODY_SIZE, RX_BODY_SIZE, 0, 1,
-                    float(servo), float(motor))
-        + dot + led_bytes + struct.pack('<B', system_state & 0xFF)
+        struct.pack(
+            '<BBHIHHff',
+            PROTO_VERSION,
+            0,
+            RX_BODY_SIZE,
+            RX_BODY_SIZE,
+            0,
+            1,
+            float(servo),
+            float(motor),
+        )
+        + dot
+        + led_bytes
+        + struct.pack('<B', system_state & 0xFF)
     )
     wire_wo_crc = _RX_MAGIC_LE + body_wo_crc
     crc = crc16_ccitt(wire_wo_crc)

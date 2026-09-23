@@ -23,6 +23,7 @@ def watchdog():
 
 def test_script_exists_and_executable():
     import os
+
     assert SCRIPT.is_file()
     assert os.access(SCRIPT, os.X_OK)
 
@@ -30,7 +31,9 @@ def test_script_exists_and_executable():
 def test_bash_syntax_clean_python():
     result = subprocess.run(
         ['python3', '-m', 'py_compile', str(SCRIPT)],
-        capture_output=True, text=True, timeout=5,
+        capture_output=True,
+        text=True,
+        timeout=5,
     )
     assert result.returncode == 0, result.stderr
 
@@ -39,11 +42,22 @@ class TestNodesDict:
     """The NODES dict is the watchdog's contract — every entry must be well-formed."""
 
     EXPECTED_NAMES = {
-        'pit', 'throttle', 'mux', 'gamepad',
-        'imu_fusion', 'lidar', 'realsense',
+        'pit',
+        'throttle',
+        'mux',
+        'gamepad',
+        'imu_fusion',
+        'lidar',
+        'realsense',
     }
-    REQUIRED_KEYS = {'topic', 'launch', 'device_check', 'device_label',
-                     'kill_pattern', 'process_check'}
+    REQUIRED_KEYS = {
+        'topic',
+        'launch',
+        'device_check',
+        'device_label',
+        'kill_pattern',
+        'process_check',
+    }
 
     def test_all_expected_nodes_present(self, watchdog):
         assert set(watchdog.NODES) == self.EXPECTED_NAMES
@@ -63,9 +77,7 @@ class TestNodesDict:
     def test_launch_file_exists(self, watchdog, name):
         launch_dir = SCRIPT.parent.parent / 'launch'
         launch_file = launch_dir / watchdog.NODES[name]['launch']
-        assert launch_file.is_file(), (
-            f'{name}: launch file {launch_file} missing'
-        )
+        assert launch_file.is_file(), f'{name}: launch file {launch_file} missing'
 
     @pytest.mark.parametrize('name', sorted(EXPECTED_NAMES))
     def test_device_check_callable(self, watchdog, name):
@@ -138,6 +150,7 @@ class TestFreshnessMonitor:
         fm._node = None
         fm._topics = ['/scan']
         import threading
+
         fm._lock = threading.Lock()
         fm._last = {}
         fm._subs = {}
@@ -148,6 +161,7 @@ class TestFreshnessMonitor:
         fm._node = None
         fm._topics = ['/scan']
         import threading
+
         fm._lock = threading.Lock()
         fm._last = {}
         fm._subs = {}
@@ -161,6 +175,7 @@ class TestFreshnessMonitor:
         fm._node = None
         fm._topics = ['/scan']
         import threading
+
         fm._lock = threading.Lock()
         fm._last = {}
         fm._subs = {}

@@ -51,7 +51,6 @@ from std_msgs.msg import Bool, Float32, Float32MultiArray, UInt8MultiArray
 from . import pit_protocol as pit
 from .mux_node import MuxMode, select_mode
 
-
 # RxPacket.SystemState bit layout; mirror of the firmware cfg::SYS_STATE.
 SYS_MODE_MASK = 0x03
 SYS_MODE_IDLE = 0
@@ -175,8 +174,8 @@ class PitNode(Node):
         self.declare_parameter('imu.mag_axis_order', [0, 1, 2])
         self.declare_parameter('imu.mag_axis_sign', [1.0, 1.0, 1.0])
         self.declare_parameter('imu.accel_scale', 1.0)
-        self.declare_parameter('imu.gyro_scale', 1.0)      # deg/s -> rad/s = 0.01745329
-        self.declare_parameter('imu.mag_scale', 1.0e-6)    # firmware uT -> Tesla
+        self.declare_parameter('imu.gyro_scale', 1.0)  # deg/s -> rad/s = 0.01745329
+        self.declare_parameter('imu.mag_scale', 1.0e-6)  # firmware uT -> Tesla
         # Reuse the lsm9ds1 calibration YAMLs (same keys as imu_node).
         self.declare_parameter('accelerometer.bias', [0.0, 0.0, 0.0])
         self.declare_parameter('gyroscope.bias', [0.0, 0.0, 0.0])
@@ -221,9 +220,7 @@ class PitNode(Node):
         self._mag_scale = float(self.get_parameter('imu.mag_scale').value)
         self._accel_bias = np.array(self.get_parameter('accelerometer.bias').value, float)
         self._gyro_bias = np.array(self.get_parameter('gyroscope.bias').value, float)
-        self._mag_hard = np.array(
-            self.get_parameter('magnetometer.hard_iron_bias').value, float
-        )
+        self._mag_hard = np.array(self.get_parameter('magnetometer.hard_iron_bias').value, float)
         self._mag_soft = np.array(
             self.get_parameter('magnetometer.soft_iron_matrix.data').value, float
         ).reshape(3, 3)
@@ -240,8 +237,7 @@ class PitNode(Node):
         self._pub_mag_raw = self.create_publisher(MagneticField, f'{self._mag_topic}/raw', qos)
         self._pub_encoder = self.create_publisher(Float32, self._encoder_topic, qos)
         self._pub_odom = (
-            self.create_publisher(Odometry, self._odom_topic, qos)
-            if self._publish_odom else None
+            self.create_publisher(Odometry, self._odom_topic, qos) if self._publish_odom else None
         )
         self._pub_voltage = self.create_publisher(Float32, self._voltage_topic, qos)
         self._pub_current = self.create_publisher(Float32, self._current_topic, qos)

@@ -33,20 +33,32 @@ def test_script_exists_and_executable():
 def test_py_compile_clean():
     result = subprocess.run(
         ['python3', '-m', 'py_compile', str(SCRIPT)],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
     assert result.returncode == 0, result.stderr
 
 
 class TestStateRendering:
     def test_renders_every_field(self, mon):
-        st = mon.State(v4=['192.168.52.200/24'], v6_default=False,
-                       carrier='1', operstate='up', nm_state='connected',
-                       v4_default='')
+        st = mon.State(
+            v4=['192.168.52.200/24'],
+            v6_default=False,
+            carrier='1',
+            operstate='up',
+            nm_state='connected',
+            v4_default='',
+        )
         line = st.render()
-        for fragment in ('v4=192.168.52.200/24', 'v4_default=none',
-                         'v6_default=no', 'carrier=1', 'operstate=up',
-                         'nm=connected'):
+        for fragment in (
+            'v4=192.168.52.200/24',
+            'v4_default=none',
+            'v6_default=no',
+            'carrier=1',
+            'operstate=up',
+            'nm=connected',
+        ):
             assert fragment in line
 
     def test_no_address_renders_as_none(self, mon):
@@ -60,8 +72,13 @@ class TestStateRendering:
 
 class TestClassify:
     def _st(self, mon, **kw):
-        base = {'v4': ['192.168.52.200/24'], 'v6_default': False,
-                'carrier': '1', 'operstate': 'up', 'nm_state': 'connected'}
+        base = {
+            'v4': ['192.168.52.200/24'],
+            'v6_default': False,
+            'carrier': '1',
+            'operstate': 'up',
+            'nm_state': 'connected',
+        }
         base.update(kw)
         return mon.State(**base)
 
@@ -113,7 +130,9 @@ class TestLogging:
         log = tmp_path / 'eth.log'
         result = subprocess.run(
             ['python3', str(SCRIPT), '--once', '--log', str(log)],
-            capture_output=True, text=True, timeout=20,
+            capture_output=True,
+            text=True,
+            timeout=20,
         )
         assert result.returncode == 0, result.stderr
         text = log.read_text()

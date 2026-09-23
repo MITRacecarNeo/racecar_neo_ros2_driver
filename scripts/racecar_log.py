@@ -127,7 +127,9 @@ def unmounted_nvme(lsblk_output=None):
         try:
             lsblk_output = subprocess.run(
                 ['lsblk', '-rno', 'NAME,TYPE,MOUNTPOINT'],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             ).stdout
         except (OSError, subprocess.SubprocessError):
             return None
@@ -167,7 +169,9 @@ def root_is_sd(root):
     try:
         dev = subprocess.run(
             ['findmnt', '-no', 'SOURCE', '--target', str(root)],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         return False
@@ -301,6 +305,7 @@ def active_state():
 
 # ---------------------------------------------------------------- subcommands
 
+
 def cmd_start(args):
     """Spawn `ros2 bag record` in its own session and remember where it went."""
     if active_state() is not None:
@@ -343,21 +348,25 @@ def cmd_start(args):
     stdout_path = root / f'{name}.record.log'
     with open(stdout_path, 'wb') as out:
         proc = subprocess.Popen(
-            argv, stdout=out, stderr=subprocess.STDOUT, start_new_session=True,
+            argv,
+            stdout=out,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
         )
 
-    write_state({
-        'pid': proc.pid,
-        'bag': str(bag),
-        'name': name,
-        'topics': topics,
-        'exclude': exclude,
-        'storage': storage,
-        'started': time.time(),
-        'stdout': str(stdout_path),
-    })
-    print(f'recording {"all topics" if not topics else f"{len(topics)} topics"} '
-          f'to {bag}')
+    write_state(
+        {
+            'pid': proc.pid,
+            'bag': str(bag),
+            'name': name,
+            'topics': topics,
+            'exclude': exclude,
+            'storage': storage,
+            'started': time.time(),
+            'stdout': str(stdout_path),
+        }
+    )
+    print(f'recording {"all topics" if not topics else f"{len(topics)} topics"} ' f'to {bag}')
     print(f'  pid {proc.pid}; stop with: racecar log stop')
     return 0
 
@@ -385,8 +394,9 @@ def cmd_stop(args):
         time.sleep(0.2)
 
     if pid_alive(pid):
-        print(f'recorder {pid} did not exit within {args.timeout}s; sending SIGTERM',
-              file=sys.stderr)
+        print(
+            f'recorder {pid} did not exit within {args.timeout}s; sending SIGTERM', file=sys.stderr
+        )
         try:
             os.killpg(os.getpgid(pid), signal.SIGTERM)
         except OSError:
@@ -423,17 +433,22 @@ def cmd_status(args):
     remaining = (free / rate) if rate > 0 else None
 
     if args.json:
-        print(json.dumps({
-            'recording': True,
-            'bag': str(bag),
-            'pid': state['pid'],
-            'elapsed_sec': elapsed,
-            'size_bytes': size,
-            'rate_bytes_per_sec': rate,
-            'free_bytes': free,
-            'seconds_until_full': remaining,
-            'topics': state.get('topics') or 'all',
-        }, indent=2))
+        print(
+            json.dumps(
+                {
+                    'recording': True,
+                    'bag': str(bag),
+                    'pid': state['pid'],
+                    'elapsed_sec': elapsed,
+                    'size_bytes': size,
+                    'rate_bytes_per_sec': rate,
+                    'free_bytes': free,
+                    'seconds_until_full': remaining,
+                    'topics': state.get('topics') or 'all',
+                },
+                indent=2,
+            )
+        )
         return 0
 
     print(f'recording  {bag.name}')
@@ -444,10 +459,11 @@ def cmd_status(args):
     if size == 0 and elapsed > 2.0:
         # mcap writes in chunks, so a slow topic shows nothing on disk for the
         # first few seconds. Absence of size is not absence of recording.
-        print('           (mcap flushes in chunks; a slow bag reads 0 until the'
-              ' first flush)')
-    print(f'  free     {format_size(free)}' +
-          (f'  (full in about {format_duration(remaining)})' if remaining else ''))
+        print('           (mcap flushes in chunks; a slow bag reads 0 until the' ' first flush)')
+    print(
+        f'  free     {format_size(free)}'
+        + (f'  (full in about {format_duration(remaining)})' if remaining else '')
+    )
     topics = state.get('topics')
     print(f'  topics   {", ".join(topics) if topics else "all"}')
     return 0
@@ -516,13 +532,18 @@ def cmd_analyze(args):
     size = dir_size(bag)
 
     if args.json:
-        print(json.dumps({
-            'bag': str(bag),
-            'duration_sec': duration,
-            'size_bytes': size,
-            'messages': meta.message_count,
-            'topics': rows,
-        }, indent=2))
+        print(
+            json.dumps(
+                {
+                    'bag': str(bag),
+                    'duration_sec': duration,
+                    'size_bytes': size,
+                    'messages': meta.message_count,
+                    'topics': rows,
+                },
+                indent=2,
+            )
+        )
         return 0
 
     print(f'{bag.name}')
@@ -554,8 +575,7 @@ def cmd_config(args):
 
     cfg = load_config()
     changed = False
-    for key, value in (('TOPICS', args.topics_csv), ('DIR', args.dir),
-                       ('STORAGE', args.storage)):
+    for key, value in (('TOPICS', args.topics_csv), ('DIR', args.dir), ('STORAGE', args.storage)):
         if value is not None:
             cfg[key] = value
             changed = True
@@ -576,25 +596,32 @@ def cmd_config(args):
 def build_parser():
     """Assemble the argument parser for every `racecar log` subcommand."""
     parser = argparse.ArgumentParser(
-        prog='racecar log', description='Record and analyze ROS 2 bags.',
+        prog='racecar log',
+        description='Record and analyze ROS 2 bags.',
     )
     sub = parser.add_subparsers(dest='action')
 
     start = sub.add_parser('start', help='start recording')
-    start.add_argument('test_name', nargs='?', default='run',
-                       help='name appended after the timestamp')
+    start.add_argument(
+        'test_name', nargs='?', default='run', help='name appended after the timestamp'
+    )
     start.add_argument('--topics', nargs='*', help='topics to record (default: all)')
     start.add_argument('--exclude', nargs='*', help='regex of topics to skip')
     start.add_argument('--dir', help='bag root (default: /data, else ~/logs/bags)')
     start.add_argument('--name', help='full bag name, replacing timestamp_testname')
     start.add_argument('--storage', choices=('mcap', 'sqlite3'), help='storage plugin')
-    start.add_argument('--force', action='store_true',
-                       help='record even when the rate outruns the disk')
+    start.add_argument(
+        '--force', action='store_true', help='record even when the rate outruns the disk'
+    )
     start.set_defaults(func=cmd_start)
 
     stop = sub.add_parser('stop', help='stop the running recording')
-    stop.add_argument('--timeout', type=float, default=15.0,
-                      help='seconds to wait for a clean finalize (default 15)')
+    stop.add_argument(
+        '--timeout',
+        type=float,
+        default=15.0,
+        help='seconds to wait for a clean finalize (default 15)',
+    )
     stop.set_defaults(func=cmd_stop)
 
     status = sub.add_parser('status', help='size and progress of the running bag')
@@ -611,8 +638,7 @@ def build_parser():
     analyze.set_defaults(func=cmd_analyze)
 
     config = sub.add_parser('config', help='show or set persisted defaults')
-    config.add_argument('--topics', dest='topics_csv',
-                        help='comma-separated default topic list')
+    config.add_argument('--topics', dest='topics_csv', help='comma-separated default topic list')
     config.add_argument('--dir', help='default bag root')
     config.add_argument('--storage', choices=('mcap', 'sqlite3'))
     config.add_argument('--reset', action='store_true')

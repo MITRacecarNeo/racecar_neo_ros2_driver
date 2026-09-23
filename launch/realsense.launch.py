@@ -20,25 +20,25 @@ def generate_launch_description():
     pointcloud_arg = DeclareLaunchArgument(
         'pointcloud_enable',
         default_value='false',
-        description='Enable point cloud generation (CPU intensive on Pi 5)'
+        description='Enable point cloud generation (CPU intensive on Pi 5)',
     )
 
     align_depth_arg = DeclareLaunchArgument(
         'align_depth_enable',
         default_value='false',
-        description='Align depth frames to color camera'
+        description='Align depth frames to color camera',
     )
 
     depth_profile_arg = DeclareLaunchArgument(
         'depth_profile',
         default_value='640x480x30',
-        description='Depth and infrared stream profile (widthxheightxfps)'
+        description='Depth and infrared stream profile (widthxheightxfps)',
     )
 
     color_profile_arg = DeclareLaunchArgument(
         'color_profile',
         default_value='640x480x60',
-        description='Color stream profile (widthxheightxfps)'
+        description='Color stream profile (widthxheightxfps)',
     )
 
     # D435i IMU IIO/HID-sensor sysfs attributes default to root-only on the
@@ -67,27 +67,22 @@ def generate_launch_description():
                     'enable_gyro': 'true',
                     'enable_accel': 'true',
                     # Profiles
-                    'depth_module.depth_profile':
-                        LaunchConfiguration('depth_profile'),
-                    'rgb_camera.color_profile':
-                        LaunchConfiguration('color_profile'),
-                    'depth_module.infra_profile':
-                        LaunchConfiguration('depth_profile'),
+                    'depth_module.depth_profile': LaunchConfiguration('depth_profile'),
+                    'rgb_camera.color_profile': LaunchConfiguration('color_profile'),
+                    'depth_module.infra_profile': LaunchConfiguration('depth_profile'),
                     'gyro_fps': '200',
                     'accel_fps': '63',
                     'unite_imu_method': '2',
                     # Sync and alignment
                     'enable_sync': 'true',
-                    'align_depth.enable':
-                        LaunchConfiguration('align_depth_enable'),
+                    'align_depth.enable': LaunchConfiguration('align_depth_enable'),
                     # Filters. Decimation off so depth stays 640x480 (matches
                     # the color frame and the library's depth API shape).
                     'decimation_filter.enable': 'false',
                     'spatial_filter.enable': 'false',
                     'temporal_filter.enable': 'false',
                     # Point cloud
-                    'pointcloud.enable':
-                        LaunchConfiguration('pointcloud_enable'),
+                    'pointcloud.enable': LaunchConfiguration('pointcloud_enable'),
                     # TF
                     'publish_tf': 'true',
                     'tf_publish_rate': '0.0',
@@ -98,18 +93,20 @@ def generate_launch_description():
         ],
     )
 
-    return LaunchDescription([
-        pointcloud_arg,
-        align_depth_arg,
-        depth_profile_arg,
-        color_profile_arg,
-        # Republish the RealSense streams onto the RACECAR topic names the
-        # student library and edgetpu_node read: color -> /camera/color,
-        # depth -> /camera/depth, and the combined IMU -> /imu/realsense
-        # (imu_fusion_node merges it with the Teensy LSM9DS1 into /imu/fused).
-        # SetRemap applies to the node inside the included rs_launch.
-        SetRemap(src='/camera/color/image_raw', dst='/camera/color'),
-        SetRemap(src='/camera/depth/image_rect_raw', dst='/camera/depth'),
-        SetRemap(src='/camera/imu', dst='/imu/realsense'),
-        realsense_launch,
-    ])
+    return LaunchDescription(
+        [
+            pointcloud_arg,
+            align_depth_arg,
+            depth_profile_arg,
+            color_profile_arg,
+            # Republish the RealSense streams onto the RACECAR topic names the
+            # student library and edgetpu_node read: color -> /camera/color,
+            # depth -> /camera/depth, and the combined IMU -> /imu/realsense
+            # (imu_fusion_node merges it with the Teensy LSM9DS1 into /imu/fused).
+            # SetRemap applies to the node inside the included rs_launch.
+            SetRemap(src='/camera/color/image_raw', dst='/camera/color'),
+            SetRemap(src='/camera/depth/image_rect_raw', dst='/camera/depth'),
+            SetRemap(src='/camera/imu', dst='/imu/realsense'),
+            realsense_launch,
+        ]
+    )

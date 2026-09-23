@@ -86,8 +86,7 @@ def parse(text: str) -> tuple[list[dict], int]:
     return networks, hidden
 
 
-def render(networks: list[dict], hidden: int, saved: set[str], iface: str,
-           rescanned: bool) -> str:
+def render(networks: list[dict], hidden: int, saved: set[str], iface: str, rescanned: bool) -> str:
     lines = []
     lines.append(f'  {"SSID":<24} {"SIGNAL":>6}  {"SECURITY":<14} ')
     for n in networks:
@@ -114,8 +113,9 @@ def render(networks: list[dict], hidden: int, saved: set[str], iface: str,
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument('--saved', default='',
-                    help='newline- or comma-separated SSIDs with saved profiles')
+    ap.add_argument(
+        '--saved', default='', help='newline- or comma-separated SSIDs with saved profiles'
+    )
     ap.add_argument('--iface', default='wlan0')
     ap.add_argument('--rescanned', action='store_true')
     args = ap.parse_args()

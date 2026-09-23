@@ -130,13 +130,13 @@ USB_DEVICES = [
     ('045e:028e', 'Gamepad'),
 ]
 
-SERVICE_UNITS = ('racecar-teleop', 'racecar-watchdog',
-                 'racecar-dashboard', 'racecar-jupyter')
+SERVICE_UNITS = ('racecar-teleop', 'racecar-watchdog', 'racecar-dashboard', 'racecar-jupyter')
 
 
 # ---------------------------------------------------------------------------
 # Host checks (no ROS graph needed)
 # ---------------------------------------------------------------------------
+
 
 def _run(cmd: list[str], timeout: float = 5.0) -> str:
     """Run a command and return stdout, or an empty string on any failure."""
@@ -152,8 +152,7 @@ def check_devices() -> list[Check]:
     out: list[Check] = []
     g = 'devices'
 
-    for link, hint in (('/dev/neo-pit-pcb', 'racecar udev'),
-                       ('/dev/lidar', 'racecar udev')):
+    for link, hint in (('/dev/neo-pit-pcb', 'racecar udev'), ('/dev/lidar', 'racecar udev')):
         p = Path(link)
         if p.exists():
             out.append(Check(g, Path(link).name, OK, str(p.resolve())))
@@ -184,9 +183,11 @@ def check_devices() -> list[Check]:
         for _ident, label in USB_DEVICES:
             out.append(Check(g, label, SKIP, 'lsusb unavailable'))
 
-    for pattern, label in (('/dev/spidev*', 'spidev'),
-                           ('/dev/gpiochip*', 'gpiochip'),
-                           ('/dev/i2c-1', 'i2c-1')):
+    for pattern, label in (
+        ('/dev/spidev*', 'spidev'),
+        ('/dev/gpiochip*', 'gpiochip'),
+        ('/dev/i2c-1', 'i2c-1'),
+    ):
         found = sorted(glob.glob(pattern))
         if found:
             detail = f'{len(found)} node(s)' if len(found) > 1 else found[0]
@@ -210,8 +211,11 @@ def check_devices() -> list[Check]:
     if not existing:
         out.append(Check(g, 'groups', SKIP, 'none of the racecar groups exist'))
     elif missing:
-        out.append(Check(g, 'groups', FAIL,
-                         f'not a member of {", ".join(missing)} (log out and back in?)'))
+        out.append(
+            Check(
+                g, 'groups', FAIL, f'not a member of {", ".join(missing)} (log out and back in?)'
+            )
+        )
     else:
         out.append(Check(g, 'groups', OK, ' '.join(sorted(existing))))
 
@@ -263,23 +267,24 @@ def check_system() -> list[Check]:
     else:
         frac = mem['available'] / mem['total'] if mem['total'] else 0
         status = OK if frac > 0.15 else (WARN if frac > 0.07 else FAIL)
-        out.append(Check(g, 'memory', status,
-                         f'{mem["available"]} MiB available of {mem["total"]}'))
+        out.append(
+            Check(g, 'memory', status, f'{mem["available"]} MiB available of {mem["total"]}')
+        )
 
     disk = sysinfo.read_disk('/')
     if disk is None:
         out.append(Check(g, 'disk', SKIP, 'unreadable'))
     else:
-        status = OK if disk['percent_used'] < 90 else (
-            WARN if disk['percent_used'] < 95 else FAIL)
-        out.append(Check(g, 'disk', status,
-                         f'{disk["free"]}G free on / ({disk["percent_used"]}% used)'))
+        status = OK if disk['percent_used'] < 90 else (WARN if disk['percent_used'] < 95 else FAIL)
+        out.append(
+            Check(g, 'disk', status, f'{disk["free"]}G free on / ({disk["percent_used"]}% used)')
+        )
 
     volts = sysinfo.read_rtc_voltage()
     rtc_status, rtc_label = sysinfo.classify_rtc(volts)
-    out.append(Check(g, 'rtc cell',
-                     {'healthy': OK, 'stale': WARN, 'dead': FAIL}[rtc_status],
-                     rtc_label))
+    out.append(
+        Check(g, 'rtc cell', {'healthy': OK, 'stale': WARN, 'dead': FAIL}[rtc_status], rtc_label)
+    )
 
     uv = sysinfo.read_under_voltage_alarm()
     if uv is None:
@@ -314,8 +319,9 @@ def check_services() -> list[Check]:
         if active == 'active' and enabled == 'enabled':
             out.append(Check('services', unit, OK, 'active, enabled'))
         else:
-            out.append(Check('services', unit, WARN,
-                             f'active={active or "?"} enabled={enabled or "?"}'))
+            out.append(
+                Check('services', unit, WARN, f'active={active or "?"} enabled={enabled or "?"}')
+            )
     return out
 
 
@@ -335,8 +341,14 @@ def check_network() -> list[Check]:
     elif len(eth) > 1:
         # The dual-address state is what makes the static drop; it is the
         # condition `racecar eth` exists to prevent.
-        out.append(Check(g, 'eth0 address', FAIL,
-                         f'{len(eth)} IPv4 addresses ({", ".join(eth)}); run: racecar eth static'))
+        out.append(
+            Check(
+                g,
+                'eth0 address',
+                FAIL,
+                f'{len(eth)} IPv4 addresses ({", ".join(eth)}); run: racecar eth static',
+            )
+        )
     else:
         out.append(Check(g, 'eth0 address', OK, eth[0]))
 
@@ -353,8 +365,11 @@ def check_network() -> list[Check]:
     v6def = _run(['ip', '-6', 'route', 'show', 'default', 'dev', 'eth0']).strip()
     if mode == 'static':
         if v6def:
-            out.append(Check(g, 'eth0 v6 default', FAIL,
-                             'present in static mode; run: racecar eth static'))
+            out.append(
+                Check(
+                    g, 'eth0 v6 default', FAIL, 'present in static mode; run: racecar eth static'
+                )
+            )
         else:
             out.append(Check(g, 'eth0 v6 default', OK, 'none, as expected in static mode'))
     else:
@@ -388,6 +403,7 @@ def check_network() -> list[Check]:
 # ---------------------------------------------------------------------------
 # ROS graph checks
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class RosResult:
@@ -426,8 +442,7 @@ def sample_ros(window: float, specs: list[TopicSpec]) -> RosResult:
 
         import rclpy
         from rclpy.node import Node
-        from rclpy.qos import (QoSDurabilityPolicy, QoSProfile,
-                               QoSReliabilityPolicy)
+        from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
     except Exception as exc:  # noqa: BLE001 - any import failure means no ROS
         result.reason = f'rclpy unavailable ({exc.__class__.__name__})'
         return result
@@ -484,6 +499,7 @@ def sample_ros(window: float, specs: list[TopicSpec]) -> RosResult:
                 counts[topic] += 1
                 if keep:
                     raw_latest[topic] = msg
+
             return cb
 
         for topic in counted:
@@ -492,14 +508,19 @@ def sample_ros(window: float, specs: list[TopicSpec]) -> RosResult:
             msg_cls = getattr(importlib.import_module(f'{pkg}.msg'), cls)
             msg_classes[topic] = msg_cls
             node.create_subscription(
-                msg_cls, topic, make_cb(topic, topic in VALUE_TOPICS), qos, raw=True)
+                msg_cls, topic, make_cb(topic, topic in VALUE_TOPICS), qos, raw=True
+            )
 
         if result.present & DIAGNOSTIC_SOURCED:
             try:
                 from diagnostic_msgs.msg import DiagnosticArray
+
                 node.create_subscription(
-                    DiagnosticArray, DIAGNOSTICS_TOPIC,
-                    lambda msg: _read_diagnostic_rates(msg, reported), qos)
+                    DiagnosticArray,
+                    DIAGNOSTICS_TOPIC,
+                    lambda msg: _read_diagnostic_rates(msg, reported),
+                    qos,
+                )
             except Exception:  # noqa: BLE001 - fall through to "no rate"
                 pass
 
@@ -519,6 +540,7 @@ def sample_ros(window: float, specs: list[TopicSpec]) -> RosResult:
         # Window closed, so decoding no longer lands on any rate. A payload
         # that will not decode is dropped and its value check reports missing.
         from rclpy.serialization import deserialize_message
+
         for topic, buf in raw_latest.items():
             try:
                 latest[topic] = deserialize_message(buf, msg_classes[topic])
@@ -556,8 +578,7 @@ def rate_checks(group: str, specs: list[TopicSpec], ros: RosResult) -> list[Chec
             # DiagnosticArray never arrived, not that the stream is dead, so
             # say which one failed rather than reporting 0 Hz.
             if spec.topic not in ros.reported:
-                out.append(Check(group, spec.label, WARN,
-                                 f'no rate on {DIAGNOSTICS_TOPIC}'))
+                out.append(Check(group, spec.label, WARN, f'no rate on {DIAGNOSTICS_TOPIC}'))
                 continue
             hz = ros.reported[spec.topic]
         else:
@@ -583,10 +604,9 @@ def value_checks(ros: RosResult) -> list[Check]:
         out.append(Check(g, 'IMU magnitude', SKIP, 'no sample captured'))
     else:
         a = imu.linear_acceleration
-        mag = (a.x ** 2 + a.y ** 2 + a.z ** 2) ** 0.5
+        mag = (a.x**2 + a.y**2 + a.z**2) ** 0.5
         status = OK if 8.0 < mag < 12.0 else FAIL
-        out.append(Check(g, 'IMU magnitude', status,
-                         f'{mag:.2f} m/s^2 (expect 8 to 12 at rest)'))
+        out.append(Check(g, 'IMU magnitude', status, f'{mag:.2f} m/s^2 (expect 8 to 12 at rest)'))
 
     volt = ros.values.get('/battery/voltage')
     curr = ros.values.get('/battery/current')
@@ -673,13 +693,19 @@ def main() -> int:
         prog='racecar status',
         description='Whole-car diagnostic pass. Exits 0 only when every requested check passes.',
     )
-    ap.add_argument('--quick', action='store_true',
-                    help='skip the ROS sampling phase (host checks only)')
+    ap.add_argument(
+        '--quick', action='store_true', help='skip the ROS sampling phase (host checks only)'
+    )
     ap.add_argument('--json', action='store_true', help='machine-readable output')
-    ap.add_argument('--section', default='',
-                    help=f'comma-separated subset of: {", ".join(SECTIONS)}')
-    ap.add_argument('--window', type=float, default=DEFAULT_WINDOW,
-                    help=f'ROS sample window in seconds (default {DEFAULT_WINDOW})')
+    ap.add_argument(
+        '--section', default='', help=f'comma-separated subset of: {", ".join(SECTIONS)}'
+    )
+    ap.add_argument(
+        '--window',
+        type=float,
+        default=DEFAULT_WINDOW,
+        help=f'ROS sample window in seconds (default {DEFAULT_WINDOW})',
+    )
     args = ap.parse_args()
 
     if args.section:
@@ -736,11 +762,16 @@ def main() -> int:
     elapsed = time.monotonic() - started
 
     if args.json:
-        print(json.dumps({
-            'elapsed_sec': round(elapsed, 2),
-            'exit_code': exit_code,
-            'checks': [c.__dict__ for c in checks],
-        }, indent=2))
+        print(
+            json.dumps(
+                {
+                    'elapsed_sec': round(elapsed, 2),
+                    'exit_code': exit_code,
+                    'checks': [c.__dict__ for c in checks],
+                },
+                indent=2,
+            )
+        )
     else:
         print(render(checks, elapsed, exit_code))
     return exit_code

@@ -20,9 +20,7 @@ import pytest
 def _lsusb_match(vid_pid):
     """Return True if `lsusb` lists a USB device matching vid:pid."""
     try:
-        out = subprocess.run(
-            ['lsusb'], capture_output=True, text=True, timeout=5
-        ).stdout
+        out = subprocess.run(['lsusb'], capture_output=True, text=True, timeout=5).stdout
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
     return vid_pid.lower() in out.lower()
@@ -31,9 +29,7 @@ def _lsusb_match(vid_pid):
 def _lspci_match(vid_pid):
     """Return True if `lspci -nn` lists a PCI device matching vid:pid."""
     try:
-        out = subprocess.run(
-            ['lspci', '-nn'], capture_output=True, text=True, timeout=5
-        ).stdout
+        out = subprocess.run(['lspci', '-nn'], capture_output=True, text=True, timeout=5).stdout
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
     return vid_pid.lower() in out.lower()
@@ -44,7 +40,9 @@ def _i2c_probe(bus, address):
     try:
         out = subprocess.run(
             ['i2cdetect', '-y', str(bus)],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         ).stdout
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
@@ -81,6 +79,7 @@ def _user_in_group(name):
 # RPLIDAR — 2D LIDAR
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.hardware
 class TestRPLIDAR:
     DEVICE = '/dev/lidar'
@@ -104,6 +103,7 @@ class TestRPLIDAR:
 # Gamepad — any USB HID joystick (EasySMX, Switch Pro, Xbox, etc.)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.hardware
 class TestGamepad:
     def test_gamepad_present(self):
@@ -111,6 +111,7 @@ class TestGamepad:
         # /dev/input/eventN (evdev). Newer controllers like the Switch Pro
         # only expose evdev, so a hard check on /dev/input/js0 is too narrow.
         import glob
+
         js_devices = glob.glob('/dev/input/js*')
         # Scrape /proc/bus/input/devices for any joystick-capable entry.
         joystick_event = False
@@ -136,6 +137,7 @@ class TestGamepad:
 # RealSense D435i
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.hardware
 class TestRealSense:
     """Intel RealSense D435i — depth + color + IMU over USB 3.x."""
@@ -151,7 +153,9 @@ class TestRealSense:
     def test_v4l2_devices_exist(self):
         out = subprocess.run(
             ['v4l2-ctl', '--list-devices'],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         ).stdout
         assert 'RealSense' in out, (
             'No RealSense V4L2 devices found. '
@@ -161,19 +165,23 @@ class TestRealSense:
     def test_rs_enumerate(self):
         result = subprocess.run(
             ['rs-enumerate-devices', '--compact'],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
-        assert result.returncode == 0, (
-            'rs-enumerate-devices failed. Install: bash scripts/setup_realsense.sh'
-        )
-        assert 'D435I' in result.stdout or 'D435i' in result.stdout, (
-            f'D435i not found in rs-enumerate-devices output:\n{result.stdout}'
-        )
+        assert (
+            result.returncode == 0
+        ), 'rs-enumerate-devices failed. Install: bash scripts/setup_realsense.sh'
+        assert (
+            'D435I' in result.stdout or 'D435i' in result.stdout
+        ), f'D435i not found in rs-enumerate-devices output:\n{result.stdout}'
 
     def test_usb3_connection(self):
         out = subprocess.run(
             ['rs-enumerate-devices', '--compact'],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         ).stdout
         if 'Usb Type Descriptor' in out:
             assert '3.' in out.split('Usb Type Descriptor')[1].split('\n')[0], (
@@ -186,9 +194,7 @@ class TestRealSense:
         if not os.path.isdir(iio_base):
             pytest.skip('No IIO subsystem (not running on Pi 5?)')
         iio_devices = [
-            os.path.join(iio_base, d)
-            for d in os.listdir(iio_base)
-            if d.startswith('iio:device')
+            os.path.join(iio_base, d) for d in os.listdir(iio_base) if d.startswith('iio:device')
         ]
         if not iio_devices:
             pytest.skip('No IIO devices found (RealSense IMU may not be enumerated yet)')
@@ -205,17 +211,16 @@ class TestRealSense:
 
     def test_imu_fix_script_installed(self):
         script = '/usr/local/bin/fix-realsense-imu.sh'
-        assert os.path.isfile(script), (
-            f'{script} not found. Run: bash scripts/setup_realsense.sh'
-        )
-        assert os.access(script, os.X_OK), (
-            f'{script} is not executable. Fix: sudo chmod +x {script}'
-        )
+        assert os.path.isfile(script), f'{script} not found. Run: bash scripts/setup_realsense.sh'
+        assert os.access(
+            script, os.X_OK
+        ), f'{script} is not executable. Fix: sudo chmod +x {script}'
 
 
 # ---------------------------------------------------------------------------
 # Coral EdgeTPU — USB accelerator (Phase 3A)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.hardware
 class TestCoral:
@@ -280,8 +285,9 @@ class TestCoral:
         if running.returncode == 0:
             pytest.skip('edgetpu_node is running; cannot test in isolation')
 
-        model = (Path(__file__).parent.parent / 'models'
-                 / 'efficientdet_lite0_generic_edgetpu.tflite')
+        model = (
+            Path(__file__).parent.parent / 'models' / 'efficientdet_lite0_generic_edgetpu.tflite'
+        )
         if not model.exists():
             pytest.skip(f'Model file missing: {model}')
 
@@ -290,6 +296,7 @@ class TestCoral:
             interpreter = make_interpreter(str(model))
         except ValueError:
             import time
+
             time.sleep(1.5)
             interpreter = make_interpreter(str(model))
 
@@ -300,6 +307,7 @@ class TestCoral:
         frame = np.full((1, h, w, 3), 128, dtype=np.uint8)
 
         import time
+
         # Warmup invocation — first one always pays an extra ~30 ms for tensor
         # allocation paths that aren't relevant to steady-state latency.
         interpreter.set_tensor(input_details['index'], frame)
@@ -330,6 +338,7 @@ class TestCoral:
 # RTC backup battery — vcgencmd pmic_read_adc BATT_V on Pi 5
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.hardware
 class TestRTC:
     # Rechargeable backup cell, usable 2.7-3.0 V. 2.7 V is the PCF85063 RTC's
@@ -341,7 +350,9 @@ class TestRTC:
         try:
             r = subprocess.run(
                 ['vcgencmd', 'pmic_read_adc', 'BATT_V'],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
         except (FileNotFoundError, subprocess.TimeoutExpired):
             return None
@@ -376,18 +387,22 @@ class TestRTC:
 # Python runtime dependencies for the driver
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.hardware
 class TestDependencies:
-    @pytest.mark.parametrize('module', [
-        'ackermann_msgs',
-        'cv2',
-        'numpy',
-        'rclpy',
-        'sensor_msgs',
-        'serial',
-        'smbus',
-        'spidev',
-    ])
+    @pytest.mark.parametrize(
+        'module',
+        [
+            'ackermann_msgs',
+            'cv2',
+            'numpy',
+            'rclpy',
+            'sensor_msgs',
+            'serial',
+            'smbus',
+            'spidev',
+        ],
+    )
     def test_module_importable(self, module):
         try:
             importlib.import_module(module)

@@ -14,7 +14,9 @@ def _run(*args):
     script = f'set +u; source "{TOOL}"; racecar {" ".join(args)}'
     return subprocess.run(
         ['bash', '-c', script],
-        capture_output=True, text=True, timeout=15,
+        capture_output=True,
+        text=True,
+        timeout=15,
     )
 
 
@@ -25,7 +27,9 @@ def test_tool_file_exists():
 def test_bash_syntax_clean():
     result = subprocess.run(
         ['bash', '-n', str(TOOL)],
-        capture_output=True, text=True, timeout=5,
+        capture_output=True,
+        text=True,
+        timeout=5,
     )
     assert result.returncode == 0, f'bash -n failed:\n{result.stderr}'
 
@@ -34,7 +38,9 @@ def test_sourcing_defines_racecar_function():
     script = f'source "{TOOL}" && type -t racecar'
     result = subprocess.run(
         ['bash', '-c', script],
-        capture_output=True, text=True, timeout=5,
+        capture_output=True,
+        text=True,
+        timeout=5,
     )
     assert result.returncode == 0
     assert result.stdout.strip() == 'function'
@@ -46,9 +52,25 @@ def test_help_renders(args):
     assert result.returncode == 0
     assert 'racecar' in result.stdout
     assert 'Commands' in result.stdout
-    expected = ('build', 'test', 'source', 'cd', 'teleop', 'launch',
-                'clear', 'udev', 'watchdog', 'service', 'setup', 'library',
-                'cleanup', 'status', 'eth', 'wifi', 'desktop')
+    expected = (
+        'build',
+        'test',
+        'source',
+        'cd',
+        'teleop',
+        'launch',
+        'clear',
+        'udev',
+        'watchdog',
+        'service',
+        'setup',
+        'library',
+        'cleanup',
+        'status',
+        'eth',
+        'wifi',
+        'desktop',
+    )
     for sub in expected:
         assert sub in result.stdout, f'help missing "{sub}"'
 
@@ -89,13 +111,12 @@ def test_cd_changes_pwd_to_package_root():
     # `cd` must run in the user's shell context (no subshell), so a single
     # bash session that sources the tool, runs `racecar cd`, then echoes PWD
     # should print the package root.
-    script = (
-        f'set +u; source "{TOOL}"; '
-        'racecar cd && pwd'
-    )
+    script = f'set +u; source "{TOOL}"; ' 'racecar cd && pwd'
     result = subprocess.run(
         ['bash', '-c', script],
-        capture_output=True, text=True, timeout=5,
+        capture_output=True,
+        text=True,
+        timeout=5,
     )
     assert result.returncode == 0
     assert result.stdout.strip().endswith('racecar_neo_ros2_driver')
@@ -127,8 +148,7 @@ class TestService:
         result = _run('service', 'status')
         assert result.returncode == 0
         # status output enumerates each unit name.
-        for unit in ('racecar-teleop', 'racecar-watchdog',
-                     'racecar-dashboard', 'racecar-jupyter'):
+        for unit in ('racecar-teleop', 'racecar-watchdog', 'racecar-dashboard', 'racecar-jupyter'):
             assert unit in result.stdout, f'status missing {unit}'
 
     def test_default_action_is_status(self):
@@ -148,18 +168,22 @@ class TestService:
         assert result.returncode == 0
         assert 'core:' in result.stdout
         assert 'dashboards:' in result.stdout
-        for unit in ('racecar-teleop', 'racecar-watchdog',
-                     'racecar-dashboard', 'racecar-jupyter',
-                     'racecar-webteleop', 'racecar-linefollow',
-                     'racecar-wallfollow'):
+        for unit in (
+            'racecar-teleop',
+            'racecar-watchdog',
+            'racecar-dashboard',
+            'racecar-jupyter',
+            'racecar-webteleop',
+            'racecar-linefollow',
+            'racecar-wallfollow',
+        ):
             assert unit in result.stdout, f'status missing {unit}'
 
     def test_help_lists_the_dashboards_and_update(self):
         result = _run('service', 'help')
         assert result.returncode == 0
         assert 'update' in result.stdout
-        for name, port in (('webteleop', '8081'), ('linefollow', '8082'),
-                           ('wallfollow', '8083')):
+        for name, port in (('webteleop', '8081'), ('linefollow', '8082'), ('wallfollow', '8083')):
             assert f'{name}({port})' in result.stdout
 
     def test_help_states_the_one_at_a_time_rule(self):
@@ -212,8 +236,16 @@ class TestSetup:
     def test_networking_help(self):
         result = _run('setup', 'networking', '--help')
         assert result.returncode == 0
-        for flag in ('--ssid', '--psk', '--channel', '--ap-addr',
-                     '--ap-iface', '--eth-static', '--show', '--reset'):
+        for flag in (
+            '--ssid',
+            '--psk',
+            '--channel',
+            '--ap-addr',
+            '--ap-iface',
+            '--eth-static',
+            '--show',
+            '--reset',
+        ):
             assert flag in result.stdout
 
     def test_networking_unknown_flag_errors(self):
@@ -239,9 +271,10 @@ class TestSetup:
         # "No persisted networking config" and not invoke the script.
         monkeypatch.setenv('HOME', str(tmp_path))
         result = subprocess.run(
-            ['bash', '-c',
-             f'set +u; source "{TOOL}"; racecar setup networking --show'],
-            capture_output=True, text=True, timeout=5,
+            ['bash', '-c', f'set +u; source "{TOOL}"; racecar setup networking --show'],
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         assert result.returncode == 0
         assert 'No persisted networking config' in result.stdout
@@ -256,9 +289,10 @@ class TestSetup:
         cfg_file = cfg_dir / 'networking.env'
         cfg_file.write_text('RACECAR_AP_SSID="dummy"\n')
         result = subprocess.run(
-            ['bash', '-c',
-             f'set +u; source "{TOOL}"; racecar setup networking --reset'],
-            capture_output=True, text=True, timeout=10,
+            ['bash', '-c', f'set +u; source "{TOOL}"; racecar setup networking --reset'],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         assert result.returncode == 0
         assert not cfg_file.exists()
@@ -273,9 +307,10 @@ class TestSetup:
         stub.write_text(f'#!/bin/bash\necho "reset=${{RACECAR_AP_RESET:-0}}" > "{marker}"\n')
         monkeypatch.setenv('RACECAR_NETWORKING_SCRIPT', str(stub))
         result = subprocess.run(
-            ['bash', '-c',
-             f'set +u; source "{TOOL}"; racecar setup networking --reset'],
-            capture_output=True, text=True, timeout=10,
+            ['bash', '-c', f'set +u; source "{TOOL}"; racecar setup networking --reset'],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         assert result.returncode == 0
         assert marker.read_text().strip() == 'reset=1'
@@ -289,9 +324,11 @@ class TestSetup:
         stub.write_text(f'#!/bin/bash\ntouch "{marker}"\n')
         monkeypatch.setenv('RACECAR_NETWORKING_SCRIPT', str(stub))
         result = subprocess.run(
-            ['bash', '-c',
-             f'set +u; source "{TOOL}"; racecar setup networking'],
-            capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL,
+            ['bash', '-c', f'set +u; source "{TOOL}"; racecar setup networking'],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            stdin=subprocess.DEVNULL,
         )
         assert result.returncode == 0
         assert marker.exists()
@@ -303,10 +340,15 @@ class TestSetup:
         # prints the (now-up-to-date) file.
         monkeypatch.setenv('HOME', str(tmp_path))
         result = subprocess.run(
-            ['bash', '-c',
-             f'set +u; source "{TOOL}"; '
-             'racecar setup networking --ssid=test-ssid --psk=test-pass --show'],
-            capture_output=True, text=True, timeout=5,
+            [
+                'bash',
+                '-c',
+                f'set +u; source "{TOOL}"; '
+                'racecar setup networking --ssid=test-ssid --psk=test-pass --show',
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         assert result.returncode == 0
         cfg_file = tmp_path / '.config' / 'racecar' / 'networking.env'
@@ -323,10 +365,14 @@ class TestSetup:
         # immediately. Reject rather than do something surprising.
         monkeypatch.setenv('HOME', str(tmp_path))
         result = subprocess.run(
-            ['bash', '-c',
-             f'set +u; source "{TOOL}"; '
-             'racecar setup networking --ssid=foo --reset'],
-            capture_output=True, text=True, timeout=5,
+            [
+                'bash',
+                '-c',
+                f'set +u; source "{TOOL}"; ' 'racecar setup networking --ssid=foo --reset',
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         assert result.returncode == 2
         assert 'cannot be combined' in result.stderr
@@ -340,15 +386,16 @@ class TestLibrary:
         # Override HOME so site.getusersitepackages() resolves to a tmp dir
         # and ~/jupyter_ws probes a tmp tree. PYTHONUSERBASE pins the user-site
         # path under HOME on systems where it would otherwise resolve elsewhere.
-        env_setup = (
-            f'export HOME="{home}"; '
-            f'export PYTHONUSERBASE="{home}/.local"; '
-        )
+        env_setup = f'export HOME="{home}"; ' f'export PYTHONUSERBASE="{home}/.local"; '
         return subprocess.run(
-            ['bash', '-c',
-             f'set +u; {env_setup} source "{TOOL}"; '
-             f'racecar library {" ".join(args)}'],
-            capture_output=True, text=True, timeout=10,
+            [
+                'bash',
+                '-c',
+                f'set +u; {env_setup} source "{TOOL}"; ' f'racecar library {" ".join(args)}',
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
 
     def test_no_action_errors(self):
@@ -483,8 +530,7 @@ class TestLibrary:
         assert lines, 'beta missing from --list output'
         assert '*' in lines[0]
         # alpha line should NOT have a star (just leading whitespace).
-        alpha_lines = [ln for ln in result.stdout.splitlines()
-                       if 'alpha' in ln]
+        alpha_lines = [ln for ln in result.stdout.splitlines() if 'alpha' in ln]
         assert alpha_lines
         assert '*' not in alpha_lines[0]
 
@@ -496,10 +542,11 @@ class TestCleanup:
         assert result.returncode == 0
         # Either the process inventory or the SHM section should appear; both
         # have predictable headings or 'No ...' fallback.
-        assert 'racecar processes' in result.stdout.lower() or \
-               'no racecar processes' in result.stdout.lower()
-        assert 'fastrtps shm' in result.stdout.lower() or \
-               'no fastrtps' in result.stdout.lower()
+        assert (
+            'racecar processes' in result.stdout.lower()
+            or 'no racecar processes' in result.stdout.lower()
+        )
+        assert 'fastrtps shm' in result.stdout.lower() or 'no fastrtps' in result.stdout.lower()
 
     def test_dry_run_marker_appears_when_things_found(self):
         # If the test environment has any racecar process or SHM orphan, the
@@ -530,7 +577,9 @@ class TestCompletionInstalled:
         script = f'source "{TOOL}" && type -t _racecar_complete'
         result = subprocess.run(
             ['bash', '-c', script],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         assert result.returncode == 0
         assert result.stdout.strip() == 'function'
@@ -539,7 +588,9 @@ class TestCompletionInstalled:
         script = f'source "{TOOL}" && complete -p racecar'
         result = subprocess.run(
             ['bash', '-c', script],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         assert result.returncode == 0
         assert '_racecar_complete' in result.stdout
@@ -552,7 +603,10 @@ class TestCompletionInstalled:
             '_racecar_complete; printf "%s\\n" "${COMPREPLY[@]}"'
         )
         return subprocess.run(
-            ['bash', '-c', script], capture_output=True, text=True, timeout=15,
+            ['bash', '-c', script],
+            capture_output=True,
+            text=True,
+            timeout=15,
         ).stdout.split()
 
     def test_top_level_offers_log(self):
@@ -636,8 +690,12 @@ esac
         env.update(env_extra)
         script = f'set +u; source "{TOOL}"; racecar wifi {" ".join(args)}'
         result = subprocess.run(
-            ['bash', '-c', script], capture_output=True, text=True,
-            timeout=20, env=env, input=stdin,
+            ['bash', '-c', script],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            env=env,
+            input=stdin,
         )
         return result, log.read_text()
 
@@ -688,8 +746,7 @@ esac
     def test_every_nmcli_call_that_names_an_interface_names_wlan0(self, tmp_path):
         # The guard for the whole command: wlan1 carries the AP, so it must
         # never appear in anything this command generates.
-        for args in (['list'], ['status'], ['disconnect'],
-                     ['connect', 'HomeNet']):
+        for args in (['list'], ['status'], ['disconnect'], ['connect', 'HomeNet']):
             _, log = self._wifi(tmp_path, *args, STUB_SAVED='HomeNet')
             assert 'wlan1' not in log, f'`racecar wifi {args[0]}` touched wlan1'
 
@@ -698,15 +755,16 @@ esac
         # against. Refuse rather than hand credentials to any access point
         # broadcasting the SSID.
         result, log = self._wifi(
-            tmp_path, 'connect', 'EntNet', '--identity=plainuser', stdin='pw\n')
+            tmp_path, 'connect', 'EntNet', '--identity=plainuser', stdin='pw\n'
+        )
         assert result.returncode == 2
         assert 'domain-suffix-match' in result.stderr
         assert 'connection add' not in log, 'must not create an unverified profile'
 
     def test_enterprise_profile_always_validates_the_server(self, tmp_path):
         _, log = self._wifi(
-            tmp_path, 'connect', 'EntNet', '--identity=someone@school.edu',
-            stdin='hunter2\n')
+            tmp_path, 'connect', 'EntNet', '--identity=someone@school.edu', stdin='hunter2\n'
+        )
         add = next((ln for ln in log.splitlines() if 'connection add' in ln), '')
         assert add, 'no profile created'
         assert '802-1x.domain-suffix-match school.edu' in add
@@ -715,8 +773,13 @@ esac
 
     def test_enterprise_ca_cert_override(self, tmp_path):
         _, log = self._wifi(
-            tmp_path, 'connect', 'EntNet', '--identity=someone@school.edu',
-            '--ca-cert=/etc/ssl/certs/ca.pem', stdin='hunter2\n')
+            tmp_path,
+            'connect',
+            'EntNet',
+            '--identity=someone@school.edu',
+            '--ca-cert=/etc/ssl/certs/ca.pem',
+            stdin='hunter2\n',
+        )
         add = next((ln for ln in log.splitlines() if 'connection add' in ln), '')
         assert '802-1x.ca-cert /etc/ssl/certs/ca.pem' in add
         assert '802-1x.domain-suffix-match school.edu' in add
@@ -726,26 +789,29 @@ esac
         assert result.returncode == 2
         assert 'unknown flag' in result.stderr
 
-    @pytest.mark.parametrize('args,saved', [
-        (['connect', 'HomeNet'], 'HomeNet'),   # saved profile
-        (['connect', 'PskNet', '--psk=hunter2'], ''),
-        (['connect', 'OpenNet'], ''),
-    ])
+    @pytest.mark.parametrize(
+        'args,saved',
+        [
+            (['connect', 'HomeNet'], 'HomeNet'),  # saved profile
+            (['connect', 'PskNet', '--psk=hunter2'], ''),
+            (['connect', 'OpenNet'], ''),
+        ],
+    )
     def test_connect_makes_the_network_survive_a_reboot(self, tmp_path, args, saved):
         # The reported bug: the car joined a network, rebooted, and came back
         # with no link. NetworkManager needs the profile flag set and the
         # device unblocked, and nmcli guarantees neither.
         _, log = self._wifi(tmp_path, *args, STUB_SAVED=saved)
         ssid = args[1]
-        assert f'connection modify {ssid} connection.autoconnect yes' in log, \
-            'profile autoconnect not asserted'
-        assert 'device set wlan0 autoconnect yes' in log, \
-            'device autoconnect block not cleared'
+        assert (
+            f'connection modify {ssid} connection.autoconnect yes' in log
+        ), 'profile autoconnect not asserted'
+        assert 'device set wlan0 autoconnect yes' in log, 'device autoconnect block not cleared'
 
     def test_enterprise_profile_is_created_with_autoconnect(self, tmp_path):
         _, log = self._wifi(
-            tmp_path, 'connect', 'EntNet', '--identity=someone@school.edu',
-            stdin='hunter2\n')
+            tmp_path, 'connect', 'EntNet', '--identity=someone@school.edu', stdin='hunter2\n'
+        )
         add = next((ln for ln in log.splitlines() if 'connection add' in ln), '')
         assert 'connection.autoconnect yes' in add
 
@@ -754,26 +820,32 @@ esac
         assert 'wlan1' not in log
 
     def test_status_reports_that_the_link_returns(self, tmp_path):
-        result, _ = self._wifi(tmp_path, 'status', STUB_ACTIVE_CON='HomeNet',
-                               STUB_PROF_AUTO='yes', STUB_DEV_AUTO='yes')
+        result, _ = self._wifi(
+            tmp_path,
+            'status',
+            STUB_ACTIVE_CON='HomeNet',
+            STUB_PROF_AUTO='yes',
+            STUB_DEV_AUTO='yes',
+        )
         assert "after boot: rejoins 'HomeNet'" in result.stdout
 
     def test_status_names_a_profile_that_will_not_return(self, tmp_path):
-        result, _ = self._wifi(tmp_path, 'status', STUB_ACTIVE_CON='HomeNet',
-                               STUB_PROF_AUTO='no', STUB_DEV_AUTO='yes')
+        result, _ = self._wifi(
+            tmp_path, 'status', STUB_ACTIVE_CON='HomeNet', STUB_PROF_AUTO='no', STUB_DEV_AUTO='yes'
+        )
         assert 'will NOT rejoin' in result.stdout
         assert 'autoconnect is off' in result.stdout
 
     def test_status_names_a_blocked_device(self, tmp_path):
         # Connected now, but a prior disconnect left the device blocked.
-        result, _ = self._wifi(tmp_path, 'status', STUB_ACTIVE_CON='HomeNet',
-                               STUB_PROF_AUTO='yes', STUB_DEV_AUTO='no')
+        result, _ = self._wifi(
+            tmp_path, 'status', STUB_ACTIVE_CON='HomeNet', STUB_PROF_AUTO='yes', STUB_DEV_AUTO='no'
+        )
         assert 'will NOT rejoin' in result.stdout
         assert 'blocked' in result.stdout
 
     def test_status_after_a_deliberate_disconnect(self, tmp_path):
-        result, _ = self._wifi(tmp_path, 'status', STUB_ACTIVE_CON='',
-                               STUB_DEV_AUTO='no')
+        result, _ = self._wifi(tmp_path, 'status', STUB_ACTIVE_CON='', STUB_DEV_AUTO='no')
         assert 'disconnected on purpose' in result.stdout
 
     def test_open_network_is_not_mistaken_for_an_absent_one(self, tmp_path):
@@ -792,14 +864,12 @@ esac
         assert 'not visible' in result.stderr
 
     @pytest.mark.parametrize('action', ['connect', 'disconnect'])
-    def test_unauthorized_networking_is_named_not_left_to_nmcli(
-            self, tmp_path, action):
+    def test_unauthorized_networking_is_named_not_left_to_nmcli(self, tmp_path, action):
         # Without the polkit rule, nmcli fails at the activation call with
         # "Not authorized to control networking" and no remedy. Catch it
         # before anything is prompted for or changed.
         args = [action] + (['HomeNet'] if action == 'connect' else [])
-        result, log = self._wifi(
-            tmp_path, *args, STUB_SAVED='HomeNet', STUB_PERM='auth')
+        result, log = self._wifi(tmp_path, *args, STUB_SAVED='HomeNet', STUB_PERM='auth')
         assert result.returncode == 5
         assert 'may not control networking' in result.stderr
         assert 'setup_user_env.sh' in result.stderr
@@ -814,8 +884,7 @@ esac
             assert result.returncode == 0, f'`racecar wifi {args[0]}`: {result.stderr}'
 
     def test_authorized_connect_proceeds(self, tmp_path):
-        _, log = self._wifi(
-            tmp_path, 'connect', 'HomeNet', STUB_SAVED='HomeNet', STUB_PERM='yes')
+        _, log = self._wifi(tmp_path, 'connect', 'HomeNet', STUB_SAVED='HomeNet', STUB_PERM='yes')
         assert 'connection up HomeNet ifname wlan0' in log
 
 
@@ -841,16 +910,21 @@ esac
         log = tmp_path / 'systemctl.log'
         log.touch()
         env = dict(os.environ)
-        env.update({
-            'SCTL_LOG': str(log),
-            'RACECAR_SYSTEMCTL': str(stub),
-            'RACECAR_SUDO': '',  # enable/disable are sudo-gated in real use
-        })
+        env.update(
+            {
+                'SCTL_LOG': str(log),
+                'RACECAR_SYSTEMCTL': str(stub),
+                'RACECAR_SUDO': '',  # enable/disable are sudo-gated in real use
+            }
+        )
         env.update(env_extra)
         script = f'set +u; source "{TOOL}"; racecar desktop {" ".join(args)}'
         result = subprocess.run(
-            ['bash', '-c', script], capture_output=True, text=True,
-            timeout=20, env=env,
+            ['bash', '-c', script],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            env=env,
         )
         return result, log.read_text()
 
@@ -876,14 +950,16 @@ esac
 
     def test_status_reports_disabled(self, tmp_path):
         result, _ = self._desktop(
-            tmp_path, 'status', STUB_DEFAULT='multi-user.target', STUB_ACTIVE='multi')
+            tmp_path, 'status', STUB_DEFAULT='multi-user.target', STUB_ACTIVE='multi'
+        )
         assert 'Desktop is disabled' in result.stdout
 
     def test_status_reports_pending_reboot(self, tmp_path):
         # Default says headless but the graphical target is still running:
         # the change is real but has not taken effect yet.
         result, _ = self._desktop(
-            tmp_path, 'status', STUB_DEFAULT='multi-user.target', STUB_ACTIVE='graphical')
+            tmp_path, 'status', STUB_DEFAULT='multi-user.target', STUB_ACTIVE='graphical'
+        )
         assert 'Pending' in result.stdout
         assert 'reboot' in result.stdout.lower()
 
@@ -892,25 +968,21 @@ esac
         assert 'none installed' in result.stdout
 
     def test_disable_sets_multi_user_target(self, tmp_path):
-        result, log = self._desktop(
-            tmp_path, 'disable', STUB_DEFAULT='graphical.target')
+        result, log = self._desktop(tmp_path, 'disable', STUB_DEFAULT='graphical.target')
         assert result.returncode == 0, result.stderr
         assert 'set-default multi-user.target' in log
 
     def test_enable_sets_graphical_target(self, tmp_path):
-        result, log = self._desktop(
-            tmp_path, 'enable', STUB_DEFAULT='multi-user.target')
+        result, log = self._desktop(tmp_path, 'enable', STUB_DEFAULT='multi-user.target')
         assert result.returncode == 0, result.stderr
         assert 'set-default graphical.target' in log
 
     def test_toggle_announces_the_reboot_requirement(self, tmp_path):
-        result, _ = self._desktop(
-            tmp_path, 'disable', STUB_DEFAULT='graphical.target')
+        result, _ = self._desktop(tmp_path, 'disable', STUB_DEFAULT='graphical.target')
         assert 'next boot' in result.stdout or 'after a reboot' in result.stdout
 
     def test_toggle_is_idempotent(self, tmp_path):
-        result, log = self._desktop(
-            tmp_path, 'enable', STUB_DEFAULT='graphical.target')
+        result, log = self._desktop(tmp_path, 'enable', STUB_DEFAULT='graphical.target')
         assert result.returncode == 0
         assert 'already' in result.stdout
         assert 'set-default' not in log, 'no write when already in the target state'
@@ -961,7 +1033,10 @@ class TestEthCommand:
             f'source "{TOOL}"; racecar eth static --addr=10.0.0.5/24'
         )
         result = subprocess.run(
-            ['bash', '-c', script], capture_output=True, text=True, timeout=15,
+            ['bash', '-c', script],
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         assert result.returncode == 0, result.stderr
         assert 'STUB called with: static --addr=10.0.0.5/24' in result.stdout
@@ -980,12 +1055,12 @@ class TestEthCommand:
         stub = tmp_path / 'stub_eth.sh'
         stub.write_text('#!/bin/bash\necho "STUB called with: $*"\n')
         stub.chmod(0o755)
-        script = (
-            f'set +u; export RACECAR_ETH_SCRIPT="{stub}"; '
-            f'source "{TOOL}"; racecar eth'
-        )
+        script = f'set +u; export RACECAR_ETH_SCRIPT="{stub}"; ' f'source "{TOOL}"; racecar eth'
         result = subprocess.run(
-            ['bash', '-c', script], capture_output=True, text=True, timeout=15,
+            ['bash', '-c', script],
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         assert result.returncode == 0, result.stderr
         assert 'STUB called with: status' in result.stdout

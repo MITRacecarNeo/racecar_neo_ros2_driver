@@ -63,9 +63,7 @@ class ImuFusionNode(Node):
         self._last_active = None
         self.create_timer(1.0 / rate, self._publish)
 
-        self.get_logger().info(
-            f'IMU fusion: {self._sources} -> {output_topic} @ {rate}Hz'
-        )
+        self.get_logger().info(f'IMU fusion: {self._sources} -> {output_topic} @ {rate}Hz')
 
     def _make_cb(self, topic: str):
         def cb(msg: Imu):
@@ -80,6 +78,7 @@ class ImuFusionNode(Node):
                 msg.angular_velocity.y -= float(self._rs_gyro_bias[1])
                 msg.angular_velocity.z -= float(self._rs_gyro_bias[2])
             self._latest[topic] = (msg, time.monotonic())
+
         return cb
 
     def _publish(self):
@@ -107,17 +106,29 @@ class ImuFusionNode(Node):
             out.linear_acceleration = src.linear_acceleration
             out.angular_velocity = src.angular_velocity
         else:
-            accel = np.mean([[m.linear_acceleration.x,
-                              m.linear_acceleration.y,
-                              m.linear_acceleration.z] for m in fresh], axis=0)
-            gyro = np.mean([[m.angular_velocity.x,
-                             m.angular_velocity.y,
-                             m.angular_velocity.z] for m in fresh], axis=0)
+            accel = np.mean(
+                [
+                    [m.linear_acceleration.x, m.linear_acceleration.y, m.linear_acceleration.z]
+                    for m in fresh
+                ],
+                axis=0,
+            )
+            gyro = np.mean(
+                [
+                    [m.angular_velocity.x, m.angular_velocity.y, m.angular_velocity.z]
+                    for m in fresh
+                ],
+                axis=0,
+            )
             out.linear_acceleration.x, out.linear_acceleration.y, out.linear_acceleration.z = (
-                float(accel[0]), float(accel[1]), float(accel[2])
+                float(accel[0]),
+                float(accel[1]),
+                float(accel[2]),
             )
             out.angular_velocity.x, out.angular_velocity.y, out.angular_velocity.z = (
-                float(gyro[0]), float(gyro[1]), float(gyro[2])
+                float(gyro[0]),
+                float(gyro[1]),
+                float(gyro[2]),
             )
 
         # No absolute orientation from a 6-DoF IMU (ROS convention).

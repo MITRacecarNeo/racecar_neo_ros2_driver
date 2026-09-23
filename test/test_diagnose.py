@@ -31,7 +31,9 @@ def diag():
 def _run(*args, timeout=60):
     return subprocess.run(
         ['python3', str(SCRIPT), *args],
-        capture_output=True, text=True, timeout=timeout,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
     )
 
 
@@ -43,7 +45,9 @@ def test_script_exists_and_executable():
 def test_py_compile_clean():
     result = subprocess.run(
         ['python3', '-m', 'py_compile', str(SCRIPT)],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
     assert result.returncode == 0, result.stderr
 
@@ -54,8 +58,14 @@ class TestTopicSpecs:
         assert spec.floor == pytest.approx(80.0)
 
     def test_sensors_default_to_eighty_percent(self, diag):
-        pit = {'/imu/lsm9ds1', '/mag', '/encoder/speed', '/battery/voltage',
-               '/battery/current', '/rc/channels'}
+        pit = {
+            '/imu/lsm9ds1',
+            '/mag',
+            '/encoder/speed',
+            '/battery/voltage',
+            '/battery/current',
+            '/rc/channels',
+        }
         for spec in diag.SENSOR_TOPICS:
             if spec.topic in pit:
                 continue
@@ -65,8 +75,7 @@ class TestTopicSpecs:
         # The six topics off the Teensy telemetry frame slow under graph load,
         # so their floor leaves room for it. A halved frame rate (68 Hz) must
         # still fail, or the check stops meaning anything.
-        pit = [s for s in diag.SENSOR_TOPICS
-               if s.nominal == 136.0 and 'Teensy' in s.note]
+        pit = [s for s in diag.SENSOR_TOPICS if s.nominal == 136.0 and 'Teensy' in s.note]
         assert len(pit) == 6
         for spec in pit:
             assert spec.floor_frac == diag.PIT_FLOOR_FRAC
@@ -92,18 +101,29 @@ class TestTopicSpecs:
     def test_realsense_rates_come_from_diagnostics(self, diag):
         # Subscribing to the two image streams cost 40% of the PIT telemetry
         # rate, which the PIT topics were then failed for.
-        assert diag.DIAGNOSTIC_SOURCED == {
-            '/camera/color', '/camera/depth', '/imu/realsense'}
+        assert diag.DIAGNOSTIC_SOURCED == {'/camera/color', '/camera/depth', '/imu/realsense'}
         for topic in diag.DIAGNOSTIC_SOURCED:
             spec = next(s for s in diag.SENSOR_TOPICS if s.topic == topic)
             assert 'diagnostics' in spec.note
 
     def test_every_notebook_topic_is_covered(self, diag):
         covered = {s.topic for s in diag.SENSOR_TOPICS + diag.ACTUATOR_TOPICS}
-        for topic in ('/camera/color', '/camera/depth', '/scan', '/imu/lsm9ds1',
-                      '/mag', '/imu/fused', '/encoder/speed', '/battery/voltage',
-                      '/battery/current', '/rc/channels', '/edgetpu/inference',
-                      '/joy', '/motor', '/mux_out'):
+        for topic in (
+            '/camera/color',
+            '/camera/depth',
+            '/scan',
+            '/imu/lsm9ds1',
+            '/mag',
+            '/imu/fused',
+            '/encoder/speed',
+            '/battery/voltage',
+            '/battery/current',
+            '/rc/channels',
+            '/edgetpu/inference',
+            '/joy',
+            '/motor',
+            '/mux_out',
+        ):
             assert topic in covered, f'{topic} lost from the check set'
 
     def test_value_topics_are_a_subset_of_sampled_topics(self, diag):
@@ -113,8 +133,7 @@ class TestTopicSpecs:
 
 class TestRateChecks:
     def _ros(self, diag, counts, elapsed=2.0):
-        return diag.RosResult(
-            available=True, counts=counts, elapsed=elapsed, present=set(counts))
+        return diag.RosResult(available=True, counts=counts, elapsed=elapsed, present=set(counts))
 
     def test_rate_above_floor_passes(self, diag):
         spec = diag.TopicSpec('/t', 'T', 100.0, 0.8)
@@ -159,8 +178,12 @@ class TestRateChecks:
         # as a dead stream.
         spec = next(s for s in diag.SENSOR_TOPICS if s.topic == '/camera/color')
         ros = diag.RosResult(
-            available=True, counts={}, elapsed=5.0,
-            present={'/camera/color'}, reported={'/camera/color': 59.0})
+            available=True,
+            counts={},
+            elapsed=5.0,
+            present={'/camera/color'},
+            reported={'/camera/color': 59.0},
+        )
         check = diag.rate_checks('sensors', [spec], ros)[0]
         assert check.status == diag.OK
         assert '59.0 Hz' in check.detail
@@ -168,16 +191,20 @@ class TestRateChecks:
     def test_diagnostic_sourced_topic_below_floor_fails(self, diag):
         spec = next(s for s in diag.SENSOR_TOPICS if s.topic == '/camera/depth')
         ros = diag.RosResult(
-            available=True, counts={}, elapsed=5.0,
-            present={'/camera/depth'}, reported={'/camera/depth': 12.0})
+            available=True,
+            counts={},
+            elapsed=5.0,
+            present={'/camera/depth'},
+            reported={'/camera/depth': 12.0},
+        )
         assert diag.rate_checks('sensors', [spec], ros)[0].status == diag.FAIL
 
     def test_missing_diagnostic_rate_warns_rather_than_reading_zero(self, diag):
         # A DiagnosticArray that never arrived says nothing about the camera.
         spec = next(s for s in diag.SENSOR_TOPICS if s.topic == '/camera/color')
         ros = diag.RosResult(
-            available=True, counts={}, elapsed=5.0,
-            present={'/camera/color'}, reported={})
+            available=True, counts={}, elapsed=5.0, present={'/camera/color'}, reported={}
+        )
         check = diag.rate_checks('sensors', [spec], ros)[0]
         assert check.status == diag.WARN
         assert '/diagnostics' in check.detail
@@ -205,13 +232,18 @@ class TestSampleWindow:
             def __init__(self, status):
                 self.status = status
 
-        msg = _Msg([
-            _Status('camera: color', [
-                _Value('Target frequency (Hz)', '60.0'),
-                _Value('Actual frequency (Hz)', '59.4'),
-            ]),
-            _Status('camera: Temperatures', [_Value('Asic Temperature', '54')]),
-        ])
+        msg = _Msg(
+            [
+                _Status(
+                    'camera: color',
+                    [
+                        _Value('Target frequency (Hz)', '60.0'),
+                        _Value('Actual frequency (Hz)', '59.4'),
+                    ],
+                ),
+                _Status('camera: Temperatures', [_Value('Asic Temperature', '54')]),
+            ]
+        )
         out = {}
         diag._read_diagnostic_rates(msg, out)
         assert out == {'/camera/color': pytest.approx(59.4)}
@@ -231,8 +263,8 @@ class TestSampleWindow:
 
         out = {}
         diag._read_diagnostic_rates(
-            _Msg([_Status('camera: depth',
-                          [_Value('Actual frequency (Hz)', 'n/a')])]), out)
+            _Msg([_Status('camera: depth', [_Value('Actual frequency (Hz)', 'n/a')])]), out
+        )
         assert out == {}
 
 
@@ -254,18 +286,24 @@ class TestValueChecks:
         assert check.status == diag.FAIL
 
     def test_pack_voltage_in_range_passes(self, diag):
-        ros = self._ros_with(diag, {
-            '/battery/voltage': SimpleNamespace(data=11.4),
-            '/battery/current': SimpleNamespace(data=2.0),
-        })
+        ros = self._ros_with(
+            diag,
+            {
+                '/battery/voltage': SimpleNamespace(data=11.4),
+                '/battery/current': SimpleNamespace(data=2.0),
+            },
+        )
         check = next(c for c in diag.value_checks(ros) if c.name == 'Pack voltage range')
         assert check.status == diag.OK
 
     def test_pack_voltage_out_of_range_fails(self, diag):
-        ros = self._ros_with(diag, {
-            '/battery/voltage': SimpleNamespace(data=2.0),
-            '/battery/current': SimpleNamespace(data=1.0),
-        })
+        ros = self._ros_with(
+            diag,
+            {
+                '/battery/voltage': SimpleNamespace(data=2.0),
+                '/battery/current': SimpleNamespace(data=1.0),
+            },
+        )
         check = next(c for c in diag.value_checks(ros) if c.name == 'Pack voltage range')
         assert check.status == diag.FAIL
 
@@ -378,6 +416,8 @@ class TestStrictness:
     def test_non_ok_status_is_not_a_pass(self, diag, status):
         # Mirrors the exit-code rule in main(): a skipped sensor check on a
         # car with teleop stopped must not read as a healthy car.
-        checks = [diag.Check('devices', 'a', diag.OK),
-                  diag.Check('sensors', 'b', getattr(diag, status))]
+        checks = [
+            diag.Check('devices', 'a', diag.OK),
+            diag.Check('sensors', 'b', getattr(diag, status)),
+        ]
         assert not all(c.status == diag.OK for c in checks)

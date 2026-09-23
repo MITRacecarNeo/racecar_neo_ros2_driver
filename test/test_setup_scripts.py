@@ -69,9 +69,7 @@ def test_script_passes_bash_syntax(name):
         text=True,
         timeout=10,
     )
-    assert result.returncode == 0, (
-        f'{name} fails bash -n:\n{result.stderr}'
-    )
+    assert result.returncode == 0, f'{name} fails bash -n:\n{result.stderr}'
 
 
 def test_orchestrator_calls_every_phase_script():
@@ -118,7 +116,9 @@ class TestNetworkingScript:
     def test_bash_syntax_clean(self):
         result = subprocess.run(
             ['bash', '-n', str(self.SCRIPT)],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         assert result.returncode == 0, result.stderr
 
@@ -135,8 +135,14 @@ class TestNetworkingScript:
         # Each tunable should be readable from an environment variable so
         # the racecar-tool can pass overrides without editing the script.
         text = self.SCRIPT.read_text()
-        for var in ('RACECAR_AP_SSID', 'RACECAR_AP_PSK', 'RACECAR_AP_CHANNEL',
-                    'RACECAR_AP_ADDR', 'RACECAR_AP_IFACE', 'RACECAR_ETH_STATIC'):
+        for var in (
+            'RACECAR_AP_SSID',
+            'RACECAR_AP_PSK',
+            'RACECAR_AP_CHANNEL',
+            'RACECAR_AP_ADDR',
+            'RACECAR_AP_IFACE',
+            'RACECAR_ETH_STATIC',
+        ):
             assert var in text, f'{var} not referenced in setup_networking.sh'
 
     def test_ap_on_alfa_dongle_not_wlan0(self):
@@ -146,9 +152,9 @@ class TestNetworkingScript:
         text = self.SCRIPT.read_text()
         assert 'AP_IFACE' in text, 'AP interface should be parameterized'
         assert 'wlan1' in text, 'default AP interface (wlan1) not referenced'
-        assert 'device set wlan0 managed' in text, (
-            'setup_networking.sh must reset the Pi built-in wlan0 to managed/client'
-        )
+        assert (
+            'device set wlan0 managed' in text
+        ), 'setup_networking.sh must reset the Pi built-in wlan0 to managed/client'
 
     def test_reset_mode_disables_ap_only(self):
         # RACECAR_AP_RESET=1 tears down the AP connection and exits before the
@@ -170,9 +176,9 @@ class TestNetworkingScript:
         # so the two paths cannot disagree about the file.
         text = self.SCRIPT.read_text()
         assert 'setup_eth.sh' in text, 'eth0 config must delegate to setup_eth.sh'
-        assert 'network:\n  version: 2' not in text, (
-            'setup_networking.sh must not render netplan YAML itself'
-        )
+        assert (
+            'network:\n  version: 2' not in text
+        ), 'setup_networking.sh must not render netplan YAML itself'
         assert 'RACECAR_ETH_MODE' in text, 'eth0 mode must be parameterized'
 
     def test_loads_persisted_config(self):
@@ -211,7 +217,9 @@ class TestLaunchWrapper:
     def test_bash_syntax_clean(self):
         result = subprocess.run(
             ['bash', '-n', str(self.WRAPPER)],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         assert result.returncode == 0, result.stderr
 
@@ -302,13 +310,16 @@ class TestNetworkPolkitRule:
         prefix = int(self.RULE_FILE.name.split('-')[0])
         assert prefix < 50, 'rule must sort before polkit 50-default.rules'
 
-    @pytest.mark.parametrize('action_id', [
-        'org.freedesktop.NetworkManager.network-control',
-        'org.freedesktop.NetworkManager.enable-disable-wifi',
-        'org.freedesktop.NetworkManager.wifi.scan',
-        'org.freedesktop.NetworkManager.settings.modify.own',
-        'org.freedesktop.NetworkManager.settings.modify.system',
-    ])
+    @pytest.mark.parametrize(
+        'action_id',
+        [
+            'org.freedesktop.NetworkManager.network-control',
+            'org.freedesktop.NetworkManager.enable-disable-wifi',
+            'org.freedesktop.NetworkManager.wifi.scan',
+            'org.freedesktop.NetworkManager.settings.modify.own',
+            'org.freedesktop.NetworkManager.settings.modify.system',
+        ],
+    )
     def test_grants_the_actions_the_wifi_command_needs(self, text, action_id):
         assert f'"{action_id}"' in text, f'{action_id} not granted'
 
@@ -332,20 +343,25 @@ class TestUdevRules:
     def test_rules_file_exists(self):
         assert self.RULES_FILE.is_file(), f'{self.RULES_FILE} missing'
 
-    @pytest.mark.parametrize('symlink', [
-        'neo-pit-pcb', 'lidar',
-    ])
+    @pytest.mark.parametrize(
+        'symlink',
+        [
+            'neo-pit-pcb',
+            'lidar',
+        ],
+    )
     def test_rules_define_symlink(self, symlink):
         text = self.RULES_FILE.read_text()
-        assert f'SYMLINK+="{symlink}"' in text, (
-            f'No rule defines /dev/{symlink}'
-        )
+        assert f'SYMLINK+="{symlink}"' in text, f'No rule defines /dev/{symlink}'
 
-    @pytest.mark.parametrize('vid_pid', [
-        ('10c4', 'ea60'),  # CP2102 (RPLIDAR)
-        ('1a6e', '089a'),  # Coral pre-init
-        ('18d1', '9302'),  # Coral post-init
-    ])
+    @pytest.mark.parametrize(
+        'vid_pid',
+        [
+            ('10c4', 'ea60'),  # CP2102 (RPLIDAR)
+            ('1a6e', '089a'),  # Coral pre-init
+            ('18d1', '9302'),  # Coral post-init
+        ],
+    )
     def test_rules_match_known_usb_ids(self, vid_pid):
         # Maestro uses ENV-style matching (see test below) — exempted.
         vid, pid = vid_pid
@@ -358,12 +374,15 @@ class TestUdevRules:
         # renamed to a stable wlan1 so setup_networking.sh binds a fixed name
         # instead of the per-unit MAC-derived wlx<mac>.
         text = self.RULES_FILE.read_text()
-        alfa = [ln for ln in text.splitlines()
-                if 'ATTRS{idVendor}=="0e8d"' in ln and 'ATTRS{idProduct}=="7612"' in ln]
+        alfa = [
+            ln
+            for ln in text.splitlines()
+            if 'ATTRS{idVendor}=="0e8d"' in ln and 'ATTRS{idProduct}=="7612"' in ln
+        ]
         assert alfa, 'no rule matches the ALFA MT7612U (0e8d:7612)'
-        assert any('NAME="wlan1"' in ln for ln in alfa), (
-            'ALFA rule must rename the dongle to wlan1'
-        )
+        assert any(
+            'NAME="wlan1"' in ln for ln in alfa
+        ), 'ALFA rule must rename the dongle to wlan1'
 
     def test_realsense_autosuspend_rule_present(self):
         # RealSense D435i (USB 8086:0b3a). The autosuspend rule matches the usb
@@ -380,9 +399,9 @@ class TestUdevRules:
         text = self.RULES_FILE.read_text()
         lidar_lines = [ln for ln in text.splitlines() if 'SYMLINK+="lidar"' in ln]
         assert lidar_lines, 'lidar rule missing'
-        assert any('ID_MM_DEVICE_IGNORE' in ln for ln in lidar_lines), (
-            'lidar rule must set ID_MM_DEVICE_IGNORE=1 to block ModemManager probes'
-        )
+        assert any(
+            'ID_MM_DEVICE_IGNORE' in ln for ln in lidar_lines
+        ), 'lidar rule must set ID_MM_DEVICE_IGNORE=1 to block ModemManager probes'
 
     def test_neo_pit_rule_matches_gpio_uart(self):
         # The NEO-PIT PCB is on the Pi's GPIO UART, which enumerates as ttyAMA0
@@ -431,14 +450,19 @@ class TestEthScript:
     def _run(self, tmp_path, *args):
         """Run the script in dry-run mode, isolated from the real system files."""
         env = {k: v for k, v in os.environ.items() if not k.startswith('RACECAR_ETH')}
-        env.update({
-            'RACECAR_ETH_DRY_RUN': '1',
-            'RACECAR_ETH_NETPLAN': str(tmp_path / '99-racecar-eth0.yaml'),
-            'RACECAR_ETH_CONFIG': str(tmp_path / 'networking.conf'),
-        })
+        env.update(
+            {
+                'RACECAR_ETH_DRY_RUN': '1',
+                'RACECAR_ETH_NETPLAN': str(tmp_path / '99-racecar-eth0.yaml'),
+                'RACECAR_ETH_CONFIG': str(tmp_path / 'networking.conf'),
+            }
+        )
         return subprocess.run(
             ['bash', str(self.SCRIPT), *args],
-            capture_output=True, text=True, timeout=20, env=env,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            env=env,
         )
 
     def _render(self, tmp_path, mode, *extra):
@@ -453,7 +477,9 @@ class TestEthScript:
     def test_bash_syntax_clean(self):
         result = subprocess.run(
             ['bash', '-n', str(self.SCRIPT)],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         assert result.returncode == 0, result.stderr
 

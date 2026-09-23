@@ -23,10 +23,7 @@ class MagnetometerCalibrator(Node):
         self.message_received = threading.Event()  # Use a thread-safe event
 
         self.subscription = self.create_subscription(
-            MagneticField,
-            '/mag/raw',
-            self.mag_callback,
-            qos_profile_sensor_data
+            MagneticField, '/mag/raw', self.mag_callback, qos_profile_sensor_data
         )
         self.get_logger().info('Subscribed to /mag/raw.')
 
@@ -42,11 +39,9 @@ class MagnetometerCalibrator(Node):
             self.get_logger().info('First message from /mag topic received!')
 
         if self.collecting:
-            self.mag_data.append([
-                msg.magnetic_field.x,
-                msg.magnetic_field.y,
-                msg.magnetic_field.z
-            ])
+            self.mag_data.append(
+                [msg.magnetic_field.x, msg.magnetic_field.y, msg.magnetic_field.z]
+            )
 
     def wait_for_messages(self, timeout=10.0):
         """Wait for the first message to arrive."""
@@ -91,8 +86,7 @@ class MagnetometerCalibrator(Node):
         """Collect data for one rotational step."""
         self.collecting = True
         self.get_logger().info(
-            f'Collecting data for {description} ({duration}s)... '
-            'Please start rotating now.'
+            f'Collecting data for {description} ({duration}s)... ' 'Please start rotating now.'
         )
         time.sleep(duration)
         self.collecting = False
@@ -119,21 +113,17 @@ class MagnetometerCalibrator(Node):
         D[:, 0] = data_normalized[:, 0] * 2
         D[:, 1] = data_normalized[:, 1] * 2
         D[:, 2] = data_normalized[:, 2] * 2
-        D[:, 3] = data_normalized[:, 0]**2
-        D[:, 4] = data_normalized[:, 1]**2
-        D[:, 5] = data_normalized[:, 2]**2
+        D[:, 3] = data_normalized[:, 0] ** 2
+        D[:, 4] = data_normalized[:, 1] ** 2
+        D[:, 5] = data_normalized[:, 2] ** 2
         D[:, 6] = 2 * data_normalized[:, 0] * data_normalized[:, 1]
         D[:, 7] = 2 * data_normalized[:, 0] * data_normalized[:, 2]
         D[:, 8] = 2 * data_normalized[:, 1] * data_normalized[:, 2]
 
         v = np.ones(data_normalized.shape[0])
-        (p, _, _, _) = np.linalg.lstsq(D, v, rcond=None)
+        p, _, _, _ = np.linalg.lstsq(D, v, rcond=None)
 
-        A = np.array([
-            [p[3], p[6], p[7]],
-            [p[6], p[4], p[8]],
-            [p[7], p[8], p[5]]
-        ])
+        A = np.array([[p[3], p[6], p[7]], [p[6], p[4], p[8]], [p[7], p[8], p[5]]])
 
         b = np.array([p[0], p[1], p[2]])
         hard_iron_bias_normalized = -np.linalg.inv(A) @ b
@@ -161,8 +151,12 @@ class MagnetometerCalibrator(Node):
         fig1 = plt.figure(figsize=(10, 8))
         ax1 = fig1.add_subplot(111, projection='3d')
         ax1.scatter(
-            raw_data[:, 0], raw_data[:, 1], raw_data[:, 2],
-            c='r', marker='.', label='Uncorrected Data'
+            raw_data[:, 0],
+            raw_data[:, 1],
+            raw_data[:, 2],
+            c='r',
+            marker='.',
+            label='Uncorrected Data',
         )
         ax1.set_xlabel('X-axis')
         ax1.set_ylabel('Y-axis')
@@ -175,8 +169,12 @@ class MagnetometerCalibrator(Node):
         fig2 = plt.figure(figsize=(10, 8))
         ax2 = fig2.add_subplot(111, projection='3d')
         ax2.scatter(
-            corrected_data[:, 0], corrected_data[:, 1], corrected_data[:, 2],
-            c='b', marker='.', label='Corrected Data'
+            corrected_data[:, 0],
+            corrected_data[:, 1],
+            corrected_data[:, 2],
+            c='b',
+            marker='.',
+            label='Corrected Data',
         )
         ax2.set_xlabel('X-axis')
         ax2.set_ylabel('Y-axis')
@@ -198,7 +196,7 @@ class MagnetometerCalibrator(Node):
         )
         calibration_data = {
             'magnetometer.hard_iron_bias': self.hard_iron_bias.tolist(),
-            'magnetometer.soft_iron_matrix.data': self.soft_iron_matrix.flatten().tolist()
+            'magnetometer.soft_iron_matrix.data': self.soft_iron_matrix.flatten().tolist(),
         }
         ros2_yaml_format = {'pit_node': {'ros__parameters': calibration_data}}
 

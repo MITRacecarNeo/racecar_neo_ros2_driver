@@ -26,9 +26,7 @@ def single_node_launch(
     """
     pkg_dir = get_package_share_directory('racecar_neo_ros2_driver')
     default_cfg = os.path.join(pkg_dir, 'config', default_yaml)
-    local_cfg = os.path.join(
-        pkg_dir, 'config', default_yaml.replace('.yaml', '.local.yaml')
-    )
+    local_cfg = os.path.join(pkg_dir, 'config', default_yaml.replace('.yaml', '.local.yaml'))
 
     cfg_arg = DeclareLaunchArgument(
         arg_name,
