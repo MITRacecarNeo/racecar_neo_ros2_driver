@@ -1063,8 +1063,9 @@ __RC_CLEANUP_HELP__
 
         status)
             # Whole-car diagnostic. Read-only: it observes topics and reads
-            # sysfs, and never commands the hardware. Exits non-zero unless
-            # every requested check passed, so it is usable from a script.
+            # sysfs, and never commands the hardware. Exits non-zero when a
+            # check fails (--strict: unless every check passed), so it is
+            # usable from a script.
             python3 "${RACECAR_DIAGNOSE_SCRIPT:-$pkg_dir/scripts/diagnose.py}" "$@"
             ;;
 
@@ -1163,12 +1164,13 @@ Commands:
                         (uses sudo for root-owned PIDs).
     status [flags]      Whole-car diagnostic: devices, sensors, actuators,
                         system, services and network in one pass. Read-only.
-                        Exits non-zero unless every requested check passed.
+                        Exits non-zero when a check fails; WARN still exits 0.
                           --quick             skip the ROS sampling phase
                           --json              machine-readable output
+                          --strict            also exit non-zero on WARN/SKIP
                           --section a,b       devices, sensors, actuators,
                                               system, services, network
-                          --window SEC        ROS sample window (default 2.0)
+                          --window SEC        ROS sample window (default 5.0)
     log <action>        Record and analyze ROS 2 bags. Actions:
                           start [name]        record; bag is <timestamp>_<name>
                                                 --topics A B    default: all
@@ -1252,7 +1254,7 @@ _racecar_complete() {
             COMPREPLY=( $(compgen -W "status enable disable help" -- "$cur") )
             ;;
         status)
-            COMPREPLY=( $(compgen -W "--quick --json --section --window --help" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--quick --json --strict --section --window --help" -- "$cur") )
             ;;
         log)
             if [[ $COMP_CWORD -eq 2 ]]; then

@@ -4,6 +4,55 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+Planned as 0.8.3: a `racecar status` cleanup, so its verdict matches whether
+the car is usable.
+
+### Added
+
+- `racecar status --strict`: exit 1 unless every requested check is `OK`,
+  the rule that was the default through 0.8.2.
+- A sample column on every sensor and actuator rate row, tab-separated from
+  the rate: acceleration and field vectors, pack volts and amps, lidar
+  returns and median range, RC channels, top detection, image size and
+  center depth, drive command. The RealSense streams are read once after the
+  sample window, so the decode costs no rate.
+- OK, WARN and FAIL marks in green, yellow and red, and a coloured `RESULT`
+  in the summary, on an interactive terminal. `NO_COLOR` turns it off.
+- `--json` output carries `result`, `strict` and each check's `data`.
+- `sysinfo.read_cpu_times`, `sysinfo.parse_cpu_times`,
+  `sysinfo.read_arm_clock`.
+
+### Changed
+
+- `racecar status` exits 1 only when a check fails; `WARN` and `SKIP`
+  exit 0.
+- A stream below its floor warns; only one below 2 Hz fails. Coral at 8.6 of
+  15 Hz is a warning, not a failure.
+- A stopped stack fails every rate row as not published, rather than
+  skipping them.
+- The system `load` row is now `cpu`: busy share of all cores over one
+  second, excluding the diagnostic's own time, plus the firmware ARM clock
+  against its maximum. It warns at 90 percent and never fails. See
+  `docs/troubleshooting.md`, "CPU busy share", for the 2.18x load reading
+  that prompted it.
+- Two eth0 IPv4 addresses, or an IPv6 default route in static mode, warn
+  rather than fail; dual mode can be deliberate.
+- The sticky PMIC under-voltage alarm warns rather than fails. A live dip
+  still fails the `throttling` row.
+- Rate rows read `58.6/60 Hz`; the "; from /diagnostics" and "; shared
+  Teensy frame" annotations are gone, as are the separate IMU magnitude,
+  pack voltage range, lidar sample and RC channel rows, now folded into their
+  sensor rows.
+- `racecar help` gives the real default window (5.0 s, not 2.0).
+- Version 0.8.3 in `setup.py`, `package.xml` and the `DASHBOARD_VERSION`
+  pin. The teleop, linefollow and wallfollow forks carry a matching
+  `VERSION` and `v0.8.3` tag.
+
+### Removed
+
+- `sysinfo.read_loadavg` and `sysinfo.cpu_count`, used only by the old load
+  row.
+
 ### Fixed
 
 - `setup.py`, `package.xml` and the `DASHBOARD_VERSION` pin read 0.8.2. The

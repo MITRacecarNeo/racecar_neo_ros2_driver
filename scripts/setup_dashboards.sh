@@ -51,7 +51,7 @@ RETIRED_UNITS=(
 # The dashboard release this driver was tested against. Bump with the driver's
 # own version in setup.py and package.xml; the three checkouts are tagged to
 # match.
-DASHBOARD_VERSION="${RACECAR_DASHBOARD_VERSION:-0.8.2}"
+DASHBOARD_VERSION="${RACECAR_DASHBOARD_VERSION:-0.8.3}"
 
 MODE="install"
 case "${1:-}" in

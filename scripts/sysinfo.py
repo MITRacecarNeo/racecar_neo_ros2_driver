@@ -155,30 +155,54 @@ def decode_throttled(text: str) -> tuple[int | None, list[str]]:
     return (flags, active)
 
 
-def read_loadavg() -> tuple[float, float, float] | None:
-    """Return the 1, 5 and 15 minute load averages."""
+def read_cpu_times() -> tuple[int, int] | None:
+    """Return (busy, total) jiffies summed over every CPU since boot."""
     try:
-        parts = Path('/proc/loadavg').read_text().split()
-        return (float(parts[0]), float(parts[1]), float(parts[2]))
-    except (OSError, ValueError, IndexError):
+        return parse_cpu_times(Path('/proc/stat').read_text())
+    except OSError:
         return None
 
 
-def cpu_count() -> int:
-    """Return the number of online CPUs, or 1 when it cannot be determined."""
+def parse_cpu_times(text: str) -> tuple[int, int] | None:
+    """
+    Reduce the aggregate `cpu` line of /proc/stat to (busy, total) jiffies.
+
+    idle and iowait count as not busy. guest and guest_nice are already
+    included in user and nice, so only the first eight fields are summed.
+    """
+    for line in text.splitlines():
+        parts = line.split()
+        if not parts or parts[0] != 'cpu':
+            continue
+        try:
+            fields = [int(p) for p in parts[1:9]]
+        except ValueError:
+            return None
+        if len(fields) < 5:
+            return None
+        total = sum(fields)
+        return (total - fields[3] - fields[4], total)
+    return None
+
+
+def read_arm_clock() -> tuple[int | None, int | None]:
+    """
+    Return (current, maximum) ARM clock in MHz; either may be None.
+
+    The current value comes from the firmware because cpufreq reports the
+    governor's request, not a clock the firmware has capped under-voltage.
+    """
+    current = None
+    m = re.search(r'=(\d+)', run_cmd(['vcgencmd', 'measure_clock', 'arm'], timeout=3))
+    if m:
+        current = round(int(m.group(1)) / 1e6)
+    maximum = None
     try:
-        return (
-            len(
-                [
-                    line
-                    for line in Path('/proc/cpuinfo').read_text().splitlines()
-                    if line.startswith('processor')
-                ]
-            )
-            or 1
-        )
-    except OSError:
-        return 1
+        khz = Path('/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq').read_text()
+        maximum = round(int(khz) / 1000)
+    except (OSError, ValueError):
+        pass
+    return (current, maximum)
 
 
 def read_memory() -> dict[str, int] | None:

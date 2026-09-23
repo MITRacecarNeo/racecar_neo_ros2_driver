@@ -143,7 +143,7 @@ sudo reboot
 After reboot, `racecar-teleop.service` auto-starts and pulls the watchdog via `Wants=racecar-watchdog.service`. Verify:
 
 ```sh
-racecar status              # full diagnostic; exits non-zero unless everything passed
+racecar status              # full diagnostic; exits non-zero only on a FAIL
 racecar service status      # the 4 core racecar-* units should be active+enabled
 ```
 
@@ -210,6 +210,7 @@ racecar udev                        # re-install the udev rules
 racecar cleanup [--force]           # list / kill stale racecar processes + SHM orphans
 racecar status                      # full diagnostic (devices, sensors, system, network)
 racecar status --quick              # host checks only; skips the ROS sampling phase
+racecar status --strict             # exit non-zero on any WARN or SKIP as well
 racecar eth status                  # eth0 addressing mode + conflict checks
 racecar wifi list                   # visible networks on wlan0
 racecar desktop status              # GNOME on/off for the next boot
@@ -436,10 +437,10 @@ rendered from its checkout's `.service.in` template.
 overrides) and reports a mismatch without stopping the install:
 
 ```
-==> Dashboard versions (driver pins 0.8.2)
-  teleop_dashboard: 0.8.2
-  linefollow_dashboard: 0.8.1, driver pins 0.8.2
-  wallfollow_dashboard: 0.8.2
+==> Dashboard versions (driver pins 0.8.3)
+  teleop_dashboard: 0.8.3
+  linefollow_dashboard: 0.8.2, driver pins 0.8.3
+  wallfollow_dashboard: 0.8.3
 ```
 
 **Safety.** `mux_node` forwards `/drive` only while the RB bumper is held, and
@@ -665,6 +666,11 @@ export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
 
 Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
 
+- **0.8.3** (unreleased): `racecar status` exits non-zero only on a FAIL, with
+  `--strict` for the old rule; slow-but-delivering streams and dual-mode eth0
+  warn instead of failing; each sensor row shows a sample of its data; a
+  CPU busy share and ARM clock replace the load average; OK, WARN and FAIL
+  are coloured on a terminal.
 - **0.8.2** (2026-09-22): cleanup release. `racecar lint` with pinned ruff,
   black and mypy; per-car calibration in gitignored `config/*.local.yaml`, which
   `pit.launch.py` now loads; `calibrate_mag.py` no longer overwrites a good

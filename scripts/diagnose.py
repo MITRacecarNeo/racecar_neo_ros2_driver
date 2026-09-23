@@ -5,9 +5,10 @@ Whole-car diagnostic pass behind `racecar status`.
 All subscriptions share one sample window; host checks run on a worker
 thread alongside it.
 
-Strict by design: the exit code is 0 only when every requested check passed,
-so WARN and SKIP both count against it. Deselecting a section with --quick or
---section is distinct from a check failing to run and does not affect it.
+The exit code is 1 only when a check FAILs; WARN and SKIP leave the car
+usable. --strict restores the stricter rule that anything other than OK fails.
+Deselecting a section with --quick or --section is distinct from a check
+failing to run and affects neither mode.
 
 Read-only. Nothing here commands the hardware.
 
@@ -23,6 +24,7 @@ import glob
 import grp
 import importlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -36,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import sysinfo  # noqa: E402
 
 OK, WARN, FAIL, SKIP = 'OK', 'WARN', 'FAIL', 'SKIP'
+SEVERITY = {OK: 0, SKIP: 1, WARN: 2, FAIL: 3}
 
 SECTIONS = ('devices', 'sensors', 'actuators', 'system', 'services', 'network')
 
@@ -44,20 +47,33 @@ SECTIONS = ('devices', 'sensors', 'actuators', 'system', 'services', 'network')
 DEFAULT_WINDOW = 5.0
 DISCOVERY_TIMEOUT = 6.0
 
+# Upper bound on reading one message from each /diagnostics-sourced stream
+# after the window closes.
+GRAB_TIMEOUT = 1.0
+
 # RealSense reports its own per-stream rates here, so they need no
 # subscription. See docs/troubleshooting.md, "Diagnostic rate checks".
 DIAGNOSTICS_TOPIC = '/diagnostics'
 REALSENSE_DIAGNOSTIC_NAMES = sysinfo.REALSENSE_DIAGNOSTIC_NAMES
 
+# A stream under its floor is degraded but delivering and warns. Under
+# STALL_HZ it has effectively stopped and fails, whatever its nominal rate.
+STALL_HZ = 2.0
+
+# Busy share of all cores, excluding this process, at which the cpu row warns.
+CPU_SAMPLE_SEC = 1.0
+CPU_WARN_PCT = 90.0
+
 
 @dataclass
 class Check:
-    """One diagnostic result."""
+    """One diagnostic result; `data` is a sample of what the source reported."""
 
     group: str
     name: str
     status: str
     detail: str = ''
+    data: str = ''
 
 
 @dataclass
@@ -68,7 +84,6 @@ class TopicSpec:
     label: str
     nominal: float
     floor_frac: float = 0.8
-    note: str = ''
 
     @property
     def floor(self) -> float:
@@ -81,24 +96,33 @@ class TopicSpec:
 # default because the Teensy frame rate moves with load.
 # See docs/troubleshooting.md, "Diagnostic rate checks".
 PIT_FLOOR_FRAC = 0.65
-PIT_NOTE = 'shared Teensy frame; rate varies with load'
 
 SENSOR_TOPICS = [
-    TopicSpec('/camera/color', 'RealSense color', 60.0, 0.8, 'from /diagnostics'),
-    TopicSpec('/camera/depth', 'RealSense depth', 30.0, 0.8, 'from /diagnostics'),
-    TopicSpec('/imu/realsense', 'RealSense IMU', 200.0, 0.8, 'from /diagnostics'),
+    TopicSpec('/camera/color', 'RealSense color', 60.0),
+    TopicSpec('/camera/depth', 'RealSense depth', 30.0),
+    TopicSpec('/imu/realsense', 'RealSense IMU', 200.0),
     TopicSpec('/scan', 'RPLIDAR', 7.2),
-    TopicSpec('/imu/lsm9ds1', 'PIT IMU', 136.0, PIT_FLOOR_FRAC, PIT_NOTE),
-    TopicSpec('/mag', 'PIT magnetometer', 136.0, PIT_FLOOR_FRAC, PIT_NOTE),
+    TopicSpec('/imu/lsm9ds1', 'PIT IMU', 136.0, PIT_FLOOR_FRAC),
+    TopicSpec('/mag', 'PIT magnetometer', 136.0, PIT_FLOOR_FRAC),
     TopicSpec('/imu/fused', 'Fused IMU', 100.0),
-    TopicSpec('/encoder/speed', 'Encoder', 136.0, PIT_FLOOR_FRAC, PIT_NOTE),
-    TopicSpec('/battery/voltage', 'Pack voltage', 136.0, PIT_FLOOR_FRAC, PIT_NOTE),
-    TopicSpec('/battery/current', 'Pack current', 136.0, PIT_FLOOR_FRAC, PIT_NOTE),
-    TopicSpec('/rc/channels', 'FlySky RC', 136.0, PIT_FLOOR_FRAC, PIT_NOTE),
+    TopicSpec('/encoder/speed', 'Encoder', 136.0, PIT_FLOOR_FRAC),
+    TopicSpec('/battery/voltage', 'Pack voltage', 136.0, PIT_FLOOR_FRAC),
+    TopicSpec('/battery/current', 'Pack current', 136.0, PIT_FLOOR_FRAC),
+    TopicSpec('/rc/channels', 'FlySky RC', 136.0, PIT_FLOOR_FRAC),
     # Capped by edgetpu_node's inference_rate_hz, not by the camera.
     TopicSpec('/edgetpu/inference', 'Coral inference', 15.0),
     TopicSpec('/joy', 'Gamepad', 16.0),
 ]
+
+# The six topics decoded from the shared Teensy telemetry frame.
+PIT_TOPICS = {
+    '/imu/lsm9ds1',
+    '/mag',
+    '/encoder/speed',
+    '/battery/voltage',
+    '/battery/current',
+    '/rc/channels',
+}
 
 # Rates read off /diagnostics rather than counted here.
 DIAGNOSTIC_SOURCED = set(REALSENSE_DIAGNOSTIC_NAMES.values())
@@ -108,16 +132,6 @@ ACTUATOR_TOPICS = [
     TopicSpec('/mux_out', 'Mux output', 50.0),
 ]
 
-# Topics whose payload is asserted, not just its arrival rate. Everything else
-# is subscribed raw so messages are counted without being deserialised.
-VALUE_TOPICS = {
-    '/imu/lsm9ds1',
-    '/battery/voltage',
-    '/battery/current',
-    '/scan',
-    '/rc/channels',
-}
-
 USB_DEVICES = [
     ('8086:0b3a', 'RealSense D435i'),
     ('0e8d:7612', 'ALFA AP dongle'),
@@ -126,6 +140,10 @@ USB_DEVICES = [
 ]
 
 SERVICE_UNITS = ('racecar-teleop', 'racecar-watchdog', 'racecar-dashboard', 'racecar-jupyter')
+
+
+def worst(*statuses: str) -> str:
+    return max(statuses, key=SEVERITY.__getitem__)
 
 
 # ---------------------------------------------------------------------------
@@ -209,27 +227,50 @@ def check_devices() -> list[Check]:
     return out
 
 
-def check_system() -> list[Check]:
+def _own_cpu_seconds() -> float:
+    t = os.times()
+    return t.user + t.system
+
+
+def measure_cpu_busy(interval: float = CPU_SAMPLE_SEC) -> float | None:
+    """
+    Return the percent of all-core time spent busy over `interval`.
+
+    This process's own time is subtracted: the ROS sampling window runs
+    alongside and would otherwise be reported as car load.
+    """
+    before = sysinfo.read_cpu_times()
+    own_before = _own_cpu_seconds()
+    time.sleep(interval)
+    after = sysinfo.read_cpu_times()
+    own = _own_cpu_seconds() - own_before
+    if before is None or after is None:
+        return None
+    total = after[1] - before[1]
+    if total <= 0:
+        return None
+    busy = after[0] - before[0] - own * os.sysconf('SC_CLK_TCK')
+    return max(0.0, min(100.0, 100.0 * busy / total))
+
+
+def check_system(cpu_interval: float = CPU_SAMPLE_SEC) -> list[Check]:
     """CPU, thermals, memory, disk and the clock."""
     out: list[Check] = []
     g = 'system'
 
-    load = sysinfo.read_loadavg()
-    cpus = sysinfo.cpu_count()
-    if load is None:
-        out.append(Check(g, 'load', SKIP, 'unreadable'))
+    # Busy share rather than load average: load counts queued threads, so it
+    # passes 100 percent whenever the cores are oversubscribed and says
+    # nothing about why. The ARM clock is the usual why on this car, since
+    # under-voltage caps it well below its maximum.
+    busy = measure_cpu_busy(cpu_interval)
+    if busy is None:
+        out.append(Check(g, 'cpu', SKIP, 'unreadable'))
     else:
-        one = load[0]
-        ratio = one / cpus
-        # A car running the full teleop stack sits near 1.0x, so the warning
-        # line has to sit above that or it fires on every healthy car.
-        if ratio <= 1.5:
-            status = OK
-        elif ratio <= 3.0:
-            status = WARN
-        else:
-            status = FAIL
-        out.append(Check(g, 'load', status, f'{one:.2f} on {cpus} cores ({ratio:.2f}x)'))
+        detail = f'{busy:.0f}% busy'
+        current, maximum = sysinfo.read_arm_clock()
+        if current and maximum:
+            detail += f', arm {current} of {maximum} MHz'
+        out.append(Check(g, 'cpu', OK if busy < CPU_WARN_PCT else WARN, detail))
 
     temp = sysinfo.read_soc_temp()
     if temp is None:
@@ -277,7 +318,8 @@ def check_system() -> list[Check]:
     if uv is None:
         out.append(Check(g, 'under-voltage', SKIP, 'no rpi_volt hwmon'))
     elif uv:
-        out.append(Check(g, 'under-voltage', FAIL, 'alarm tripped this boot'))
+        # Sticky until reboot. A live dip already fails the throttling row.
+        out.append(Check(g, 'under-voltage', WARN, 'alarm tripped this boot'))
     else:
         out.append(Check(g, 'under-voltage', OK, 'clear'))
 
@@ -322,19 +364,13 @@ def check_network() -> list[Check]:
     out: list[Check] = []
     g = 'network'
 
+    # Static plus DHCP on eth0 is what `racecar eth static` clears, but a
+    # dual-mode eth0 can be deliberate, so it warns rather than fails.
     eth = _iface_v4('eth0')
     if not eth:
         out.append(Check(g, 'eth0 address', WARN, 'no global IPv4 (cable out?)'))
     elif len(eth) > 1:
-        # Two IPv4 addresses on eth0: the state `racecar eth static` clears.
-        out.append(
-            Check(
-                g,
-                'eth0 address',
-                FAIL,
-                f'{len(eth)} IPv4 addresses ({", ".join(eth)}); run: racecar eth static',
-            )
-        )
+        out.append(Check(g, 'eth0 address', WARN, f'{", ".join(eth)} (dual mode)'))
     else:
         out.append(Check(g, 'eth0 address', OK, eth[0]))
 
@@ -351,13 +387,9 @@ def check_network() -> list[Check]:
     v6def = _run(['ip', '-6', 'route', 'show', 'default', 'dev', 'eth0']).strip()
     if mode == 'static':
         if v6def:
-            out.append(
-                Check(
-                    g, 'eth0 v6 default', FAIL, 'present in static mode; run: racecar eth static'
-                )
-            )
+            out.append(Check(g, 'eth0 v6 default', WARN, 'present in static mode'))
         else:
-            out.append(Check(g, 'eth0 v6 default', OK, 'none, as expected in static mode'))
+            out.append(Check(g, 'eth0 v6 default', OK, 'none'))
     else:
         out.append(Check(g, 'eth0 v6 default', OK, f'{mode} mode, route allowed'))
 
@@ -387,6 +419,148 @@ def check_network() -> list[Check]:
 
 
 # ---------------------------------------------------------------------------
+# Sample readers: one message in, (status, one-line summary) out
+# ---------------------------------------------------------------------------
+
+
+def _xyz(v: Any, scale: float = 1.0) -> str:
+    return f'{v.x * scale:+.2f} {v.y * scale:+.2f} {v.z * scale:+.2f}'
+
+
+def read_pit_imu(msg: Any) -> tuple[str, str]:
+    a = msg.linear_acceleration
+    mag = math.sqrt(a.x**2 + a.y**2 + a.z**2)
+    data = f'accel {_xyz(a)} m/s^2, |a| {mag:.2f}'
+    if 8.0 < mag < 12.0:
+        return OK, data
+    return FAIL, f'{data}, expect 8 to 12 at rest'
+
+
+def read_accel(msg: Any) -> tuple[str, str]:
+    return OK, f'accel {_xyz(msg.linear_acceleration)} m/s^2'
+
+
+def read_mag(msg: Any) -> tuple[str, str]:
+    return OK, f'field {_xyz(msg.magnetic_field, 1e6)} uT'
+
+
+def read_fused(msg: Any) -> tuple[str, str]:
+    q = msg.orientation
+    yaw = math.degrees(math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y**2 + q.z**2)))
+    return OK, f'yaw {yaw:+.1f} deg, gyro z {msg.angular_velocity.z:+.2f} rad/s'
+
+
+def read_speed(msg: Any) -> tuple[str, str]:
+    return OK, f'{msg.data:+.2f} m/s'
+
+
+def read_pack_voltage(msg: Any) -> tuple[str, str]:
+    v = msg.data
+    if 5.0 < v < 13.0:
+        return OK, f'{v:.2f} V'
+    return FAIL, f'{v:.2f} V, expect 5 to 13'
+
+
+def read_pack_current(msg: Any) -> tuple[str, str]:
+    c = msg.data
+    return (OK if c >= 0.0 else FAIL), f'{c:.2f} A'
+
+
+def read_rc(msg: Any) -> tuple[str, str]:
+    n = len(msg.data)
+    head = ' '.join(f'{x:+.2f}' for x in msg.data[:4])
+    data = f'{n} channels: {head}' + (' ...' if n > 4 else '')
+    if n == 8:
+        return OK, data
+    return FAIL, f'{data}, expect 8'
+
+
+def read_scan(msg: Any) -> tuple[str, str]:
+    # Median rather than nearest: a fixed near return on this car's mount
+    # would pin the nearest reading regardless of the room.
+    n = len(msg.ranges)
+    hits = sorted(
+        r for r in msg.ranges if math.isfinite(r) and msg.range_min <= r <= msg.range_max
+    )
+    data = f'{n} ranges, {len(hits)} returns'
+    if hits:
+        data += f', median {hits[len(hits) // 2]:.2f} m'
+    if n == 1080:
+        return OK, data
+    return WARN, f'{data}, expect 1080'
+
+
+def read_detections(msg: Any) -> tuple[str, str]:
+    n = len(msg.detections)
+    data = f'{n} detection' + ('' if n == 1 else 's')
+    scored = [
+        (h.hypothesis.score, h.hypothesis.class_id) for d in msg.detections for h in d.results
+    ]
+    if scored:
+        score, label = max(scored)
+        data += f', top {label} {score:.2f}'
+    return OK, data
+
+
+def read_joy(msg: Any) -> tuple[str, str]:
+    pressed = sum(1 for b in msg.buttons if b)
+    return OK, f'{len(msg.axes)} axes, {len(msg.buttons)} buttons, {pressed} pressed'
+
+
+def read_color(msg: Any) -> tuple[str, str]:
+    return OK, f'{msg.width}x{msg.height} {msg.encoding}'
+
+
+def read_depth(msg: Any) -> tuple[str, str]:
+    data = f'{msg.width}x{msg.height} {msg.encoding}'
+    if msg.encoding in ('16UC1', 'mono16') and msg.width and msg.height:
+        lo = (msg.height // 2) * msg.step + (msg.width // 2) * 2
+        hi = lo + 2
+        raw = bytes(msg.data[lo:hi])
+        if len(raw) == 2:
+            mm = int.from_bytes(raw, 'big' if msg.is_bigendian else 'little')
+            data += f', center {mm / 1000:.2f} m' if mm else ', center no return'
+    return OK, data
+
+
+def read_drive(msg: Any) -> tuple[str, str]:
+    d = msg.drive
+    return OK, f'speed {d.speed:+.2f} m/s, steer {d.steering_angle:+.2f} rad'
+
+
+SAMPLE_READERS: dict[str, Callable[[Any], tuple[str, str]]] = {
+    '/camera/color': read_color,
+    '/camera/depth': read_depth,
+    '/imu/realsense': read_accel,
+    '/scan': read_scan,
+    '/imu/lsm9ds1': read_pit_imu,
+    '/mag': read_mag,
+    '/imu/fused': read_fused,
+    '/encoder/speed': read_speed,
+    '/battery/voltage': read_pack_voltage,
+    '/battery/current': read_pack_current,
+    '/rc/channels': read_rc,
+    '/edgetpu/inference': read_detections,
+    '/joy': read_joy,
+    '/motor': read_drive,
+    '/mux_out': read_drive,
+}
+
+
+def read_sample(topic: str, msg: Any) -> tuple[str, str]:
+    """Summarise one message; a payload of an unexpected shape warns."""
+    reader = SAMPLE_READERS.get(topic)
+    if reader is None:
+        return OK, ''
+    if msg is None:
+        return OK, 'no sample captured'
+    try:
+        return reader(msg)
+    except (AttributeError, TypeError, ValueError) as exc:
+        return WARN, f'unreadable sample ({exc.__class__.__name__})'
+
+
+# ---------------------------------------------------------------------------
 # ROS graph checks
 # ---------------------------------------------------------------------------
 
@@ -405,6 +579,28 @@ class RosResult:
 
 
 _read_diagnostic_rates = sysinfo.read_diagnostic_rates
+
+
+def _msg_class(type_str: str) -> Any:
+    pkg, _, cls = type_str.split('/')
+    return getattr(importlib.import_module(f'{pkg}.msg'), cls)
+
+
+def _grab_once(node: Any, topics: list[str], types: dict[str, Any], qos: Any) -> dict[str, Any]:
+    """Take the first message on each topic, waiting at most GRAB_TIMEOUT."""
+    import rclpy
+
+    got: dict[str, Any] = {}
+    subs = [
+        node.create_subscription(types[t], t, lambda m, t=t: got.setdefault(t, m), qos)
+        for t in topics
+    ]
+    deadline = time.monotonic() + GRAB_TIMEOUT
+    while len(got) < len(topics) and time.monotonic() < deadline:
+        rclpy.spin_once(node, timeout_sec=0.02)
+    for sub in subs:
+        node.destroy_subscription(sub)
+    return got
 
 
 def sample_ros(window: float, specs: list[TopicSpec]) -> RosResult:
@@ -441,9 +637,11 @@ def sample_ros(window: float, specs: list[TopicSpec]) -> RosResult:
             result.reason = 'no ROS graph visible'
             return result
 
+        # A visible graph with none of the car's topics is a stopped stack,
+        # which every rate row then reports as not published.
         result.present = {t for t in wanted if t in names}
         if not result.present:
-            result.reason = 'no racecar topics on the graph'
+            result.available = True
             return result
 
         # Subscribing to the RealSense streams would cost 40 percent of the
@@ -457,28 +655,21 @@ def sample_ros(window: float, specs: list[TopicSpec]) -> RosResult:
         qos.reliability = QoSReliabilityPolicy.BEST_EFFORT
         qos.durability = QoSDurabilityPolicy.VOLATILE
 
-        # Raw subscriptions throughout, value topics included; the kept buffers
-        # are decoded after the window. See docs/troubleshooting.md,
+        # Raw subscriptions throughout; each topic's last buffer is kept and
+        # decoded after the window. See docs/troubleshooting.md,
         # "Diagnostic rate checks".
         raw_latest: dict[str, bytes] = {}
-        msg_classes: dict[str, Any] = {}
+        msg_classes = {t: _msg_class(names[t][0]) for t in result.present}
 
-        def make_cb(topic: str, keep: bool) -> Callable[[bytes], None]:
+        def make_cb(topic: str) -> Callable[[bytes], None]:
             def cb(msg: bytes) -> None:
                 counts[topic] += 1
-                if keep:
-                    raw_latest[topic] = msg
+                raw_latest[topic] = msg
 
             return cb
 
         for topic in counted:
-            type_str = names[topic][0]
-            pkg, _, cls = type_str.split('/')
-            msg_cls = getattr(importlib.import_module(f'{pkg}.msg'), cls)
-            msg_classes[topic] = msg_cls
-            node.create_subscription(
-                msg_cls, topic, make_cb(topic, topic in VALUE_TOPICS), qos, raw=True
-            )
+            node.create_subscription(msg_classes[topic], topic, make_cb(topic), qos, raw=True)
 
         if result.present & DIAGNOSTIC_SOURCED:
             try:
@@ -507,7 +698,7 @@ def sample_ros(window: float, specs: list[TopicSpec]) -> RosResult:
         result.elapsed = time.monotonic() - start
 
         # Window closed, so decoding no longer lands on any rate. A payload
-        # that will not decode is dropped and its value check reports missing.
+        # that will not decode is dropped and its row reports no sample.
         from rclpy.serialization import deserialize_message
 
         for topic, buf in raw_latest.items():
@@ -515,6 +706,12 @@ def sample_ros(window: float, specs: list[TopicSpec]) -> RosResult:
                 latest[topic] = deserialize_message(buf, msg_classes[topic])
             except Exception:  # noqa: BLE001
                 pass
+
+        # The camera streams are too costly to count but cheap to read once
+        # now that the window is closed.
+        grab = sorted(result.present & DIAGNOSTIC_SOURCED)
+        if grab:
+            latest.update(_grab_once(node, grab, msg_classes, qos))
 
         result.counts = dict(counts)
         result.values = latest
@@ -532,76 +729,37 @@ def sample_ros(window: float, specs: list[TopicSpec]) -> RosResult:
     return result
 
 
+def rate_status(hz: float, spec: TopicSpec) -> str:
+    """OK at or above the floor, WARN while still delivering, FAIL once stalled."""
+    if hz >= spec.floor:
+        return OK
+    return WARN if hz >= STALL_HZ else FAIL
+
+
 def rate_checks(group: str, specs: list[TopicSpec], ros: RosResult) -> list[Check]:
-    """Turn the sampled counts into per-topic rate checks."""
+    """Turn the sampled counts and payloads into one row per topic."""
     out: list[Check] = []
     for spec in specs:
         if not ros.available:
             out.append(Check(group, spec.label, SKIP, ros.reason or 'no ROS graph'))
             continue
         if spec.topic not in ros.present:
-            out.append(Check(group, spec.label, FAIL, f'{spec.topic} not published'))
+            out.append(Check(group, spec.label, FAIL, 'not published'))
             continue
-        if spec.topic in DIAGNOSTIC_SOURCED:
+        value_status, data = read_sample(spec.topic, ros.values.get(spec.topic))
+        if spec.topic in DIAGNOSTIC_SOURCED and spec.topic not in ros.reported:
             # The publisher reports its own rate. Its absence means the
             # DiagnosticArray never arrived, not that the stream is dead, so
             # say which one failed rather than reporting 0 Hz.
-            if spec.topic not in ros.reported:
-                out.append(Check(group, spec.label, WARN, f'no rate on {DIAGNOSTICS_TOPIC}'))
-                continue
+            status = worst(WARN, value_status)
+            out.append(Check(group, spec.label, status, f'no rate on {DIAGNOSTICS_TOPIC}', data))
+            continue
+        if spec.topic in DIAGNOSTIC_SOURCED:
             hz = ros.reported[spec.topic]
         else:
             hz = ros.counts.get(spec.topic, 0) / ros.elapsed if ros.elapsed else 0.0
-        detail = f'{hz:.1f} Hz (floor {spec.floor:.1f})'
-        if spec.note:
-            detail += f'; {spec.note}'
-        out.append(Check(group, spec.label, OK if hz >= spec.floor else FAIL, detail))
-    return out
-
-
-def value_checks(ros: RosResult) -> list[Check]:
-    """Check payload values, not only arrival."""
-    out: list[Check] = []
-    g = 'sensors'
-    if not ros.available:
-        for name in ('IMU magnitude', 'Pack voltage range', 'LIDAR samples', 'RC channels'):
-            out.append(Check(g, name, SKIP, ros.reason or 'no ROS graph'))
-        return out
-
-    imu = ros.values.get('/imu/lsm9ds1')
-    if imu is None:
-        out.append(Check(g, 'IMU magnitude', SKIP, 'no sample captured'))
-    else:
-        a = imu.linear_acceleration
-        mag = (a.x**2 + a.y**2 + a.z**2) ** 0.5
-        status = OK if 8.0 < mag < 12.0 else FAIL
-        out.append(Check(g, 'IMU magnitude', status, f'{mag:.2f} m/s^2 (expect 8 to 12 at rest)'))
-
-    volt = ros.values.get('/battery/voltage')
-    curr = ros.values.get('/battery/current')
-    if volt is None:
-        out.append(Check(g, 'Pack voltage range', SKIP, 'no sample captured'))
-    else:
-        v = volt.data
-        c = curr.data if curr is not None else 0.0
-        status = OK if 5.0 < v < 13.0 and c >= 0.0 else FAIL
-        out.append(Check(g, 'Pack voltage range', status, f'{v:.2f} V, {c:.2f} A'))
-
-    scan = ros.values.get('/scan')
-    if scan is None:
-        out.append(Check(g, 'LIDAR samples', SKIP, 'no sample captured'))
-    else:
-        n = len(scan.ranges)
-        status = OK if n == 1080 else WARN
-        out.append(Check(g, 'LIDAR samples', status, f'{n} (expect 1080 angle-compensated)'))
-
-    rc = ros.values.get('/rc/channels')
-    if rc is None:
-        out.append(Check(g, 'RC channels', SKIP, 'no sample captured'))
-    else:
-        n = len(rc.data)
-        out.append(Check(g, 'RC channels', OK if n == 8 else FAIL, f'{n} channels (expect 8)'))
-
+        status = worst(rate_status(hz, spec), value_status)
+        out.append(Check(group, spec.label, status, f'{hz:.1f}/{spec.nominal:g} Hz', data))
     return out
 
 
@@ -629,16 +787,57 @@ def actuator_checks(ros: RosResult) -> list[Check]:
 # ---------------------------------------------------------------------------
 
 MARK = {OK: '[ OK ]', WARN: '[WARN]', FAIL: '[FAIL]', SKIP: '[SKIP]'}
+ANSI = {OK: '32', WARN: '33', FAIL: '31'}
 
 
-def exit_code_for(checks: list[Check]) -> int:
-    """Return 0 only when every check is OK; WARN, FAIL and SKIP all fail the run."""
-    return 0 if all(c.status == OK for c in checks) else 1
+def overall(checks: list[Check]) -> str:
+    """Summary verdict: FAIL on any failure, WARN on any warning or skip, else OK."""
+    if any(c.status == FAIL for c in checks):
+        return FAIL
+    if any(c.status in (WARN, SKIP) for c in checks):
+        return WARN
+    return OK
 
 
-def render(checks: list[Check], elapsed: float, exit_code: int) -> str:
+def exit_code_for(checks: list[Check], strict: bool = False) -> int:
+    """
+    Return 1 when any check failed, else 0.
+
+    Strict mode also fails on WARN and SKIP, so 0 means every check was OK.
+    """
+    if strict:
+        return 0 if all(c.status == OK for c in checks) else 1
+    return 1 if any(c.status == FAIL for c in checks) else 0
+
+
+def use_color() -> bool:
+    """Colour only an interactive terminal; NO_COLOR (no-color.org) opts out."""
+    return (
+        sys.stdout.isatty()
+        and 'NO_COLOR' not in os.environ
+        and os.environ.get('TERM', '') != 'dumb'
+    )
+
+
+def paint(text: str, status: str, color: bool, bold: bool = False) -> str:
+    code = ANSI.get(status)
+    if not color or code is None:
+        return text
+    return f'\033[{"1;" if bold else ""}{code}m{text}\033[0m'
+
+
+def render(
+    checks: list[Check], elapsed: float, exit_code: int, strict: bool = False, color: bool = False
+) -> str:
+    """
+    Lay the checks out by section.
+
+    Rows that carry a sample pad everything before it to one width and then
+    tab-separate it, so the sample column lines up and `cut -f2` extracts it.
+    """
     lines: list[str] = []
-    width = max((len(c.name) for c in checks), default=10)
+    name_w = max((len(c.name) for c in checks), default=10)
+    detail_w = max((len(c.detail) for c in checks if c.data), default=0)
     for group in SECTIONS:
         rows = [c for c in checks if c.group == group]
         if not rows:
@@ -646,15 +845,24 @@ def render(checks: list[Check], elapsed: float, exit_code: int) -> str:
         lines.append('')
         lines.append(group.upper())
         for c in rows:
-            lines.append(f'  {MARK[c.status]}  {c.name:<{width}}  {c.detail}'.rstrip())
+            mark = paint(MARK[c.status], c.status, color)
+            if c.data:
+                lines.append(f'  {mark}  {c.name:<{name_w}}  {c.detail:<{detail_w + 1}}\t{c.data}')
+            else:
+                lines.append(f'  {mark}  {c.name:<{name_w}}  {c.detail}'.rstrip())
 
     tally = {s: sum(1 for c in checks if c.status == s) for s in (OK, WARN, FAIL, SKIP)}
+    counts = '   '.join(
+        paint(f'{tally[s]} {label}', s, color and tally[s] > 0)
+        for s, label in ((OK, 'ok'), (WARN, 'warn'), (FAIL, 'fail'), (SKIP, 'skipped'))
+    )
+    result = overall(checks)
     lines.append('')
     lines.append(
-        f'  {tally[OK]} ok   {tally[WARN]} warn   {tally[FAIL]} fail   '
-        f'{tally[SKIP]} skipped        {elapsed:.1f}s   exit {exit_code}'
+        f'  RESULT {paint(result, result, color, bold=True)}   {counts}   '
+        f'{elapsed:.1f}s   exit {exit_code}'
     )
-    if exit_code != 0:
+    if strict and exit_code != 0:
         lines.append('  Strict: anything other than OK is a failure.')
     return '\n'.join(lines)
 
@@ -662,12 +870,18 @@ def render(checks: list[Check], elapsed: float, exit_code: int) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser(
         prog='racecar status',
-        description='Whole-car diagnostic pass. Exits 0 only when every requested check passes.',
+        description=(
+            'Whole-car diagnostic pass. Exits 1 when a check fails; '
+            'WARN and SKIP exit 0 unless --strict.'
+        ),
     )
     ap.add_argument(
         '--quick', action='store_true', help='skip the ROS sampling phase (host checks only)'
     )
     ap.add_argument('--json', action='store_true', help='machine-readable output')
+    ap.add_argument(
+        '--strict', action='store_true', help='exit 1 unless every requested check is OK'
+    )
     ap.add_argument(
         '--section', default='', help=f'comma-separated subset of: {", ".join(SECTIONS)}'
     )
@@ -722,14 +936,13 @@ def main() -> int:
     checks.extend(host.get('devices', []))
     if 'sensors' in requested:
         checks.extend(rate_checks('sensors', SENSOR_TOPICS, ros))
-        checks.extend(value_checks(ros))
     if 'actuators' in requested:
         checks.extend(actuator_checks(ros))
     checks.extend(host.get('system', []))
     checks.extend(host.get('services', []))
     checks.extend(host.get('network', []))
 
-    exit_code = exit_code_for(checks)
+    exit_code = exit_code_for(checks, args.strict)
     elapsed = time.monotonic() - started
 
     if args.json:
@@ -737,6 +950,8 @@ def main() -> int:
             json.dumps(
                 {
                     'elapsed_sec': round(elapsed, 2),
+                    'result': overall(checks),
+                    'strict': args.strict,
                     'exit_code': exit_code,
                     'checks': [c.__dict__ for c in checks],
                 },
@@ -744,7 +959,7 @@ def main() -> int:
             )
         )
     else:
-        print(render(checks, elapsed, exit_code))
+        print(render(checks, elapsed, exit_code, args.strict, use_color()))
     return exit_code
 
 

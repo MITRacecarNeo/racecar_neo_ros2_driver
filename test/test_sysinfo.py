@@ -186,6 +186,35 @@ class TestMemory:
         assert sysinfo.parse_meminfo('MemTotal: 1024 kB\n') is None
 
 
+class TestCpuTimes:
+    STAT = 'cpu  494969 599 69983 34490 4416 0 9467 0 0 0\ncpu0 1 2 3 4 5 6 7 8 0 0\n'
+
+    def test_idle_and_iowait_are_not_busy(self):
+        busy, total = sysinfo.parse_cpu_times(self.STAT)
+        assert total == 494969 + 599 + 69983 + 34490 + 4416 + 9467
+        assert busy == total - 34490 - 4416
+
+    def test_guest_fields_are_not_double_counted(self):
+        # guest (field 9) is already inside user.
+        assert sysinfo.parse_cpu_times('cpu 10 0 0 90 0 0 0 0 7 0\n') == (10, 100)
+
+    def test_malformed_is_none(self):
+        assert sysinfo.parse_cpu_times('cpu x y\n') is None
+        assert sysinfo.parse_cpu_times('intr 1 2\n') is None
+
+
+class TestArmClock:
+    def test_firmware_clock_in_mhz(self, fake_run):
+        fake_run.result = _completed('frequency(0)=1000008576\n')
+        current, _maximum = sysinfo.read_arm_clock()
+        assert current == 1000
+        assert fake_run.calls[0] == ['vcgencmd', 'measure_clock', 'arm']
+
+    def test_no_vcgencmd(self, fake_run):
+        fake_run.exc = FileNotFoundError('vcgencmd')
+        assert sysinfo.read_arm_clock()[0] is None
+
+
 class TestDisk:
     def test_gib_and_percent(self, monkeypatch):
         gib = 1024**3
