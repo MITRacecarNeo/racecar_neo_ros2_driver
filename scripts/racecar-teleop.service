@@ -2,9 +2,8 @@
 Description=RACECAR Neo Teleop (control + sensors + ML + display)
 After=network-online.target
 Wants=network-online.target
-# Pull watchdog along when teleop starts; BindsTo in watchdog stops it when
-# teleop stops. Wants=racecar-watchdog is a "best-effort start" — teleop
-# still comes up if watchdog fails for some reason.
+# Wants= starts watchdog with teleop without requiring it; watchdog's
+# BindsTo= stops it with teleop.
 Wants=racecar-watchdog.service
 
 [Service]

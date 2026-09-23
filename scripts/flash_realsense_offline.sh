@@ -53,9 +53,8 @@ done
 
 FW_BIN="$FW_DIR/D4XX_FW_Image-${FW_VERSION}.bin"
 
-# rs-* tools ship with the ROS librealsense2 package. Source the overlay so the
-# binaries resolve; the flash itself passes RS_LIB to root explicitly (below),
-# since sudo strips LD_* from the environment even with -E.
+# rs-* tools ship with the ROS librealsense2 package; source the overlay so the
+# binaries resolve.
 if ! command -v rs-fw-update >/dev/null 2>&1; then
     # shellcheck disable=SC1091
     [ -f /opt/ros/jazzy/setup.bash ] && source /opt/ros/jazzy/setup.bash
@@ -68,9 +67,9 @@ if [ -z "$RS_FW_UPDATE" ] || [ -z "$RS_ENUM" ]; then
     exit 1
 fi
 
-# The librealsense libs sit under the arch triplet dir (…/lib/aarch64-linux-gnu),
-# which the sourced overlay put on LD_LIBRARY_PATH. Reuse that verbatim rather
-# than guess the triplet; fall back to a derived default if it is somehow empty.
+# The librealsense libs sit under the arch triplet dir (.../lib/aarch64-linux-gnu),
+# which the sourced overlay put on LD_LIBRARY_PATH. Reuse that rather than
+# guess the triplet; else derive the default.
 if [ -z "$RS_LIB" ]; then
     RS_LIB="${LD_LIBRARY_PATH:-/opt/ros/jazzy/lib/$(uname -m)-linux-gnu:/opt/ros/jazzy/lib}"
 fi
@@ -136,7 +135,8 @@ fi
 # --- Firmware file must be staged locally ---
 if [ ! -f "$FW_BIN" ]; then
     echo "ERROR: firmware image not found: $FW_BIN" >&2
-    echo "  Stage it once on a networked machine, then re-clone (see header)." >&2
+    echo "  Stage it once on a networked machine, then re-clone." >&2
+    echo "  Staging steps: racecar setup realsense --help" >&2
     if [ -d "$FW_DIR" ]; then
         echo "  Files present in $FW_DIR:" >&2
         ls -1 "$FW_DIR" 2>/dev/null | sed 's/^/    /' >&2 || true

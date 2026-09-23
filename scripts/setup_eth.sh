@@ -13,6 +13,7 @@
 # differs, and `netplan apply` runs only when something changed.
 #
 # Test hooks:
+#   RACECAR_ETH_IFACE     interface (default eth0)
 #   RACECAR_ETH_NETPLAN   netplan file path (default /etc/netplan/99-racecar-eth0.yaml)
 #   RACECAR_ETH_CONFIG    persisted settings file
 #   RACECAR_ETH_DRY_RUN=1 render and write without sudo; never runs netplan apply
@@ -55,7 +56,7 @@ usage: setup_eth.sh <static|dynamic|status> [--addr=CIDR] [--force]
   status    configured mode, live addresses, routes, and conflict checks.
 
   --addr=CIDR  static address to use, persisted for later runs
-  --force      skip the confirmation when the calling SSH session is on eth0
+  --force, -y  skip the confirmation when the calling SSH session is on eth0
 USAGE
 }
 
@@ -89,10 +90,8 @@ v4_addrs() {
 v6_default_route() { ip -6 route show default dev "$IFACE" 2>/dev/null; }
 v4_default_route() { ip -4 route show default dev "$IFACE" 2>/dev/null; }
 
-# Read a root-owned file without ever prompting. netplan files are mode 600
-# root:root, so a plain user cannot read them; `racecar eth status` is
-# read-only and must not stop to ask for a password, so this degrades to an
-# empty result and the caller reports that it could not look.
+# Read a root-owned file without prompting for a password (netplan files are
+# mode 600); prints nothing when unreadable.
 read_priv() {
     if [ -r "$1" ]; then
         cat "$1" 2>/dev/null
@@ -101,9 +100,8 @@ read_priv() {
     fi
 }
 
-# The mode the netplan file declares, independent of what is currently live.
-# "unreadable" and "unknown" are different answers: the first means we could
-# not look, the second means we looked and the file declares neither.
+# The mode the netplan file declares, independent of what is live: static,
+# dynamic, absent, unreadable (could not look) or unknown (declares neither).
 configured_mode() {
     local content
     if [ ! -e "$NETPLAN_PATH" ] && ! sudo -n test -e "$NETPLAN_PATH" 2>/dev/null; then
@@ -122,13 +120,9 @@ configured_mode() {
     fi
 }
 
-# Other netplan files that also configure this interface. Nothing trips this
-# today (the 90-NM-*.yaml files are wifi connections and carry no ethernet
-# stanza), but a competing address from another source is a second route back
-# to the same conflict, so the check stays as a guard.
-# Sets COMPETING to the matching files and COMPETING_SCANNED to 0 when none of
-# the files could be read, so status can distinguish "nothing competes" from
-# "could not look".
+# Other netplan files that also configure this interface. Sets COMPETING to
+# the matching files and COMPETING_SCANNED to the number read (0 = could not
+# look).
 competing_netplan() {
     local f base dir content
     base="$(basename "$NETPLAN_PATH")"

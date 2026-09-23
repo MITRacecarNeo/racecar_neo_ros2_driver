@@ -1,34 +1,24 @@
 """
 NEO-PIT board driver: the Pi's single owner of the Teensy UART link.
 
-Replaces the Maestro actuator path (pwm_node + maestro.py) and the I2C IMU
-reader (imu_node). One node owns the serial port because only one process can:
+One node owns the serial port because only one process can:
 
   - subscribes /motor (AckermannDriveStamped, normalized [-1, 1]) and streams
-    command frames to the Teensy at command_rate_hz (normalized passthrough:
-    the Teensy maps the values to servo/ESC PWM);
+    command frames to the Teensy at command_rate_hz; the Teensy maps the values
+    to servo/ESC PWM;
   - reads telemetry frames and republishes the LSM9DS1 as /imu/lsm9ds1 + /mag
-    (imu_fusion_node blends /imu/lsm9ds1 with the RealSense /imu/realsense into
-    /imu/fused, the single IMU the library reads); both topics are parameters.
+    (imu_fusion_node blends /imu/lsm9ds1 with /imu/realsense into /imu/fused).
 
-Encoder telemetry is republished as vehicle speed (m/s) on encoder_topic and,
-when publish_odom is set, wrapped as nav_msgs/Odometry on odom_topic for
-consumers that expect the standard message. Battery current and the RC
-channels are republished too, the latter both as normalized values (rc_topic)
-and as a link-up flag read from the raw widths (rc_link_topic). The
-node also forwards display state to the Teensy in each command frame: the drive
-mode (from /joy) and per-display "active" flags in SystemState, plus the
-dot-matrix bitmap (dotmatrix_topic) and LED colors (led_topic). Command values
-are forwarded raw with a per-axis sign so steering/throttle polarity can be
-corrected on hardware without reflashing. On a stale or missing /motor command
-the node sends neutral, and it tolerates a missing serial device (retries).
+Also republishes encoder speed, /odom, battery power and the RC channels, and
+forwards the drive mode and display content in each command frame. A stale or
+missing /motor command sends neutral; a missing serial device is retried.
 
-IMU axis order/sign and the gyro/mag unit scales default to identity/pass-through
-and MUST be verified against the LSM9DS1 mounting on the PIT PCB and the units
-the firmware's Adafruit driver emits; the physical-axis convention students rely
-on is documented in racecar-neo-library physics.py.
+The gyro and mag unit scales are unverified; see config/pit.yaml. The
+physical-axis convention students rely on is documented in racecar-neo-library
+physics.py.
 """
 
+from collections.abc import Sequence
 import threading
 import time
 
@@ -49,8 +39,8 @@ import serial
 from std_msgs.msg import Bool, Float32, Float32MultiArray, UInt8MultiArray
 
 from . import pit_protocol as pit
+from .limits import clamp
 from .mux_node import MuxMode, select_mode
-
 
 # RxPacket.SystemState bit layout; mirror of the firmware cfg::SYS_STATE.
 SYS_MODE_MASK = 0x03
@@ -90,8 +80,9 @@ def build_odom(speed_mps: float, frame_id: str, child_frame_id: str) -> Odometry
     return odom
 
 
-# Display payload sizes: 8x24 monochrome bitmap, 84 RGB LED triplets.
-DOT_FRAME_LEN = 192
+# Display payload sizes: 8x24 monochrome bitmap, 84 RGB LED triplets. The
+# firmware's led[255] field has 3 spare bytes; encode_command zero-pads them.
+DOT_FRAME_LEN = pit.DOT_MATRIX_LEN
 LED_FRAME_LEN = 84 * 3
 
 _MODE_BITS = {
@@ -101,28 +92,16 @@ _MODE_BITS = {
 }
 
 
-def clamp(value: float, low: float = -1.0, high: float = 1.0) -> float:
-    return max(low, min(high, value))
-
-
-def remap_axes(vec, order, sign) -> np.ndarray:
-    """Reorder and sign-flip a 3-vector: out[i] = sign[i] * vec[order[i]]."""
+def remap_axes(
+    vec: Sequence[float], order: Sequence[int], sign: Sequence[float], scale: float = 1.0
+) -> np.ndarray:
+    """Reorder, sign-flip and scale a 3-vector: out[i] = scale * sign[i] * vec[order[i]]."""
     v = np.asarray(vec, dtype=float)
-    return np.array([sign[i] * v[order[i]] for i in range(3)])
-
-
-def transform_accel(raw, order, sign, scale, bias) -> np.ndarray:
-    """Raw accel (m/s^2 from the firmware) to the body frame, minus bias."""
-    return remap_axes(raw, order, sign) * scale - np.asarray(bias, dtype=float)
-
-
-def transform_gyro(raw, order, sign, scale, bias) -> np.ndarray:
-    """Raw gyro to the body frame in rad/s (scale=deg->rad if needed), minus bias."""
-    return remap_axes(raw, order, sign) * scale - np.asarray(bias, dtype=float)
+    return np.array([sign[i] * v[order[i]] for i in range(3)]) * scale
 
 
 class PitNode(Node):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__('pit_node')
 
         self.declare_parameter('serial_port', '/dev/neo-pit-pcb')
@@ -139,9 +118,7 @@ class PitNode(Node):
         self.declare_parameter('voltage_topic', '/battery/voltage')
         self.declare_parameter('current_topic', '/battery/current')
         self.declare_parameter('rc_topic', '/rc/channels')
-        # Link state from the raw pulse widths, before rc_normalized clamps a
-        # dead channel onto the same value as a switch held low. mux_node reads
-        # this to decide whether a transmitter may take drive authority.
+        # Link state from raw pulse widths; see Telemetry.rc_link_up.
         self.declare_parameter('rc_link_topic', '/rc/link')
 
         # Encoder speed republish + display/LED command forwarding to the Teensy.
@@ -166,18 +143,17 @@ class PitNode(Node):
 
         self.declare_parameter('frame_id', 'imu_link')
         self.declare_parameter('publish_mag', True)
-        # imu_fusion_node blends this with /imu/realsense into /imu/fused.
         self.declare_parameter('imu_topic', '/imu/lsm9ds1')
         self.declare_parameter('mag_topic', '/mag')
-        # Axis remap + unit scales. Identity/pass-through until verified on the PCB.
+        # Axis remap + unit scales; the verified values live in config/pit.yaml.
         self.declare_parameter('imu.accel_gyro_axis_order', [0, 1, 2])
         self.declare_parameter('imu.accel_gyro_axis_sign', [1.0, 1.0, 1.0])
         self.declare_parameter('imu.mag_axis_order', [0, 1, 2])
         self.declare_parameter('imu.mag_axis_sign', [1.0, 1.0, 1.0])
         self.declare_parameter('imu.accel_scale', 1.0)
-        self.declare_parameter('imu.gyro_scale', 1.0)      # deg/s -> rad/s = 0.01745329
-        self.declare_parameter('imu.mag_scale', 1.0e-6)    # firmware uT -> Tesla
-        # Reuse the lsm9ds1 calibration YAMLs (same keys as imu_node).
+        self.declare_parameter('imu.gyro_scale', 1.0)  # deg/s -> rad/s = 0.01745329
+        self.declare_parameter('imu.mag_scale', 1.0e-6)  # firmware uT -> Tesla
+        # Keys match config/lsm9ds1_cal.yaml and config/lsm9ds1_mag_cal.yaml.
         self.declare_parameter('accelerometer.bias', [0.0, 0.0, 0.0])
         self.declare_parameter('gyroscope.bias', [0.0, 0.0, 0.0])
         self.declare_parameter('magnetometer.hard_iron_bias', [0.0, 0.0, 0.0])
@@ -221,9 +197,7 @@ class PitNode(Node):
         self._mag_scale = float(self.get_parameter('imu.mag_scale').value)
         self._accel_bias = np.array(self.get_parameter('accelerometer.bias').value, float)
         self._gyro_bias = np.array(self.get_parameter('gyroscope.bias').value, float)
-        self._mag_hard = np.array(
-            self.get_parameter('magnetometer.hard_iron_bias').value, float
-        )
+        self._mag_hard = np.array(self.get_parameter('magnetometer.hard_iron_bias').value, float)
         self._mag_soft = np.array(
             self.get_parameter('magnetometer.soft_iron_matrix.data').value, float
         ).reshape(3, 3)
@@ -240,8 +214,7 @@ class PitNode(Node):
         self._pub_mag_raw = self.create_publisher(MagneticField, f'{self._mag_topic}/raw', qos)
         self._pub_encoder = self.create_publisher(Float32, self._encoder_topic, qos)
         self._pub_odom = (
-            self.create_publisher(Odometry, self._odom_topic, qos)
-            if self._publish_odom else None
+            self.create_publisher(Odometry, self._odom_topic, qos) if self._publish_odom else None
         )
         self._pub_voltage = self.create_publisher(Float32, self._voltage_topic, qos)
         self._pub_current = self.create_publisher(Float32, self._current_topic, qos)
@@ -255,13 +228,13 @@ class PitNode(Node):
         self._latest_speed = 0.0
         self._latest_steer = 0.0
         self._cmd_stamp = 0.0
-        self._dot_frame = None
+        self._dot_frame: bytes | None = None
         self._dot_stamp = 0.0
-        self._led_frame = None
+        self._led_frame: bytes | None = None
         self._led_stamp = 0.0
-        self._joy_buttons = []
+        self._joy_buttons: list[int] = []
         self._start_time = time.monotonic()
-        self._ser = None
+        self._ser: serial.Serial | None = None
         self._write_lock = threading.Lock()
         self._crc_fail_count = 0
         self._running = True
@@ -279,8 +252,8 @@ class PitNode(Node):
             f'require_crc={self._require_crc}'
         )
         self.get_logger().warn(
-            'Verify IMU axis order/sign and gyro/mag scales against the PIT board '
-            f'before trusting {self._imu_topic} and {self._mag_topic}.'
+            'IMU gyro/mag unit scales are unverified; check imu.gyro_scale and '
+            f'imu.mag_scale before trusting {self._imu_topic} and {self._mag_topic}.'
         )
 
     def _open_serial(self) -> bool:
@@ -293,25 +266,25 @@ class PitNode(Node):
             self.get_logger().warn(f'Cannot open {self._port}: {exc}; retrying')
             return False
 
-    def _motor_cb(self, msg: AckermannDriveStamped):
+    def _motor_cb(self, msg: AckermannDriveStamped) -> None:
         self._latest_speed = clamp(msg.drive.speed)
         self._latest_steer = clamp(msg.drive.steering_angle)
         self._cmd_stamp = time.monotonic()
 
-    def _dot_cb(self, msg: UInt8MultiArray):
+    def _dot_cb(self, msg: UInt8MultiArray) -> None:
         data = bytes(bytearray(msg.data))[:DOT_FRAME_LEN]
         self._dot_frame = data.ljust(DOT_FRAME_LEN, b'\x00')
         self._dot_stamp = time.monotonic()
 
-    def _led_cb(self, msg: UInt8MultiArray):
+    def _led_cb(self, msg: UInt8MultiArray) -> None:
         data = bytes(bytearray(msg.data))[:LED_FRAME_LEN]
         self._led_frame = data.ljust(LED_FRAME_LEN, b'\x00')
         self._led_stamp = time.monotonic()
 
-    def _joy_cb(self, msg: Joy):
+    def _joy_cb(self, msg: Joy) -> None:
         self._joy_buttons = list(msg.buttons)
 
-    def _build_display(self, now: float):
+    def _build_display(self, now: float) -> tuple[int, bytes | None, bytes | None]:
         """Build the SystemState byte + dot-matrix/LED payloads for this frame."""
         mode = select_mode(self._joy_buttons, self._gamepad_btn, self._auto_btn)
         state = _MODE_BITS.get(mode, SYS_MODE_IDLE)
@@ -331,7 +304,7 @@ class PitNode(Node):
 
         return state, dot, led
 
-    def _send_command(self):
+    def _send_command(self) -> None:
         if self._ser is None or not self._ser.is_open:
             return
         now = time.monotonic()
@@ -349,7 +322,7 @@ class PitNode(Node):
             self.get_logger().warn(f'Serial write failed: {exc}; reconnecting')
             self._close_serial()
 
-    def _read_loop(self):
+    def _read_loop(self) -> None:
         buffer = bytearray()
         while self._running:
             if self._ser is None or not self._ser.is_open:
@@ -372,7 +345,7 @@ class PitNode(Node):
                 elif consumed == 0:
                     break
 
-    def _publish_telemetry(self, telem: pit.Telemetry):
+    def _publish_telemetry(self, telem: pit.Telemetry) -> None:
         if self._require_crc and not telem.crc_ok:
             self._crc_fail_count += 1
             if self._crc_fail_count % 100 == 1:
@@ -382,12 +355,8 @@ class PitNode(Node):
             return
 
         stamp = self.get_clock().now().to_msg()
-        raw_accel = transform_accel(
-            telem.accel, self._ag_order, self._ag_sign, self._accel_scale, [0.0, 0.0, 0.0]
-        )
-        raw_gyro = transform_gyro(
-            telem.gyro, self._ag_order, self._ag_sign, self._gyro_scale, [0.0, 0.0, 0.0]
-        )
+        raw_accel = remap_axes(telem.accel, self._ag_order, self._ag_sign, self._accel_scale)
+        raw_gyro = remap_axes(telem.gyro, self._ag_order, self._ag_sign, self._gyro_scale)
         accel = raw_accel - self._accel_bias
         gyro = raw_gyro - self._gyro_bias
 
@@ -437,7 +406,7 @@ class PitNode(Node):
         self._pub_rc_link.publish(rc_link)
 
         if self._publish_mag:
-            raw_mag = remap_axes(telem.mag, self._mag_order, self._mag_sign) * self._mag_scale
+            raw_mag = remap_axes(telem.mag, self._mag_order, self._mag_sign, self._mag_scale)
             mag_vec = self._mag_soft @ (raw_mag - self._mag_hard)
 
             mag = MagneticField()
@@ -456,7 +425,7 @@ class PitNode(Node):
             mag_raw.magnetic_field.z = float(raw_mag[2])
             self._pub_mag_raw.publish(mag_raw)
 
-    def _close_serial(self):
+    def _close_serial(self) -> None:
         try:
             if self._ser is not None:
                 self._ser.close()
@@ -464,7 +433,7 @@ class PitNode(Node):
             pass
         self._ser = None
 
-    def shutdown(self):
+    def shutdown(self) -> None:
         self._running = False
         if self._ser is not None and self._ser.is_open:
             try:
@@ -475,7 +444,7 @@ class PitNode(Node):
         self._close_serial()
 
 
-def main(args=None):
+def main(args: list[str] | None = None) -> None:
     rclpy.init(args=args)
     node = PitNode()
     try:

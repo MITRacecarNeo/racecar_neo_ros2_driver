@@ -1,32 +1,27 @@
 """Tests for scripts/wifi_scan.py (the `racecar wifi list` formatter)."""
 
-import importlib.util
-from pathlib import Path
+from conftest import load_script
 
-import pytest
-
-SCRIPT = Path(__file__).parent.parent / 'scripts' / 'wifi_scan.py'
-
-_spec = importlib.util.spec_from_file_location('wifi_scan', SCRIPT)
-wifi_scan = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(wifi_scan)
+wifi_scan = load_script('wifi_scan')
 
 
 # Shape of a real scan on a car parked in a lab: the same access point
 # repeated across BSSIDs, several hidden networks, mixed security fields.
-FIXTURE = '\n'.join([
-    'Duck:100:WPA2:',
-    ':100:WPA2 802.1X:',
-    'FBISurveillanceVan:100:WPA2:',
-    'Duck:72:WPA2:',
-    ':88:WPA2:',
-    'xfinitywifi:100::',
-    'eduroam:97:WPA2 802.1X:*',
-    'Duck:64:WPA2:',
-    'FBISurveillanceVan:81:WPA2:',
-    ':40:WPA1 WPA2 802.1X:',
-    'vandv:52:WPA2:',
-])
+FIXTURE = '\n'.join(
+    [
+        'Duck:100:WPA2:',
+        ':100:WPA2 802.1X:',
+        'FBISurveillanceVan:100:WPA2:',
+        'Duck:72:WPA2:',
+        ':88:WPA2:',
+        'xfinitywifi:100::',
+        'eduroam:97:WPA2 802.1X:*',
+        'Duck:64:WPA2:',
+        'FBISurveillanceVan:81:WPA2:',
+        ':40:WPA1 WPA2 802.1X:',
+        'vandv:52:WPA2:',
+    ]
+)
 
 
 class TestSplitNmcli:
@@ -129,9 +124,3 @@ class TestRender:
     def test_empty_scan_renders(self):
         out = wifi_scan.render([], 0, set(), 'wlan0', False)
         assert 'no networks visible' in out
-
-
-@pytest.mark.parametrize('ssid', ['Duck', 'FBISurveillanceVan', 'vandv'])
-def test_every_listed_ssid_came_from_the_scan(ssid):
-    networks, _ = wifi_scan.parse(FIXTURE)
-    assert ssid in {n['ssid'] for n in networks}

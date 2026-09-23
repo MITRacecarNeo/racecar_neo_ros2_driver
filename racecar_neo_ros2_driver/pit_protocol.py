@@ -24,9 +24,8 @@ The firmware frames the command by scanning for the 4 magic bytes, then reading
 sizeof(RxPacket) further bytes; the magic is not part of the RxPacket struct.
 
 checksum is CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF) over every byte that
-precedes the 2-byte checksum field, magic included. The current firmware does
-not yet compute or verify it (see decode_telemetry crc_ok and the migration
-notes); callers decide whether to enforce.
+precedes the 2-byte checksum field, magic included. Callers decide whether to
+enforce it (pit_node require_crc).
 """
 
 from dataclasses import dataclass
@@ -82,31 +81,30 @@ class Telemetry:
     Adafruit_LSM9DS1 getEvent() emits (accel m/s^2; gyro and mag units are
     unverified, see pit_node scale params). volt_curr is [bus voltage mV,
     current mA]; rc is the eight FlySky channels as raw pulse widths in us
-    (~1000-2000). crc_ok reflects the CRC-16 check; it is False against current
-    firmware, which leaves the checksum field uninitialized.
+    (~1000-2000). crc_ok reflects the CRC-16 check.
     """
 
     version: int
     mcu_id: int
     timestamp_us: int
-    volt_curr: tuple
-    rc: tuple
-    imu: tuple
+    volt_curr: tuple[int, ...]
+    rc: tuple[int, ...]
+    imu: tuple[float, ...]
     encoder: float
-    ekf: tuple
+    ekf: tuple[float, ...]
     checksum: int
     crc_ok: bool
 
     @property
-    def accel(self) -> tuple:
+    def accel(self) -> tuple[float, ...]:
         return self.imu[0:3]
 
     @property
-    def gyro(self) -> tuple:
+    def gyro(self) -> tuple[float, ...]:
         return self.imu[3:6]
 
     @property
-    def mag(self) -> tuple:
+    def mag(self) -> tuple[float, ...]:
         return self.imu[6:9]
 
     @property
@@ -122,22 +120,16 @@ class Telemetry:
     @property
     def rc_link_up(self) -> bool:
         """
-        Report whether every RC channel carries a plausible pulse width.
+        Report whether every raw channel width is in [RC_PULSE_MIN_US, RC_PULSE_MAX_US].
 
-        Read this, not rc_normalized, to decide whether a transmitter is
-        present. The normalization clamps into [-1, 1], which puts a dead
-        channel (near 0 us) on exactly -1.0 -- the same value a switch held at
-        its low end produces. The two are indistinguishable after the clamp, so
-        link state has to come from the raw widths.
-
-        This is a single frame's verdict. Deciding that a link is live enough
-        to hand it authority also needs freshness and a sustained hold, which
-        are stateful and belong to the consumer.
+        Use this, not rc_normalized, for transmitter presence: the clamp maps a
+        dead channel and a switch held low to the same -1.0. Single-frame
+        verdict; freshness and hold time belong to the consumer.
         """
         return all(RC_PULSE_MIN_US <= c <= RC_PULSE_MAX_US for c in self.rc)
 
     @property
-    def rc_normalized(self) -> tuple:
+    def rc_normalized(self) -> tuple[float, ...]:
         """
         Map the eight FlySky channels to [-1, 1].
 
@@ -183,39 +175,48 @@ def encode_command(
     servo: float,
     motor: float,
     system_state: int = 0,
-    dot_matrix: bytes = None,
-    led: bytes = None,
+    dot_matrix: bytes | None = None,
+    led: bytes | None = None,
 ) -> bytes:
     """
     Build a full command frame (magic prefix + body + CRC), RX_WIRE_SIZE bytes.
 
-    servo and motor are the normalized [-1, 1] steering and speed commands
-    (normalized-passthrough: the Teensy maps them to servo/ESC PWM). dot_matrix
-    (<=192 bytes) and led (<=255 bytes) are zero-padded display payloads; the
-    current firmware ignores them.
+    servo and motor are the normalized [-1, 1] steering and speed commands.
+    dot_matrix (up to 192 bytes) and led (up to 255 bytes) are zero-padded.
     """
     dot = bytes(dot_matrix or b'')[:DOT_MATRIX_LEN].ljust(DOT_MATRIX_LEN, b'\x00')
     led_bytes = bytes(led or b'')[:LED_LEN].ljust(LED_LEN, b'\x00')
 
     body_wo_crc = (
-        struct.pack('<BBHIHHff', PROTO_VERSION, 0, RX_BODY_SIZE, RX_BODY_SIZE, 0, 1,
-                    float(servo), float(motor))
-        + dot + led_bytes + struct.pack('<B', system_state & 0xFF)
+        struct.pack(
+            '<BBHIHHff',
+            PROTO_VERSION,
+            0,
+            RX_BODY_SIZE,
+            RX_BODY_SIZE,
+            0,
+            1,
+            float(servo),
+            float(motor),
+        )
+        + dot
+        + led_bytes
+        + struct.pack('<B', system_state & 0xFF)
     )
     wire_wo_crc = _RX_MAGIC_LE + body_wo_crc
     crc = crc16_ccitt(wire_wo_crc)
     return wire_wo_crc + struct.pack('<H', crc)
 
 
-def scan_for_packet(buffer: bytearray) -> tuple:
+def scan_for_packet(buffer: bytearray) -> tuple[Telemetry | None, int]:
     """
     Extract the first complete telemetry frame from a rolling byte buffer.
 
-    Returns (Telemetry, consumed) once a full framed packet is found, dropping
-    any leading garbage; returns (None, drop) when no complete packet is
-    present yet, where drop bytes have already been discarded from the front of
-    buffer (kept small so a truncated magic straddling reads is not lost).
-    Mutates buffer in place: consumed/dropped bytes are removed.
+    Mutates buffer in place, discarding leading garbage. Returns
+    (Telemetry, consumed) for a decoded frame, (None, n) after discarding n
+    bytes that held no frame (scan again), or (None, 0) when more bytes are
+    needed. The last 3 bytes are kept when no magic is present, so a magic
+    split across reads is not lost.
     """
     idx = buffer.find(_TX_MAGIC_LE)
     if idx == -1:

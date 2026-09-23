@@ -1,9 +1,8 @@
 # LSM9DS1 accelerometer and gyroscope bias, consumed by pit_node via
-# pit.launch.py. Regenerate per car with:
+# pit.launch.py. Zeros are the uncalibrated defaults, identical to what
+# pit_node declares. Per-car values go in lsm9ds1_cal.local.yaml (gitignored,
+# loaded after this file), written by:
 #   ros2 run racecar_neo_ros2_driver calibrate_imu.py
-#
-# Zeros below are the uncalibrated defaults; pit_node declares the same values,
-# so an uncalibrated car behaves identically with or without this file.
 pit_node:
   ros__parameters:
     accelerometer.bias: [0.0, 0.0, 0.0]

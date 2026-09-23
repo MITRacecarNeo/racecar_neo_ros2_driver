@@ -1,23 +1,21 @@
 """
 Coral EdgeTPU object-detection node.
 
-Subscribes to the colour camera topic, resizes each frame to the model's input shape,
-runs inference on the USB EdgeTPU, and publishes
-vision_msgs/Detection2DArray on /edgetpu/inference plus a per-second
+Subscribes to the color camera topic, resizes each frame to the model's input
+shape, runs inference on the M.2 (PCIe) EdgeTPU, and publishes
+vision_msgs/Detection2DArray on /edgetpu/inference plus a periodic
 diagnostic_msgs/DiagnosticArray on /diagnostics.
 
-Inference is rate limited by inference_rate_hz, independently of the camera.
-The colour stream runs at 60 fps and nothing downstream consumes detections
-faster than the dashboards draw them, so inferring on every frame spent TPU
-time and current for results nobody read. Frames above the rate are dropped
-before the decode, which is where the cost is.
+Inference is capped at inference_rate_hz, independent of the camera; frames
+above the cap are dropped before decode.
 
-Numpy-only image path — no cv_bridge or cv2 dependency.
+Numpy-only image path; no cv_bridge or cv2 dependency.
 """
 
 import os
 import re
 import time
+from typing import Any
 
 from ament_index_python.packages import get_package_share_directory
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
@@ -25,8 +23,10 @@ import numpy as np
 from PIL import Image as PILImage
 from pycoral.utils.edgetpu import list_edge_tpus, make_interpreter
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
+from rclpy.time import Time
 from sensor_msgs.msg import Image
 from vision_msgs.msg import (
     BoundingBox2D,
@@ -39,7 +39,7 @@ from vision_msgs.msg import (
 )
 
 
-def load_labels(path: str) -> dict:
+def load_labels(path: str) -> dict[int, str]:
     """Parse a one-class-per-line labels file into {index: name}."""
     labels = {}
     with open(path) as f:
@@ -66,7 +66,7 @@ def image_msg_to_rgb(msg: Image) -> np.ndarray:
 
 
 def resize_rgb(rgb: np.ndarray, target_w: int, target_h: int) -> np.ndarray:
-    """Bilinear-resize an (H, W, 3) uint8 array via PIL — Coral expects uint8."""
+    """Bilinear-resize an (H, W, 3) uint8 array via PIL; Coral expects uint8."""
     pil = PILImage.fromarray(rgb, mode='RGB')
     return np.asarray(pil.resize((target_w, target_h), PILImage.BILINEAR))
 
@@ -79,7 +79,9 @@ def resize_rgb(rgb: np.ndarray, target_w: int, target_h: int) -> np.ndarray:
 _ROLE_BY_NAME_SUFFIX = {3: 'boxes', 2: 'classes', 1: 'scores', 0: 'count'}
 
 
-def roles_from_names(output_details):
+def roles_from_names(
+    output_details: list[dict[str, Any]],
+) -> tuple[int, int, int, int] | None:
     """
     Match output tensors to roles by their name suffix.
 
@@ -109,16 +111,17 @@ def roles_from_names(output_details):
     return roles['boxes'], roles['scores'], roles['classes'], roles['count']
 
 
-def map_output_tensors(output_details):
+def map_output_tensors(
+    output_details: list[dict[str, Any]],
+) -> tuple[int, int, int | None, int | None]:
     """
     Match an SSD-style model's output tensors to (boxes, scores, classes, count) indices.
 
     EfficientDet-Lite and other SSD-family models have four outputs but
-    get_output_details() does not order them consistently: this repository's
-    two models report them in different orders. Prefer the name suffix, which
-    distinguishes scores from classes; fall back to shape when a model does
-    not carry the standard names, where the two (1, N) tensors can only be
-    told apart by position:
+    get_output_details() does not order them consistently. Prefer the name
+    suffix, which distinguishes scores from classes; fall back to shape when a
+    model does not carry the standard names, where the two (1, N) tensors can
+    only be told apart by position:
       - boxes:   (1, N, 4)
       - scores:  (1, N)
       - classes: (1, N), same shape as scores; whichever comes second
@@ -148,12 +151,12 @@ def map_output_tensors(output_details):
 
 
 class EdgeTPUNode(Node):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__('edgetpu_node')
 
         self.declare_parameter('model_path', '')
         self.declare_parameter('labels_path', '')
-        self.declare_parameter('score_threshold', 0.5)
+        self.declare_parameter('score_threshold', 0.4)
         self.declare_parameter('max_detections', 0)
         self.declare_parameter('image_topic', '/camera/color')
         self.declare_parameter('inference_rate_hz', 15.0)
@@ -192,12 +195,8 @@ class EdgeTPUNode(Node):
         if not tpus:
             self.get_logger().fatal('No EdgeTPU device detected')
             raise SystemExit(1)
-        self.get_logger().info(
-            f'EdgeTPU found: {tpus[0]["type"]} at {tpus[0]["path"]}'
-        )
+        self.get_logger().info(f'EdgeTPU found: {tpus[0]["type"]} at {tpus[0]["path"]}')
 
-        # The M.2 Apex is bound at boot and loads on the first try; no USB
-        # firmware-enumeration retry needed.
         self._interpreter = make_interpreter(model_path)
         self._interpreter.allocate_tensors()
 
@@ -222,28 +221,20 @@ class EdgeTPUNode(Node):
         self._detection_count = 0
         self._last_inference_ms = 0.0
         self._avg_inference_ms = 0.0
-        self._last_image_time = None
+        self._last_image_time: Time | None = None
         self._last_inference_at = 0.0
         self._frames_dropped = 0
         self._tpu_ok = True
         self._scores_checked = False
 
-        self._det_pub = self.create_publisher(
-            Detection2DArray, '/edgetpu/inference', 10
-        )
-        self._diag_pub = self.create_publisher(
-            DiagnosticArray, '/diagnostics', 10
-        )
-        self.create_subscription(
-            Image, image_topic, self._image_cb, qos_profile_sensor_data
-        )
+        self._det_pub = self.create_publisher(Detection2DArray, '/edgetpu/inference', 10)
+        self._diag_pub = self.create_publisher(DiagnosticArray, '/diagnostics', 10)
+        self.create_subscription(Image, image_topic, self._image_cb, qos_profile_sensor_data)
         self.create_timer(diag_period, self._publish_diagnostics)
 
-        self.get_logger().info(
-            f'Subscribed to {image_topic}, publishing /edgetpu/inference'
-        )
+        self.get_logger().info(f'Subscribed to {image_topic}, publishing /edgetpu/inference')
 
-    def _image_cb(self, msg: Image):
+    def _image_cb(self, msg: Image) -> None:
         # Stamped for every frame, before the rate gate: the stale-input
         # watchdog is asking whether the camera is alive, not whether this
         # node chose to infer.
@@ -289,16 +280,20 @@ class EdgeTPUNode(Node):
         ).reshape(-1, 4)
 
         if self._idx_classes is not None:
-            classes = self._interpreter.get_tensor(
-                self._output_details[self._idx_classes]['index']
-            ).flatten().astype(int)
+            classes = (
+                self._interpreter.get_tensor(self._output_details[self._idx_classes]['index'])
+                .flatten()
+                .astype(int)
+            )
         else:
             classes = np.zeros(len(scores), dtype=int)
 
         if self._idx_count is not None:
-            count = int(self._interpreter.get_tensor(
-                self._output_details[self._idx_count]['index']
-            ).flatten()[0])
+            count = int(
+                self._interpreter.get_tensor(
+                    self._output_details[self._idx_count]['index']
+                ).flatten()[0]
+            )
         else:
             count = len(scores)
 
@@ -341,7 +336,7 @@ class EdgeTPUNode(Node):
         self._detection_count += n_det
         self._det_pub.publish(det_array)
 
-    def _rate_limited(self, now=None):
+    def _rate_limited(self, now: float | None = None) -> bool:
         """
         Report whether this frame falls inside the inference interval.
 
@@ -357,7 +352,7 @@ class EdgeTPUNode(Node):
         self._last_inference_at = now
         return False
 
-    def _check_scores_look_like_scores(self, scores):
+    def _check_scores_look_like_scores(self, scores: np.ndarray) -> None:
         """
         Warn once if the scores tensor does not hold confidences.
 
@@ -376,13 +371,13 @@ class EdgeTPUNode(Node):
                 'tensor names against map_output_tensors().'
             )
 
-    def _publish_diagnostics(self):
+    def _publish_diagnostics(self) -> None:
         msg = DiagnosticArray()
         msg.header.stamp = self.get_clock().now().to_msg()
 
         status = DiagnosticStatus()
         status.name = 'EdgeTPU Inference'
-        status.hardware_id = 'coral_edgetpu_usb'
+        status.hardware_id = 'coral_edgetpu_m2'
 
         if not self._tpu_ok:
             status.level = DiagnosticStatus.ERROR
@@ -406,9 +401,12 @@ class EdgeTPUNode(Node):
             KeyValue(key='avg_inference_ms', value=f'{self._avg_inference_ms:.1f}'),
             KeyValue(key='model_input', value=f'{self._model_w}x{self._model_h}'),
             KeyValue(key='score_threshold', value=str(self._score_threshold)),
-            KeyValue(key='inference_rate_hz',
-                     value=f'{1.0 / self._inference_period:.1f}'
-                           if self._inference_period else 'uncapped'),
+            KeyValue(
+                key='inference_rate_hz',
+                value=(
+                    f'{1.0 / self._inference_period:.1f}' if self._inference_period else 'uncapped'
+                ),
+            ),
             KeyValue(key='frames_dropped', value=str(self._frames_dropped)),
             KeyValue(key='tpu_ok', value=str(self._tpu_ok)),
         ]
@@ -416,12 +414,12 @@ class EdgeTPUNode(Node):
         self._diag_pub.publish(msg)
 
 
-def main(args=None):
+def main(args: list[str] | None = None) -> None:
     rclpy.init(args=args)
     node = EdgeTPUNode()
     try:
         rclpy.spin(node)
-    except (KeyboardInterrupt, SystemExit):
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.destroy_node()

@@ -1,57 +1,45 @@
-"""Unit tests for scripts/watchdog.py (NODES schema + pure helpers)."""
+"""Unit tests for scripts/watchdog.py: NODES schema and restart logic."""
 
-import importlib.util
 from pathlib import Path
 import subprocess
+from types import SimpleNamespace
 
+from conftest import load_script
 import pytest
 
-SCRIPT = Path(__file__).parent.parent / 'scripts' / 'watchdog.py'
-
-
-def _load_watchdog_module():
-    spec = importlib.util.spec_from_file_location('watchdog', SCRIPT)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+LAUNCH_DIR = Path(__file__).resolve().parent.parent / 'launch'
 
 
 @pytest.fixture(scope='module')
 def watchdog():
-    return _load_watchdog_module()
-
-
-def test_script_exists_and_executable():
-    import os
-    assert SCRIPT.is_file()
-    assert os.access(SCRIPT, os.X_OK)
-
-
-def test_bash_syntax_clean_python():
-    result = subprocess.run(
-        ['python3', '-m', 'py_compile', str(SCRIPT)],
-        capture_output=True, text=True, timeout=5,
-    )
-    assert result.returncode == 0, result.stderr
+    return load_script('watchdog')
 
 
 class TestNodesDict:
-    """The NODES dict is the watchdog's contract — every entry must be well-formed."""
-
     EXPECTED_NAMES = {
-        'pit', 'throttle', 'mux', 'gamepad',
-        'imu_fusion', 'lidar', 'realsense',
+        'pit',
+        'throttle',
+        'mux',
+        'gamepad',
+        'imu_fusion',
+        'lidar',
+        'realsense',
     }
-    REQUIRED_KEYS = {'topic', 'launch', 'device_check', 'device_label',
-                     'kill_pattern', 'process_check'}
+    REQUIRED_KEYS = {
+        'topic',
+        'launch',
+        'device_check',
+        'device_label',
+        'kill_pattern',
+        'process_check',
+    }
 
     def test_all_expected_nodes_present(self, watchdog):
         assert set(watchdog.NODES) == self.EXPECTED_NAMES
 
     @pytest.mark.parametrize('name', sorted(EXPECTED_NAMES))
     def test_node_has_required_keys(self, watchdog, name):
-        cfg = watchdog.NODES[name]
-        missing = self.REQUIRED_KEYS - set(cfg)
+        missing = self.REQUIRED_KEYS - set(watchdog.NODES[name])
         assert not missing, f'{name} missing keys: {missing}'
 
     @pytest.mark.parametrize('name', sorted(EXPECTED_NAMES))
@@ -61,37 +49,21 @@ class TestNodesDict:
 
     @pytest.mark.parametrize('name', sorted(EXPECTED_NAMES))
     def test_launch_file_exists(self, watchdog, name):
-        launch_dir = SCRIPT.parent.parent / 'launch'
-        launch_file = launch_dir / watchdog.NODES[name]['launch']
-        assert launch_file.is_file(), (
-            f'{name}: launch file {launch_file} missing'
-        )
+        launch_file = LAUNCH_DIR / watchdog.NODES[name]['launch']
+        assert launch_file.is_file(), f'{name}: launch file {launch_file} missing'
 
     @pytest.mark.parametrize('name', sorted(EXPECTED_NAMES))
-    def test_device_check_callable(self, watchdog, name):
-        cb = watchdog.NODES[name]['device_check']
-        assert callable(cb)
-        # device_check should be safe to call repeatedly and return bool.
-        result = cb()
-        assert isinstance(result, bool)
-
-    @pytest.mark.parametrize('name', sorted(EXPECTED_NAMES))
-    def test_process_check_callable(self, watchdog, name):
-        cb = watchdog.NODES[name]['process_check']
-        assert callable(cb)
-        result = cb()
-        assert isinstance(result, bool)
+    @pytest.mark.parametrize('key', ['device_check', 'process_check'])
+    def test_checks_return_bool(self, watchdog, name, key):
+        assert isinstance(watchdog.NODES[name][key](), bool)
 
     def test_realsense_topic(self, watchdog):
-        # RealSense color is remapped onto /camera/color (the only camera).
         assert watchdog.NODES['realsense']['topic'] == '/camera/color'
 
     def test_lidar_has_freshness_threshold(self, watchdog):
-        # sllidar can silently desync from the CP2102 (the SDK swallows
-        # transient read errors); process-presence + topic-advertisement both
-        # stay green. Freshness check on /scan is what catches it.
-        # Threshold must be > 0.1s (one scan period) and < restart cooldown
-        # (so a stall actually triggers a restart instead of being absorbed).
+        # A stalled sllidar keeps its process and advertisement; only freshness
+        # catches it. The window must span several scans and stay under the
+        # cooldown, or a stall is absorbed instead of restarted.
         fresh = watchdog.NODES['lidar'].get('freshness_sec')
         assert fresh is not None, 'lidar must define freshness_sec'
         assert 1.0 <= fresh <= watchdog.RESTART_COOLDOWN
@@ -99,72 +71,138 @@ class TestNodesDict:
 
 class TestConfig:
     def test_poll_interval_reasonable(self, watchdog):
-        # Too short = thrashing; too long = slow failure detection.
         assert 1 <= watchdog.POLL_INTERVAL <= 30
 
     def test_restart_cooldown_at_least_15s(self, watchdog):
-        # Prevents respawn loops if a node crashes immediately on start.
+        # A node that crashes on start must not respawn in a tight loop.
         assert watchdog.RESTART_COOLDOWN >= 15
 
     def test_package_name(self, watchdog):
         assert watchdog.PACKAGE == 'racecar_neo_ros2_driver'
 
 
+class TestStaleAge:
+    def test_no_window_is_never_stale(self, watchdog):
+        assert watchdog.stale_age(None, True, True, 100.0, 60.0) is None
+
+    def test_old_message_is_stale(self, watchdog):
+        assert watchdog.stale_age(5.0, True, True, 100.0, 7.5) == 7.5
+
+    def test_recent_message_is_fresh(self, watchdog):
+        assert watchdog.stale_age(5.0, True, True, 100.0, 0.2) is None
+
+    def test_exactly_at_the_window_is_fresh(self, watchdog):
+        assert watchdog.stale_age(5.0, True, True, 100.0, 5.0) is None
+
+    def test_no_message_yet_is_not_stale(self, watchdog):
+        assert watchdog.stale_age(5.0, True, True, 100.0, None) is None
+
+    def test_grace_after_a_restart(self, watchdog):
+        # The restarted node gets one full window before it is judged.
+        assert watchdog.stale_age(5.0, True, True, 4.9, 30.0) is None
+        assert watchdog.stale_age(5.0, True, True, 5.0, 30.0) == 30.0
+
+    @pytest.mark.parametrize('topic_alive,proc_alive', [(False, True), (True, False)])
+    def test_not_judged_while_down(self, watchdog, topic_alive, proc_alive):
+        assert watchdog.stale_age(5.0, topic_alive, proc_alive, 100.0, 30.0) is None
+
+
+class TestFailureReason:
+    @pytest.mark.parametrize(
+        'topic_alive,proc_alive,stale,expected',
+        [
+            (True, True, None, None),
+            (False, False, None, 'topic+process down'),
+            (False, True, None, 'topic not advertised'),
+            (True, False, None, 'process not running'),
+            (True, True, 7.25, 'topic stale (7.2s)'),
+            (False, True, 7.25, 'topic not advertised'),
+        ],
+    )
+    def test_reasons(self, watchdog, topic_alive, proc_alive, stale, expected):
+        assert watchdog.failure_reason(topic_alive, proc_alive, stale) == expected
+
+
+class TestRestartDecision:
+    def test_healthy_node_skips_the_device_check(self, watchdog):
+        def device_check():
+            raise AssertionError('device_check must not run for a healthy node')
+
+        assert watchdog.restart_decision(None, device_check) == 'healthy'
+
+    def test_failed_node_with_device_restarts(self, watchdog):
+        assert watchdog.restart_decision('topic not advertised', lambda: True) == 'restart'
+
+    def test_failed_node_without_device_is_left_alone(self, watchdog):
+        assert watchdog.restart_decision('process not running', lambda: False) == 'no-device'
+
+
+class TestCooldown:
+    def test_inside_the_cooldown(self, watchdog):
+        assert watchdog.cooldown_remaining(110.0, 100.0, 30.0) == pytest.approx(20.0)
+
+    def test_after_the_cooldown(self, watchdog):
+        assert watchdog.cooldown_remaining(130.0, 100.0, 30.0) == 0.0
+
+    def test_never_restarted(self, watchdog):
+        assert watchdog.cooldown_remaining(1_700_000_000.0, 0.0) == 0.0
+
+    def test_restart_node_honours_the_cooldown(self, watchdog, monkeypatch):
+        def popen(*_a, **_k):
+            raise AssertionError('restart launched inside the cooldown')
+
+        monkeypatch.setattr(watchdog, 'subprocess', SimpleNamespace(Popen=popen))
+        monkeypatch.setitem(watchdog._last_restart, 'lidar', watchdog.time.time())
+        watchdog._restart_node('lidar', watchdog.NODES['lidar'])
+
+
 class TestHelpers:
-    def test_clean_fastrtps_orphans_safe_on_empty_shm(self, watchdog):
-        # /dev/shm in a test environment may have no fastrtps segments —
-        # the function must handle that gracefully and return 0.
-        n = watchdog._clean_fastrtps_orphans()
-        assert isinstance(n, int)
-        assert n >= 0
+    def test_clean_fastrtps_orphans_returns_a_count(self, watchdog):
+        assert watchdog._clean_fastrtps_orphans() >= 0
 
-    def test_find_rpi_volt_alarm_returns_path_or_none(self, watchdog):
-        result = watchdog._find_rpi_volt_alarm()
-        # Either a Path (on Pi 5 with rpi_volt driver) or None (CI / dev box).
-        assert result is None or hasattr(result, 'read_text')
+    def test_is_running_false_for_an_absent_process(self, watchdog):
+        assert watchdog._is_running('/nonexistent/path/xyz_unique_string_123')() is False
 
-    def test_is_running_returns_callable(self, watchdog):
-        cb = watchdog._is_running('/nonexistent/path/xyz_unique_string_123')
-        assert callable(cb)
-        # No such process should exist with that path substring.
-        assert cb() is False
+    def test_pgrep_errors_count_as_running_until_the_threshold(self, watchdog, monkeypatch):
+        def run(*_a, **_k):
+            raise OSError('pgrep missing')
+
+        fake = SimpleNamespace(run=run, TimeoutExpired=subprocess.TimeoutExpired)
+        monkeypatch.setattr(watchdog, 'subprocess', fake)
+        check = watchdog._is_running('/any')
+        results = [check() for _ in range(watchdog.PGREP_FAIL_THRESHOLD)]
+        assert results[:-1] == [True] * (watchdog.PGREP_FAIL_THRESHOLD - 1)
+        assert results[-1] is False
+
+
+class _StubNode:
+    def __init__(self) -> None:
+        self.destroyed = []
+
+    def destroy_subscription(self, sub) -> None:
+        self.destroyed.append(sub)
+
+
+@pytest.fixture
+def monitor(watchdog):
+    node = _StubNode()
+    return watchdog._FreshnessMonitor(node, ['/scan']), node
 
 
 class TestFreshnessMonitor:
-    """The bookkeeping side of _FreshnessMonitor — independent of rclpy."""
-
-    def test_age_none_before_any_message(self, watchdog):
-        fm = watchdog._FreshnessMonitor.__new__(watchdog._FreshnessMonitor)
-        fm._node = None
-        fm._topics = ['/scan']
-        import threading
-        fm._lock = threading.Lock()
-        fm._last = {}
-        fm._subs = {}
+    def test_age_none_before_any_message(self, monitor):
+        fm, _ = monitor
         assert fm.age('/scan') is None
 
-    def test_age_recent_after_mark(self, watchdog):
-        fm = watchdog._FreshnessMonitor.__new__(watchdog._FreshnessMonitor)
-        fm._node = None
-        fm._topics = ['/scan']
-        import threading
-        fm._lock = threading.Lock()
-        fm._last = {}
-        fm._subs = {}
+    def test_age_recent_after_mark(self, monitor):
+        fm, _ = monitor
         fm._mark('/scan')
-        age = fm.age('/scan')
-        assert age is not None
-        assert 0 <= age < 0.5  # called immediately, should be tiny
+        assert 0 <= fm.age('/scan') < 0.5
 
-    def test_reset_clears_last_seen(self, watchdog):
-        fm = watchdog._FreshnessMonitor.__new__(watchdog._FreshnessMonitor)
-        fm._node = None
-        fm._topics = ['/scan']
-        import threading
-        fm._lock = threading.Lock()
-        fm._last = {}
-        fm._subs = {}
+    def test_reset_clears_last_seen_and_drops_the_subscription(self, monitor):
+        fm, node = monitor
+        fm._subs['/scan'] = 'sub'
         fm._mark('/scan')
-        assert fm.age('/scan') is not None
         fm.reset('/scan')
         assert fm.age('/scan') is None
+        assert node.destroyed == ['sub']

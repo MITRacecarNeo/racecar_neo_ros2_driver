@@ -1,11 +1,9 @@
 #!/bin/bash
 # Install the lab dashboards as racecar-* systemd units.
 #
-# Three dashboards, forked into MITRacecarNeo and carrying this platform's
-# lidar convention, ports and branding. The unit is still rendered from the
-# checkout's .service.in rather than copied, so a car keeps working if a fork
-# is later synced from Neobotics upstream.
-# See docs/troubleshooting.md, "Lab dashboard checkouts".
+# Three dashboards from the MITRacecarNeo forks: webteleop (8081), linefollow
+# (8082), wallfollow (8083). Units are rendered from each checkout's
+# .service.in. See docs/troubleshooting.md, "Lab dashboard checkouts".
 #
 # Usage:
 #   setup_dashboards.sh                clone or ff-only update, then install units
@@ -16,30 +14,38 @@
 # mux if a second one runs, so enabling is per unit and deliberate:
 # `racecar service enable wallfollow`.
 #
-# Each checkout carries a VERSION tracking this driver's release rather than a
-# count of its own, the same way the RealSense firmware target is pinned here
-# and reconciled by `racecar setup realsense`. A mismatch is reported and the
-# install continues: a car mid-upgrade should still end up with working units,
-# and the operator is the one who decides whether to fast-forward.
+# Each checkout's VERSION is checked against DASHBOARD_VERSION; a mismatch is
+# reported, not fatal. Units of retired dashboards are stopped, disabled and
+# removed.
 #
 # Set RACECAR_DASHBOARDS=0 to skip entirely.
+#
+# Test hooks: RACECAR_SYSTEMD_DIR, RACECAR_SYSTEMCTL, RACECAR_SUDO.
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DASH_DIR="$SCRIPT_DIR/dashboards"
 ORG_URL="https://github.com/MITRacecarNeo"
+SYSTEMD_DIR="${RACECAR_SYSTEMD_DIR:-/etc/systemd/system}"
+SUDO="${RACECAR_SUDO-sudo}"
+SYSTEMCTL="$SUDO ${RACECAR_SYSTEMCTL:-systemctl}"
 
-# The platform work lives on this branch, not on the forks' default. Cloning
-# the default gets the Neobotics original: upstream ports, neoracer unit
-# names, Humble paths and the forward-facing lidar convention. Clone the
-# branch explicitly rather than relying on the fork's default-branch setting,
-# which is a GitHub setting this script cannot see.
+# Clone this branch explicitly; the forks' default branch is the Neobotics
+# original.
 BRANCH="${RACECAR_DASHBOARD_BRANCH:-racecar-neo}"
 
 REPOS=(
     teleop_dashboard
     linefollow_dashboard
     wallfollow_dashboard
+)
+
+# Dashboards no longer shipped. Their units are removed if still installed.
+RETIRED_UNITS=(
+    racecar-camlabel
+    racecar-eps
+    racecar-pursuit
+    racecar-smartfollow
 )
 
 # The dashboard release this driver was tested against. Bump with the driver's
@@ -53,7 +59,7 @@ case "${1:-}" in
     --update)      MODE="update" ;;
     --units-only)  MODE="units" ;;
     -h|--help)
-        sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+        awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "${BASH_SOURCE[0]}"
         exit 0
         ;;
     *)
@@ -72,12 +78,11 @@ mismatched=()
 changed=0
 
 # Compare a checkout's VERSION against the pinned one. A checkout with no
-# VERSION predates the file and is reported as such rather than passed over,
-# since that is exactly the stale checkout the check exists to catch.
+# VERSION predates the file and is reported, not passed over.
 check_version() {
-    # Two statements: bash expands every word of a `local` before any
-    # of its assignments take effect, so a single one would build dir
-    # from the caller's repo rather than from $1.
+    # Two statements: bash expands every word of a `local` before any of its
+    # assignments take effect, so a single one would build dir from the
+    # caller's repo rather than from $1. Same in fetch_repo and install_unit.
     local repo="$1" found
     local dir="$DASH_DIR/$repo"
     if [[ ! -f "$dir/VERSION" ]]; then
@@ -99,9 +104,6 @@ check_version() {
 # skipping the update. A failure here is reported and skipped, so a car with no
 # network still finishes setup.
 fetch_repo() {
-    # Two statements: bash expands every word of a `local` before any
-    # of its assignments take effect, so a single one would build dir
-    # from the caller's repo rather than from $1.
     local repo="$1"
     local dir="$DASH_DIR/$repo" on
     if [[ -d "$dir/.git" ]]; then
@@ -113,9 +115,7 @@ fetch_repo() {
             failed+=("$repo (branch $on)")
             return 1
         fi
-        # Name the remote branch: the branch is created by the clone below
-        # with tracking, but a checkout made before this script did that has
-        # no upstream and would fail with 'no tracking information'.
+        # Name the remote branch; older checkouts have no upstream set.
         if git -C "$dir" pull --ff-only --quiet origin "$BRANCH" 2>/dev/null; then
             echo "  $repo: up to date"
         else
@@ -133,16 +133,10 @@ fetch_repo() {
     fi
 }
 
-# Render the checkout's template for this platform. The forks already target
-# Jazzy and carry this platform's names, so the substitutions below are a
-# no-op on them; they stay because a fork synced from Neobotics upstream comes
-# back carrying Humble and the neoracer names, and rendering is what keeps
-# that car working rather than pointing a unit at a ROS that is not installed.
-#
-# The two required tokens are checked first: without @DIR@ the unit would run
-# from the wrong directory, and Environment=HOME= is the anchor the discovery
-# line is appended after. A template missing either has changed shape enough
-# that installing the result would be a guess.
+# Render the checkout's template for this platform. The substitutions are
+# no-ops on the forks and cover a fork re-synced from Neobotics upstream
+# (Humble paths, neoracer names). @DIR@ and Environment=HOME= are required
+# anchors; a template missing either is refused.
 render_unit() {
     local src="$1" dir="$2" token
     for token in '@DIR@' 'Environment=HOME='; do
@@ -173,9 +167,6 @@ unit_name() {
 }
 
 install_unit() {
-    # Two statements: bash expands every word of a `local` before any
-    # of its assignments take effect, so a single one would build dir
-    # from the caller's repo rather than from $1.
     local repo="$1"
     local dir="$DASH_DIR/$repo"
     local src unit rendered
@@ -194,21 +185,36 @@ install_unit() {
         return 1
     fi
 
-    if cmp -s "$rendered" "/etc/systemd/system/$unit"; then
+    if cmp -s "$rendered" "$SYSTEMD_DIR/$unit"; then
         echo "  $unit: already up to date"
-    elif sudo install -m 0644 "$rendered" "/etc/systemd/system/$unit"; then
+    elif $SUDO install -m 0644 "$rendered" "$SYSTEMD_DIR/$unit"; then
         echo "  $unit: installed"
         changed=1
     else
-        # This function is called under `|| true`, which suppresses errexit
-        # for its whole body: without testing the install, the next line
-        # reported success on a car where it had just failed.
+        # Called under `|| true`, so errexit is off here; test the install
+        # explicitly.
         echo "  $unit: install failed (sudo?)" >&2
         failed+=("$repo (install)")
         rm -f "$rendered"
         return 1
     fi
     rm -f "$rendered"
+}
+
+# Stop, disable and remove a retired dashboard's unit.
+remove_retired_unit() {
+    local unit="$1.service"
+    local path="$SYSTEMD_DIR/$unit"
+    [[ -f "$path" ]] || return 0
+    $SYSTEMCTL stop "$unit" 2>/dev/null || true
+    $SYSTEMCTL disable "$unit" 2>/dev/null || true
+    if $SUDO rm "$path"; then
+        echo "  $unit: retired dashboard; removed"
+        changed=1
+    else
+        echo "  $unit: retired, but could not remove $path" >&2
+        failed+=("$1 (remove)")
+    fi
 }
 
 if [[ "$MODE" != "units" ]]; then
@@ -227,18 +233,20 @@ for repo in "${REPOS[@]}"; do
 done
 echo
 
-if [[ "$MODE" == "update" ]] || [[ "$MODE" == "install" ]] || [[ "$MODE" == "units" ]]; then
-    echo "==> Rendering and installing units"
-    for repo in "${REPOS[@]}"; do
-        [[ -d "$DASH_DIR/$repo" ]] || continue
-        install_unit "$repo" || true
-    done
-fi
+echo "==> Rendering and installing units"
+for repo in "${REPOS[@]}"; do
+    [[ -d "$DASH_DIR/$repo" ]] || continue
+    install_unit "$repo" || true
+done
+
+echo "==> Retired dashboard units"
+for unit in "${RETIRED_UNITS[@]}"; do
+    remove_retired_unit "$unit"
+done
 
 if [[ $changed -eq 1 ]]; then
-    # Not fatal: the units are on disk either way, and aborting here would
-    # skip the summary that says what state the car was left in.
-    if sudo systemctl daemon-reload; then
+    # Not fatal: aborting here would skip the summary of the car's state.
+    if $SYSTEMCTL daemon-reload; then
         echo "  systemctl daemon-reload"
     else
         echo "  systemctl daemon-reload failed; run it by hand" >&2

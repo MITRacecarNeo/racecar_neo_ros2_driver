@@ -7,12 +7,24 @@ import pytest
 from racecar_neo_ros2_driver import pit_protocol as pit
 
 
-def _build_telemetry(timestamp=0, volt_curr=(0, 0), rc=(0,) * 8,
-                     imu=(0.0,) * 9, encoder=0.0, ekf=(0.0,) * 3, good_crc=True):
-    """Assemble a telemetry packet the way the firmware would, for decode tests."""
+def _build_telemetry(
+    timestamp=0,
+    volt_curr=(0, 0),
+    rc=(0,) * 8,
+    imu=(0.0,) * 9,
+    encoder=0.0,
+    ekf=(0.0,) * 3,
+    good_crc=True,
+):
     header = struct.pack(
-        '<IBBHIHH', pit.TX_MAGIC, pit.PROTO_VERSION, 0,
-        pit.TX_PACKET_SIZE, pit.TX_PACKET_SIZE, 0, 1,
+        '<IBBHIHH',
+        pit.TX_MAGIC,
+        pit.PROTO_VERSION,
+        0,
+        pit.TX_PACKET_SIZE,
+        pit.TX_PACKET_SIZE,
+        0,
+        1,
     )
     body = struct.pack('<i2H8H9ff3f', timestamp, *volt_curr, *rc, *imu, encoder, *ekf)
     pre = header + body
@@ -68,8 +80,12 @@ class TestEncodeCommand:
 class TestDecodeTelemetry:
     def test_roundtrip_fields(self):
         pkt = _build_telemetry(
-            timestamp=123456, volt_curr=(111, 222), rc=tuple(range(1, 9)),
-            imu=tuple(float(i) for i in range(9)), encoder=4900.0, ekf=(0.1, 0.2, 0.3),
+            timestamp=123456,
+            volt_curr=(111, 222),
+            rc=tuple(range(1, 9)),
+            imu=tuple(float(i) for i in range(9)),
+            encoder=4900.0,
+            ekf=(0.1, 0.2, 0.3),
         )
         t = pit.decode_telemetry(pkt)
         assert t.timestamp_us == 123456
@@ -103,7 +119,7 @@ class TestDecodeTelemetry:
         assert got[3] == pytest.approx(0.5)
         assert got[4] == pytest.approx(-0.5)
         assert got[5] == pytest.approx(-1.0)  # 900 us clamps
-        assert got[6] == pytest.approx(1.0)   # 2100 us clamps
+        assert got[6] == pytest.approx(1.0)  # 2100 us clamps
         assert len(got) == 8
 
     def test_rc_link_up_with_a_transmitter(self):
@@ -134,11 +150,7 @@ class TestDecodeTelemetry:
         assert above.rc_link_up is False
 
     def test_no_signal_is_distinguishable_from_switch_low(self):
-        """
-        Guard the regression this property exists to prevent.
-
-        rc_normalized clamps both to -1.0; rc_link_up must not.
-        """
+        # rc_normalized clamps both to -1.0; rc_link_up must not.
         dead = pit.decode_telemetry(_build_telemetry(rc=(0,) * 8))
         low = pit.decode_telemetry(_build_telemetry(rc=(1000,) * 8))
         assert dead.rc_normalized[5] == low.rc_normalized[5] == pytest.approx(-1.0)
@@ -162,7 +174,7 @@ class TestDecodeTelemetry:
 class TestFraming:
     def test_strips_leading_garbage(self):
         pkt = _build_telemetry(timestamp=42)
-        buf = bytearray(b'\xAA\xBB\xCC' + pkt)
+        buf = bytearray(b'\xaa\xbb\xcc' + pkt)
         telem, consumed = pit.scan_for_packet(buf)
         assert telem.timestamp_us == 42
         assert consumed == pit.TX_PACKET_SIZE

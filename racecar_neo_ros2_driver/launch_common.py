@@ -1,6 +1,8 @@
 """Shared helpers for the per-node launch files (watchdog restart targets)."""
 
+from collections.abc import Sequence
 import os
+from typing import Any
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -9,42 +11,52 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
+def local_overrides(config_dir: str, yamls: Sequence[str]) -> list[str]:
+    """Return config_dir/<name>.local.yaml for each YAML in yamls that has one."""
+    paths = [os.path.join(config_dir, y.replace('.yaml', '.local.yaml')) for y in yamls]
+    return [p for p in paths if os.path.exists(p)]
+
+
 def single_node_launch(
     arg_name: str,
     default_yaml: str,
     package: str,
     executable: str,
-    node_name: str = None,
-    remappings=None,
-    description: str = None,
-):
+    node_name: str | None = None,
+    remappings: list[tuple[str, str]] | None = None,
+    description: str | None = None,
+    extra_yamls: Sequence[tuple[str, str]] = (),
+) -> LaunchDescription:
     """
-    Build a 1-node LaunchDescription whose only config is a YAML param file.
+    Build a 1-node LaunchDescription configured from YAML param files.
 
     arg_name: launch arg the YAML path is exposed as (e.g. 'throttle_config').
     default_yaml: filename inside this package's share/config (e.g. 'throttle.yaml').
+    extra_yamls: (arg_name, filename) pairs loaded after default_yaml, in order.
+
+    Per-car overrides (config/<name>.local.yaml, gitignored) load last, one per
+    YAML that has one, so their keys win.
     """
     pkg_dir = get_package_share_directory('racecar_neo_ros2_driver')
-    default_cfg = os.path.join(pkg_dir, 'config', default_yaml)
-    local_cfg = os.path.join(
-        pkg_dir, 'config', default_yaml.replace('.yaml', '.local.yaml')
-    )
+    config_dir = os.path.join(pkg_dir, 'config')
 
-    cfg_arg = DeclareLaunchArgument(
-        arg_name,
-        default_value=default_cfg,
-        description=description or f'Path to {executable} config YAML',
-    )
+    files = [(arg_name, default_yaml), *extra_yamls]
+    args = [
+        DeclareLaunchArgument(
+            name,
+            default_value=os.path.join(config_dir, yaml),
+            description=(
+                (description or f'Path to {executable} config YAML')
+                if name == arg_name
+                else f'Path to {yaml}'
+            ),
+        )
+        for name, yaml in files
+    ]
+    parameters: list[Any] = [LaunchConfiguration(name) for name, _ in files]
+    parameters += local_overrides(config_dir, [yaml for _, yaml in files])
 
-    # A per-car override, applied after the shipped file so its keys win.
-    # .gitignore already reserves config/*.local.yaml; this is what reads it.
-    # Settings that differ per car (an enabled RC gate, say) go here instead of
-    # in the committed YAML, so a car never carries a dirty working tree.
-    parameters = [LaunchConfiguration(arg_name)]
-    if os.path.exists(local_cfg):
-        parameters.append(local_cfg)
-
-    node_kwargs = {
+    node_kwargs: dict[str, Any] = {
         'package': package,
         'executable': executable,
         'name': node_name or executable,
@@ -55,4 +67,4 @@ def single_node_launch(
         node_kwargs['remappings'] = remappings
     node = Node(**node_kwargs)
 
-    return LaunchDescription([cfg_arg, node])
+    return LaunchDescription([*args, node])

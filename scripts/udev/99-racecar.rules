@@ -1,4 +1,4 @@
-# RACECAR Neo v2 — stable device symlinks
+# RACECAR Neo v2: stable device symlinks
 # Installed to /etc/udev/rules.d/ by scripts/setup_udev.sh.
 # After install: sudo udevadm control --reload-rules && sudo udevadm trigger
 
@@ -10,45 +10,37 @@ SUBSYSTEM=="tty", KERNEL=="ttyAMA0", SYMLINK+="neo-pit-pcb", GROUP="dialout", MO
 
 # RPLIDAR A3-class via CP2102 USB-UART bridge
 # VID 10c4:ea60. Serial "0001" is generic for CP2102; match by VID:PID only.
-# ID_MM_DEVICE_IGNORE tells ModemManager not to probe this port. Without it,
-# any systemctl daemon-reload (e.g. snap auto-refresh) re-triggers MM's
-# probe sweep, which opens the CP2102 mid-frame and desyncs the sllidar SDK's
-# binary frame reader — node stays alive but /scan goes silent until restart.
-# Observed in 2026-05-12 8h endurance test.
+# ID_MM_DEVICE_IGNORE keeps ModemManager from probing the port; a probe
+# desyncs the sllidar frame reader and /scan goes silent. See
+# docs/troubleshooting.md, "Lidar /scan stalls".
 SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", ENV{ID_MM_DEVICE_IGNORE}="1", SYMLINK+="lidar", GROUP="dialout", MODE="0660"
 
 # Intel RealSense D435i (forward camera: color + depth + IMU, RACECAR v2)
 # VID 8086:0b3a. Disable USB autosuspend to prevent disconnects during streaming.
 SUBSYSTEM=="usb", ATTR{idVendor}=="8086", ATTR{idProduct}=="0b3a", ATTR{power/autosuspend}="-1", ATTR{power/control}="on"
 
-
-# Coral EdgeTPU — non-root access in both pre-init and post-init USB IDs
+# Coral EdgeTPU USB: non-root access in both pre-init and post-init USB IDs
 # Pre-init: 1a6e:089a (Global Unichip). Post-init (after firmware load): 18d1:9302 (Google).
 SUBSYSTEM=="usb", ATTRS{idVendor}=="1a6e", ATTRS{idProduct}=="089a", GROUP="plugdev", MODE="0660"
 SUBSYSTEM=="usb", ATTRS{idVendor}=="18d1", ATTRS{idProduct}=="9302", GROUP="plugdev", MODE="0660"
 
-# ALFA AWUS036ACM (MediaTek MT7612U, 0e8d:7612, driver mt76x2u) — the WiFi AP
+# ALFA AWUS036ACM (MediaTek MT7612U, 0e8d:7612, driver mt76x2u), the WiFi AP
 # adapter. Rename it to a stable wlan1 so setup_networking.sh binds the AP to a
 # fixed name; the predictable-naming scheme would otherwise give it a per-unit
 # MAC-derived name (wlx<mac>) that differs on every dongle. The Pi's built-in
 # brcmfmac stays wlan0 (client/default).
 SUBSYSTEM=="net", ACTION=="add", ATTRS{idVendor}=="0e8d", ATTRS{idProduct}=="7612", NAME="wlan1"
 
-# SPI device nodes — Ubuntu 24.04 for Pi ships /dev/spidev* as root:dialout,
+# SPI device nodes. Ubuntu 24.04 for Pi ships /dev/spidev* as root:dialout,
 # but RPi-OS convention (and luma.led_matrix expectations) is group `spi`.
 # Match RPi-OS so student tutorials work. Group is created by setup_user_env.sh.
 SUBSYSTEM=="spidev", GROUP="spi", MODE="0660"
 
-# GPIO character device — Ubuntu 24.04 ships /dev/gpiochip* as root:root 0600,
+# GPIO character device. Ubuntu 24.04 ships /dev/gpiochip* as root:root 0600,
 # which forces sudo for any gpiozero/lgpio/RPi.GPIO use. Drop it into a `gpio`
 # group with 0660 so library code works without root. Group is created by
 # setup_user_env.sh.
 SUBSYSTEM=="gpio", KERNEL=="gpiochip*", GROUP="gpio", MODE="0660"
 
-# EasySMX gamepad / Switch-Pro-spoof recovery is handled by blacklisting
-# the hid_nintendo module instead — see scripts/modprobe.d/blacklist-hid-nintendo.conf
-# and the install logic in setup_udev.sh. udev-based unbind approaches were
-# attempted in earlier v0.0.6 iterations but didn't work: hid-nintendo
-# re-grabs the device immediately after each unbind, so the controller's
-# firmware never sees the "HID rejected" condition long enough to downgrade
-# itself to Xbox 360 mode.
+# EasySMX gamepad: handled by scripts/modprobe.d/blacklist-hid-nintendo.conf,
+# not udev.

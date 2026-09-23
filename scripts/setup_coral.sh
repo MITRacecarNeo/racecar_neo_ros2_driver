@@ -28,7 +28,6 @@ DEPEND_DIR="$SCRIPT_DIR/../depend"
 
 echo "=== Coral EdgeTPU Setup ==="
 
-# --- 1. libedgetpu runtime ---
 echo "[1/5] Installing libedgetpu runtime..."
 if dpkg -l libedgetpu1-std 2>/dev/null | grep -q "^ii"; then
     echo "  libedgetpu1-std already installed. Skipping."
@@ -36,7 +35,6 @@ else
     sudo dpkg -i "$DEPEND_DIR"/libedgetpu1-std_*.deb
 fi
 
-# --- 2. tflite_runtime ---
 echo "[2/5] Installing tflite_runtime..."
 if python3 -c "import tflite_runtime" 2>/dev/null; then
     echo "  tflite_runtime already installed. Skipping."
@@ -44,7 +42,6 @@ else
     pip3 install --user --break-system-packages "$DEPEND_DIR"/tflite_runtime-*.whl
 fi
 
-# --- 3. pycoral ---
 echo "[3/5] Installing pycoral..."
 if python3 -c "import pycoral" 2>/dev/null; then
     echo "  pycoral already installed. Skipping."
@@ -52,7 +49,6 @@ else
     pip3 install --user --break-system-packages "$DEPEND_DIR"/pycoral-*.whl
 fi
 
-# --- 4. Driver + access rule (form-factor dependent) ---
 NEEDS_REBOOT=0
 if lspci -nn 2>/dev/null | grep -qi '1ac1:089a'; then
     echo "[4/5] M.2/PCIe Coral (Apex) detected. Installing gasket driver + overlay..."
@@ -75,7 +71,7 @@ if lspci -nn 2>/dev/null | grep -qi '1ac1:089a'; then
 
     # Non-root /dev/apex_0 access.
     sudo groupadd -f apex
-    sudo usermod -aG apex "$USER"
+    sudo usermod -aG apex "${SUDO_USER:-$USER}"
 
     # coral-msi device-tree overlay -> /boot/firmware/overlays + config.txt.
     dtc -@ -I dts -O dtb -o /tmp/coral-msi.dtbo "$SCRIPT_DIR/coral-msi.dts"
@@ -98,7 +94,6 @@ else
     echo "      or scripts/setup_udev.sh to install them. No reboot for USB."
 fi
 
-# --- 5. Verify ---
 echo "[5/5] Verifying Coral EdgeTPU..."
 if [ "$NEEDS_REBOOT" = "1" ]; then
     if dkms status 2>/dev/null | grep -q "gasket.*installed"; then
@@ -125,7 +120,7 @@ else
 fi
 
 echo ""
-echo "=== Coral EdgeTPU setup complete! ==="
+echo "=== Coral EdgeTPU setup complete ==="
 if [ "$NEEDS_REBOOT" = "1" ]; then
     echo "REBOOT required: the overlay and apex auto-load take effect at boot."
     echo "After reboot, verify: python3 -c 'from pycoral.utils.edgetpu import list_edge_tpus; print(list_edge_tpus())'"

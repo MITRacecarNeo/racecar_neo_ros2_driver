@@ -13,6 +13,9 @@ dotmatrix_node:
     # republish, the custom pixel frame is dropped and text (if any) takes over.
     pixels_timeout_sec: 5.0
 
+    # /dotmatrix/text staleness window; republishing the same text keeps it up.
+    text_timeout_sec: 6.0
+
     # One-shot intro: scrolls once on rasterizer launch, then yields to the
     # drive-mode glyph + label. Empty string disables the splash.
     splash_message: ">>> Welcome to RACECAR Neo! >>>"

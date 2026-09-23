@@ -1,4 +1,4 @@
-"""Unit tests for pit_node's pure IMU-transform helpers."""
+"""Unit tests for pit_node: SystemState bits, axis remap, odometry, display frame."""
 
 import numpy as np
 import pytest
@@ -7,7 +7,7 @@ from racecar_neo_ros2_driver.mux_node import MuxMode
 from racecar_neo_ros2_driver.pit_node import (
     _MODE_BITS,
     build_odom,
-    clamp,
+    PitNode,
     POSE_UNESTIMATED,
     remap_axes,
     SPEED_VARIANCE,
@@ -18,8 +18,6 @@ from racecar_neo_ros2_driver.pit_node import (
     SYS_MODE_IDLE,
     SYS_MODE_MANUAL,
     SYS_MODE_MASK,
-    transform_accel,
-    transform_gyro,
     TWIST_COMPONENT_UNKNOWN,
 )
 
@@ -46,15 +44,6 @@ class TestSystemStateBits:
         assert flags & SYS_MODE_MASK == 0
 
 
-class TestClamp:
-    def test_within(self):
-        assert clamp(0.3) == 0.3
-
-    def test_saturates(self):
-        assert clamp(2.0) == 1.0
-        assert clamp(-2.0) == -1.0
-
-
 class TestRemap:
     def test_identity(self):
         out = remap_axes([1.0, 2.0, 3.0], [0, 1, 2], [1.0, 1.0, 1.0])
@@ -66,26 +55,18 @@ class TestRemap:
         assert np.allclose(out, [3.0, 2.0, -1.0])
 
 
-class TestTransformAccel:
-    def test_bias_and_scale(self):
-        out = transform_accel(
-            [9.81, 0.0, 0.0], [0, 1, 2], [1.0, 1.0, 1.0], 1.0, [0.81, 0.0, 0.0]
-        )
-        assert np.allclose(out, [9.0, 0.0, 0.0])
-
-
-class TestTransformGyro:
+class TestRemapScale:
     def test_deg_to_rad_scale(self):
         # gyro_scale converts deg/s -> rad/s; 180 deg/s -> pi rad/s.
-        out = transform_gyro(
-            [180.0, 0.0, 0.0], [0, 1, 2], [1.0, 1.0, 1.0], np.pi / 180.0, [0.0, 0.0, 0.0]
-        )
+        out = remap_axes([180.0, 0.0, 0.0], [0, 1, 2], [1.0, 1.0, 1.0], np.pi / 180.0)
         assert np.allclose(out, [np.pi, 0.0, 0.0])
+
+    def test_scale_applies_after_remap(self):
+        out = remap_axes([1.0, 2.0, 3.0], [2, 1, 0], [-1.0, 1.0, 1.0], 2.0)
+        assert np.allclose(out, [-6.0, 4.0, 2.0])
 
 
 class TestBuildOdom:
-    """Encoder speed wrapped as Odometry; forward twist only."""
-
     def test_speed_lands_in_forward_twist(self):
         odom = build_odom(2.5, 'odom', 'base_link')
         assert odom.twist.twist.linear.x == pytest.approx(2.5)
@@ -116,3 +97,62 @@ class TestBuildOdom:
         # /motor carries steering normalized to [-1, 1] rather than radians.
         odom = build_odom(3.0, 'odom', 'base_link')
         assert odom.twist.twist.angular.z == 0.0
+
+
+class _Pit:
+    """PitNode._build_display over plain attributes, without rclpy or a serial port."""
+
+    _build_display = PitNode._build_display
+
+    def __init__(self, start=0.0) -> None:
+        self._joy_buttons = []
+        self._gamepad_btn = 4
+        self._auto_btn = 5
+        self._dot_frame = None
+        self._dot_stamp = 0.0
+        self._led_frame = None
+        self._led_stamp = 0.0
+        self._display_timeout = 0.5
+        self._start_time = start
+        self._led_startup = 10.0
+
+
+class TestBuildDisplay:
+    def test_idle_with_nothing_to_show(self):
+        assert _Pit()._build_display(100.0) == (SYS_MODE_IDLE, None, None)
+
+    def test_bumpers_set_the_mode_bits(self):
+        pit = _Pit()
+        pit._joy_buttons = [0, 0, 0, 0, 1, 0, 0, 0]
+        assert pit._build_display(100.0)[0] == SYS_MODE_MANUAL
+        pit._joy_buttons = [0, 0, 0, 0, 0, 1, 0, 0]
+        assert pit._build_display(100.0)[0] == SYS_MODE_AUTO
+
+    def test_fresh_frames_are_forwarded_and_flagged(self):
+        pit = _Pit()
+        pit._dot_frame, pit._dot_stamp = b'\x01' * 24, 99.8
+        pit._led_frame, pit._led_stamp = b'\x02' * 252, 99.9
+        state, dot, led = pit._build_display(100.0)
+        assert state == SYS_DOTMATRIX_ACTIVE | SYS_LED_ACTIVE
+        assert dot == b'\x01' * 24
+        assert led == b'\x02' * 252
+
+    def test_stale_frames_are_dropped(self):
+        pit = _Pit()
+        pit._dot_frame, pit._dot_stamp = b'\x01', 99.0
+        pit._led_frame, pit._led_stamp = b'\x02', 99.0
+        assert pit._build_display(100.0) == (SYS_MODE_IDLE, None, None)
+
+    def test_driver_starting_flag_during_the_startup_window(self):
+        pit = _Pit(start=100.0)
+        assert pit._build_display(105.0)[0] & SYS_DRIVER_STARTING
+        assert not pit._build_display(110.0)[0] & SYS_DRIVER_STARTING
+
+    def test_flags_combine_with_the_mode(self):
+        pit = _Pit(start=100.0)
+        pit._joy_buttons = [0, 0, 0, 0, 1, 0, 0, 0]
+        pit._dot_frame, pit._dot_stamp = b'\x01', 100.0
+        state, _, _ = pit._build_display(100.0)
+        assert state & SYS_MODE_MASK == SYS_MODE_MANUAL
+        assert state & SYS_DOTMATRIX_ACTIVE
+        assert state & SYS_DRIVER_STARTING

@@ -1,24 +1,13 @@
 """Unit tests for scripts/racecar_log.py (the `racecar log` implementation)."""
 
-import importlib.util
 import json
-from pathlib import Path
+import os
 import time
 
+from conftest import load_script
 import pytest
 
-SCRIPT = Path(__file__).parent.parent / 'scripts' / 'racecar_log.py'
-
-
-def _load():
-    """Import the script by path; scripts/ is not a package."""
-    spec = importlib.util.spec_from_file_location('racecar_log', SCRIPT)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-rl = _load()
+rl = load_script('racecar_log')
 
 
 class TestNaming:
@@ -78,7 +67,9 @@ class TestResolveLogRoot:
 
     def test_falls_back_to_last_candidate(self):
         got = rl.resolve_log_root(
-            None, candidates=('/nonexistent-a', '/nonexistent-b'), environ={},
+            None,
+            candidates=('/nonexistent-a', '/nonexistent-b'),
+            environ={},
         )
         assert str(got) == '/nonexistent-b'
 
@@ -119,15 +110,27 @@ class TestUnmountedNvme:
 
 
 class TestFormatting:
-    @pytest.mark.parametrize('n,expected', [
-        (512, '512 B'), (2048, '2.0 KB'), (5 * 1024**2, '5.0 MB'), (3 * 1024**3, '3.0 GB'),
-    ])
+    @pytest.mark.parametrize(
+        'n,expected',
+        [
+            (512, '512 B'),
+            (2048, '2.0 KB'),
+            (5 * 1024**2, '5.0 MB'),
+            (3 * 1024**3, '3.0 GB'),
+        ],
+    )
     def test_sizes(self, n, expected):
         assert rl.format_size(n) == expected
 
-    @pytest.mark.parametrize('sec,expected', [
-        (0, '0:00'), (65, '1:05'), (3661, '1:01:01'), (-5, '0:00'),
-    ])
+    @pytest.mark.parametrize(
+        'sec,expected',
+        [
+            (0, '0:00'),
+            (65, '1:05'),
+            (3661, '1:01:01'),
+            (-5, '0:00'),
+        ],
+    )
     def test_durations(self, sec, expected):
         assert rl.format_duration(sec) == expected
 
@@ -174,7 +177,6 @@ class TestState:
         assert rl.read_state(path) is None
 
     def test_pid_alive_on_self(self):
-        import os
         assert rl.pid_alive(os.getpid()) is True
 
     def test_pid_alive_rejects_garbage(self):

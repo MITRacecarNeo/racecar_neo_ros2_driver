@@ -4,9 +4,9 @@
   <name>racecar_neo_ros2_driver</name>
   <version>0.8.1</version>
   <description>
-    ROS2 driver for the MIT RACECAR Neo v2 — sensor/actuator drivers, command
+    ROS2 driver for the MIT RACECAR Neo v2: sensor/actuator drivers, command
     arbitration, safety/uptime/recovery infrastructure (watchdog, systemd units,
-    pre-flight tests) inherited from the UAV Neo driver architecture.
+    pre-flight tests).
   </description>
   <maintainer email="chrisclai02@gmail.com">racecar</maintainer>
   <license>GPL-3.0-or-later</license>
@@ -14,13 +14,22 @@
   <depend>rclpy</depend>
   <depend>std_msgs</depend>
   <depend>sensor_msgs</depend>
-  <depend>geometry_msgs</depend>
   <depend>nav_msgs</depend>
   <depend>ackermann_msgs</depend>
   <depend>vision_msgs</depend>
   <depend>diagnostic_msgs</depend>
   <depend>joy</depend>
   <depend>realsense2_camera</depend>
+
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-pil</exec_depend>
+  <exec_depend>python3-serial</exec_depend>
+  <exec_depend>sllidar_ros2</exec_depend>
+  <!-- pycoral and luma.core have no rosdep keys; setup_coral.sh and
+       setup_dotmatrix.sh install them. -->
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

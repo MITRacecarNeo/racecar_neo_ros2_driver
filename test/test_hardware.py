@@ -2,62 +2,40 @@
 Pre-flight hardware connectivity tests for RACECAR Neo v2.
 
 Each assertion's failure message includes a one-line fix hint. Tests for
-hardware that isn't connected will fail loudly — that's intentional. Run
-selectively with `pytest -m hardware` or skip with `pytest -m 'not hardware'`.
+absent hardware fail. Run them with `pytest -m hardware`; skip them with
+`pytest -m 'not hardware'`.
 """
 
+import glob
 import grp
 import importlib
 import importlib.util
 import os
+from pathlib import Path
 import pwd
-import re
 import subprocess
+import time
 
+from conftest import load_script
 import pytest
+
+sysinfo = load_script('sysinfo')
 
 
 def _lsusb_match(vid_pid):
-    """Return True if `lsusb` lists a USB device matching vid:pid."""
     try:
-        out = subprocess.run(
-            ['lsusb'], capture_output=True, text=True, timeout=5
-        ).stdout
+        out = subprocess.run(['lsusb'], capture_output=True, text=True, timeout=5).stdout
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
     return vid_pid.lower() in out.lower()
 
 
 def _lspci_match(vid_pid):
-    """Return True if `lspci -nn` lists a PCI device matching vid:pid."""
     try:
-        out = subprocess.run(
-            ['lspci', '-nn'], capture_output=True, text=True, timeout=5
-        ).stdout
+        out = subprocess.run(['lspci', '-nn'], capture_output=True, text=True, timeout=5).stdout
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
     return vid_pid.lower() in out.lower()
-
-
-def _i2c_probe(bus, address):
-    """Return True if i2cdetect reports a device at `address` on `bus`."""
-    try:
-        out = subprocess.run(
-            ['i2cdetect', '-y', str(bus)],
-            capture_output=True, text=True, timeout=5,
-        ).stdout
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
-    detected = set()
-    for line in out.splitlines()[1:]:
-        parts = line.split()
-        if not parts or not parts[0].endswith(':'):
-            continue
-        row_base = int(parts[0].rstrip(':'), 16)
-        for col, val in enumerate(parts[1:]):
-            if re.fullmatch(r'[0-9a-fA-F]{2}', val):
-                detected.add(row_base + col)
-    return address in detected
 
 
 def _user_in_group(name):
@@ -78,8 +56,9 @@ def _user_in_group(name):
 
 
 # ---------------------------------------------------------------------------
-# RPLIDAR — 2D LIDAR
+# RPLIDAR 2D LIDAR
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.hardware
 class TestRPLIDAR:
@@ -101,23 +80,20 @@ class TestRPLIDAR:
 
 
 # ---------------------------------------------------------------------------
-# Gamepad — any USB HID joystick (EasySMX, Switch Pro, Xbox, etc.)
+# Gamepad: any USB HID joystick (EasySMX, Switch Pro, Xbox, etc.)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.hardware
 class TestGamepad:
     def test_gamepad_present(self):
-        # joy_node accepts both legacy /dev/input/jsN (joydev) and modern
-        # /dev/input/eventN (evdev). Newer controllers like the Switch Pro
-        # only expose evdev, so a hard check on /dev/input/js0 is too narrow.
-        import glob
+        # joy_node reads joydev (/dev/input/jsN) or evdev (/dev/input/eventN);
+        # some controllers, such as the Switch Pro, expose only evdev.
         js_devices = glob.glob('/dev/input/js*')
-        # Scrape /proc/bus/input/devices for any joystick-capable entry.
         joystick_event = False
         try:
             with open('/proc/bus/input/devices') as f:
                 blob = f.read()
-            # Each block with EV=... that has 'js' or 'ABS' indicates joystick.
             for block in blob.split('\n\n'):
                 if 'EV=' in block and ('ABS' in block or 'js' in block.lower()):
                     if 'Handlers=' in block and 'event' in block:
@@ -136,10 +112,9 @@ class TestGamepad:
 # RealSense D435i
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.hardware
 class TestRealSense:
-    """Intel RealSense D435i — depth + color + IMU over USB 3.x."""
-
     USB_ID = '8086:0b3a'
 
     def test_usb_present(self):
@@ -151,7 +126,9 @@ class TestRealSense:
     def test_v4l2_devices_exist(self):
         out = subprocess.run(
             ['v4l2-ctl', '--list-devices'],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         ).stdout
         assert 'RealSense' in out, (
             'No RealSense V4L2 devices found. '
@@ -161,34 +138,37 @@ class TestRealSense:
     def test_rs_enumerate(self):
         result = subprocess.run(
             ['rs-enumerate-devices', '--compact'],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
-        assert result.returncode == 0, (
-            'rs-enumerate-devices failed. Install: bash scripts/setup_realsense.sh'
-        )
-        assert 'D435I' in result.stdout or 'D435i' in result.stdout, (
-            f'D435i not found in rs-enumerate-devices output:\n{result.stdout}'
-        )
+        assert (
+            result.returncode == 0
+        ), 'rs-enumerate-devices failed. Install: bash scripts/setup_realsense.sh'
+        assert (
+            'D435I' in result.stdout or 'D435i' in result.stdout
+        ), f'D435i not found in rs-enumerate-devices output:\n{result.stdout}'
 
     def test_usb3_connection(self):
         out = subprocess.run(
             ['rs-enumerate-devices', '--compact'],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         ).stdout
-        if 'Usb Type Descriptor' in out:
-            assert '3.' in out.split('Usb Type Descriptor')[1].split('\n')[0], (
-                'RealSense is not on a USB 3.x port. '
-                'Depth + color + IMU at full rate requires USB 3.0+.'
-            )
+        if 'Usb Type Descriptor' not in out:
+            pytest.skip('rs-enumerate-devices reported no USB type descriptor')
+        assert '3.' in out.split('Usb Type Descriptor')[1].split('\n')[0], (
+            'RealSense is not on a USB 3.x port. '
+            'Depth + color + IMU at full rate requires USB 3.0+.'
+        )
 
     def test_imu_permissions(self):
         iio_base = '/sys/bus/iio/devices'
         if not os.path.isdir(iio_base):
             pytest.skip('No IIO subsystem (not running on Pi 5?)')
         iio_devices = [
-            os.path.join(iio_base, d)
-            for d in os.listdir(iio_base)
-            if d.startswith('iio:device')
+            os.path.join(iio_base, d) for d in os.listdir(iio_base) if d.startswith('iio:device')
         ]
         if not iio_devices:
             pytest.skip('No IIO devices found (RealSense IMU may not be enumerated yet)')
@@ -205,25 +185,22 @@ class TestRealSense:
 
     def test_imu_fix_script_installed(self):
         script = '/usr/local/bin/fix-realsense-imu.sh'
-        assert os.path.isfile(script), (
-            f'{script} not found. Run: bash scripts/setup_realsense.sh'
-        )
-        assert os.access(script, os.X_OK), (
-            f'{script} is not executable. Fix: sudo chmod +x {script}'
-        )
+        assert os.path.isfile(script), f'{script} not found. Run: bash scripts/setup_realsense.sh'
+        assert os.access(
+            script, os.X_OK
+        ), f'{script} is not executable. Fix: sudo chmod +x {script}'
 
 
 # ---------------------------------------------------------------------------
-# Coral EdgeTPU — USB accelerator (Phase 3A)
+# Coral EdgeTPU (M.2 primary, USB fallback)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.hardware
 class TestCoral:
-    # M.2 (PCIe) Apex is the primary device; the M.2 setup lands /dev/apex_0.
     M2_PCI_ID = '1ac1:089a'
     APEX_DEV = '/dev/apex_0'
-    # USB accelerator IDs (fallback). The USB ID flips after the first
-    # firmware load; either is acceptable.
+    # The USB accelerator's ID changes after its first firmware load.
     PRE_INIT_ID = '1a6e:089a'
     POST_INIT_ID = '18d1:9302'
 
@@ -239,22 +216,20 @@ class TestCoral:
 
     @pytest.mark.skipif(
         importlib.util.find_spec('tflite_runtime') is None,
-        reason='tflite_runtime not yet installed (Phase 3A)',
+        reason='tflite_runtime not installed',
     )
     def test_tflite_runtime_importable(self):
         import tflite_runtime  # noqa: F401
 
     @pytest.mark.skipif(
         importlib.util.find_spec('pycoral') is None,
-        reason='pycoral not yet installed (Phase 3A)',
+        reason='pycoral not installed',
     )
     def test_pycoral_importable(self):
         import pycoral.utils.edgetpu  # noqa: F401
 
-    # Inference latency budget. The bundled efficientdet-lite0 typically
-    # runs single-digit ms on the M.2 (PCIe) Apex on a Pi 5; 100 ms gives
-    # generous headroom for the first 1-2 warmup invocations + bus
-    # contention with active camera streams while teleop is running.
+    # Steady state is single-digit ms on the M.2 card; 100 ms absorbs warmup
+    # and bus contention with the camera streams.
     INFERENCE_BUDGET_MS = 100.0
 
     @pytest.mark.skipif(
@@ -263,16 +238,12 @@ class TestCoral:
     )
     def test_inference_within_latency_budget(self):
         import numpy as np
-        from pathlib import Path
-        import subprocess
         from pycoral.utils.edgetpu import list_edge_tpus, make_interpreter
 
         if not list_edge_tpus():
-            pytest.skip('No EdgeTPU device — cannot run inference')
+            pytest.skip('No EdgeTPU device; cannot run inference')
 
-        # The EdgeTPU delegate is single-user. If edgetpu_node is running
-        # (likely under racecar-teleop.service) the delegate load will fail.
-        # Skip rather than report a spurious failure.
+        # The EdgeTPU delegate is single-user; a running edgetpu_node holds it.
         running = subprocess.run(
             ['pgrep', '-f', 'lib/racecar_neo_ros2_driver/edgetpu_node'],
             capture_output=True,
@@ -280,8 +251,9 @@ class TestCoral:
         if running.returncode == 0:
             pytest.skip('edgetpu_node is running; cannot test in isolation')
 
-        model = (Path(__file__).parent.parent / 'models'
-                 / 'efficientdet_lite0_generic_edgetpu.tflite')
+        model = (
+            Path(__file__).parent.parent / 'models' / 'efficientdet_lite0_generic_edgetpu.tflite'
+        )
         if not model.exists():
             pytest.skip(f'Model file missing: {model}')
 
@@ -289,23 +261,18 @@ class TestCoral:
         try:
             interpreter = make_interpreter(str(model))
         except ValueError:
-            import time
             time.sleep(1.5)
             interpreter = make_interpreter(str(model))
 
         interpreter.allocate_tensors()
         input_details = interpreter.get_input_details()[0]
         _, h, w, _ = input_details['shape']
-        # Synthetic mid-gray image avoids needing a real camera frame.
         frame = np.full((1, h, w, 3), 128, dtype=np.uint8)
 
-        import time
-        # Warmup invocation — first one always pays an extra ~30 ms for tensor
-        # allocation paths that aren't relevant to steady-state latency.
+        # The first invocation pays ~30 ms of one-time allocation.
         interpreter.set_tensor(input_details['index'], frame)
         interpreter.invoke()
 
-        # Measure mean over 10 invocations.
         n = 10
         t0 = time.monotonic()
         for _ in range(n):
@@ -321,43 +288,23 @@ class TestCoral:
         )
 
 
-# The MAX7219 dot matrix moved onto the NEO-PIT board (v0.3.0) and is driven by
-# the Teensy over the UART command frame, not the Pi's SPI bus, so the former
-# SPI-device / luma.led_matrix hardware checks were removed in v0.4.0.
-
-
 # ---------------------------------------------------------------------------
-# RTC backup battery — vcgencmd pmic_read_adc BATT_V on Pi 5
+# RTC backup battery: vcgencmd pmic_read_adc BATT_V on Pi 5
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.hardware
 class TestRTC:
-    # Rechargeable backup cell, usable 2.7-3.0 V. 2.7 V is the PCF85063 RTC's
-    # own floor (clock resets below it), so it is the recharge line.
-    BATT_MIN_VOLTS = 2.7
-
-    def _read_batt_volts(self):
-        """Return RTC battery voltage in volts, or None if vcgencmd is unusable."""
-        try:
-            r = subprocess.run(
-                ['vcgencmd', 'pmic_read_adc', 'BATT_V'],
-                capture_output=True, text=True, timeout=5,
-            )
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            return None
-        if r.returncode != 0 or 'BATT_V' not in r.stdout:
-            return None
-        m = re.search(r'BATT_V\s+volt\(\d+\)=([0-9.]+)V', r.stdout)
-        return float(m.group(1)) if m else None
+    BATT_MIN_VOLTS = sysinfo.RTC_LOW_VOLTS
 
     def test_user_in_video_group(self):
         assert _user_in_group('video'), (
-            'User not in video group (needed for /dev/vcio → vcgencmd). Fix: '
+            'User not in video group (needed for /dev/vcio for vcgencmd). Fix: '
             'sudo usermod -aG video $USER and log out + back in.'
         )
 
     def test_battery_above_threshold(self):
-        volts = self._read_batt_volts()
+        volts = sysinfo.read_rtc_voltage()
         if volts is None:
             pytest.skip(
                 'vcgencmd pmic_read_adc BATT_V unavailable; either /dev/vcio '
@@ -367,7 +314,7 @@ class TestRTC:
         assert volts >= self.BATT_MIN_VOLTS, (
             f'RTC backup battery at {volts:.2f}V (floor '
             f'{self.BATT_MIN_VOLTS}V). Recharge the Pi 5 RTC backup cell '
-            f'(usable 2.7-3.0 V) — below 2.7 V the clock resets on every '
+            f'(usable 2.7-3.0 V); below 2.7 V the clock resets on every '
             f'power-off.'
         )
 
@@ -376,18 +323,26 @@ class TestRTC:
 # Python runtime dependencies for the driver
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.hardware
 class TestDependencies:
-    @pytest.mark.parametrize('module', [
-        'ackermann_msgs',
-        'cv2',
-        'numpy',
-        'rclpy',
-        'sensor_msgs',
-        'serial',
-        'smbus',
-        'spidev',
-    ])
+    @pytest.mark.parametrize(
+        'module',
+        [
+            'ackermann_msgs',
+            'diagnostic_msgs',
+            'luma.core',
+            'nav_msgs',
+            'numpy',
+            'PIL',
+            'rclpy',
+            'rosbag2_py',
+            'sensor_msgs',
+            'serial',
+            'vision_msgs',
+            'yaml',
+        ],
+    )
     def test_module_importable(self, module):
         try:
             importlib.import_module(module)

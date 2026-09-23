@@ -15,11 +15,13 @@
   .card.healthy { border-left-color: var(--green); }
   .card.stale   { border-left-color: var(--yellow); }
   .card.dead    { border-left-color: var(--red); }
+  .card.unsupervised { border-left-color: var(--muted); }
   .card h2 { font-size: 1rem; margin-bottom: 0.5rem; }
   .indicator { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
   .indicator.healthy { background: var(--green); box-shadow: 0 0 6px var(--green); }
   .indicator.stale   { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); }
   .indicator.dead    { background: var(--red); box-shadow: 0 0 6px var(--red); }
+  .indicator.unsupervised { background: var(--muted); }
   table { width: 100%; border-collapse: collapse; margin-bottom: 1.5rem; }
   th, td { text-align: left; padding: 0.4rem 0.8rem; border-bottom: 1px solid #2a2a4a; font-size: 0.85rem; }
   th { color: #7ec8e3; }
@@ -34,7 +36,7 @@
 </head>
 <body>
 
-<h1>RACECAR Neo &mdash; System Dashboard</h1>
+<h1>RACECAR Neo system dashboard</h1>
 <div class="meta">
   <span id="timestamp">Loading...</span> &bull;
   <span id="log-dir"></span>
@@ -44,16 +46,16 @@
 <div class="section-title">Nodes</div>
 <div class="grid" id="nodes"></div>
 
-<div class="section-title">System Health</div>
+<div class="section-title">System health</div>
 <div class="grid" id="system-health"></div>
 
-<div class="section-title">Topic Rates</div>
+<div class="section-title">Topic rates</div>
 <table>
   <thead><tr><th>Topic</th><th>Rate</th><th>Status</th></tr></thead>
   <tbody id="rates"></tbody>
 </table>
 
-<div class="section-title">Watchdog Log</div>
+<div class="section-title">Watchdog log</div>
 <div class="log-box" id="watchdog-log">No watchdog events yet.</div>
 
 <script>
@@ -65,9 +67,8 @@ function update() {
       document.getElementById('timestamp').textContent = data.timestamp;
       document.getElementById('log-dir').textContent = data.log_dir;
 
-      // Nodes
       let nh = '';
-      for (const [key, n] of Object.entries(data.nodes)) {
+      for (const n of Object.values(data.nodes)) {
         nh += `<div class="card ${n.status}">
           <h2><span class="indicator ${n.status}"></span>${n.label}</h2>
           <div style="color:var(--muted);font-size:0.8rem">${n.topic}</div>
@@ -76,9 +77,8 @@ function update() {
       }
       document.getElementById('nodes').innerHTML = nh;
 
-      // System Health (RTC battery, Pi under-voltage alarm, etc.)
       let sh = '';
-      for (const [key, item] of Object.entries(data.system_health || {})) {
+      for (const item of Object.values(data.system_health || {})) {
         sh += `<div class="card ${item.status}">
           <h2><span class="indicator ${item.status}"></span>${item.label}</h2>
           <div style="margin-top:0.3rem">${item.detail}</div>
@@ -86,17 +86,15 @@ function update() {
       }
       document.getElementById('system-health').innerHTML = sh;
 
-      // Rates
       let rh = '';
       for (const [topic, info] of Object.entries(data.rates)) {
-        const hz = info.hz !== null ? info.hz.toFixed(1) + ' Hz' : '—';
+        const hz = info.hz !== null ? info.hz.toFixed(1) + ' Hz' : '-';
         const cls = info.hz === null ? 'dead' : (info.stale ? 'stale' : 'ok');
         const label = info.hz === null ? 'NO DATA' : (info.stale ? 'STALE' : 'OK');
         rh += `<tr><td>${topic}</td><td class="hz ${cls}">${hz}</td><td class="hz ${cls}">${label}</td></tr>`;
       }
       document.getElementById('rates').innerHTML = rh;
 
-      // Watchdog log
       const wl = data.watchdog_log;
       document.getElementById('watchdog-log').textContent = wl.length ? wl.join('\n') : 'No watchdog events yet.';
     })

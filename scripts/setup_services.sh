@@ -6,10 +6,10 @@
 # only update files that changed.
 #
 # Services installed:
-#   racecar-teleop.service    — full stack via launch_teleop.sh
-#   racecar-watchdog.service  — BindsTo=teleop, restart-on-failure supervisor
-#   racecar-dashboard.service — web status page (port 8080, after Phase 4E)
-#   racecar-jupyter.service   — JupyterLab (port 8888)
+#   racecar-teleop.service    full stack via launch_teleop.sh
+#   racecar-watchdog.service  BindsTo=teleop, restart-on-failure supervisor
+#   racecar-dashboard.service web status page (port 8080)
+#   racecar-jupyter.service   JupyterLab (port 8888)
 #
 # After install: `sudo systemctl start racecar-teleop` or reboot.
 set -eo pipefail
@@ -28,7 +28,7 @@ for svc in "${SERVICES[@]}"; do
     src="${SCRIPT_DIR}/${svc}"
     dst="/etc/systemd/system/${svc}"
     if [[ ! -f "$src" ]]; then
-        echo "Missing $src — skipping" >&2
+        echo "Missing $src; skipping" >&2
         continue
     fi
     if cmp -s "$src" "$dst" 2>/dev/null; then
@@ -45,9 +45,7 @@ if [[ $changed -eq 1 ]]; then
     echo "  systemctl daemon-reload"
 fi
 
-# Enable so they auto-start on boot. `enable` is idempotent — no-op if
-# already enabled. We deliberately don't `start` here; the user controls
-# when the stack first comes up (avoids surprise launch during install).
+# Enable only; the operator starts the stack.
 for svc in "${SERVICES[@]}"; do
     if systemctl is-enabled --quiet "$svc"; then
         echo "  $svc: already enabled"

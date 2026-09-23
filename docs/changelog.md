@@ -2,122 +2,247 @@
 
 All notable changes to this project will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.8.1] - 2026-09-10
+## [Unreleased]
+
+## [0.8.2] - 2026-09-22
+
+Cleanup release: a whole-repository audit against the development rules, the
+bugs it surfaced, and on-car verification of items earlier releases left open.
 
 ### Added
 
-- **A Detections toggle on `webteleop`, over the colour frame.** Reads
-  `vision_msgs/Detection2DArray` from the dashboard's new `detections_topic`,
-  default `/edgetpu/inference`, and draws each box with its class and
-  confidence. Boxes are published in source-image pixels and leave the service
-  normalized, so the browser scales them to whatever width its column gives
-  the preview. Detections older than 1.5 s are cleared: a frozen box on a live
-  frame is a lie about what is out there. A car with no detector, or without
-  `vision_msgs` installed, gets the toggle disabled rather than a page that
-  fails to load.
-- **`score_threshold` is 0.4**, the Coral examples' default and the value
-  this model was evaluated at. At 0.5 an ordinary indoor scene reported
-  nothing at all, which reads as a broken pipeline rather than an empty one.
-- **The default detection model is EfficientDet-Lite0 on COCO**,
-  `models/efficientdet_lite0_320_coco_edgetpu.tflite` with
-  `models/coco_labels.txt`, from `google-coral/test_data`. The model it
-  replaces as the default is a single-class detector whose `labels.txt` reads
-  `car` and nothing else, which made the dashboard's new overlay a poor
-  demonstration of a machine-vision pipeline; both are still in `models/` and
-  the choice is one line of `config/edgetpu.yaml`.
-- **`edgetpu_node` caps inference at `inference_rate_hz`, shipped at 15.** The
-  colour stream runs at 60 fps and nothing downstream reads detections faster
-  than a dashboard draws them, so three frames in four were TPU time and
-  current spent on results nobody saw. Frames above the rate are dropped
-  before the decode, which is where the cost is; `_last_image_time` is still
-  stamped for every frame, so the stale-input watchdog still reports on the
-  camera rather than on this node's own gating. `frames_dropped` and the
-  configured rate are published in `/diagnostics`. `0` restores per-frame
-  inference. `diagnose.py`'s nominal for `/edgetpu/inference` moves from 17.0
-  to 15.0 to match, and a test ties the two together so they cannot drift.
-- **`setup_dashboards.sh` clones the `racecar-neo` branch explicitly.** The
-  forks' default branch is still the Neobotics original: upstream ports,
-  neoracer unit names, Humble paths and the forward-facing lidar convention.
-  A fresh car ran `git clone` with no branch and got that, so none of the
-  platform work was reachable by `racecar setup dashboards`. The clone now
-  names the branch and sets tracking, the pull names `origin <branch>` so a
-  checkout made before tracking existed still fast-forwards, and a checkout
-  someone has deliberately put on another branch is reported and left alone
-  rather than switched underneath them. `RACECAR_DASHBOARD_BRANCH` overrides.
-- **Each dashboard checkout carries a `VERSION` tracking this driver's
-  release**, plus `docs/changelog.md` and `docs/architecture.md`, and a README
-  Contents entry pointing at them. `setup_dashboards.sh` pins
-  `RACECAR_DASHBOARD_VERSION` and reports a checkout that does not match, the
-  same shape as the RealSense firmware target the driver pins and `racecar
-  setup realsense` reconciles. A mismatch is reported and the install
-  continues: a car mid-upgrade should still end up with working units, and
-  which release to run is the operator's call.
-- **`webteleop` shows the depth stream under the colour frame.** The Camera card carries both D435i streams at the same width and the same framing, so a feature lines up vertically between them; the card's column narrows to 400 px so the pair stands about as tall as the lidar beside it, and the Logs card moves up into the width that opens on the right. Depth is colorized on the inferno ramp with near bright and far dark, one ordered scale from dark to bright, so a step in colour is a step in distance and the view survives being read by a colour blind student. The ramp starts above black, which leaves pure black to mean "no return" on its own: glass, a mirror and anything past `depth_max_m` are otherwise indistinguishable from a wall at the far end. New `depth_topic` and `depth_max_m` in `teleop.yaml`; an empty `depth_topic` is a car whose camera is colour only and drops the pane rather than subscribing to a topic nobody publishes, while a configured topic delivering nothing keeps the pane so a dead stream stays visible as a fault. Six tests cover both wire encodings (`16UC1` millimetres and `32FC1` metres), the ramp's ordering, its separation of far from no-return, and the subscription that must not be created.
-- **`docs/img/`** carries the RACECAR Neo logo set: the R-mark, the wordmark and the app icon. The dashboards embed the mark and the icon; the palette below is sampled from these files rather than declared by hand.
-- **`docs/troubleshooting.md`** collects the failure modes and the reasoning behind choices that look arbitrary at the call site: the diagnostic's rate tuning, eth0 addressing, the AP isolation dispatcher, NetworkManager authorization, the `.bashrc` block rewrite, the desktop toggle's scope, the Jupyter dependency pins, Coral M.2 interrupts, RealSense flash privileges, raspi-config on Ubuntu, and the dashboard checkouts. Eleven multi-paragraph comment blocks moved out of `scripts/` into it, each replaced by a two-line note naming the constraint and the section; comment runs of eight lines or more dropped from 274 lines to file headers only. Long rationale in a source file reads as a docstring to the next tool that touches it, and none of it was load-bearing at the call site.
-- **`scripts/polkit/49-racecar-network.rules`**, installed to `/etc/polkit-1/rules.d/` by `setup_user_env.sh`. Answers five NetworkManager polkit actions (`network-control`, `enable-disable-wifi`, `wifi.scan`, `settings.modify.own`, `settings.modify.system`) with yes for the `sudo` group. The `49-` prefix is what puts it ahead of polkit's own `50-default.rules`. Members of that group can already reach the same operations through `sudo nmcli`, so the grant removes a password prompt rather than a privilege boundary; the cost is that an unlocked shell on the car can change its networking, which is the intended trade for a lab robot driven from a terminal.
-- **`scripts/setup_nvme.sh`** partitions, formats and mounts the NVMe at `/data`, the bag root `racecar log` prefers over `~/logs/bags`. Single GPT partition, ext4 labelled `racecar-data` with the root reserve set to zero (the 5% default costs about 25 GB on a data-only disk), and an fstab entry by UUID with `noatime,nofail` plus a short device timeout, so a missing or failed drive does not strand the car at boot. Refuses a disk that carries a filesystem signature, holds a mounted partition, or backs `/`, and exits early when `/data` is already mounted. Kept out of `setup_all.sh`, since it erases a disk and wants a human confirming the target.
+- **`racecar lint`**: runs `ruff check`, `black --check` and `mypy` from the
+  package root with the settings in the new `pyproject.toml` (99 columns,
+  single quotes, typed signatures). `setup_dev_tools.sh` installs pinned
+  `ruff==0.16.8`, `black==26.5.1` and `mypy==2.3.1` per-user, and
+  `setup_user_env.sh` puts `~/.local/bin` on `PATH`, so every car runs the
+  same checks.
+- **Per-car overrides for `pit_node` and `imu_fusion_node`**: each shipped
+  YAML (`pit`, `lsm9ds1_cal`, `lsm9ds1_mag_cal`, `imu_fusion`, `realsense_cal`)
+  is followed by its gitignored `config/<name>.local.yaml` when present, through
+  `single_node_launch(extra_yamls=...)`.
+- `racecar build` removes dangling symlinks under the package's `build/` and
+  `install/` trees before colcon runs. A deleted source otherwise breaks the
+  `setup.py` glob on every car built with `--symlink-install`.
+- `setup_dashboards.sh` stops, disables and removes the units of the retired
+  camlabel, eps, pursuit and smartfollow dashboards.
+- `imu_fusion_node` parameter `realsense_topic`, replacing a hard-coded name.
+- `docs/troubleshooting.md` sections: LSM9DS1 axis mapping, EdgeTPU inference
+  rate and threshold, Gamepad hid_nintendo blacklist, Lidar /scan stalls.
+- Tests for the calibrators, `launch_common`, `sysinfo`, IMU fusion, gamepad
+  mapping, mux arbitration, the watchdog restart decision and `pit_node`
+  display bits; pure helpers were extracted from the nodes to reach them.
 
 ### Changed
 
-- **The lab dashboards are three, not seven, and forked into MITRacecarNeo.** `teleop_dashboard`, `linefollow_dashboard` and `wallfollow_dashboard` are forks of the Neobotics Foundation repositories; `setup_dashboards.sh` clones from `MITRacecarNeo` and no longer installs `camlabel`, `pursuit`, `eps` or `smartfollow`. Forking is what makes the rest of this section possible: the four unforked dashboards could only ever be rendered around, never corrected. Ports are reassigned so the set is contiguous from the web dashboard's 8080: `webteleop` 8081 (was 8087), `linefollow` 8082 (was 8086), `wallfollow` 8083 (was 8081). The dashboard unit keeps the name `racecar-webteleop`; `racecar-teleop` is the core ROS stack and the two would collide.
-- **The unit is still rendered from the checkout's template rather than copied.** The forks target Jazzy and carry this platform's names, so the substitutions are a no-op on them, but a fork synced from Neobotics upstream comes back carrying Humble and the neoracer names. `render_unit` now requires `@DIR@` and `Environment=HOME=` and accepts either ROS distribution, and `unit_name` strips either project's prefix, so both land on the same `racecar-<name>.service`.
-- **The three dashboards carry the RACECAR Neo mark, wordmark and palette.** Crimson `#A01936` to orange `#EC8B48` with wordmark ink `#231F20`, all sampled from `docs/img/` rather than eyeballed. The Neobotics red and Tarmac Blue are gone, the embedded Neobotics logo is replaced by the R-mark, and each page carries the app icon as its favicon. A dashboard on screen now names the vehicle it drives.
-- **Orange leads the palette, and the palette splits by role rather than by taste.** The two ends of the mark's gradient are near inverses in contrast: crimson measures 7.8:1 on white and 2.1:1 on tarmac, orange 2.5:1 on white and 6.5:1 on tarmac, so swapping one for the other inverts every legibility guarantee the first pass relied on. Orange now carries the brand and the interactive role on the dark surfaces, ember `#A55312` (the same 26 degree hue held down to L 0.36, 5.5:1 on white) carries them on the light ones, and `wallfollow`, which has both themes, switches between the two on `data-theme` along with the ink that sits on top of the fill: white on ember is 5.5:1, white on orange is 2.5:1, ink on orange is 6.5:1. Crimson is reserved for STOP, Reset, TIMED OUT and line lost. Spending the alarm colour on the normal case is what left `webteleop`'s state box red while driving and its fault sharing that red with the STOP button; the box now reads ember while moving and crimson only on a fault. Light page grounds warm from `#FFFFFF` to `#FAF7F4` so the cards lift off them.
+- Calibration utilities write `config/<name>.local.yaml` (source and install
+  share) instead of the tracked defaults, write only the keys the node
+  declares, and print a backup reminder for `~/.config/racecar/calibration/`.
+  `calibrate_imu.py` and `calibrate_realsense_imu.py` share
+  `scripts/calibrate_common.py`.
+- `setup_networking.sh` no longer passes `--force` to `setup_eth.sh`, so the
+  eth0-SSH guard applies. Run it from the console or over wlan0.
+- `racecar status` no longer requires `/dev/spidev*`; the dot-matrix check
+  needs only `dotmatrix_node`. The dashboard's dot-matrix card watches
+  `/dotmatrix/frame`, and unsupervised nodes show grey.
+- `edgetpu_node` reports `hardware_id` `coral_edgetpu_m2`; its code default
+  `score_threshold` is 0.4, matching the YAML.
+- `package.xml` declares the runtime dependencies the nodes import.
+- All Python is black-formatted and every signature in the package, launch
+  files and scripts is typed. Test files are renamed to mirror their sources.
+- Comments and docs: ASCII only, noun-phrase headings, stale hardware
+  references (Maestro, `imu_node`, USB Coral, SPI display, firmware without
+  CRC) and version-history comments removed.
 
 ### Fixed
 
-- **`webteleop`'s lidar view was 180 degrees out.** It took the raw scan angle
-  negated, which is the neoracer's forward-facing 270 degree mount; the Neo
-  mounts its RPLIDAR facing aft over 360 degrees at 1080 points, so the nose
-  sits at the raw 180 edge. It now carries `LIDAR_MOUNT_YAW_DEG` and derives
-  the angle from the message's own `angle_min` and `angle_increment`, the same
-  constant and convention `wallfollow` steers on, so a 360 and a 270 degree
-  scan both work and a forward-facing lidar needs only `0.0`. This is the last
-  of the v0.8.0 known limitation; it never affected driving, because teleop's
-  input is manual. Eight tests cover the convention, including that left and
-  right are not mirrored and that the change is a yaw rather than a handedness
-  flip.
+- The measured LSM9DS1 calibration was applied by copying it over tracked
+  files, so any checkout silently reverted it; this car was running on zeros.
+  It now lives in the gitignored `.local.yaml` files.
+- `teleop.launch.py` passed `pit_config` to `pit.launch.py`, which ignored it.
+- `calibrate_mag.py` wrote a zero bias and identity matrix over the existing
+  calibration when it had under 100 samples; it now writes nothing and exits 1.
+- `RTC_VCHG_UV=0` skipped the RTC step but left an existing
+  `dtparam=rtc_bbat_vchg=` line, so charging stayed on. It now removes the line.
+- `setup_raspi_config.sh` added an `enable_uart=0` on every Ubuntu run; it now
+  leaves exactly one `enable_uart=1`.
+- `racecar` help and completion listed retired dashboards, and
+  `racecar wifi connect` carried a duplicated autoconnect block.
+- `launch_teleop.sh` updates `~/logs/latest` atomically and sends its banner
+  and SHM-sweep lines to `teleop.log`.
+- `setup_realsense.sh` pointed at `uav_neo_ros2_driver` for verification.
+- Docs contradicting the code: the watchdog restart rule, the NVMe layout,
+  `racecar launch imu`, the RealSense topics and filters, and changelog links.
+- Tests that could not fail (dashboard rate, diagnose exit code, USB3 speed)
+  now assert real behaviour.
+
+### Removed
+
+- `scripts/clear_dotmatrix.py` and `racecar clear`; the display has been
+  Teensy-driven since 0.4.0. `scripts/dmatrix_patterns.py` is the self-test.
+- `docs/specifics/post-audit-tests.md` and
+  `docs/specifics/networking_test_checklist.md` (v0.0.x checklists).
+- Dead watchdog code: `STARTUP_GRACE`, `_i2c_probe`, the `restart_delay` branch
+  and the `ros2 topic list` fallback.
+- `pit_node.transform_accel` and `transform_gyro`; `remap_axes` takes the scale.
+
+## [0.8.1] - 2026-09-10
+
+Dashboard-side changes are recorded in each fork's `docs/changelog.md`
+(`teleop_dashboard`, `linefollow_dashboard`, `wallfollow_dashboard`, all at
+0.8.1); the entries here name them and cover the driver side.
+
+### Added
+
+- **`webteleop` Detections toggle** over the colour frame, reading
+  `/edgetpu/inference` (`detections_topic`); boxes older than 1.5 s are
+  cleared, and a car without a detector or `vision_msgs` gets the toggle
+  disabled.
+- **`webteleop` depth stream** under the colour frame, colorized on the inferno
+  ramp with pure black reserved for "no return". New `depth_topic` and
+  `depth_max_m` in `teleop.yaml`; an empty `depth_topic` drops the pane.
+- **`edgetpu_node` caps inference at `inference_rate_hz`, shipped at 15.** The
+  colour stream runs at 60 fps and nothing downstream reads detections faster
+  than a dashboard draws them. Frames above the rate are dropped before the
+  decode; `_last_image_time` is still stamped for every frame, so the
+  stale-input watchdog reports on the camera rather than on the rate gate.
+  `frames_dropped` and the configured rate are published in `/diagnostics`,
+  and `0` restores per-frame inference. `diagnose.py`'s nominal for
+  `/edgetpu/inference` moves from 17.0 to 15.0, with a test tying the two
+  together.
+- **Each dashboard checkout carries a `VERSION` tracking this driver's
+  release**, plus `docs/changelog.md` and `docs/architecture.md`.
+  `setup_dashboards.sh` pins `RACECAR_DASHBOARD_VERSION` and reports a
+  mismatch without stopping the install, so a car mid-upgrade still ends up
+  with working units.
+- **`docs/img/`** carries the RACECAR Neo logo set: the R-mark, the wordmark and
+  the app icon. The dashboards embed the mark and the icon, and the palette is
+  sampled from these files.
+- **`docs/troubleshooting.md`** collects the failure modes and the reasoning
+  behind choices that look arbitrary at the call site. Eleven multi-paragraph
+  comment blocks moved out of `scripts/` into it, each replaced by a two-line
+  note naming the constraint and the section.
+- **`scripts/polkit/49-racecar-network.rules`**, installed to
+  `/etc/polkit-1/rules.d/` by `setup_user_env.sh`. Grants five NetworkManager
+  polkit actions (`network-control`, `enable-disable-wifi`, `wifi.scan`,
+  `settings.modify.own`, `settings.modify.system`) to the `sudo` group; the
+  `49-` prefix puts it ahead of polkit's `50-default.rules`. Members of that
+  group can already reach the same operations through `sudo nmcli`, so the
+  grant removes a password prompt rather than a privilege boundary.
+- **`racecar wifi status` reports whether the link returns** on an `after boot`
+  line, naming the network that rejoins or the reason none will.
+- **`racecar wifi` names an unauthorized car before it prompts.** `connect` and
+  `disconnect` read `nmcli general permissions` first and exit 5 with the
+  `setup_user_env.sh` remedy when `network-control` is not `yes`. `status` and
+  `list` skip the check.
+
+### Changed
+
+- **The lab dashboards are three, not seven, and forked into MITRacecarNeo.**
+  `teleop_dashboard`, `linefollow_dashboard` and `wallfollow_dashboard` are
+  forks of the Neobotics Foundation repositories; `setup_dashboards.sh` clones
+  from `MITRacecarNeo` and no longer installs `camlabel`, `pursuit`, `eps` or
+  `smartfollow`. Ports are contiguous from the web dashboard's 8080:
+  `webteleop` 8081 (was 8087), `linefollow` 8082 (was 8086), `wallfollow` 8083
+  (was 8081). The unit keeps the name `racecar-webteleop`, since
+  `racecar-teleop` is the core ROS stack.
+- **The unit is still rendered from the checkout's template rather than
+  copied.** A fork synced from Neobotics upstream comes back carrying Humble
+  and the neoracer names; `render_unit` now requires `@DIR@` and
+  `Environment=HOME=` and accepts either ROS distribution, and `unit_name`
+  strips either project's prefix, so both land on the same
+  `racecar-<name>.service`.
+- **The default detection model is EfficientDet-Lite0 on COCO**,
+  `models/efficientdet_lite0_320_coco_edgetpu.tflite` with
+  `models/coco_labels.txt`, from `google-coral/test_data`. The single-class
+  (`car`) model it replaces stays in `models/`; the choice is one line of
+  `config/edgetpu.yaml`.
+- **`score_threshold` is 0.4**, the Coral examples' default and the value this
+  model was evaluated at. At 0.5 an ordinary indoor scene reported nothing.
+- **The three dashboards carry the RACECAR Neo mark, wordmark and palette**
+  (crimson `#A01936` to orange `#EC8B48`, ink `#231F20`, sampled from
+  `docs/img/`), with orange leading on dark surfaces, ember `#A55312` on light
+  ones, and crimson reserved for stop and fault. Contrast measurements are in
+  the forks' `docs/architecture.md`.
+- **The PIT floor in `racecar status` is 65 percent of nominal** rather than 80
+  (88.4 Hz), leaving room for load-dependence and under-voltage throttling; a
+  halved frame rate (68 Hz) and a dead link still fail.
+
+### Fixed
+
+- **`webteleop`'s lidar view was 180 degrees out.** It now carries
+  `LIDAR_MOUNT_YAW_DEG` and derives angles from the message's `angle_min` and
+  `angle_increment`, the convention `wallfollow` steers on. This closes the
+  v0.8.0 known limitation for `webteleop`; teleop driving was never affected.
+- **`wallfollow` steered into walls on this chassis.** It assumed the
+  neoracer's forward-facing 270 degree lidar; the Neo's RPLIDAR faces aft over
+  360 degrees, a 180 degree yaw rather than a handedness flip.
+  `student_deg = LIDAR_MOUNT_YAW_DEG - raw_deg`, with ray indices from the
+  message's own angles, so 360 and 270 degree scans both work. Where
+  normalization belongs for every consumer is still open with the Neobotics
+  Foundation.
+- **Dashboard plots in crimson were near-invisible** on the dark plot ground
+  (2.09:1); traces and markers now use orange at 6.5:1, and `webteleop`'s chart
+  labels no longer scale with the stretched canvas.
+- **`setup_dashboards.sh` cloned the forks' default branch**, the Neobotics
+  original with upstream ports, neoracer unit names and the forward-facing
+  lidar convention, so none of the platform work reached a fresh car. It now
+  clones the `racecar-neo` branch with tracking, pulls `origin <branch>`, and
+  leaves a checkout deliberately on another branch alone.
+  `RACECAR_DASHBOARD_BRANCH` overrides.
 - **`edgetpu_node` would have swapped scores for classes on the COCO model.**
-  The four SSD outputs were matched to roles by shape, and scores and classes
-  share the shape `(1, N)`, so the two were told apart by which came first in
-  `get_output_details()`. That order is not stable: the two models in
-  `models/` report them in opposite orders, and the incoming one would have
-  thresholded on the class id and labelled every box with its confidence,
-  silently. Roles now come from the export's output name suffix, which
-  distinguishes them, with the shape heuristic kept as a fallback for a model
-  that does not carry the standard names and a one-time error log if the
-  scores tensor holds values outside [0, 1].
+  Scores and classes share the shape `(1, N)`, and the two models in `models/`
+  report them in opposite orders. Roles now come from the export's output name
+  suffix, with the shape heuristic kept as a fallback and a one-time error log
+  if the scores tensor holds values outside [0, 1].
 - **`setup_dashboards.sh` reported a unit as installed when the install had
-  failed.** `install_unit` is called under `|| true`, which suppresses
-  `errexit` for its whole body, so a `sudo install` that failed fell straight
-  through to the success message. The install is tested now, and a failed
-  `systemctl daemon-reload` no longer aborts the run before the summary that
-  says what state the car was left in.
+  failed**, because `install_unit` ran under `|| true`, which suppresses
+  `errexit` for its whole body. A failed `systemctl daemon-reload` no longer
+  aborts the run before the summary.
 - **Three functions in `setup_dashboards.sh` built a path from the wrong
-  variable.** `local repo="$1" dir="$DASH_DIR/$repo"` expands every word
-  before any of its assignments take effect, so `dir` came from the caller's
-  `repo`, not from `$1`. Every call site loops over a variable that happens to
-  be named `repo`, which is the only reason this worked. Split in two.
-- **Half of what the dashboards drew on their plots was invisible.** The plot ground is tarmac `#231F20` in every dashboard and every theme, and crimson on it measures 2.09:1, under the 3:1 floor for a graphical element. Drawn in crimson and therefore barely there: `webteleop`'s commanded-throttle trace and its car marker, `linefollow`'s offset trace and its line-lost band, `wallfollow`'s look-ahead rays, target ray and car marker. All now use orange at 6.5:1, except `linefollow`'s lost band, which keeps the fault meaning and takes crimson lifted to `#E4525A` at 4.4:1. The slider-change markers were the reverse problem, gold at 9.4:1 with an 8 px glow, drawn louder than the data they annotate; they are a plain neutral dashed rule now. `webteleop`'s third log series moves from gold to cyan `#6FC9D4`, since gold and orange are adjacent hues and the two traces were no longer separable.
-- **`webteleop`'s chart labels were scaled up with the canvas.** The chart canvas is 420x160 stretched to the card width, which scales its text along with everything else: the axis labels came out half again too big and ran into the trace and into each other. The backing store is matched to the drawn box before each pass, and the top tick moved clear of the header line.
-- **`wallfollow` steered into walls on this chassis.** It reads `/scan` in the student convention (0 the nose, positive the right) and took the raw scan angle negated, which is the neoracer's 270 degree forward-facing mount. The RACECAR Neo mounts its RPLIDAR facing aft over 360 degrees at 1080 points, so the nose sits at the raw 180 edge; measured on hardware, an object in front reports at raw 180 and one off the car's right at raw +90, a 180 degree yaw rather than a handedness flip. `LIDAR_MOUNT_YAW_DEG` carries the offset and `student_deg = LIDAR_MOUNT_YAW_DEG - raw_deg`. Ray indices come from the message's own `angle_min` and `angle_increment` and wrap modulo the point count, so the 360 and 270 degree patterns both work and a forward-facing lidar needs only `0.0`. This replaces an uncommitted `np.roll(msg.ranges, 540)` in the checkout, which was correct in effect but mutated the message and hardcoded half of 1080. The v0.8.0 known limitation is resolved for `wallfollow`; where normalization belongs for every consumer is still open with the Neobotics Foundation.
-- **`racecar status` failed the six PIT topics on a healthy car.** The sensor rate check measured the Teensy telemetry stream at 88 Hz against a floor of 108.8 and called it a fault. The stream was not slow; the diagnostic was measuring its own overhead. Counting a topic means receiving it, and `pit_node` reads the serial port on a Python thread that loses throughput to whatever else is on the graph. Subscribing to the RealSense colour and depth streams cost 40 percent of the PIT rate, measured A/B on hardware over interleaved trials: 133.6 Hz mean without those two subscriptions against 79.9 Hz with them. The RealSense rates now come from `/diagnostics`, where the camera node publishes its own per-stream frequency and where `scripts/dashboard.py` has read them since v0.7.3. With the two subscriptions gone the PIT topics measure 136.2 Hz against a nominal of 136.
-- **`racecar status` failed the lidar for the same reason.** `/scan` is a value-check topic, so it was deserialised on arrival rather than counted raw: 1080 ranges plus 1080 intensities for every message inside the sample window. That put the measured rate at 4.6 Hz against a 6.4 floor on a lidar delivering 7.2. Every subscription is now raw, and the single buffer a value check needs is deserialised after the window closes. `/scan` measures 7.2 Hz, matching an independent probe.
-- **The sample window was too short to measure the PIT stream at all.** The serial reader delivers frames in clumps, so a short window samples the clumping. Twelve trials per window length on `/imu/lsm9ds1`, nothing else subscribed: at 2.0 seconds the rate ranged 88.2 to 231.5 Hz (standard deviation 32.0); at 5.0 seconds, 146.5 to 157.3 (standard deviation 3.1). `DEFAULT_WINDOW` is 5.0. A full pass costs about 10 seconds rather than 5.
-- **The PIT floor is 65 percent of nominal** rather than 80, leaving room for the load-dependence that remains once the diagnostic stops adding to it, and for a car dipping into under-voltage throttling. The floor is 88.4 Hz, so a car delivering anywhere in the 90 to 110 Hz band passes; a halved frame rate (68 Hz) and a dead link (0 Hz) both still fail.
-- **The lidar nominal was 8.0 Hz on a lidar that delivers 7.2.** `lidar.yaml` leaves `scan_mode` unset, so the driver runs its "typical" mode at 7.2 Hz; the declared 8.0 put the floor at 6.4 and left 11 percent of headroom, so an ordinary dip failed a healthy unit. Nominal is 7.2 and the floor 5.8. A lidar desynced to 2 Hz, the case the check was written for, still fails.
-- **The RealSense streams were never underdelivering.** They were declared at 25 and 12 fps against a note calling the gap between those and the configured 60 and 30 a known hardware shortfall tracked separately. There is no shortfall: `/diagnostics` reports 59.0 and 29.6 fps against targets of 60 and 30. The 25 and 12 were what this tool measured while subscribed to both streams itself. Nominal is now the configured rate at the standard 80 percent floor, and the note is gone.
-- **A joined network did not survive a reboot.** `racecar wifi connect` left persistence to whatever `nmcli` defaulted to for the creation path, and the profile it produced carried `connection.autoconnect=no`, so the car came back with no wlan0 link and the command had to be repeated every session. Two flags govern this and the tool set neither: the profile's `connection.autoconnect`, which is what persists, and the device's own autoconnect flag, which `nmcli device disconnect` clears and nothing restored. `connect` now sets both on every path and creates enterprise profiles with the flag rather than correcting them after. A car booting to `graphical.target` makes the profile flag easy to lose by hand: the GNOME network menu writes `no` when someone disconnects from the desktop.
-- **`racecar wifi status` says whether the link returns.** One line, `after boot`, naming the network that rejoins or the reason none will. A car that reads `connected` can still be one reboot from no link, and the two flags behind that were not visible anywhere.
-- **`racecar wifi connect` refused every open network.** `nmcli` reports an empty SECURITY field for an open AP, and the "not visible" guard tested that field for emptiness, so an open SSID in plain sight exited 4 and the open-network branch below it was unreachable. Found while testing the persistence fix.
-- **`racecar wifi connect` and `disconnect` could not change anything.** NetworkManager asks polkit before activating a connection or editing a profile, the stock policy answers `auth`, and polkit needs an agent to collect a password. An SSH session has none, so both actions died inside `nmcli` with `Error: Connection activation failed: Not authorized to control networking.` For `connect` that came after the passphrase had already been typed, and neither the tool nor `nmcli` said what to do about it. The v0.7.4 command was written and reviewed against a desktop session, where the GNOME agent answers the prompt and the whole gate is invisible; the headless car is the platform it actually runs on. Fixed by the polkit rule above. `status` and `list` were never affected, since reading needs no authorization.
-- **`racecar wifi` now names an unauthorized car before it prompts.** `connect` and `disconnect` read `nmcli general permissions` first and exit 5 with the `setup_user_env.sh` remedy when `network-control` is not `yes`, alongside the existing rfkill and missing-interface checks. Cars imaged before this release need that one run; the rule takes effect when it lands, with no reboot or NetworkManager restart. `status` and `list` skip the check, since refusing them would withhold the diagnosis an unauthorized car needs.
-- **The README described eleven setup phases**; `setup_all.sh` has called twelve since v0.8.0, and the list omitted `setup_dashboards.sh`.
+  variable.** `local repo="$1" dir="$DASH_DIR/$repo"` expands every word before
+  any assignment takes effect; split in two.
+- **`racecar status` failed the six PIT topics on a healthy car.** The
+  diagnostic's own RealSense colour and depth subscriptions cost 40 percent of
+  the PIT telemetry rate (133.6 Hz without, 79.9 Hz with, A/B on hardware). The
+  RealSense rates now come from `/diagnostics`, as `dashboard.py` has read them
+  since v0.7.3, and the PIT topics measure 136.2 Hz against a nominal of 136.
+- **`racecar status` failed the lidar for the same reason.** `/scan` was
+  deserialised on arrival; every subscription is now raw, and the one buffer a
+  value check needs is deserialised after the window closes. `/scan` measures
+  7.2 Hz, matching an independent probe.
+- **The sample window was too short to measure the PIT stream.** Frames arrive
+  in clumps: at 2.0 s the rate ranged 88.2 to 231.5 Hz (standard deviation
+  32.0), at 5.0 s 146.5 to 157.3 (3.1). `DEFAULT_WINDOW` is 5.0.
+- **The lidar nominal was 8.0 Hz on a lidar that delivers 7.2** (`scan_mode`
+  unset runs the "typical" mode). Nominal is 7.2 and the floor 5.8.
+- **The RealSense nominals were 25 and 12 fps**, the rates this tool measured
+  while subscribed to both streams itself. `/diagnostics` reports 59.0 and
+  29.6; nominal is now the configured rate at the standard 80 percent floor.
+- **A joined network did not survive a reboot.** `racecar wifi connect` set
+  neither the profile's `connection.autoconnect` nor the device's autoconnect
+  flag, which `nmcli device disconnect` clears. `connect` now sets both on
+  every path, and creates enterprise profiles with the flag set.
+- **`racecar wifi connect` refused every open network.** `nmcli` reports an
+  empty SECURITY field for an open AP, and the "not visible" guard tested that
+  field for emptiness.
+- **`racecar wifi connect` and `disconnect` could not change anything over
+  SSH.** The stock polkit policy answers `auth` and an SSH session has no agent,
+  so both died inside `nmcli` with `Not authorized to control networking`,
+  after the passphrase had been typed. Fixed by the polkit rule above.
+- **The README described eleven setup phases**; `setup_all.sh` has called
+  twelve since v0.8.0, and the list omitted `setup_dashboards.sh`.
 
 ## [0.8.0] - 2026-09-06
 
 Lab dashboards from the NeoRacer, a transmitter-held autonomy gate, and bag recording behind `racecar log`.
+
+Known limitation at release: the lidar-based dashboards (`wallfollow`, `eps`,
+`smartfollow`) did not steer correctly, and `webteleop`'s lidar view was
+rotated. This chassis reports an object in front at 180 degrees and one to the
+right at -90 under their arithmetic, a 180 degree yaw rather than a handedness
+flip. A correction inside this driver was prototyped and reverted because it
+would settle a shared convention unilaterally; v0.8.1 fixed it in the forks.
 
 ### Added
 
@@ -127,13 +252,8 @@ Lab dashboards from the NeoRacer, a transmitter-held autonomy gate, and bag reco
 - **`/rc/link`** (`std_msgs/Bool`) from `pit_node`, backed by `pit_protocol.Telemetry.rc_link_up`. Presence of a transmitter cannot be read off `/rc/channels`: `rc_normalized` clamps into `[-1, 1]`, which puts a dead channel (near 0 us) on exactly `-1.0`, the same value a switch held low produces. Link state is read from the raw pulse widths instead, before the clamp.
 - **FlySky autonomy gate in `mux_node`**, off by default (`rc_authority_enable`). With no transmitter the bumpers govern exactly as before. Enabled and with a live transmitter, the mode channel takes the gate: middle idle, up manual (the USB gamepad drives), down autonomous, and the bumpers are ignored. Authority requires all four of a fresh link, in-band channels, a sustained hold (`rc_link_hold_sec`), and the switch seen at middle once since the grant; one bad frame revokes it. Granting is slow and revoking immediate on purpose. A frozen buffer holding a plausible mid-band constant passes the band check and is rejected by the change detector.
 - **`racecar log`**, ROS 2 bag recording and analysis. `start [name]` records to `<timestamp>_<name>` under `/data` when an NVMe is mounted there and `~/logs/bags` otherwise; `stop` sends SIGINT, which is what lets rosbag2 finalize the bag rather than leaving it unindexed; `status` reports size, rate, elapsed and time until the disk fills; `list`, `analyze` (duration, size, per-topic counts and mean rates) and `config` complete the set. Recording every topic pulls in the RealSense colour and depth streams at roughly 73 MB/s against a sustained SD write near 30 MB/s, so `start` refuses without `--force` and says what will happen. An unmounted NVMe is named rather than silently skipped.
+- **`scripts/setup_nvme.sh`** partitions, formats and mounts the NVMe at `/data`, the bag root `racecar log` prefers over `~/logs/bags`. Single GPT partition, ext4 labelled `racecar-data` with the root reserve set to zero (the 5% default costs about 25 GB on a data-only disk), and an fstab entry by UUID with `noatime,nofail` plus a short device timeout, so a missing or failed drive does not strand the car at boot. Refuses a disk that carries a filesystem signature, holds a mounted partition, or backs `/`, and exits early when `/data` is already mounted. Kept out of `setup_all.sh`, since it erases a disk and wants a human confirming the target.
 - **Per-car parameter overrides.** `single_node_launch` now loads `config/<name>.local.yaml` after the shipped file when it exists, so settings that differ per car live outside the committed YAML. `.gitignore` has reserved `config/*.local.yaml` since v0.5.0; nothing read it until now.
-
-### Known limitations
-
-- **The lidar-based dashboards do not steer correctly on this platform.** `wallfollow`, `eps` and `smartfollow` derive steering from `/scan` using their own angle arithmetic, which takes 0 as the car's nose and positive as its right. Measured on hardware, this chassis reports an object placed to the car's right at -90 degrees under that arithmetic, and an object placed in front at 180 degrees; a mirrored scan would have put the front object at 0, so the difference is a 180 degree yaw rather than a handedness flip. `webteleop` still drives correctly, since its input is manual, but its lidar view is rotated. `camlabel`, `pursuit` and `linefollow` read no lidar and are unaffected.
-
-  This is a missing convention rather than a defect in either codebase: nothing defines whose job it is to normalize lidar orientation, so the driver and the dashboards each assume the other has. Resolving it needs agreement with the Neobotics Foundation on where normalization belongs; the preferred direction is for the dashboards to consume the `racecar-neo-library` API, which already normalizes orientation and units for student code, rather than raw `/scan`. A correction inside this driver was prototyped and reverted, because it settles a shared convention unilaterally and would leave any unaware consumer wrong in the other direction.
 
 ### Changed
 
@@ -187,6 +307,7 @@ Calibration pipeline, dashboard efficiency, and discovery scoping. Collects ever
 - **RealSense IMU calibration.** `scripts/calibrate_realsense_imu.py` and `config/realsense_cal.yaml`; `imu_fusion_node` declares `realsense_accel_bias` / `realsense_gyro_bias` and subtracts them from `/imu/realsense` samples. `imu_fusion.launch.py` loads the calibration file alongside `imu_fusion.yaml` and exposes both as the `imu_fusion_config` and `realsense_cal_config` launch arguments.
 - **Bootloader EEPROM reconciliation.** `setup_raspi_config.sh` now brings four EEPROM keys to a known-good state and writes only when one differs, leaving unrelated keys alone: `PSU_MAX_CURRENT=5000`, `POWER_OFF_ON_HALT=1`, `BOOT_UART=1`, `BOOT_ORDER=0xf461`. `PSU_MAX_CURRENT` is the one that matters: a car fed from a BEC never negotiates USB-PD, so the firmware assumes a 3 A supply and caps total USB peripheral current at 600 mA, which is not enough for the RealSense, lidar, and ALFA dongle together. Skip with `RACECAR_EEPROM=0`; changes apply on the next boot.
 - **RTC backup cell trickle charging.** `setup_raspi_config.sh` writes `dtparam=rtc_bbat_vchg=3000000` to the boot config, so the Pi 5 keeps the RTC cell topped up and the clock survives a power cut. The Pi 5 ships with charging disabled, which lets the cell drain until `TestRTC` fails. Override with `RTC_VCHG_UV`, and set `RTC_VCHG_UV=0` to skip; only enable charging for a rechargeable cell such as the official Raspberry Pi RTC battery (ML2032), since charging a primary CR2032 can make it vent or leak.
+- **`docs/architecture.md`**: node inventory, control and sensing pipelines as diagrams, full topic reference with message types and consumers, launch composition, systemd process model, configuration map, and calibration data flow.
 - **Diagnostic-sourced camera rates on the dashboard.** `/camera/color`, `/camera/depth`, and `/imu/realsense` rates are read from the `realsense2_camera` `/diagnostics` stream instead of being measured with dedicated subscriptions.
 
 ### Changed
@@ -195,6 +316,7 @@ Calibration pipeline, dashboard efficiency, and discovery scoping. Collects ever
 - **Dashboard subscriptions are raw.** Rate sampling uses `raw=True`, so messages are counted without deserializing them. Measured on a Team 2 car, dashboard CPU dropped from roughly 40-50% to about 20%.
 - **RealSense default stream profiles** are `640x480x30` for depth and `640x480x60` for color, up from `640x480x15` on both.
 - **`pit.launch.py`** builds its node explicitly instead of going through `single_node_launch()`, so it can load `pit.yaml`, `lsm9ds1_cal.yaml`, and `lsm9ds1_mag_cal.yaml` together.
+- **Changelog moved** from `CHANGELOG.md` to `docs/changelog.md`; the README link follows it.
 - **`pit_node` bias application** computes the raw vector first and subtracts the bias from it, rather than passing the bias into `transform_accel` / `transform_gyro`. This is what makes the raw publishers possible.
 
 ### Fixed
@@ -207,17 +329,12 @@ Calibration pipeline, dashboard efficiency, and discovery scoping. Collects ever
 - **RealSense calibrator log message** named `/imu/lsm9ds1/raw` while subscribing to `/imu/realsense`.
 - **Calibration utilities were not executable.** All three were committed mode `644`, so `setup.py` installed them under `lib/` but `ros2 run racecar_neo_ros2_driver calibrate_imu.py` failed with `No executable found`. They are mode `755` now and appear in `ros2 pkg executables`.
 - **`.bashrc` blocks now reconcile instead of skipping.** `setup_user_env.sh` guarded both managed blocks on "is the marker present", which answers whether the block was ever written rather than whether it is current. Any line added to a block therefore reached only cars imaged afterwards, silently, while the phase reported success; `ROS_AUTOMATIC_DISCOVERY_RANGE` was the first line to hit this. The blocks hold no per-car state (every path is fixed or resolved from `$HOME` at runtime), so each run now drops any existing copy and writes the current one. Hand edits inside a block do not survive; personal settings belong outside the markers.
+- **README corrections.** The hardware table listed the Coral as USB (it moved to M.2 PCIe in v0.6.0) and the dot matrix as Pi SPI (`/dev/spidev0.0`); the display is driven by the Teensy, with frames sent over the NEO-PIT UART. Watchdog node count corrected from 8 to 7 and dashboard cards from 10 to 9.
 - **Lint backlog.** `ament_flake8` goes from 261 errors to 0 and `ament_pep257` is clean, across the calibration scripts, `pit_node.py`, `pit.launch.py`, and `dashboard.py`. `colcon test` failures drop to the RTC backup-battery hardware check.
 
 ### Removed
 
 - **`transform_mag()`** in `pit_node.py`, along with its `TestTransformMag` tests. Introduced in v0.3.0 and left unreferenced when the publish path inlined the same arithmetic to reuse the intermediate for the new `/mag/raw` publisher. The helper survived only through its own tests, so the two copies of the math could have drifted apart with nothing to catch it. Suite goes from 367 to 365.
-
-### Documentation
-
-- **`docs/architecture.md`** added: node inventory, control and sensing pipelines as diagrams, full topic reference with message types and consumers, launch composition, systemd process model, configuration map, and calibration data flow.
-- **Changelog moved** from `CHANGELOG.md` to `docs/changelog.md`; the README link follows it.
-- **README corrections.** The hardware table listed the Coral as USB (it moved to M.2 PCIe in v0.6.0) and the dot matrix as Pi SPI (`/dev/spidev0.0`); the display is driven by the Teensy, with frames sent over the NEO-PIT UART. Watchdog node count corrected from 8 to 7 and dashboard cards from 10 to 9, both verified against `watchdog.py` and `dashboard.py`.
 
 ## [0.7.2] - 2026-07-07
 
@@ -258,7 +375,7 @@ Move the WiFi access point off the Pi's built-in `wlan0` onto an attached ALFA M
 
 ## [0.6.0] - 2026-07-07
 
-Coral Edge TPU moves from the USB accelerator to the M.2 (PCIe) Apex card (`1ac1:089a`). Ported from `uav_neo_ros2_driver` PR #8; racecar-neo runs the same Pi 5 / BCM2712, so the recipe transfers directly. See [docs/specifics/coral-m2-migration.md](docs/specifics/coral-m2-migration.md).
+Coral Edge TPU moves from the USB accelerator to the M.2 (PCIe) Apex card (`1ac1:089a`). Ported from `uav_neo_ros2_driver` PR #8; racecar-neo runs the same Pi 5 / BCM2712, so the recipe transfers directly. See [specifics/coral-m2-migration.md](specifics/coral-m2-migration.md).
 
 ### Added
 
@@ -295,6 +412,10 @@ Battery power and FlySky RC telemetry, already decoded from the Teensy frame, ar
 
 NEO-PIT communication maturity: the Teensy now owns the physical PWM limits and the display peripherals, the Pi exposes encoder speed and forwards dot-matrix/LED content and drive state over the command frame. Pairs with `racecar-pit-firmware` v0.4.0. Drive polarity and dot-matrix pixel orientation are settled on hardware (see Notes).
 
+Notes:
+
+- **Drive polarity settled on hardware (2026-07-06, wheels up).** With the `+1 -> max` firmware mapping, forward and steering read inverted, so `pit.yaml` `speed_sign`/`steering_sign` are both `-1` (see Changed). Reverse required a firmware-side fix (`racecar-pit-firmware` v0.4.0: snap past the ESC brake zone, deeper reverse endpoint); the Pi side is unaffected. Dot-matrix pixel orientation is corrected on the Teensy (firmware bitmap column axis reversed to match Parola text).
+
 ### Added
 
 - **`/encoder/speed`** (`std_msgs/Float32`): `pit_node` republishes the Teensy encoder telemetry as vehicle speed in m/s (`encoder_topic` parameter).
@@ -309,10 +430,6 @@ NEO-PIT communication maturity: the Teensy now owns the physical PWM limits and 
 ### Removed
 
 - The Pi-SPI dot-matrix hardware checks (`TestDotMatrix`: SPI device/group, `luma.led_matrix` import) and the glyph/label/splash helpers and their tests; the matrix is Teensy-driven now.
-
-### Notes
-
-- **Drive polarity settled on hardware (2026-07-06, wheels up).** With the `+1 -> max` firmware mapping, forward and steering read inverted, so `pit.yaml` `speed_sign`/`steering_sign` are both `-1` (see Changed). Reverse required a firmware-side fix (`racecar-pit-firmware` v0.4.0: snap past the ESC brake zone, deeper reverse endpoint); the Pi side is unaffected. Dot-matrix pixel orientation is corrected on the Teensy (firmware bitmap column axis reversed to match Parola text).
 
 ## [0.3.2] - 2026-07-06
 
@@ -332,6 +449,12 @@ Driver-side migration to the NEO-PIT drive controller (Teensy 4.1 PCB, repo `neo
 
 Verified end-to-end on-robot (2026-07-06, wheels up): with the paired `racecar-pit-firmware` flashed, an Xbox controller drives the car through the mux to the ESC and servo, and `/imu/lsm9ds1` streams live LSM9DS1 telemetry. See Notes.
 
+Notes:
+
+- **Firmware.** The paired `racecar-pit-firmware` (branch `feature/drive-telemetry`, firmware PR #1) is on-robot verified: telemetry CRC valid, IMU/voltage/encoder populate, and the full ROS path (`/motor` -> `pit_node` -> Teensy) actuates the ESC and servo from an Xbox controller (`/imu/lsm9ds1` at 151 Hz, no CRC/resync errors). `require_crc` stays `false` on the Pi side pending a longer soak of the CRC path.
+- **Service restart after the udev rename.** A `racecar-teleop` instance started before this build holds the pre-v0.3.0 environment and pins `pit_node` to the old `/dev/serial0` (absent on Ubuntu), retry-looping without ever opening the UART; the watchdog does not correct a bad config path. After installing the `/dev/neo-pit-pcb` udev rule, run `sudo systemctl restart racecar-teleop` so the launch re-sources the current overlay.
+- **IMU calibration unverified.** `pit.yaml` `imu.*_axis_order/sign` and `gyro_scale`/`mag_scale` default to pass-through and must be checked against the LSM9DS1 mounting on the PCB and the units the firmware's Adafruit driver emits.
+
 ### Added
 
 - **`pit_node`** (`racecar_neo_ros2_driver/pit_node.py`) owns the Pi/Teensy UART on `/dev/neo-pit-pcb` (stable udev symlink to the GPIO UART, `ttyAMA0` on Pi 5 / Ubuntu). Subscribes `/motor` and streams command frames at 60 Hz (normalized `[-1, 1]`, per-axis `steering_sign`/`speed_sign`, neutral on a stale command past `command_timeout_sec`); reads telemetry and republishes the LSM9DS1 as `/imu/lsm9ds1` + `/mag` (both topic names are parameters), which `imu_fusion_node` blends with the RealSense `/imu/realsense` into `/imu/fused`. Battery/current, encoder, and RC channels are decoded but not yet published. Reconnects on device loss; sends neutral on shutdown.
@@ -348,15 +471,13 @@ Verified end-to-end on-robot (2026-07-06, wheels up): with the paired `racecar-p
 
 - The Pololu Maestro drive path and the I2C IMU node, now superseded by `pit_node` and the Teensy: `pwm_node`, `maestro.py`, `imu_node`, `config/pwm.yaml`, `launch/pwm.launch.py`, `launch/imu.launch.py`, their unit tests, the `/dev/maestro` udev rule, and the `TestMaestro` / Pi-side `TestLSM9DS1` hardware checks. The `lsm9ds1_cal.yaml` / `lsm9ds1_mag_cal.yaml` calibration files stay; `pit_node` reads them.
 
-### Notes
-
-- **Firmware.** The paired `racecar-pit-firmware` (branch `feature/drive-telemetry`, firmware PR #1) is on-robot verified: telemetry CRC valid, IMU/voltage/encoder populate, and the full ROS path (`/motor` -> `pit_node` -> Teensy) actuates the ESC and servo from an Xbox controller (`/imu/lsm9ds1` at 151 Hz, no CRC/resync errors). `require_crc` stays `false` on the Pi side pending a longer soak of the CRC path.
-- **Service restart after the udev rename.** A `racecar-teleop` instance started before this build holds the pre-v0.3.0 environment and pins `pit_node` to the old `/dev/serial0` (absent on Ubuntu), retry-looping without ever opening the UART; the watchdog does not correct a bad config path. After installing the `/dev/neo-pit-pcb` udev rule, run `sudo systemctl restart racecar-teleop` so the launch re-sources the current overlay.
-- **IMU calibration unverified.** `pit.yaml` `imu.*_axis_order/sign` and `gyro_scale`/`mag_scale` default to pass-through and must be checked against the LSM9DS1 mounting on the PCB and the units the firmware's Adafruit driver emits.
-
-## [0.2.2] - 2026-07-05
+## 0.2.2 - 2026-07-05
 
 Offline Intel RealSense D435i firmware flashing for airgapped fleet units. The D435i IMU needs firmware >= 5.17.0.9 to stream on the Pi 5's xHCI USB controller (older firmware dies with `Motion Module force pause`); camera firmware lives in the camera's own flash, not on the disk, so cloning the golden image neither carries the update to another camera nor breaks an already-updated one. Each unit must be flashed individually, and airgapped units cannot fetch the image at flash time.
+
+Notes:
+
+- Verified on-robot: flashed unit serial 943222070134 from 5.11.1.100 to 5.17.0.9, then brought the camera up and confirmed depth, color, and IMU all publish. The IMU (`/camera/camera/accel|gyro|imu`) streams real data post-flash (accel reads the gravity vector, ~9.1 m/s2) where the old firmware published nothing. A transient `Motion Module failure / HID set_power` warning still fires once at init on the Pi 5 xHCI combo but does not stop the stream.
 
 ### Added
 
@@ -367,11 +488,7 @@ Offline Intel RealSense D435i firmware flashing for airgapped fleet units. The D
 
 - **`docs/realsense_topics.md`**: added the airgapped fleet-flash procedure and corrected the `rs-fw-update` library-path note. `sudo` strips `LD_*` from the environment even with `-E`, so the ROS-packaged binary needs `LD_LIBRARY_PATH` passed explicitly via `sudo env`; enumeration and post-flash verify run as the invoking user (the normal `0b3a` device is reachable via the `video`/`plugdev` groups) and only the flash itself uses `sudo`.
 
-### Notes
-
-- Verified on-robot: flashed unit serial 943222070134 from 5.11.1.100 to 5.17.0.9, then brought the camera up and confirmed depth, color, and IMU all publish. The IMU (`/camera/camera/accel|gyro|imu`) streams real data post-flash (accel reads the gravity vector, ~9.1 m/s2) where the old firmware published nothing. A transient `Motion Module failure / HID set_power` warning still fires once at init on the Pi 5 xHCI combo but does not stop the stream.
-
-## [0.2.1] - 2026-07-05
+## 0.2.1 - 2026-07-05
 
 Refines the RealSense integration: the color stream moves to `/camera/color`, depth is exposed on `/camera/depth` as a working API, and the RealSense IMU feeds a fusion node so the Teensy LSM9DS1 can join later.
 
@@ -390,6 +507,10 @@ Refines the RealSense integration: the color stream moves to `/camera/color`, de
 ## [0.2.0] - 2026-07-05
 
 Camera subsystem moves to an Intel RealSense D435i as the single forward camera, retiring the Logitech BRIO / Arducam gscam hybrid. The RealSense color stream is published on `/camera/forward`, the topic `edgetpu_node` and the student library (`camera_real.py`) already read, so the forward-camera contract is unchanged while the physical source and the depth/IMU streams are new.
+
+Notes:
+
+- `realsense2_camera` is not installable on the dev workstation, so the D435i launch and the `SetRemap` onto `/camera/forward` are verified by build + lint here and need a bench check on the Pi. If `SetRemap` does not propagate into the included `rs_launch.py`, the fallback is a `topic_tools relay` (already an apt dependency) or a direct `realsense2_camera_node` with a remapping.
 
 ### Added
 
@@ -410,13 +531,13 @@ Camera subsystem moves to an Intel RealSense D435i as the single forward camera,
 - **`gscam` dependency** and **`scripts/patch_gscam.sh`** (the gscam overlay build/patch phase). `setup_all.sh` is now eleven phases.
 - **`/dev/cam_forward` and `/dev/cam_backward`** udev symlinks.
 
-### Notes
-
-- `realsense2_camera` is not installable on the dev workstation, so the D435i launch and the `SetRemap` onto `/camera/forward` are verified by build + lint here and need a bench check on the Pi. If `SetRemap` does not propagate into the included `rs_launch.py`, the fallback is a `topic_tools relay` (already an apt dependency) or a direct `realsense2_camera_node` with a remapping.
-
-## [0.1.0] - 2026-05-13
+## 0.1.0 - 2026-05-13
 
 QoL: give the `racecar` tool authority over which `~/jupyter_ws/<folder>/library/` is on Python's `sys.path`, so student scripts (e.g. `labs/demo.py`) can `import racecar_core` without a manually-placed `.pth` or `sys.path` hack. Matches the sim installer's existing convention (a `racecar_student.pth` in site-packages) but anchored to user site-packages since the Pi has no venv.
+
+Notes:
+
+- The fix-the-installer-side counterpart (template `${RACECAR_DIR}/library` into the `.pth` from the rsync path during install) is tracked separately in `racecar-neo-installer`. This change gives the on-Pi user the ability to *re-select* without re-running the installer; useful when a student keeps multiple work folders side-by-side (e.g. course copy + personal copy + experimental clone).
 
 ### Added
 
@@ -433,13 +554,13 @@ QoL: give the `racecar` tool authority over which `~/jupyter_ws/<folder>/library
 
 - Bumped `<version>` 0.0.9 -> 0.1.0 in `package.xml` and `setup.py`. Minor-version bump because this is a new user-facing capability, not a bugfix.
 
-### Notes
-
-- The fix-the-installer-side counterpart (template `${RACECAR_DIR}/library` into the `.pth` from the rsync path during install) is tracked separately in `racecar-neo-installer`. This change gives the on-Pi user the ability to *re-select* without re-running the installer; useful when a student keeps multiple work folders side-by-side (e.g. course copy + personal copy + experimental clone).
-
-## [0.0.9] - 2026-05-13
+## 0.0.9 - 2026-05-13
 
 New-machine audit: full `setup_all.sh` run on a fresh Ubuntu 24.04 Pi 5 (NVMe-only) surfaced three independent fleet-portability bugs that all silently produced a "mostly working" robot. No driver code changes; setup scripts and udev rules only.
+
+Verified on fresh hardware:
+
+End-to-end re-run of `setup_all.sh` on a fresh Pi 5 (NVMe-only, no SD): all 11 phases complete without error, `groups` shows `racecar adm dialout cdrom sudo dip video plugdev users lpadmin sambashare i2c gpio spi`, `/dev/spidev0.0` is `root:spi 0660`, `/dev/gpiochip0` is `root:gpio 0660`, `/dev/maestro` -> `ttyACM0`, `/dev/lidar` -> `ttyUSB0`, `/dev/cam_forward` -> `video0`. Only outstanding device is `/dev/cam_backward` (Arducam B0578) which appears when the camera is plugged in; its rule was already VID:PID-based and correct.
 
 ### Fixed
 
@@ -451,11 +572,7 @@ New-machine audit: full `setup_all.sh` run on a fresh Ubuntu 24.04 Pi 5 (NVMe-on
 
 - Bumped `<version>` 0.0.8 -> 0.0.9 in `package.xml` and `setup.py`.
 
-### Verified on fresh hardware
-
-End-to-end re-run of `setup_all.sh` on a fresh Pi 5 (NVMe-only, no SD): all 11 phases complete without error, `groups` shows `racecar adm dialout cdrom sudo dip video plugdev users lpadmin sambashare i2c gpio spi`, `/dev/spidev0.0` is `root:spi 0660`, `/dev/gpiochip0` is `root:gpio 0660`, `/dev/maestro` -> `ttyACM0`, `/dev/lidar` -> `ttyUSB0`, `/dev/cam_forward` -> `video0`. Only outstanding device is `/dev/cam_backward` (Arducam B0578) which appears when the camera is plugged in; its rule was already VID:PID-based and correct.
-
-## [0.0.8] - 2026-05-13
+## 0.0.8 - 2026-05-13
 
 Ship the pip dependencies the v2 student library needs to run on Python 3.12 / Pi 5. No driver code changes; `setup_jupyter.sh` only.
 
@@ -465,9 +582,17 @@ Ship the pip dependencies the v2 student library needs to run on Python 3.12 / P
   - **Why `matplotlib-inline<0.2`:** the 0.2 line calls `matplotlib.rcParams._get(...)`, which only exists in matplotlib >= 3.10. Pi-OS bookworm/noble ship apt matplotlib 3.6.3, so on Python 3.12 (the Pi 5 default) the 0.2.x transitive blows up the first `plt.subplots()` call inside Jupyter with `AttributeError: 'RcParams' object has no attribute '_get'`. Pinning 0.1.x keeps the inline backend usable on the current apt matplotlib.
 - **nptyping intentionally not added.** An earlier v0.0.8 draft pinned `nptyping<2` because the v1 student library used the deprecated `NDArray[(480, 640, 3), np.uint8]` generic form. On Python 3.12 both nptyping branches are broken: 2.x raises `InvalidArgumentsError` at class definition (incompatible `Shape["..."]` API), and 1.4.4 triggers a runaway recursion between `typing._type_repr` and nptyping's `__repr__` that adds ~30 s to a cold `import racecar_core`. MITUavNeo/uav-neo-library hit the same Py3.12 wall and resolved it by dropping nptyping entirely; every module that needed the `NDArray[...]` syntax got a 2-line inline stub instead. The racecar-neo v2 library v1.2.0 mirrors that pattern, so this driver doesn't need to ship nptyping at all.
 
-## [0.0.7] - 2026-05-12
+## 0.0.7 - 2026-05-12
 
 Functionality audit before tagging, plus the lidar/ModemManager hardening surfaced by the 2026-05-12 endurance test. Safety hardening, Pi 5 efficiency wins, and dead-code removal; no new features.
+
+Deferred at release:
+
+- **EdgeTPU under watchdog supervision**; the `1a6e:089a -> 18d1:9302` USB firmware enumeration needs its own retry-after-reset logic. v0.0.7 only marks edgetpu/dotmatrix as `supervised=False` on the dashboard.
+- **Topic-name constants module**; topic strings repeat across nodes, watchdog, dashboard, launch files. Mechanical but large; punted.
+- **PWM parameter nesting**; `motor.{channel,center_pwm,magnitude_pwm}` would read better than the flat parameters, but the YAML round-trip is non-trivial.
+- **Watchdog failure-path test coverage**; cooldown, stale-child-kill, device-check-skip, volt-alarm-tripped branches are still mostly untested. Its own focused PR.
+- **Shared `pi_health.py`**; RTC voltage classifier + BATT_V regex + rpi_volt hwmon walk live in watchdog, dashboard, and `test_hardware.py` with drift between copies.
 
 ### Added
 
@@ -482,7 +607,7 @@ Functionality audit before tagging, plus the lidar/ModemManager hardening surfac
 ### Fixed
 
 - **Maestro hardcoded `/dev/ttyACM0`** in `pwm_node.py` and `maestro.py`. Footgun for `ros2 run` invocations without `--params-file` (Coral / joystick passthrough can grab ACM0 transiently). Both now default to `/dev/maestro`; the udev symlink contract.
-- **Gamepad node didn't clip to `[-1, 1]`** before publishing. A miscalibrated EasySMX or a typo'd `throttle_sign` could escape downstream. Throttle clamps already, but the contract per `[[project_conventions]]` is enforced at every boundary now.
+- **Gamepad node didn't clip to `[-1, 1]`** before publishing. A miscalibrated EasySMX or a typo'd `throttle_sign` could escape downstream. Throttle clamps already; the `[-1, 1]` contract is now enforced at every boundary.
 - **`watchdog.py` shelled out to `ros2 topic list` every 5 s**; measurable Pi 5 CPU + DDS discovery pressure. Replaced with an in-process rclpy `Node` (`racecar_watchdog`) spun in a daemon thread, calling `node.get_topic_names_and_types()` directly. `_get_active_topics()` keeps the subprocess fallback for module-level helper tests.
 - **`dashboard.py` fan-out of `ros2 topic hz` subprocesses** every 3 s, leaking zombies on `join(timeout)` mismatches. Replaced with a single long-lived rclpy node (`racecar_dashboard`) that subscribes BEST_EFFORT to each `RATE_TOPICS` entry, records monotonic arrival timestamps in a per-topic deque, and computes Hz over a 3 s window. Late-binding `attach_subscriptions()` picks up new publishers each tick.
 - **`dashboard.py` read the full `watchdog.log` every refresh.** Replaced with seek-from-end so only the last 4 KB are read regardless of file size.
@@ -493,7 +618,7 @@ Functionality audit before tagging, plus the lidar/ModemManager hardening surfac
 - **`launch/teleop.launch.py::_gated_include`** had two near-identical TimerAction branches. `TimerAction(period=0.0, condition=...)` honors the condition correctly, so the special-case was unnecessary. Collapsed.
 - **`setup_networking.sh` destructive step ordering**; `nmcli connection delete` of prior Wi-Fi client connections ran before `netplan apply` on eth0. Any failure under `set -e` between them could strand an SSH-over-WiFi user. Reordered: dispatcher install -> AP configure + bring up -> eth0 netplan apply -> delete prior Wi-Fi client. The user's existing WiFi survives any earlier failure now.
 - **Bash `pipefail` missing across phase scripts**; `set -e` alone let `wget | dpkg -i` chains silently mask upstream failures. Standardized to `set -eo pipefail` across phase scripts + orchestrator; `test_scripts_use_pipefail` enforces it. `-u` not adopted yet (per-script audit of `${VAR:-default}` usage needed first).
-- **Watchdog and dashboard module docstrings** trimmed to one-line summaries per `[[feedback_terse_comments]]`.
+- **Watchdog and dashboard module docstrings** trimmed to one-line summaries.
 - **Lidar silently stopped publishing under ModemManager probe**; 2026-05-12 8h endurance: a snap-store refresh triggered `systemctl daemon-reload`, ModemManager re-probed every tty, and its probe of the lidar's CP2102 (`10c4:ea60`) desynced the sllidar SDK's binary frame reader. Process stayed alive, `/scan` stayed advertised, no scans came through. Two-part fix: (1) `scripts/udev/99-racecar.rules` adds `ENV{ID_MM_DEVICE_IGNORE}="1"` to the lidar rule so MM never opens that port, and (2) `scripts/watchdog.py` gains a `freshness_sec` field on NODES entries; if set, the watchdog subscribes via rclpy (BEST_EFFORT) and treats the topic as failed when no message arrives within the window, separately from process-presence. Only `lidar` opts in (`freshness_sec=5.0`), with a post-restart grace so cooldown can't trigger a self-restart loop. New tests cover the udev rule and the freshness monitor.
 - **Mux arming gate never fired on the EasySMX**; `joy_is_centered` checked every axis under threshold 0.2, but axes[2] (LT) and axes[5] (RT) rest at +1.0 in Xbox-360 mode. Result: the v0.0.7 arming gate blocked driving entirely on the real controller. Added `arm_ignore_axes` parameter (default `[2, 5]`) that `joy_is_centered` skips during the centered check, leaving the stick axes (0, 1, 3, 4) fully gated. Three new tests cover the trigger-at-rest case, the ignore-axes path, and that ignoring triggers doesn't excuse a stuck stick.
 
@@ -503,15 +628,7 @@ Functionality audit before tagging, plus the lidar/ModemManager hardening surfac
 - `config/mux.yaml` documents the new `startup_grace_sec` and `arm_axis_threshold` parameters.
 - `Maestro.__init__` docstring updated to mention `/dev/maestro`.
 
-### Deferred
-
-- **EdgeTPU under watchdog supervision**; the `1a6e:089a -> 18d1:9302` USB firmware enumeration needs its own retry-after-reset logic. v0.0.7 only marks edgetpu/dotmatrix as `supervised=False` on the dashboard.
-- **Topic-name constants module**; topic strings repeat across nodes, watchdog, dashboard, launch files. Mechanical but large; punted.
-- **PWM parameter nesting**; `motor.{channel,center_pwm,magnitude_pwm}` would read better than the flat parameters, but the YAML round-trip is non-trivial.
-- **Watchdog failure-path test coverage**; cooldown, stale-child-kill, device-check-skip, volt-alarm-tripped branches are still mostly untested. Its own focused PR.
-- **Shared `pi_health.py`**; RTC voltage classifier + BATT_V regex + rpi_volt hwmon walk live in watchdog, dashboard, and `test_hardware.py` with drift between copies.
-
-## [0.0.6] - 2026-05-11
+## 0.0.6 - 2026-05-11
 
 Phase 6: networking. eth0 dual-IP for predictable wired access, wlan0 isolated AP so anyone within range can reach the robot's dashboard / JupyterLab / SSH without needing existing WiFi infrastructure.
 
@@ -535,11 +652,11 @@ Phase 6: networking. eth0 dual-IP for predictable wired access, wlan0 isolated A
 - `racecar setup networking --ssid=foo --show` now persists `foo` BEFORE printing the file contents. The first cut made `--show` short-circuit before the persist step, so flags combined with `--show` were silently lost. Two-pass parse: collect every flag first, then act. Same fix path rejects `--reset` combined with override flags (those would be deleted immediately; almost certainly a user error). Regression covered by `test_networking_flag_persists_when_combined_with_show` and `test_networking_reset_with_overrides_errors`.
 - `scripts/setup_networking.sh` idempotency: previously a no-op re-run still reported "Dispatcher installed" / "Connection already exists; reapplying settings" / "Applying netplan..." (touching the live AP and bouncing eth0 for nothing). Now the script:
   - Writes the dispatcher only if its content differs (`cmp` vs the live file).
-  - Probes `NetworkManager-dispatcher.service` with `is-enabled --quiet`, not `is-active --quiet` (the service is `Type=simple`, so it's `inactive` between events even though it'll fire correctly).
+  - Probes `NetworkManager-dispatcher.service` with `is-enabled --quiet`, not `is-active --quiet` (the service is D-Bus activated and exits when idle, so it's `inactive` between events even though it'll fire correctly).
   - Diffs each AP-connection setting against `nmcli -g` output before calling `nmcli connection modify`.
   - Only `nmcli connection up`s the AP when settings changed or the connection isn't currently activated (avoids dropping AP clients during clean re-runs).
   - Only `netplan apply`s when the netplan YAML actually changed (eliminates the noisy `systemd-networkd is not running` warning on no-op re-runs).
-- `scripts/setup_networking.sh` enables `NetworkManager-dispatcher.service` if it's not already enabled. Without it, the AP-isolation dispatcher script gets installed but never invoked, so the `iptables FORWARD REJECT` rules silently never apply. On Ubuntu Server the service is enabled by default; on Raspberry Pi OS / Ubuntu Desktop it ships disabled, which is what bit us on first install.
+- `scripts/setup_networking.sh` enables `NetworkManager-dispatcher.service` if it's not already enabled. Without it, the AP-isolation dispatcher script gets installed but never invoked, so the `iptables FORWARD REJECT` rules silently never apply. On Ubuntu Server the service is enabled by default; on Raspberry Pi OS / Ubuntu Desktop it ships disabled, which is what failed on the first install.
 - EasySMX KC-8236 wrong-button-mapping on cold boot: the controller spoofs Nintendo Switch Pro VID:PID (`057e:2009`), and kernels >= 5.16 (= every Pi 5 image) ship `hid_nintendo` which claims it and binds it as a Switch controller; A/B/X/Y swapped from Xbox, no `/dev/input/js0`, no force feedback. **Worked fine on Pi 4 only because its older kernel image lacked `hid_nintendo`.** Fix: blacklist `hid_nintendo` system-wide. With the driver out of the way, the controller's firmware times out waiting for a HID handler and downgrades itself to Xbox 360 mode (`2f24:016d`), which binds cleanly to `xpad`. Tradeoff acknowledged: a real Nintendo Switch Pro Controller wouldn't work on the racecar either; not a use case we support. Verified on-robot: `lsusb` reports `2f24:016d`, `/dev/input/js0` present, mux mode-switch via LB/RB works.
   - **Two earlier attempts were tried and removed:** (a) udev rule unbinding from `usbhid`; `hid-nintendo` re-grabbed instantly; (b) udev rule unbinding from the `nintendo` HID driver directly; same problem, the kernel re-runs match logic and `nintendo` is the only driver willing to claim `057e:2009`. The mode-switch only triggers when no driver responds at all, which requires the system-wide blacklist.
 
@@ -548,7 +665,7 @@ Phase 6: networking. eth0 dual-IP for predictable wired access, wlan0 isolated A
 - Bumped `<version>` 0.0.5 -> 0.0.6 in `package.xml` and `setup.py`.
 - README: new top-level Networking section documenting the workflow, defaults, persistence file location, and verification commands. `racecar` shell-tool list expanded to include `setup`.
 
-## [0.0.5] - 2026-05-11
+## 0.0.5 - 2026-05-11
 
 Phase 5 polish: log noise eliminated, raspi-config consolidated, real Coral latency test, README brought current with v0.0.3 + v0.0.4 features.
 
@@ -571,9 +688,13 @@ Phase 5 polish: log noise eliminated, raspi-config consolidated, real Coral late
 - gscam camera calibration noise on every boot; `Unable to open camera calibration file` ERROR + `Camera calibration file not found` WARN are gone now that both cameras have a real (placeholder) `camera_info` YAML loaded via `package://` URLs.
 - `LaunchConfigurationEquals` deprecation warning on every teleop start.
 
-## [0.0.4] - 2026-05-11
+## 0.0.4 - 2026-05-11
 
 Safety + recovery infrastructure: full-stack launch wrapper, restart-on-failure watchdog, four systemd services (teleop / watchdog / dashboard / jupyter), a real-time web dashboard, and quality-of-life additions to the `racecar` tool.
+
+Skipped at release:
+
+- **Phase 4D; image_relay.py**; UAV Neo's QoS-matched relay shim is a 30-line stdlib script worth porting only when something actually needs a QoS-adapted republish. Nothing in the racecar stack currently does (gscam publishes directly to `/camera/forward` with sensor_data QoS, which `edgetpu_node` subscribes to with matching QoS). Deferred; will land if and when a consumer needs it.
 
 ### Added
 
@@ -621,11 +742,7 @@ Safety + recovery infrastructure: full-stack launch wrapper, restart-on-failure 
 - `scripts/setup_all.sh` orchestrator: 8 -> 10 phases.
 - `scripts/setup_dotmatrix.sh` adds SPI enable via `raspi-config nonint do_spi 0` (no-op on machines without raspi-config).
 
-### Skipped
-
-- **Phase 4D; image_relay.py**; UAV Neo's QoS-matched relay shim is a 30-line stdlib script worth porting only when something actually needs a QoS-adapted republish. Nothing in the racecar stack currently does (gscam publishes directly to `/camera/forward` with sensor_data QoS, which `edgetpu_node` subscribes to with matching QoS). Deferred; will land if and when a consumer needs it.
-
-## [0.0.3] - 2026-05-11
+## 0.0.3 - 2026-05-11
 
 ML inference, dot matrix display, stable device paths, and a unified `racecar` developer CLI.
 
@@ -679,7 +796,7 @@ ML inference, dot matrix display, stable device paths, and a unified `racecar` d
 - `setup.py` `data_files` ships `models/` to the install share so `model_path: "models/..."` resolves correctly via `get_package_share_directory`
 - `test/test_hardware.py`; Maestro, RPLIDAR, BRIO, and Arducam classes now check the udev symlinks instead of raw `/dev/tty*` / `/dev/video*` paths
 
-## [0.0.2] - 2026-05-11
+## 0.0.2 - 2026-05-11
 
 Sensor integration phase + setup automation + a 107-test pytest suite that covers software, hardware connectivity, and the setup scripts themselves.
 
@@ -727,16 +844,17 @@ Sensor integration phase + setup automation + a 107-test pytest suite that cover
 - `maestro.py` `setRange(chan, min, max)` -> `setRange(chan, min_target, max_target)` to stop shadowing Python builtins (A002)
 - Imports across the package reordered to Google style (stdlib -> third-party, alphabetic within each); multi-line docstrings switched to second-line-summary format (D213)
 
-[Unreleased]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.0.6...HEAD
-[0.0.6]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.0.5...v0.0.6
-[0.0.5]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.0.4...v0.0.5
-[0.0.4]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.0.3...v0.0.4
-[0.0.3]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.0.2...v0.0.3
-[0.0.2]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.0.1...v0.0.2
-
-## [0.0.1] - 2026-05-11
+## 0.0.1 - 2026-05-11
 
 Initial driver scaffolding and the control pipeline (gamepad -> motor PWM). Sensor, ML, watchdog, and setup-automation layers are planned for later releases.
+
+Design notes and migration from v1:
+
+- **Normalized `[-1, 1]` command convention** on every intermediate topic. Autonomy code publishing to `/drive` should target this range; v1 expected `[-0.25, 0.25]`.
+- **Single tuning surface for top speed.** `max_speed_forward / max_speed_backward / max_steering` in `throttle.yaml` are the only place the effective top speed is set. v1 spread this across three nodes with three duplicated constants.
+- **Two-step servo calibration in `pwm.yaml`.** Per axis: (1) find `center_pwm` at command = 0, (2) raise `magnitude_pwm` at command = +1 until visible saturation. Replaces v1's six interdependent parameters per axis.
+- **Mux is timer-driven** at 50 Hz, not event-driven on `/joy` callbacks. Keeps the Maestro continuously fed and gives the future watchdog an unambiguous "mux alive" signal.
+- **Mux zeros on `/joy` disconnect and on upstream command staleness.** v1 had no such safety net.
 
 ### Added
 
@@ -756,12 +874,20 @@ Initial driver scaffolding and the control pipeline (gamepad -> motor PWM). Sens
 - Parameter YAMLs: `config/gamepad.yaml`, `mux.yaml`, `throttle.yaml`, `pwm.yaml`
 - Project files: `README.md`, `LICENSE` (GPLv3), `.gitignore`, `.gitattributes`
 
-### Design notes & migration from v1
-
-- **Normalized `[-1, 1]` command convention** on every intermediate topic. Autonomy code publishing to `/drive` should target this range; v1 expected `[-0.25, 0.25]`.
-- **Single tuning surface for top speed.** `max_speed_forward / max_speed_backward / max_steering` in `throttle.yaml` are the only place the effective top speed is set. v1 spread this across three nodes with three duplicated constants.
-- **Two-step servo calibration in `pwm.yaml`.** Per axis: (1) find `center_pwm` at command = 0, (2) raise `magnitude_pwm` at command = +1 until visible saturation. Replaces v1's six interdependent parameters per axis.
-- **Mux is timer-driven** at 50 Hz, not event-driven on `/joy` callbacks. Keeps the Maestro continuously fed and gives the future watchdog an unambiguous "mux alive" signal.
-- **Mux zeros on `/joy` disconnect and on upstream command staleness.** v1 had no such safety net.
-
-[0.0.1]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/releases/tag/v0.0.1
+[Unreleased]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.8.2...HEAD
+[0.8.2]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.8.1...v0.8.2
+[0.8.1]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.8.0...v0.8.1
+[0.8.0]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.7.4...v0.8.0
+[0.7.4]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.7.3...v0.7.4
+[0.7.3]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.7.2...v0.7.3
+[0.7.2]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.7.1...v0.7.2
+[0.7.1]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.7.0...v0.7.1
+[0.7.0]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.5.1...v0.6.0
+[0.5.1]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.5.0...v0.5.1
+[0.5.0]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.3.2...v0.4.0
+[0.3.2]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.3.1...v0.3.2
+[0.3.1]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/releases/tag/v0.2.0

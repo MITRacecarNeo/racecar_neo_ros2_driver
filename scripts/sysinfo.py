@@ -1,24 +1,17 @@
 #!/usr/bin/env python3
-"""
-Host facts shared by the dashboard and the `racecar status` diagnostic.
-
-Both consumers need the same readings, and the RTC thresholds in particular
-are the kind of constant that goes wrong quietly when it exists in two
-places: a copy that drifts still passes its own tests. One implementation
-lives here and both callers import it.
-"""
+"""Host facts shared by the dashboard, the watchdog and `racecar status`."""
 
 from __future__ import annotations
 
 from pathlib import Path
 import re
+import shutil
 import subprocess
+from typing import Any
 
-# RTC backup cell thresholds for the rechargeable cell (usable 2.7-3.0 V,
-# replacing the old CR2032 at 3.0-3.3 V). 2.7 V is the PCF85063's own floor:
-# below it the clock resets on the next power-off regardless of chemistry, so
-# it doubles as the recharge line. OK above 2.8 V leaves a "recharge soon"
-# band before the floor. Kept in sync with TestRTC.BATT_MIN_VOLTS.
+# Rechargeable RTC backup cell, usable 2.7-3.0 V. 2.7 V is the PCF85063's own
+# floor: below it the clock resets on the next power-off, so it is the
+# recharge line. OK above 2.8 V leaves a "recharge soon" band before it.
 RTC_OK_VOLTS = 2.8
 RTC_LOW_VOLTS = 2.7
 
@@ -35,33 +28,84 @@ THROTTLE_BITS = {
     19: 'soft temperature limit has occurred',
 }
 
+# RealSense publishes its per-stream rates on /diagnostics under these names.
+REALSENSE_DIAGNOSTIC_NAMES = {
+    'camera: color': '/camera/color',
+    'camera: depth': '/camera/depth',
+    'camera: gyro': '/imu/realsense',
+}
+DIAGNOSTIC_RATE_KEY = 'Actual frequency (Hz)'
+
+
+def run_cmd(cmd: list[str], timeout: float = 5.0) -> str:
+    """Run a command and return stdout, or an empty string on any failure."""
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except (subprocess.TimeoutExpired, OSError):
+        return ''
+    return r.stdout if r.returncode == 0 else ''
+
+
+def read_diagnostic_rates(msg: Any, into: dict[str, float]) -> None:
+    """Copy the RealSense per-stream rates from one DiagnosticArray into `into`."""
+    for status in msg.status:
+        topic = REALSENSE_DIAGNOSTIC_NAMES.get(status.name.lower())
+        if topic is None:
+            continue
+        for value in status.values:
+            if value.key != DIAGNOSTIC_RATE_KEY:
+                continue
+            try:
+                into[topic] = float(value.value)
+            except (TypeError, ValueError):
+                pass
+            break
+
 
 def read_rtc_voltage() -> float | None:
     """Return the Pi 5 RTC backup cell voltage in volts, or None when unavailable."""
     try:
         r = subprocess.run(
             ['vcgencmd', 'pmic_read_adc', 'BATT_V'],
-            capture_output=True, text=True, timeout=3,
+            capture_output=True,
+            text=True,
+            timeout=3,
         )
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+    except (subprocess.TimeoutExpired, OSError):
         return None
-    if r.returncode != 0 or 'BATT_V' not in r.stdout:
+    if r.returncode != 0:
         return None
     m = re.search(r'BATT_V\s+volt\(\d+\)=([0-9.]+)V', r.stdout)
     return float(m.group(1)) if m else None
 
 
-def read_under_voltage_alarm() -> bool | None:
-    """Return the Pi 5 PMIC sticky low-voltage alarm, or None if unavailable."""
+def under_voltage_alarm_path() -> Path | None:
+    """
+    Locate the Pi 5 PMIC sticky low-voltage alarm file, or None.
+
+    hwmon numbering is not stable across boots, so match on the driver name.
+    The flag reads 1 from the first under-voltage event until reboot.
+    """
     for h in Path('/sys/class/hwmon').glob('hwmon*'):
         try:
             if (h / 'name').read_text().strip() == 'rpi_volt':
                 alarm = h / 'in0_lcrit_alarm'
                 if alarm.exists():
-                    return alarm.read_text().strip() == '1'
+                    return alarm
         except OSError:
             continue
     return None
+
+
+def read_under_voltage_alarm() -> bool | None:
+    """Return the Pi 5 PMIC sticky low-voltage alarm, or None if unavailable."""
+    alarm = under_voltage_alarm_path()
+    if alarm is None:
+        return None
+    try:
+        return alarm.read_text().strip() == '1'
+    except OSError:
+        return None
 
 
 def classify_rtc(volts: float | None) -> tuple[str, str]:
@@ -92,11 +136,18 @@ def read_throttled() -> tuple[int | None, list[str]]:
     try:
         r = subprocess.run(
             ['vcgencmd', 'get_throttled'],
-            capture_output=True, text=True, timeout=3,
+            capture_output=True,
+            text=True,
+            timeout=3,
         )
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+    except (subprocess.TimeoutExpired, OSError):
         return (None, [])
-    m = re.search(r'throttled=0x([0-9a-fA-F]+)', r.stdout)
+    return decode_throttled(r.stdout)
+
+
+def decode_throttled(text: str) -> tuple[int | None, list[str]]:
+    """Parse `throttled=0x...` into (raw flags, set condition names in bit order)."""
+    m = re.search(r'throttled=0x([0-9a-fA-F]+)', text)
     if not m:
         return (None, [])
     flags = int(m.group(1), 16)
@@ -116,10 +167,16 @@ def read_loadavg() -> tuple[float, float, float] | None:
 def cpu_count() -> int:
     """Return the number of online CPUs, or 1 when it cannot be determined."""
     try:
-        return len([
-            line for line in Path('/proc/cpuinfo').read_text().splitlines()
-            if line.startswith('processor')
-        ]) or 1
+        return (
+            len(
+                [
+                    line
+                    for line in Path('/proc/cpuinfo').read_text().splitlines()
+                    if line.startswith('processor')
+                ]
+            )
+            or 1
+        )
     except OSError:
         return 1
 
@@ -130,6 +187,11 @@ def read_memory() -> dict[str, int] | None:
         text = Path('/proc/meminfo').read_text()
     except OSError:
         return None
+    return parse_meminfo(text)
+
+
+def parse_meminfo(text: str) -> dict[str, int] | None:
+    """Reduce /proc/meminfo text to MiB totals: total, available, used."""
     fields = {}
     for key in ('MemTotal', 'MemAvailable'):
         m = re.search(rf'^{key}:\s+(\d+) kB', text, re.MULTILINE)
@@ -146,11 +208,10 @@ def read_memory() -> dict[str, int] | None:
 def read_disk(path: str = '/') -> dict[str, int] | None:
     """Return filesystem usage for `path` in GiB, plus percent used."""
     try:
-        import shutil
         total, used, free = shutil.disk_usage(path)
     except OSError:
         return None
-    gib = 1024 ** 3
+    gib = 1024**3
     return {
         'total': total // gib,
         'used': used // gib,
@@ -172,9 +233,11 @@ def ntp_synchronized() -> bool | None:
     try:
         r = subprocess.run(
             ['timedatectl', 'show', '-p', 'NTPSynchronized', '--value'],
-            capture_output=True, text=True, timeout=3,
+            capture_output=True,
+            text=True,
+            timeout=3,
         )
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+    except (subprocess.TimeoutExpired, OSError):
         return None
     if r.returncode != 0:
         return None

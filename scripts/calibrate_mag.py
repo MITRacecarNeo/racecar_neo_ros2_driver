@@ -1,241 +1,169 @@
 #!/usr/bin/env python3
-"""LSM9DS1 magnetometer calibrator for ROS2."""
+"""
+LSM9DS1 magnetometer hard- and soft-iron calibration for pit_node.
 
-import os
-import threading
-import time
+Reads /mag/raw while the car is rotated about each axis, fits an ellipsoid,
+and writes config/lsm9ds1_mag_cal.local.yaml.
+"""
 
-from ament_index_python.packages import get_package_share_directory
-import matplotlib.pyplot as plt
+from __future__ import annotations
+
+import argparse
+from dataclasses import dataclass
+from pathlib import Path
+import sys
+from typing import Any
+
 import numpy as np
 import rclpy
-from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import MagneticField
-import yaml
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from calibrate_common import (  # noqa: E402, I100
+    backup_reminder,
+    CalibratorNode,
+    output_dirs,
+    spin_until_done,
+    write_local_yaml,
+)
+
+CAL_NAME = 'lsm9ds1_mag_cal'
+NODE = 'pit_node'
+TOOL = 'calibrate_mag.py'
+MIN_SAMPLES = 100
+STEP_SECONDS = 15.0
+STEPS = [
+    ('Yaw', 'turn the car flat, like driving in a circle'),
+    ('Roll', 'barrel-roll the car about its long axis'),
+    ('Pitch', 'tip the nose up and down'),
+]
 
 
-class MagnetometerCalibrator(Node):
-    def __init__(self):
-        super().__init__('magnetometer_calibrator')
+@dataclass
+class MagFit:
+    """Hard-iron offset (T) and soft-iron matrix from an ellipsoid fit."""
 
-        self.subscription = None
-        self.message_received = threading.Event()  # Use a thread-safe event
+    hard_iron: np.ndarray
+    soft_iron: np.ndarray
 
-        self.subscription = self.create_subscription(
-            MagneticField,
-            '/mag/raw',
-            self.mag_callback,
-            qos_profile_sensor_data
-        )
-        self.get_logger().info('Subscribed to /mag/raw.')
 
-        self.mag_data = []
-        self.collecting = False
-        self.hard_iron_bias = np.zeros(3)
-        self.soft_iron_matrix = np.identity(3)
+def fit_ellipsoid(samples: list[list[float]]) -> MagFit | None:
+    """
+    Fit an ellipsoid to raw field samples, or return None when it cannot.
 
-    def mag_callback(self, msg):
-        """Collect one magnetometer sample."""
-        if not self.message_received.is_set():
-            self.message_received.set()  # Signal that we've received the first message
-            self.get_logger().info('First message from /mag topic received!')
+    None means fewer than MIN_SAMPLES or a fit that is not an ellipsoid (a
+    quadric matrix that is not positive definite, or non-finite values).
+    """
+    if len(samples) < MIN_SAMPLES:
+        return None
+    data = np.asarray(samples, dtype=float)
+    scale = float(np.mean(np.linalg.norm(data, axis=1)))
+    if not np.isfinite(scale) or scale <= 0.0:
+        return None
+    x, y, z = (data / scale).T
+    # Quadric 2*b.v + v^T A v = 1, solved by least squares on normalized data.
+    design = np.column_stack(
+        [2 * x, 2 * y, 2 * z, x * x, y * y, z * z, 2 * x * y, 2 * x * z, 2 * y * z]
+    )
+    p, *_ = np.linalg.lstsq(design, np.ones(len(data)), rcond=None)
+    a = np.array([[p[3], p[6], p[7]], [p[6], p[4], p[8]], [p[7], p[8], p[5]]])
+    evals, evecs = np.linalg.eigh(a)
+    if not np.all(np.isfinite(evals)) or np.any(evals <= 0.0):
+        return None
+    hard_iron = -np.linalg.solve(a, p[:3]) * scale
+    soft_iron = evecs @ np.diag(np.sqrt(evals)) @ evecs.T
+    if not (np.all(np.isfinite(hard_iron)) and np.all(np.isfinite(soft_iron))):
+        return None
+    return MagFit(hard_iron=hard_iron, soft_iron=soft_iron)
 
-        if self.collecting:
-            self.mag_data.append([
-                msg.magnetic_field.x,
-                msg.magnetic_field.y,
-                msg.magnetic_field.z
-            ])
 
-    def wait_for_messages(self, timeout=10.0):
-        """Wait for the first message to arrive."""
-        self.get_logger().info('Waiting for first message from /mag topic...')
-        return self.message_received.wait(timeout)
+def mag_params(fit: MagFit) -> dict[str, list[float]]:
+    return {
+        'magnetometer.hard_iron_bias': [float(v) for v in fit.hard_iron],
+        'magnetometer.soft_iron_matrix.data': [float(v) for v in fit.soft_iron.flatten()],
+    }
 
-    def run_calibration_procedure(self):
-        """Run the full calibration procedure."""
-        if not self.wait_for_messages():
-            self.get_logger().error('No messages received from /mag topic. Aborting.')
-            self.get_logger().error('Troubleshooting steps:')
-            self.get_logger().error('1. Make sure imu_node is running.')
-            self.get_logger().error("2. Run 'ros2 topic echo /mag' to check for data.")
-            return
 
-        self.get_logger().info('=' * 60)
-        self.get_logger().info('RACECAR 3D Magnetometer Calibration (Structured Method)')
-        self.get_logger().info('=' * 60)
+def fit_and_write(
+    samples: list[list[float]], dirs: list[Path]
+) -> tuple[MagFit, list[Path]] | None:
+    """Fit and write the local YAML; write nothing and return None if the fit fails."""
+    fit = fit_ellipsoid(samples)
+    if fit is None:
+        return None
+    return fit, write_local_yaml(CAL_NAME, NODE, mag_params(fit), dirs, TOOL)
 
-        try:
-            self.get_logger().info('\n--- Step 1: Yaw Axis (Turn like a car) ---')
-            input('Press Enter to begin...')
-            self.collect_data_for_step(15, 'Yaw Axis')
 
-            self.get_logger().info('\n--- Step 2: Roll Axis (Barrel Roll) ---')
-            input('Press Enter to begin...')
-            self.collect_data_for_step(15, 'Roll Axis')
+def plot_results(samples: list[list[float]], fit: MagFit) -> None:
+    import matplotlib.pyplot as plt
 
-            self.get_logger().info('\n--- Step 3: Pitch Axis (Nose up/down) ---')
-            input('Press Enter to begin...')
-            self.collect_data_for_step(15, 'Pitch Axis')
+    raw = np.asarray(samples, dtype=float)
+    corrected = (fit.soft_iron @ (raw - fit.hard_iron).T).T
+    for data, color, title in (
+        (raw, 'r', 'Uncorrected magnetometer data (ellipsoid)'),
+        (corrected, 'b', 'Corrected magnetometer data (sphere)'),
+    ):
+        ax = plt.figure(figsize=(10, 8)).add_subplot(111, projection='3d')
+        ax.scatter(data[:, 0], data[:, 1], data[:, 2], c=color, marker='.')
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Z')
+        ax.set_title(title)
+    print('Close the plot windows to exit.')
+    plt.show()
 
-            self.get_logger().info('\nAll data collected. Calculating parameters...')
-            self.calculate_calibration()
-            self.save_calibration_file()
-        except KeyboardInterrupt:
-            self.get_logger().info('Calibration interrupted.')
-        except Exception as e:
-            self.get_logger().error(f'An error occurred: {str(e)}')
 
-    def collect_data_for_step(self, duration, description):
-        """Collect data for one rotational step."""
-        self.collecting = True
-        self.get_logger().info(
-            f'Collecting data for {description} ({duration}s)... '
-            'Please start rotating now.'
-        )
-        time.sleep(duration)
-        self.collecting = False
-        self.get_logger().info(f'Step complete. Current sample count: {len(self.mag_data)}')
+class MagnetometerCalibrator(CalibratorNode):
+    def __init__(self) -> None:
+        super().__init__('magnetometer_calibrator', MagneticField, '/mag/raw')
+        self.samples: list[list[float]] = []
+        self.fit: MagFit | None = None
 
-    def calculate_calibration(self):
-        """Calculate hard- and soft-iron biases via ellipsoid fitting."""
-        if len(self.mag_data) < 100:
-            self.get_logger().error(
-                'Not enough data points to perform calibration. Try rotating more.'
+    def extract(self, msg: Any) -> list[float]:
+        f = msg.magnetic_field
+        return [f.x, f.y, f.z]
+
+    def run(self) -> int:
+        log = self.get_logger()
+        if not self.wait_for_first_message():
+            log.error('Is pit_node running? Check: ros2 topic echo /mag/raw')
+            return 1
+        log.info('LSM9DS1 magnetometer calibration')
+        for i, (axis, how) in enumerate(STEPS, start=1):
+            log.info(f'Step {i}/{len(STEPS)}: {axis} axis; {how}.')
+            input('Press Enter, then start rotating...')
+            self.samples += self.collect(STEP_SECONDS, f'{axis} axis')
+
+        dirs = output_dirs()
+        if not dirs:
+            log.error('No config directory found; nothing written.')
+            return 1
+        result = fit_and_write(self.samples, dirs)
+        if result is None:
+            log.error(
+                f'Fit failed with {len(self.samples)} samples (need {MIN_SAMPLES}, '
+                'covering all three axes); nothing written. Rotate more and retry.'
             )
-            return
-
-        data = np.array(self.mag_data)
-
-        # --- Normalization Step ---
-        norms = np.linalg.norm(data, axis=1)
-        avg_norm = np.mean(norms)
-        data_normalized = data / avg_norm
-        self.get_logger().info(f'Data normalized with average field strength: {avg_norm:.4e} T')
-
-        # --- Ellipsoid Fitting on normalized data ---
-        D = np.zeros((data_normalized.shape[0], 9))
-        D[:, 0] = data_normalized[:, 0] * 2
-        D[:, 1] = data_normalized[:, 1] * 2
-        D[:, 2] = data_normalized[:, 2] * 2
-        D[:, 3] = data_normalized[:, 0]**2
-        D[:, 4] = data_normalized[:, 1]**2
-        D[:, 5] = data_normalized[:, 2]**2
-        D[:, 6] = 2 * data_normalized[:, 0] * data_normalized[:, 1]
-        D[:, 7] = 2 * data_normalized[:, 0] * data_normalized[:, 2]
-        D[:, 8] = 2 * data_normalized[:, 1] * data_normalized[:, 2]
-
-        v = np.ones(data_normalized.shape[0])
-        (p, _, _, _) = np.linalg.lstsq(D, v, rcond=None)
-
-        A = np.array([
-            [p[3], p[6], p[7]],
-            [p[6], p[4], p[8]],
-            [p[7], p[8], p[5]]
-        ])
-
-        b = np.array([p[0], p[1], p[2]])
-        hard_iron_bias_normalized = -np.linalg.inv(A) @ b
-
-        # De-normalize the hard-iron bias
-        self.hard_iron_bias = hard_iron_bias_normalized * avg_norm
-
-        # Calculate the final soft-iron matrix
-        evals, evecs = np.linalg.eig(A)
-        self.soft_iron_matrix = evecs @ np.sqrt(np.diag(np.abs(evals))) @ evecs.T
-
-        # --- Apply correction to the original data for plotting ---
-        data_corrected = np.zeros_like(data)
-        for i in range(len(data)):
-            data_corrected[i, :] = self.soft_iron_matrix @ (data[i, :] - self.hard_iron_bias)
-
-        # --- Plot the results ---
-        self.plot_results(data, data_corrected)
-
-    def plot_results(self, raw_data, corrected_data):
-        """Plot raw and corrected magnetometer data as 3D scatters."""
-        self.get_logger().info('Generating plots for visualization...')
-
-        # Plot 1: Uncorrected (Raw) Data
-        fig1 = plt.figure(figsize=(10, 8))
-        ax1 = fig1.add_subplot(111, projection='3d')
-        ax1.scatter(
-            raw_data[:, 0], raw_data[:, 1], raw_data[:, 2],
-            c='r', marker='.', label='Uncorrected Data'
-        )
-        ax1.set_xlabel('X-axis')
-        ax1.set_ylabel('Y-axis')
-        ax1.set_zlabel('Z-axis')
-        ax1.set_title('Uncorrected Magnetometer Data (Ellipsoid)')
-        ax1.legend()
-        ax1.axis('auto')
-
-        # Plot 2: Corrected Data
-        fig2 = plt.figure(figsize=(10, 8))
-        ax2 = fig2.add_subplot(111, projection='3d')
-        ax2.scatter(
-            corrected_data[:, 0], corrected_data[:, 1], corrected_data[:, 2],
-            c='b', marker='.', label='Corrected Data'
-        )
-        ax2.set_xlabel('X-axis')
-        ax2.set_ylabel('Y-axis')
-        ax2.set_zlabel('Z-axis')
-        ax2.set_title('Corrected Magnetometer Data (Sphere)')
-        ax2.legend()
-        ax2.axis('auto')
-
-        self.get_logger().info('Displaying plots. Close the plot windows to exit the script.')
-        plt.show()
-
-    def save_calibration_file(self):
-        """Save the calibration data to a YAML file."""
-        pkg_dir = get_package_share_directory('racecar_neo_ros2_driver')
-        install_file = os.path.join(pkg_dir, 'config', 'lsm9ds1_mag_cal.yaml')
-        ws_root = install_file.split('install/')[0]
-        src_file = os.path.join(
-            ws_root, 'src', 'racecar_neo_ros2_driver', 'config', 'lsm9ds1_mag_cal.yaml'
-        )
-        calibration_data = {
-            'magnetometer.hard_iron_bias': self.hard_iron_bias.tolist(),
-            'magnetometer.soft_iron_matrix.data': self.soft_iron_matrix.flatten().tolist()
-        }
-        ros2_yaml_format = {'pit_node': {'ros__parameters': calibration_data}}
-
-        try:
-            with open(install_file, 'w') as f:
-                yaml.dump(ros2_yaml_format, f, default_flow_style=False, indent=2)
-            with open(src_file, 'w') as f:
-                yaml.dump(ros2_yaml_format, f, default_flow_style=False, indent=2)
-        except Exception as e:
-            self.get_logger().error(f'Failed to save calibration file: {str(e)}')
-
-        self.get_logger().info('=' * 60)
-        self.get_logger().info('CALIBRATION COMPLETE')
-        self.get_logger().info(
-            f'Data saved to: {install_file} and permanent source file: {src_file}'
-        )
+            return 1
+        self.fit, written = result
+        log.info(f'Hard-iron bias (T): {self.fit.hard_iron.tolist()}')
+        log.info(backup_reminder(written))
+        return 0
 
 
-def main(args=None):
-    rclpy.init(args=args)
-    calibrator = MagnetometerCalibrator()
-    calibration_thread = threading.Thread(target=calibrator.run_calibration_procedure, daemon=True)
-    calibration_thread.start()
-    try:
-        # Spin the node to process callbacks
-        while calibration_thread.is_alive() and rclpy.ok():
-            rclpy.spin_once(calibrator, timeout_sec=0.1)
-        calibration_thread.join()
-    except KeyboardInterrupt:
-        calibrator.get_logger().info('Shutting down calibrator node.')
-    finally:
-        # Check if node exists and is valid before destroying
-        if calibrator.subscription is not None:
-            calibrator.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
+    ap.add_argument('--no-plot', action='store_true', help='skip the 3D before/after plots')
+    args = ap.parse_args()
+
+    rclpy.init()
+    node = MagnetometerCalibrator()
+    code = spin_until_done(node)
+    if code == 0 and node.fit is not None and not args.no_plot:
+        plot_results(node.samples, node.fit)
+    return code
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

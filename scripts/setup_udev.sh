@@ -9,11 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RULES_SRC="${SCRIPT_DIR}/udev/99-racecar.rules"
 RULES_DST="/etc/udev/rules.d/99-racecar.rules"
 
-# Module blacklist: prevents hid_nintendo from claiming the EasySMX KC-8236
-# (spoofs Switch Pro VID:PID 057e:2009). With hid_nintendo gone, the
-# controller's firmware downgrades to Xbox 360 mode (2f24:016d) and binds
-# to `xpad`, giving us /dev/input/js0 + correct button mapping. See the
-# rationale in the .conf header.
+# hid_nintendo blacklist for the EasySMX gamepad; rationale in the .conf.
 MODPROBE_SRC="${SCRIPT_DIR}/modprobe.d/blacklist-hid-nintendo.conf"
 MODPROBE_DST="/etc/modprobe.d/blacklist-hid-nintendo.conf"
 
@@ -26,14 +22,12 @@ if [[ ! -f "${MODPROBE_SRC}" ]]; then
     exit 1
 fi
 
-# Install the udev rules (cheap).
 sudo install -m 0644 "${RULES_SRC}" "${RULES_DST}"
 sudo udevadm control --reload-rules
 sudo udevadm trigger
 
-# Install the modprobe blacklist. The kernel reads /etc/modprobe.d/ on
-# boot, BUT hid_nintendo may be loaded from the initramfs before that —
-# so when the blacklist changes, we also need to regenerate the initramfs.
+# hid_nintendo can load from the initramfs before /etc/modprobe.d/ is read,
+# so a changed blacklist also regenerates the initramfs.
 INITRAMFS_NEEDED=0
 if ! sudo cmp -s "${MODPROBE_SRC}" "${MODPROBE_DST}" 2>/dev/null; then
     sudo install -m 0644 "${MODPROBE_SRC}" "${MODPROBE_DST}"
@@ -41,8 +35,7 @@ if ! sudo cmp -s "${MODPROBE_SRC}" "${MODPROBE_DST}" 2>/dev/null; then
 fi
 
 if [[ $INITRAMFS_NEEDED -eq 1 ]]; then
-    # Unload the running module if present so the change takes effect
-    # this boot too (otherwise blacklist only applies next reboot).
+    # Unload the running module so the change applies this boot.
     if lsmod | grep -q '^hid_nintendo'; then
         echo "  Unloading running hid_nintendo module..."
         sudo modprobe -r hid_nintendo 2>/dev/null || true
@@ -53,5 +46,5 @@ if [[ $INITRAMFS_NEEDED -eq 1 ]]; then
     fi
 fi
 
-echo "Installed ${RULES_DST} and ${MODPROBE_DST}; symlinks should appear under /dev/."
+echo "Installed ${RULES_DST} and ${MODPROBE_DST}; check /dev/neo-pit-pcb and /dev/lidar."
 echo "If the gamepad was just plugged in, unplug + replug it once for the change to take effect."

@@ -3,9 +3,7 @@
 Format an `nmcli -t` wifi scan into one row per network.
 
 A scan returns one row per BSSID, so an access point with several radios
-repeats and hidden networks come back with an empty SSID. On a car parked in
-a lab this turns roughly a dozen real networks into 30-plus rows, which is
-not something an operator should have to read past.
+repeats and hidden networks come back with an empty SSID.
 
 Reads `nmcli -t -f SSID,SIGNAL,SECURITY,IN-USE device wifi list ...` on
 stdin, groups by SSID keeping the strongest signal, and collapses the
@@ -47,13 +45,11 @@ def parse(text: str) -> tuple[list[dict], int]:
     """Return (networks, hidden_count), strongest first."""
     best: dict[str, dict] = {}
     hidden = 0
-    for raw in text.splitlines():
-        line = raw.rstrip('\n')
+    for line in text.splitlines():
         if not line.strip():
             continue
         parts = split_nmcli(line)
-        # Tolerate extra trailing fields so adding a column to the nmcli
-        # query does not break parsing.
+        # Pad short records; extra trailing fields are ignored.
         while len(parts) < 4:
             parts.append('')
         ssid, signal_s, security, in_use = parts[0], parts[1], parts[2], parts[3]
@@ -86,10 +82,9 @@ def parse(text: str) -> tuple[list[dict], int]:
     return networks, hidden
 
 
-def render(networks: list[dict], hidden: int, saved: set[str], iface: str,
-           rescanned: bool) -> str:
+def render(networks: list[dict], hidden: int, saved: set[str], iface: str, rescanned: bool) -> str:
     lines = []
-    lines.append(f'  {"SSID":<24} {"SIGNAL":>6}  {"SECURITY":<14} ')
+    lines.append(f'  {"SSID":<24} {"SIGNAL":>6}  SECURITY')
     for n in networks:
         marks = []
         if n['ssid'] in saved:
@@ -114,8 +109,9 @@ def render(networks: list[dict], hidden: int, saved: set[str], iface: str,
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument('--saved', default='',
-                    help='newline- or comma-separated SSIDs with saved profiles')
+    ap.add_argument(
+        '--saved', default='', help='newline- or comma-separated SSIDs with saved profiles'
+    )
     ap.add_argument('--iface', default='wlan0')
     ap.add_argument('--rescanned', action='store_true')
     args = ap.parse_args()
