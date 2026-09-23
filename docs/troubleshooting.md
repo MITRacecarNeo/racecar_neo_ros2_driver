@@ -7,6 +7,7 @@ comment in the source can point here instead of carrying the full account.
 ## Contents
 
 - [Diagnostic rate checks](#diagnostic-rate-checks)
+- [CPU busy share](#cpu-busy-share)
 - [eth0 addressing](#eth0-addressing)
 - [AP isolation dispatcher](#ap-isolation-dispatcher)
 - [NetworkManager authorization](#networkmanager-authorization)
@@ -70,8 +71,49 @@ measurement otherwise. Two were wrong before v0.8.1:
 The six PIT topics carry a 65 percent floor rather than 80. Their rate stays
 load-dependent even with the diagnostic's own cost removed, and a car dipping
 into under-voltage throttling drops further. At 88.4 Hz the floor passes
-anything in the 90 to 110 Hz band while a halved frame rate (68 Hz) and a
-dead link (0 Hz) both still fail.
+anything in the 90 to 110 Hz band while a halved frame rate (68 Hz) still
+warns.
+
+Below its floor a stream warns; below `STALL_HZ` (2 Hz) it fails. Through
+v0.8.2 the floor itself was the fail line, so a Coral delivering 8.6 of its
+15 Hz on a throttled car failed the run next to a dead link. A slow stream
+still feeds the car; a stopped one does not, and the exit code now separates
+them. A car whose stack is down entirely shows every topic as not published,
+which fails rather than skips.
+
+## CPU busy share
+
+`scripts/diagnose.py`: `measure_cpu_busy`, `check_system`.
+`scripts/sysinfo.py`: `read_cpu_times`, `read_arm_clock`.
+
+Through v0.8.2 the system section reported the 1-minute load average divided
+by the core count, which read 2.18x (8.71 on 4 cores) on 2026-09-22. Load
+counts runnable and blocked threads, not CPU time, so it has no 100 percent
+ceiling. That reading was real run-queue pressure, not an artifact: 95 percent
+busy across all cores, 7 to 14 runnable threads, no I/O wait.
+
+The cause was the clock. `vcgencmd get_throttled` read 0x50005, and the
+firmware had capped the ARM at 1000 MHz of 2400 while cpufreq still reported
+2400. The same teleop stack then needs about 2.4 times the CPU share it uses
+at full clock. The top consumers at the time, in percent of one core:
+
+| process | CPU |
+| --- | --- |
+| `pit_node` | 71 |
+| `edgetpu_node` | 68 |
+| `imu_fusion_node` | 59 |
+| `dashboard.py` | 47 |
+| `realsense2_camera` | 41 |
+| `mux_node` | 16 |
+| `throttle_node` | 12 |
+
+The row is now `cpu`: the busy share of all cores over one second, which
+cannot pass 100 percent, and the firmware's ARM clock against its maximum.
+The diagnostic's own CPU time over that second is subtracted, since its ROS
+window runs alongside; with it included the same car read 95 percent, without
+it 77. The row warns at 90 percent and never fails, because a saturated CPU
+shows up as a fault only through the rates it slows, which the sensor rows
+already report.
 
 ## eth0 addressing
 

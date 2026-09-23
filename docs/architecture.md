@@ -365,21 +365,26 @@ once and shares a single 5 s sample window rather than measuring topics in
 sequence, and runs the host checks on a worker thread beside it. Checks are
 grouped as devices, sensors, actuators, system, services and network; rate
 checks compare observed Hz against a per-topic floor rather than testing for
-presence. It is read-only and never commands the hardware. The measurement
+presence. Each rate row also carries one decoded sample from its topic in a
+tab-separated column, and a payload outside its expected range (gravity,
+pack voltage, channel count) sets the row's status. The RealSense streams
+are read once after the window closes, so their decode costs no rate. It is
+read-only and never commands the hardware. The measurement
 cost of that window, and the floors, are covered in docs/troubleshooting.md,
 "Diagnostic rate checks".
 
-The exit code is strict: 0 only when every requested check passed, so `WARN`
-and `SKIP` both count against it. Deselecting a section with `--quick` or
-`--section` is distinct from a check failing to run, and does not affect the
-result; without that distinction a car with teleop stopped would skip its
-sensor checks and still report success.
+The exit code is 1 only when a check fails; `WARN` and `SKIP` leave the car
+usable and exit 0. `--strict` makes anything other than `OK` fail, for
+scripts that need every check to have run and passed. Deselecting a section
+with `--quick` or `--section` is distinct from a check failing to run and
+affects neither mode. A car with teleop stopped still fails: its topics are
+absent from the graph, and an absent topic is a `FAIL`, not a `SKIP`.
 
 `scripts/sysinfo.py` holds the host readings the dashboard, `diagnose.py`,
 `watchdog.py` and `eth_monitor.py` share: RTC thresholds and classification,
-the under-voltage alarm path, SoC temperature, throttling flags, load, memory,
-disk, uptime, clock sync, the RealSense `/diagnostics` rate parser and a
-subprocess helper. Each reading has one definition.
+the under-voltage alarm path, SoC temperature, throttling flags, CPU time,
+the ARM clock, memory, disk, uptime, clock sync, the RealSense `/diagnostics`
+rate parser and a subprocess helper. Each reading has one definition.
 
 ## Configuration
 
