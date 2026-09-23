@@ -436,10 +436,10 @@ rendered from its checkout's `.service.in` template.
 overrides) and reports a mismatch without stopping the install:
 
 ```
-==> Dashboard versions (driver pins 0.8.1)
-  teleop_dashboard: 0.8.1
-  linefollow_dashboard: 0.7.9, driver pins 0.8.1
-  wallfollow_dashboard: 0.8.1
+==> Dashboard versions (driver pins 0.8.2)
+  teleop_dashboard: 0.8.2
+  linefollow_dashboard: 0.8.1, driver pins 0.8.2
+  wallfollow_dashboard: 0.8.2
 ```
 
 **Safety.** `mux_node` forwards `/drive` only while the RB bumper is held, and

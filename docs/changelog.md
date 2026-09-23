@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+### Fixed
+
+- `setup.py`, `package.xml` and the `DASHBOARD_VERSION` pin read 0.8.2. The
+  0.8.2 release was merged and tagged still reading 0.8.1; the `v0.8.2` tag
+  keeps that content, since moving a published tag would rewrite history.
+
 ## [0.8.2] - 2026-09-22
 
 Cleanup release: a whole-repository audit against the development rules, the
