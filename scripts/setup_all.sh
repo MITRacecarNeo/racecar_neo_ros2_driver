@@ -1,5 +1,5 @@
 #!/bin/bash
-# RACECAR Neo v2 — one-shot setup orchestrator.
+# RACECAR Neo v2: one-shot setup orchestrator.
 #
 # Usage: bash scripts/setup_all.sh
 # Idempotent: re-runs skip completed phases.
@@ -43,7 +43,7 @@ echo "==> [5/12] udev rules (stable /dev/neo-pit-pcb, /dev/lidar)"
 bash "$SCRIPT_DIR/setup_udev.sh"
 
 echo
-echo "==> [6/12] Dot matrix display deps"
+echo "==> [6/12] Dot matrix fonts (luma, for the dotmatrix_node rasterizer)"
 bash "$SCRIPT_DIR/setup_dotmatrix.sh"
 
 echo
@@ -65,7 +65,6 @@ bash "$SCRIPT_DIR/setup_jupyter.sh"
 echo
 echo "==> [11/12] systemd services (teleop, watchdog, dashboard, jupyter)"
 bash "$SCRIPT_DIR/setup_services.sh"
-
 
 echo
 echo "==> [12/12] Lab dashboards (clone + install units, disabled)"

@@ -6,9 +6,9 @@ sllidar_node:
     frame_id: "laser"
     inverted: false
     angle_compensate: true
-    # scan_mode unset → driver picks the LIDAR's "typical" mode.
-    # On our hardware (HW rev 7) that's "Sensitivity": 8 kHz @ 10 Hz → 800
-    # raw points/rev → 1080-point angle-compensated grid.
+    # scan_mode unset: the driver picks the LIDAR's "typical" mode.
+    # On HW rev 7 that is "Sensitivity": 8 kHz @ 10 Hz, 800 raw points/rev,
+    # a 1080-point angle-compensated grid.
     # Override if your LIDAR ships with a different default: "Standard",
     # "Express", "Boost", "Stability", "DenseBoost" (model-dependent).
     scan_mode: ""

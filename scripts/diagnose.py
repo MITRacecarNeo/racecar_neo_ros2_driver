@@ -2,9 +2,8 @@
 """
 Whole-car diagnostic pass behind `racecar status`.
 
-Every subscription opens at once and shares one sample window, with the host
-checks on a worker thread beside it, so a pass costs one discovery plus one
-window rather than a window per section.
+All subscriptions share one sample window; host checks run on a worker
+thread alongside it.
 
 Strict by design: the exit code is 0 only when every requested check passed,
 so WARN and SKIP both count against it. Deselecting a section with --quick or
@@ -18,17 +17,19 @@ Rate-check tuning and the measurement costs behind it: docs/troubleshooting.md.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 from dataclasses import dataclass, field
 import glob
 import grp
+import importlib
 import json
 import os
 from pathlib import Path
 import re
-import subprocess
 import sys
 import threading
 import time
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -46,12 +47,7 @@ DISCOVERY_TIMEOUT = 6.0
 # RealSense reports its own per-stream rates here, so they need no
 # subscription. See docs/troubleshooting.md, "Diagnostic rate checks".
 DIAGNOSTICS_TOPIC = '/diagnostics'
-REALSENSE_DIAGNOSTIC_NAMES = {
-    'camera: color': '/camera/color',
-    'camera: depth': '/camera/depth',
-    'camera: gyro': '/imu/realsense',
-}
-DIAGNOSTIC_RATE_KEY = 'Actual frequency (Hz)'
+REALSENSE_DIAGNOSTIC_NAMES = sysinfo.REALSENSE_DIAGNOSTIC_NAMES
 
 
 @dataclass
@@ -82,8 +78,7 @@ class TopicSpec:
 # Nominal rates come from configuration where one is declared (mux.yaml sets
 # 50 Hz for the drive chain, imu_fusion.yaml 100 Hz for the fused IMU) and
 # from measurement on a running car otherwise. The PIT floor is wider than the
-# default because the Teensy frame rate moves with load, and the camera and
-# lidar nominals were corrected in v0.8.1.
+# default because the Teensy frame rate moves with load.
 # See docs/troubleshooting.md, "Diagnostic rate checks".
 PIT_FLOOR_FRAC = 0.65
 PIT_NOTE = 'shared Teensy frame; rate varies with load'
@@ -138,13 +133,7 @@ SERVICE_UNITS = ('racecar-teleop', 'racecar-watchdog', 'racecar-dashboard', 'rac
 # ---------------------------------------------------------------------------
 
 
-def _run(cmd: list[str], timeout: float = 5.0) -> str:
-    """Run a command and return stdout, or an empty string on any failure."""
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        return ''
-    return r.stdout if r.returncode == 0 else ''
+_run = sysinfo.run_cmd
 
 
 def check_devices() -> list[Check]:
@@ -155,12 +144,11 @@ def check_devices() -> list[Check]:
     for link, hint in (('/dev/neo-pit-pcb', 'racecar udev'), ('/dev/lidar', 'racecar udev')):
         p = Path(link)
         if p.exists():
-            out.append(Check(g, Path(link).name, OK, str(p.resolve())))
+            out.append(Check(g, p.name, OK, str(p.resolve())))
         else:
-            out.append(Check(g, Path(link).name, FAIL, f'missing (run: {hint})'))
+            out.append(Check(g, p.name, FAIL, f'missing (run: {hint})'))
 
-    # The Coral moved to M.2 PCIe; it has no USB presence at all, so an lsusb
-    # probe for it reports a missing accelerator on a working car.
+    # Coral is M.2 PCIe: probe /dev/apex_* and lspci, not lsusb.
     apex = sorted(glob.glob('/dev/apex_*'))
     if apex:
         slot = ''
@@ -168,7 +156,7 @@ def check_devices() -> list[Check]:
             if 'Coral' in line or 'Global Unichip' in line:
                 slot = line.split()[0]
                 break
-        detail = f'{apex[0]}' + (f' (pci {slot})' if slot else '')
+        detail = apex[0] + (f' (pci {slot})' if slot else '')
         out.append(Check(g, 'coral', OK, detail))
     else:
         out.append(Check(g, 'coral', FAIL, 'no /dev/apex_* node'))
@@ -184,7 +172,6 @@ def check_devices() -> list[Check]:
             out.append(Check(g, label, SKIP, 'lsusb unavailable'))
 
     for pattern, label in (
-        ('/dev/spidev*', 'spidev'),
         ('/dev/gpiochip*', 'gpiochip'),
         ('/dev/i2c-1', 'i2c-1'),
     ):
@@ -339,8 +326,7 @@ def check_network() -> list[Check]:
     if not eth:
         out.append(Check(g, 'eth0 address', WARN, 'no global IPv4 (cable out?)'))
     elif len(eth) > 1:
-        # The dual-address state is what makes the static drop; it is the
-        # condition `racecar eth` exists to prevent.
+        # Two IPv4 addresses on eth0: the state `racecar eth static` clears.
         out.append(
             Check(
                 g,
@@ -411,35 +397,20 @@ class RosResult:
 
     available: bool = False
     reason: str = ''
-    counts: dict = field(default_factory=dict)
+    counts: dict[str, int] = field(default_factory=dict)
     elapsed: float = 0.0
-    present: set = field(default_factory=set)
-    values: dict = field(default_factory=dict)
-    reported: dict = field(default_factory=dict)
+    present: set[str] = field(default_factory=set)
+    values: dict[str, Any] = field(default_factory=dict)
+    reported: dict[str, float] = field(default_factory=dict)
 
 
-def _read_diagnostic_rates(msg, into: dict) -> None:
-    """Pull the RealSense per-stream rates out of one DiagnosticArray."""
-    for status in msg.status:
-        topic = REALSENSE_DIAGNOSTIC_NAMES.get(status.name.lower())
-        if topic is None:
-            continue
-        for value in status.values:
-            if value.key != DIAGNOSTIC_RATE_KEY:
-                continue
-            try:
-                into[topic] = float(value.value)
-            except (TypeError, ValueError):
-                pass
-            break
+_read_diagnostic_rates = sysinfo.read_diagnostic_rates
 
 
 def sample_ros(window: float, specs: list[TopicSpec]) -> RosResult:
     """Open every subscription at once and count arrivals over one window."""
     result = RosResult()
     try:
-        import importlib
-
         import rclpy
         from rclpy.node import Node
         from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
@@ -458,14 +429,12 @@ def sample_ros(window: float, specs: list[TopicSpec]) -> RosResult:
     try:
         node = Node('racecar_diagnose')
 
-        # Discovery is the floor on runtime, not the sample window: nothing
-        # arrives until the graph is known. Poll until the expected topics
-        # show up rather than sleeping a fixed amount.
+        # Poll discovery until every expected topic appears or DISCOVERY_TIMEOUT.
         deadline = time.monotonic() + DISCOVERY_TIMEOUT
-        names: dict = {}
+        names: dict[str, list[str]] = {}
         while time.monotonic() < deadline:
             names = dict(node.get_topic_names_and_types())
-            if sum(1 for t in wanted if t in names) >= len(wanted):
+            if all(t in names for t in wanted):
                 break
             time.sleep(0.2)
         if not names:
@@ -481,21 +450,21 @@ def sample_ros(window: float, specs: list[TopicSpec]) -> RosResult:
         # PIT rate this same window is measuring; one DiagnosticArray at 1 Hz
         # costs nothing. See docs/troubleshooting.md, "Diagnostic rate checks".
         counted = sorted(result.present - DIAGNOSTIC_SOURCED)
-        counts = {t: 0 for t in counted}
-        latest: dict = {}
-        reported: dict = {}
+        counts = dict.fromkeys(counted, 0)
+        latest: dict[str, Any] = {}
+        reported: dict[str, float] = {}
         qos = QoSProfile(depth=10)
         qos.reliability = QoSReliabilityPolicy.BEST_EFFORT
         qos.durability = QoSDurabilityPolicy.VOLATILE
 
-        # Raw throughout, value topics included: deserialising inside the
-        # window depressed the lidar rate it was measuring. Only the last
-        # buffer is kept, decoded once the clock stops.
-        raw_latest: dict = {}
-        msg_classes: dict = {}
+        # Raw subscriptions throughout, value topics included; the kept buffers
+        # are decoded after the window. See docs/troubleshooting.md,
+        # "Diagnostic rate checks".
+        raw_latest: dict[str, bytes] = {}
+        msg_classes: dict[str, Any] = {}
 
-        def make_cb(topic: str, keep: bool):
-            def cb(msg):
+        def make_cb(topic: str, keep: bool) -> Callable[[bytes], None]:
+            def cb(msg: bytes) -> None:
                 counts[topic] += 1
                 if keep:
                     raw_latest[topic] = msg
@@ -591,7 +560,7 @@ def rate_checks(group: str, specs: list[TopicSpec], ros: RosResult) -> list[Chec
 
 
 def value_checks(ros: RosResult) -> list[Check]:
-    """Assert what the notebook asserted about payloads, not just arrival."""
+    """Check payload values, not only arrival."""
     out: list[Check] = []
     g = 'sensors'
     if not ros.available:
@@ -640,12 +609,9 @@ def actuator_checks(ros: RosResult) -> list[Check]:
     """Drive chain plus the two display devices, observed rather than driven."""
     out = rate_checks('actuators', ACTUATOR_TOPICS, ros)
 
-    dot_running = bool(_run(['pgrep', '-f', 'dotmatrix_node']).strip())
-    spidev = bool(glob.glob('/dev/spidev*'))
-    if dot_running and spidev:
-        out.append(Check('actuators', 'Dot matrix', OK, 'node running, spidev present'))
-    elif not spidev:
-        out.append(Check('actuators', 'Dot matrix', FAIL, 'no /dev/spidev*'))
+    # The Teensy drives the display; dotmatrix_node renders frames for pit_node.
+    if _run(['pgrep', '-f', 'dotmatrix_node']).strip():
+        out.append(Check('actuators', 'Dot matrix', OK, 'dotmatrix_node running'))
     else:
         out.append(Check('actuators', 'Dot matrix', WARN, 'dotmatrix_node not running'))
 
@@ -663,6 +629,11 @@ def actuator_checks(ros: RosResult) -> list[Check]:
 # ---------------------------------------------------------------------------
 
 MARK = {OK: '[ OK ]', WARN: '[WARN]', FAIL: '[FAIL]', SKIP: '[SKIP]'}
+
+
+def exit_code_for(checks: list[Check]) -> int:
+    """Return 0 only when every check is OK; WARN, FAIL and SKIP all fail the run."""
+    return 0 if all(c.status == OK for c in checks) else 1
 
 
 def render(checks: list[Check], elapsed: float, exit_code: int) -> str:
@@ -758,7 +729,7 @@ def main() -> int:
     checks.extend(host.get('services', []))
     checks.extend(host.get('network', []))
 
-    exit_code = 0 if all(c.status == OK for c in checks) else 1
+    exit_code = exit_code_for(checks)
     elapsed = time.monotonic() - started
 
     if args.json:

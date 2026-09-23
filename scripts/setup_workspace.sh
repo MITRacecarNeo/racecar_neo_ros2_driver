@@ -7,7 +7,7 @@ SRC_DIR="$WS_DIR/src"
 
 mkdir -p "$SRC_DIR"
 
-# sllidar_ros2 — upstream Slamtec driver; sibling package, not vendored.
+# sllidar_ros2: upstream Slamtec driver; sibling package, not vendored.
 if [ ! -d "$SRC_DIR/sllidar_ros2" ]; then
     echo "  cloning sllidar_ros2 from Slamtec"
     git clone --depth=1 https://github.com/Slamtec/sllidar_ros2.git "$SRC_DIR/sllidar_ros2"

@@ -40,12 +40,14 @@ class TestModeGlyphAndLabel:
     def test_label_fits_16px_region(self, mode):
         from luma.core.legacy.font import proportional
         from racecar_neo_ros2_driver.dotmatrix_node import TINY_FONT
+
         assert rendered_text_width(mode_label(mode), proportional(TINY_FONT)) <= 16
 
 
 class TestSplashConfig:
     def test_default_splash_in_config_yaml(self):
         from pathlib import Path
+
         cfg = (Path(__file__).parent.parent / 'config' / 'dotmatrix.yaml').read_text()
         assert 'splash_message:' in cfg
         assert 'Welcome to RACECAR Neo' in cfg
@@ -105,10 +107,12 @@ class TestPatchedTinyFont:
     def test_n_glyph_is_overridden(self):
         from racecar_neo_ros2_driver.dotmatrix_node import TINY_FONT
         from luma.core.legacy.font import TINY_FONT as STOCK_TINY_FONT
+
         assert TINY_FONT[ord('N')] != STOCK_TINY_FONT[ord('N')]
 
     def test_n_glyph_has_diagonal(self):
         from racecar_neo_ros2_driver.dotmatrix_node import TINY_FONT
+
         n = TINY_FONT[ord('N')]
         assert len(n) == 4
         c1, c2 = n[1], n[2]
@@ -118,15 +122,15 @@ class TestPatchedTinyFont:
 
 
 class TestRenderedTextWidth:
-    """rendered_text_width measures what luma actually paints."""
-
     def test_empty_string_is_zero(self):
         from luma.core.legacy.font import TINY_FONT, proportional
+
         assert rendered_text_width('', proportional(TINY_FONT)) == 0
 
     def test_known_widths_in_tiny_font(self):
         from racecar_neo_ros2_driver.dotmatrix_node import TINY_FONT
         from luma.core.legacy.font import proportional
+
         font = proportional(TINY_FONT)
         assert rendered_text_width('IDLE', font) == 15
         assert rendered_text_width('AUTO', font) == 15

@@ -14,7 +14,7 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import SetRemap
 
 
-def generate_launch_description():
+def generate_launch_description() -> LaunchDescription:
     realsense_dir = get_package_share_directory('realsense2_camera')
 
     pointcloud_arg = DeclareLaunchArgument(
@@ -41,13 +41,9 @@ def generate_launch_description():
         description='Color stream profile (widthxheightxfps)',
     )
 
-    # D435i IMU IIO/HID-sensor sysfs attributes default to root-only on the
-    # Pi 5. Permissions are fixed at the root level by setup_realsense.sh's
-    # udev rule (99-realsense-imu.rules, RUN+= on iio device-add) and the
-    # realsense-imu-permissions.service boot unit; the launch does not shell
-    # out to sudo (no TTY under systemd, so it only ever failed with exit 1).
+    # IMU sysfs permissions come from setup_realsense.sh (udev rule + boot unit).
 
-    # Include the stock realsense launch with UAV Neo defaults; a short delay
+    # Include the stock realsense launch with RACECAR defaults; a short delay
     # lets the camera USB enumerate before rs_launch opens it.
     realsense_launch = TimerAction(
         period=1.0,
@@ -59,34 +55,28 @@ def generate_launch_description():
                 launch_arguments={
                     'camera_namespace': '/',
                     'camera_name': 'camera',
-                    # Streams
                     'enable_depth': 'true',
                     'enable_color': 'true',
                     'enable_infra1': 'false',
                     'enable_infra2': 'false',
                     'enable_gyro': 'true',
                     'enable_accel': 'true',
-                    # Profiles
                     'depth_module.depth_profile': LaunchConfiguration('depth_profile'),
                     'rgb_camera.color_profile': LaunchConfiguration('color_profile'),
                     'depth_module.infra_profile': LaunchConfiguration('depth_profile'),
                     'gyro_fps': '200',
                     'accel_fps': '63',
                     'unite_imu_method': '2',
-                    # Sync and alignment
                     'enable_sync': 'true',
                     'align_depth.enable': LaunchConfiguration('align_depth_enable'),
-                    # Filters. Decimation off so depth stays 640x480 (matches
-                    # the color frame and the library's depth API shape).
+                    # Decimation off so depth stays 640x480, matching the color
+                    # frame and the library's depth API shape.
                     'decimation_filter.enable': 'false',
                     'spatial_filter.enable': 'false',
                     'temporal_filter.enable': 'false',
-                    # Point cloud
                     'pointcloud.enable': LaunchConfiguration('pointcloud_enable'),
-                    # TF
                     'publish_tf': 'true',
                     'tf_publish_rate': '0.0',
-                    # Diagnostics
                     'diagnostics_period': '1.0',
                 }.items(),
             ),

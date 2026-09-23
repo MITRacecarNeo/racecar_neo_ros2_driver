@@ -5,10 +5,10 @@ Control pipeline (gamepad/mux/throttle/pit + joy_node) is always brought up.
 pit_node owns the Teensy UART and drives the servo/ESC. imu_fusion merges the
 RealSense and Teensy LSM9DS1 IMUs into /imu/fused; the RealSense D435i is the
 camera.
+
 Each sensor/ML/display subsystem can be disabled via a name_enable arg
-(default 'true') -- for instance, edgetpu_enable:=false skips the Coral.
-EdgeTPU is staggered 3s so the camera topics are up before it subscribes
-(the M.2 Apex is bound at boot, so no USB-firmware enumeration wait).
+(default 'true'); edgetpu_enable:=false skips the Coral. EdgeTPU is staggered
+3s so the camera topics are up before it subscribes.
 """
 
 import os
@@ -30,12 +30,12 @@ _SUBSYSTEMS = (
 )
 
 
-def generate_launch_description():
+def generate_launch_description() -> LaunchDescription:
     pkg_dir = get_package_share_directory('racecar_neo_ros2_driver')
     launch_dir = os.path.join(pkg_dir, 'launch')
     config_dir = os.path.join(pkg_dir, 'config')
 
-    # Joy node + control-pipeline configs (existing args from v0.0.1)
+    # Joy node + control-pipeline configs
     joy_device_arg = DeclareLaunchArgument(
         'joy_device_id',
         default_value='0',
@@ -52,19 +52,26 @@ def generate_launch_description():
         description='Hz at which joy_node republishes axes when no event arrives',
     )
     gamepad_cfg_arg = DeclareLaunchArgument(
-        'gamepad_config', default_value=os.path.join(config_dir, 'gamepad.yaml')
+        'gamepad_config',
+        default_value=os.path.join(config_dir, 'gamepad.yaml'),
+        description='Path to gamepad_node config YAML',
     )
     mux_cfg_arg = DeclareLaunchArgument(
-        'mux_config', default_value=os.path.join(config_dir, 'mux.yaml')
+        'mux_config',
+        default_value=os.path.join(config_dir, 'mux.yaml'),
+        description='Path to mux_node config YAML',
     )
     throttle_cfg_arg = DeclareLaunchArgument(
-        'throttle_config', default_value=os.path.join(config_dir, 'throttle.yaml')
+        'throttle_config',
+        default_value=os.path.join(config_dir, 'throttle.yaml'),
+        description='Path to throttle_node config YAML',
     )
     pit_cfg_arg = DeclareLaunchArgument(
-        'pit_config', default_value=os.path.join(config_dir, 'pit.yaml')
+        'pit_config',
+        default_value=os.path.join(config_dir, 'pit.yaml'),
+        description='Path to pit_node config YAML',
     )
 
-    # Per-subsystem enable flags
     enable_args = [
         DeclareLaunchArgument(
             f'{name}_enable',
@@ -74,7 +81,7 @@ def generate_launch_description():
         for name in _SUBSYSTEMS
     ]
 
-    # Control pipeline — always on
+    # Control pipeline; always on
     joy = Node(
         package='joy',
         executable='joy_node',
@@ -105,8 +112,8 @@ def generate_launch_description():
         launch_arguments={'pit_config': LaunchConfiguration('pit_config')}.items(),
     )
 
-    def _gated_include(name: str, delay: float = 0.0):
-        # TimerAction with period=0 still fires correctly and lets the condition gate.
+    def _gated_include(name: str, delay: float = 0.0) -> TimerAction:
+        # TimerAction carries the enable condition; period=0 fires immediately.
         return TimerAction(
             period=delay,
             actions=[
@@ -121,13 +128,8 @@ def generate_launch_description():
 
     imu_fusion_launch = _gated_include('imu_fusion')
     lidar_launch = _gated_include('lidar')
-    # RealSense D435i is the camera; realsense.launch.py remaps its color stream
-    # to /camera/color, depth to /camera/depth, and the camera IMU to
-    # /imu/realsense (imu_fusion_node merges it into /imu/fused).
     realsense_launch = _gated_include('realsense')
-    # EdgeTPU short stagger so the camera topics are up before edgetpu_node
-    # subscribes. The M.2 Apex is bound at boot, so the old 10s USB-firmware
-    # enumeration wait is no longer needed.
+    # Stagger so camera topics exist before edgetpu_node subscribes.
     edgetpu_launch = _gated_include('edgetpu', delay=3.0)
     dotmatrix_launch = _gated_include('dotmatrix')
 

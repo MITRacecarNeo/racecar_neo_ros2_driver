@@ -16,15 +16,13 @@ pit_node:
     steering_sign: -1
     speed_sign: 1
 
-    # Firmware does not compute the CRC-16 yet; keep false until it does.
+    # Firmware CRC is valid; false pending a longer soak of the CRC path.
     require_crc: false
 
-    # RC link state, from the raw pulse widths. rc_normalized clamps a dead
-    # channel onto -1.0, the same value a switch held low gives, so presence of
-    # a transmitter cannot be read off /rc/channels. mux_node gates on this.
+    # Link presence from raw pulse widths; mux_node gates on it.
     rc_link_topic: "/rc/link"
 
-    # ---- Odometry (/odom) ----
+    # Odometry (/odom)
     # Wraps the encoder speed as nav_msgs/Odometry for consumers that expect
     # the standard message; the lab dashboards read twist.twist.linear.x.
     # Forward twist only: pose is not integrated, so it is marked unestimated.
@@ -33,7 +31,7 @@ pit_node:
     odom_frame_id: odom
     odom_child_frame_id: base_link
 
-    # ---- IMU republish (/imu/lsm9ds1, /mag) ----
+    # IMU republish (/imu/lsm9ds1, /mag)
     # imu_fusion_node blends /imu/lsm9ds1 with /imu/realsense into /imu/fused,
     # the single IMU the library reads.
     frame_id: imu_link
@@ -41,14 +39,9 @@ pit_node:
     imu_topic: "/imu/lsm9ds1"
     mag_topic: "/mag"
 
-    # Rotates the LSM9DS1 into the RealSense D435i IMU frame (the fusion
-    # authority) so imu_fusion_node can average the two. Derived on hardware
-    # (2026-07-07) from static gravity in ~10 orientations and confirmed against
-    # the camera gyro (per-axis correlation +1.00): RS_X=-LSM_Y, RS_Y=+LSM_Z,
-    # RS_Z=+LSM_X. The mapping is a reflection (det -1): the LSM9DS1's published
-    # accel/gyro frame is left-handed vs the camera, so a plain rotation solver
-    # cannot express it; accel and gyro share the convention, so one order/sign
-    # serves both.
+    # LSM9DS1 -> RealSense D435i IMU frame, so imu_fusion_node can average the
+    # two: RS_X=-LSM_Y, RS_Y=+LSM_Z, RS_Z=+LSM_X. A reflection (det -1), shared
+    # by accel and gyro. See docs/troubleshooting.md, "LSM9DS1 axis mapping".
     imu.accel_gyro_axis_order: [1, 2, 0]
     imu.accel_gyro_axis_sign: [-1.0, 1.0, 1.0]
     imu.mag_axis_order: [0, 1, 2]
@@ -62,7 +55,7 @@ pit_node:
     imu.mag_scale: 1.0e-6
 
     # Calibration biases. Overridden by lsm9ds1_cal.yaml / lsm9ds1_mag_cal.yaml
-    # when those are also passed (same parameter keys as the old imu_node).
+    # and their .local.yaml copies (pit.launch.py).
     accelerometer.bias: [0.0, 0.0, 0.0]
     gyroscope.bias: [0.0, 0.0, 0.0]
     magnetometer.hard_iron_bias: [0.0, 0.0, 0.0]

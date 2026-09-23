@@ -1,25 +1,12 @@
 """Unit tests for scripts/dmatrix_patterns.py (pattern-generation helpers)."""
 
-import importlib.util
-from pathlib import Path
-
+from conftest import load_script
 import pytest
-
-SCRIPT = Path(__file__).parent.parent / 'scripts' / 'dmatrix_patterns.py'
-
-
-def _load_patterns_module():
-    # The script is at scripts/dmatrix_patterns.py (not on the import path).
-    # Load it by file path so we can hit its pure helpers without rclpy.init().
-    spec = importlib.util.spec_from_file_location('dmatrix_patterns', SCRIPT)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 @pytest.fixture(scope='module')
 def patterns():
-    return _load_patterns_module()
+    return load_script('dmatrix_patterns')
 
 
 class TestCheckerboard:
@@ -48,7 +35,7 @@ class TestSweepFrame:
     def test_only_one_column_lit_per_frame(self, patterns):
         for col in (0, 5, 23):
             frame = patterns._sweep_frame(24, col)
-            assert sum(frame) == 8  # 8 rows × 1 lit col
+            assert sum(frame) == 8  # 8 rows, 1 lit col
             # That lit column is `col` in every row
             for r in range(8):
                 assert frame[r * 24 + col] == 1
@@ -60,8 +47,8 @@ class TestSweepFrame:
 
 class TestModuleId:
     def test_each_module_lights_a_unique_row(self, patterns):
-        # 3-module display, 24 px wide. Module 0 → row 0 lit on cols 0..7;
-        # module 1 → row 1 lit on cols 8..15; module 2 → row 2 lit on cols 16..23.
+        # 3-module display, 24 px wide. Module 0 lights row 0 on cols 0..7;
+        # module 1 lights row 1 on cols 8..15; module 2 lights row 2 on cols 16..23.
         data = patterns._module_id(24, 3)
         assert data[0 * 24 + 0] == 1  # module 0 row 0 col 0
         assert data[0 * 24 + 7] == 1  # module 0 row 0 col 7
@@ -72,7 +59,7 @@ class TestModuleId:
         assert data[2 * 24 + 23] == 1
 
     def test_more_modules_than_rows_clamps_to_last_row(self, patterns):
-        # 9 modules but only 8 rows → modules 8+ pile onto row 7.
+        # 9 modules but only 8 rows, so modules 8+ pile onto row 7.
         data = patterns._module_id(72, 9)
         # module 8 spans cols 64..71; rows 7 cols 64..71 lit.
         for c in range(64, 72):

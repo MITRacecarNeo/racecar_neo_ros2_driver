@@ -15,108 +15,100 @@ from rclpy.node import Node
 from std_msgs.msg import String, UInt8MultiArray
 
 HEIGHT = 8
+MODULE_WIDTH = 8
+FONT_MIN_SECONDS = 8.0
+# 6-char chunks in TINY_FONT render 23-24 px wide, filling the 24-px display
+# without scrolling.
+FONT_CHUNKS = ['ABCDEF', 'GHIJKL', 'MNOPQR', 'STUVWX', 'YZ0123', '456789']
 
 
-def _checkerboard(width: int) -> list:
+def _checkerboard(width: int) -> list[int]:
     return [((r + c) & 1) for r in range(HEIGHT) for c in range(width)]
 
 
-def _all_on(width: int) -> list:
+def _all_on(width: int) -> list[int]:
     return [1] * (HEIGHT * width)
 
 
-def _sweep_frame(width: int, lit_col: int) -> list:
+def _sweep_frame(width: int, lit_col: int) -> list[int]:
     return [1 if c == lit_col else 0 for r in range(HEIGHT) for c in range(width)]
 
 
-def _module_id(width: int, cascaded: int) -> list:
-    # Light a different row in each 8-px module so module ordering is obvious.
-    # Module N (0-indexed) gets row N lit across its 8 columns.
-    rows = [['.'] * width for _ in range(HEIGHT)]
+def _module_id(width: int, cascaded: int) -> list[int]:
+    # Module N lights row N (clamped to the last row) across its 8 columns.
+    lit = set()
     for m in range(cascaded):
         row = min(m, HEIGHT - 1)
-        for c in range(m * 8, min((m + 1) * 8, width)):
-            rows[row][c] = 'X'
-    return [1 if rows[r][c] == 'X' else 0 for r in range(HEIGHT) for c in range(width)]
+        for c in range(m * MODULE_WIDTH, min((m + 1) * MODULE_WIDTH, width)):
+            lit.add((row, c))
+    return [1 if (r, c) in lit else 0 for r in range(HEIGHT) for c in range(width)]
 
 
 class PatternPublisher(Node):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__('dmatrix_pattern_publisher')
         self.pix_pub = self.create_publisher(UInt8MultiArray, '/dotmatrix/pixels', 1)
         self.txt_pub = self.create_publisher(String, '/dotmatrix/text', 1)
 
-    def publish_pixels(self, flat_data):
+    def publish_pixels(self, flat_data: list[int]) -> None:
         msg = UInt8MultiArray()
         msg.data = list(flat_data)
         self.pix_pub.publish(msg)
 
-    def publish_text(self, text: str):
+    def publish_text(self, text: str) -> None:
         msg = String()
         msg.data = text
         self.txt_pub.publish(msg)
 
-    def clear_text(self):
-        self.publish_text('')
 
-
-def run_checkerboard(node, width, duration_s):
-    node.get_logger().info('checkerboard for %.1fs' % duration_s)
+def _hold(node: PatternPublisher, data: list[int], duration_s: float) -> None:
     deadline = time.monotonic() + duration_s
-    data = _checkerboard(width)
     while time.monotonic() < deadline:
         node.publish_pixels(data)
         rclpy.spin_once(node, timeout_sec=0.0)
         time.sleep(0.5)
 
 
-def run_all_on(node, width, duration_s):
-    node.get_logger().info('all-on for %.1fs' % duration_s)
-    deadline = time.monotonic() + duration_s
-    data = _all_on(width)
-    while time.monotonic() < deadline:
-        node.publish_pixels(data)
-        rclpy.spin_once(node, timeout_sec=0.0)
-        time.sleep(0.5)
+def run_checkerboard(node: PatternPublisher, args: argparse.Namespace) -> None:
+    node.get_logger().info(f'checkerboard for {args.duration:.1f}s')
+    _hold(node, _checkerboard(args.width), args.duration)
 
 
-def run_sweep(node, width, duration_s):
-    node.get_logger().info('column sweep for %.1fs' % duration_s)
-    deadline = time.monotonic() + duration_s
+def run_all_on(node: PatternPublisher, args: argparse.Namespace) -> None:
+    node.get_logger().info(f'all-on for {args.duration:.1f}s')
+    _hold(node, _all_on(args.width), args.duration)
+
+
+def run_sweep(node: PatternPublisher, args: argparse.Namespace) -> None:
+    node.get_logger().info(f'column sweep for {args.duration:.1f}s')
+    deadline = time.monotonic() + args.duration
     col = 0
     while time.monotonic() < deadline:
-        node.publish_pixels(_sweep_frame(width, col))
+        node.publish_pixels(_sweep_frame(args.width, col))
         rclpy.spin_once(node, timeout_sec=0.0)
         time.sleep(0.08)
-        col = (col + 1) % width
+        col = (col + 1) % args.width
 
 
-def run_module_id(node, width, cascaded, duration_s):
-    node.get_logger().info('module identifier for %.1fs' % duration_s)
-    deadline = time.monotonic() + duration_s
-    data = _module_id(width, cascaded)
-    while time.monotonic() < deadline:
-        node.publish_pixels(data)
-        rclpy.spin_once(node, timeout_sec=0.0)
-        time.sleep(0.5)
+def run_module_id(node: PatternPublisher, args: argparse.Namespace) -> None:
+    node.get_logger().info(f'module identifier for {args.duration:.1f}s')
+    _hold(node, _module_id(args.width, args.cascaded), args.duration)
 
 
-def run_font_scroll(node, duration_s):
-    # 6-char chunks in TINY_FONT render at 23-24 px static, filling all
-    # three cascaded modules of the 24-px viewport with no scrolling.
-    chunks = ['ABCDEF', 'GHIJKL', 'MNOPQR', 'STUVWX', 'YZ0123', '456789']
-    node.get_logger().info('font chunks (A-Z 0-9) for %.1fs' % duration_s)
-    per_chunk = max(0.7, duration_s / len(chunks))
+def run_font_scroll(node: PatternPublisher, args: argparse.Namespace) -> None:
+    duration_s = max(args.duration, FONT_MIN_SECONDS)
+    node.get_logger().info(f'font chunks (A-Z 0-9) for {duration_s:.1f}s')
+    per_chunk = max(0.7, duration_s / len(FONT_CHUNKS))
     deadline = time.monotonic() + duration_s
     idx = 0
     while time.monotonic() < deadline:
-        node.publish_text(chunks[idx])
-        idx = (idx + 1) % len(chunks)
+        node.publish_text(FONT_CHUNKS[idx])
+        idx = (idx + 1) % len(FONT_CHUNKS)
         chunk_end = time.monotonic() + per_chunk
         while time.monotonic() < chunk_end and time.monotonic() < deadline:
             rclpy.spin_once(node, timeout_sec=0.0)
             time.sleep(0.05)
-    node.clear_text()
+    node.publish_text('')
 
 
 PATTERNS = {
@@ -128,7 +120,7 @@ PATTERNS = {
 }
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         'pattern',
@@ -142,32 +134,25 @@ def main(argv=None):
         '--cascaded', type=int, default=3, help='Cascaded module count (used by module-id pattern)'
     )
     parser.add_argument(
-        '--duration', type=float, default=4.0, help='Seconds to run each pattern (default 4)'
+        '--duration',
+        type=float,
+        default=4.0,
+        help=f'Seconds to run each pattern (default 4; font at least {FONT_MIN_SECONDS:.0f})',
     )
     args = parser.parse_args(argv)
+    names = list(PATTERNS) if args.pattern == 'all' else [args.pattern]
 
     rclpy.init()
     node = PatternPublisher()
     # Give discovery a moment so the first publish isn't lost.
     time.sleep(0.5)
-
     try:
-        if args.pattern == 'all':
-            run_checkerboard(node, args.width, args.duration)
-            run_all_on(node, args.width, args.duration)
-            run_sweep(node, args.width, args.duration)
-            run_module_id(node, args.width, args.cascaded, args.duration)
-            # Font test needs longer (~0.6s per 3-char chunk × 13 chunks).
-            run_font_scroll(node, max(args.duration, 8.0))
-        elif args.pattern == 'font':
-            run_font_scroll(node, max(args.duration, 8.0))
-        elif args.pattern == 'module-id':
-            run_module_id(node, args.width, args.cascaded, args.duration)
-        else:
-            PATTERNS[args.pattern](node, args.width, args.duration)
+        for name in names:
+            PATTERNS[name](node, args)
     finally:
         node.destroy_node()
         rclpy.try_shutdown()
+    return 0
 
 
 if __name__ == '__main__':

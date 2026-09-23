@@ -14,6 +14,7 @@ letting the bag quietly drop messages.
 """
 
 import argparse
+from collections.abc import Mapping, Sequence
 import json
 import os
 from pathlib import Path
@@ -23,6 +24,7 @@ import signal
 import subprocess
 import sys
 import time
+from typing import Any
 
 CONFIG_DIR = Path.home() / '.config' / 'racecar'
 CONFIG_FILE = CONFIG_DIR / 'log.conf'
@@ -45,19 +47,23 @@ HIGH_RATE_TOPICS = {
 SD_SUSTAINED_MBPS = 30.0
 
 
-def sanitize_name(name):
+def sanitize_name(name: str | None) -> str:
     """Reduce a test name to something safe for a directory name."""
     cleaned = re.sub(r'[^A-Za-z0-9._-]+', '-', (name or '').strip())
     return cleaned.strip('-.') or 'run'
 
 
-def build_bag_name(test_name, now, prefix_fmt=TIMESTAMP_FMT):
+def build_bag_name(test_name: str | None, now: float, prefix_fmt: str = TIMESTAMP_FMT) -> str:
     """Compose the bag directory name: timestamp first, then the test name."""
     stamp = time.strftime(prefix_fmt, time.localtime(now))
     return f'{stamp}_{sanitize_name(test_name)}'
 
 
-def resolve_log_root(explicit=None, candidates=ROOT_CANDIDATES, environ=None):
+def resolve_log_root(
+    explicit: str | Path | None = None,
+    candidates: Sequence[str] = ROOT_CANDIDATES,
+    environ: Mapping[str, str] | None = None,
+) -> Path:
     """
     Pick where bags are written, most specific source first.
 
@@ -76,7 +82,12 @@ def resolve_log_root(explicit=None, candidates=ROOT_CANDIDATES, environ=None):
     return Path(candidates[-1])
 
 
-def build_record_argv(bag_dir, topics=None, exclude=None, storage=DEFAULT_STORAGE):
+def build_record_argv(
+    bag_dir: str | Path,
+    topics: Sequence[str] | None = None,
+    exclude: Sequence[str] | None = None,
+    storage: str = DEFAULT_STORAGE,
+) -> list[str]:
     """Assemble the `ros2 bag record` command line."""
     argv = ['ros2', 'bag', 'record', '--output', str(bag_dir), '--storage', storage]
     if topics:
@@ -88,14 +99,14 @@ def build_record_argv(bag_dir, topics=None, exclude=None, storage=DEFAULT_STORAG
     return argv
 
 
-def estimate_mbps(topics):
+def estimate_mbps(topics: Sequence[str] | None) -> float:
     """Estimate the write rate for a topic selection, in MB/s."""
     if not topics:
         return sum(HIGH_RATE_TOPICS.values())
     return sum(HIGH_RATE_TOPICS.get(t, 0.0) for t in topics)
 
 
-def format_size(num_bytes):
+def format_size(num_bytes: float) -> str:
     """Render a byte count in the largest unit that keeps it above 1."""
     value = float(num_bytes)
     if value < 1024.0:
@@ -103,11 +114,11 @@ def format_size(num_bytes):
     for unit in ('KB', 'MB', 'GB', 'TB'):
         value /= 1024.0
         if value < 1024.0 or unit == 'TB':
-            return f'{value:.1f} {unit}'
-    return f'{value:.1f} TB'
+            break
+    return f'{value:.1f} {unit}'
 
 
-def format_duration(seconds):
+def format_duration(seconds: float) -> str:
     """Render an elapsed time as h:mm:ss, dropping empty leading units."""
     seconds = int(max(0, seconds))
     hours, rem = divmod(seconds, 3600)
@@ -115,13 +126,12 @@ def format_duration(seconds):
     return f'{hours}:{minutes:02d}:{secs:02d}' if hours else f'{minutes}:{secs:02d}'
 
 
-def unmounted_nvme(lsblk_output=None):
+def unmounted_nvme(lsblk_output: str | None = None) -> str | None:
     """
     Name an NVMe disk that carries no mounted filesystem, or None.
 
-    The intended bag target is /data on NVMe. A car whose drive is still raw
-    falls back to the SD card, which is slower and smaller, so that is worth
-    saying out loud rather than leaving someone to find it from a full disk.
+    The intended bag target is /data on NVMe. A raw NVMe means bags fall back
+    to the SD card, which is slower and smaller.
     """
     if lsblk_output is None:
         try:
@@ -151,7 +161,7 @@ def unmounted_nvme(lsblk_output=None):
     return None
 
 
-def storage_hint(root):
+def storage_hint(root: str | Path) -> str | None:
     """Suggest making /data when the NVMe is present but unused."""
     if str(root).startswith('/data'):
         return None
@@ -164,7 +174,7 @@ def storage_hint(root):
     )
 
 
-def root_is_sd(root):
+def root_is_sd(root: str | Path) -> bool:
     """Report whether the bag root sits on an SD card rather than NVMe."""
     try:
         dev = subprocess.run(
@@ -178,7 +188,12 @@ def root_is_sd(root):
     return 'mmcblk' in dev
 
 
-def bandwidth_warning(topics, root, sustained=SD_SUSTAINED_MBPS, free_bytes=None):
+def bandwidth_warning(
+    topics: Sequence[str] | None,
+    root: str | Path,
+    sustained: float = SD_SUSTAINED_MBPS,
+    free_bytes: int | None = None,
+) -> str | None:
     """
     Return a warning when the selection outruns the disk, else None.
 
@@ -194,7 +209,7 @@ def bandwidth_warning(topics, root, sustained=SD_SUSTAINED_MBPS, free_bytes=None
             free_bytes = shutil.disk_usage(root).free
         except OSError:
             free_bytes = 0
-    fill = format_duration(free_bytes / 1e6 / rate) if rate else '?'
+    fill = format_duration(free_bytes / 1e6 / rate)
     return (
         f'{rate:.0f} MB/s of image topics onto an SD card that sustains about '
         f'{sustained:.0f} MB/s. Messages will be dropped, and the disk fills in '
@@ -202,7 +217,7 @@ def bandwidth_warning(topics, root, sustained=SD_SUSTAINED_MBPS, free_bytes=None
     )
 
 
-def dir_size(path):
+def dir_size(path: str | Path) -> int:
     """Total size of a directory tree, in bytes."""
     total = 0
     for dirpath, _dirnames, filenames in os.walk(path):
@@ -214,7 +229,7 @@ def dir_size(path):
     return total
 
 
-def load_config(path=None):
+def load_config(path: str | Path | None = None) -> dict[str, str]:
     """Read the persisted KEY=VALUE defaults."""
     path = Path(path) if path else CONFIG_FILE
     cfg = {}
@@ -230,7 +245,7 @@ def load_config(path=None):
     return cfg
 
 
-def save_config(cfg, path=None):
+def save_config(cfg: dict[str, str], path: str | Path | None = None) -> None:
     """Persist the defaults, replacing the file."""
     path = Path(path) if path else CONFIG_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -238,7 +253,7 @@ def save_config(cfg, path=None):
     path.write_text('# racecar log defaults\n' + body)
 
 
-def read_state(path=None):
+def read_state(path: str | Path | None = None) -> dict[str, Any] | None:
     """Load the active recording's state, or None when nothing is recording."""
     path = Path(path) if path else STATE_FILE
     try:
@@ -247,14 +262,14 @@ def read_state(path=None):
         return None
 
 
-def write_state(state, path=None):
+def write_state(state: dict[str, Any], path: str | Path | None = None) -> None:
     """Record where the running bag went, so status and stop can find it."""
     path = Path(path) if path else STATE_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(state, indent=2) + '\n')
 
 
-def clear_state(path=None):
+def clear_state(path: str | Path | None = None) -> None:
     """Forget the active recording."""
     path = Path(path) if path else STATE_FILE
     try:
@@ -263,7 +278,7 @@ def clear_state(path=None):
         pass
 
 
-def pid_alive(pid):
+def pid_alive(pid: Any) -> bool:
     """Report whether a PID is still running, without signalling it."""
     try:
         os.kill(int(pid), 0)
@@ -272,12 +287,11 @@ def pid_alive(pid):
     return True
 
 
-def summarize_topics(counts, duration_sec):
+def summarize_topics(counts: dict[str, int], duration_sec: float) -> list[dict[str, Any]]:
     """
     Build per-topic rows of message count and mean rate.
 
-    Sorted by count, so the topics that dominate a bag come first; that is what
-    someone reading an oversized recording is looking for.
+    Sorted by count, descending, so the topics that dominate a bag come first.
     """
     rows = []
     for topic, count in counts.items():
@@ -286,13 +300,12 @@ def summarize_topics(counts, duration_sec):
     return sorted(rows, key=lambda r: r['count'], reverse=True)
 
 
-def active_state():
+def active_state() -> dict[str, Any] | None:
     """
     Return the running recording's state, clearing it when the process is gone.
 
-    A bag whose recorder died (OOM, a reboot mid-run) leaves a state file
-    behind. Treating that as "recording" would make stop and status lie, so it
-    is cleared on sight and reported as finished.
+    A recorder that died (OOM, a reboot mid-run) leaves a state file behind;
+    it is cleared here so stop and status report "not recording".
     """
     state = read_state()
     if state is None:
@@ -306,11 +319,11 @@ def active_state():
 # ---------------------------------------------------------------- subcommands
 
 
-def cmd_start(args):
+def cmd_start(args: argparse.Namespace) -> int:
     """Spawn `ros2 bag record` in its own session and remember where it went."""
-    if active_state() is not None:
-        state = read_state()
-        print(f"already recording: {state['bag']} (pid {state['pid']})", file=sys.stderr)
+    running = active_state()
+    if running is not None:
+        print(f"already recording: {running['bag']} (pid {running['pid']})", file=sys.stderr)
         print('stop it first with: racecar log stop', file=sys.stderr)
         return 1
 
@@ -371,7 +384,7 @@ def cmd_start(args):
     return 0
 
 
-def cmd_stop(args):
+def cmd_stop(args: argparse.Namespace) -> int:
     """Signal the recorder and wait for rosbag2 to finalize the bag."""
     state = active_state()
     if state is None:
@@ -412,7 +425,7 @@ def cmd_stop(args):
     return 0
 
 
-def cmd_status(args):
+def cmd_status(args: argparse.Namespace) -> int:
     """Report on the running recording without attaching to it."""
     state = active_state()
     if state is None:
@@ -457,9 +470,7 @@ def cmd_status(args):
     print(f'  elapsed  {format_duration(elapsed)}')
     print(f'  size     {format_size(size)}  ({format_size(rate)}/s)')
     if size == 0 and elapsed > 2.0:
-        # mcap writes in chunks, so a slow topic shows nothing on disk for the
-        # first few seconds. Absence of size is not absence of recording.
-        print('           (mcap flushes in chunks; a slow bag reads 0 until the' ' first flush)')
+        print('           (mcap flushes in chunks; a slow bag reads 0 until the first flush)')
     print(
         f'  free     {format_size(free)}'
         + (f'  (full in about {format_duration(remaining)})' if remaining else '')
@@ -469,7 +480,7 @@ def cmd_status(args):
     return 0
 
 
-def cmd_list(args):
+def cmd_list(args: argparse.Namespace) -> int:
     """List recorded bags under the log root, newest first."""
     root = resolve_log_root(args.dir or load_config().get('DIR'))
     if not root.is_dir():
@@ -490,7 +501,7 @@ def cmd_list(args):
     return 0
 
 
-def _read_metadata(bag):
+def _read_metadata(bag: Path) -> Any:
     """Read a bag's metadata via rosbag2_py, or None when it cannot be read."""
     try:
         import rosbag2_py
@@ -502,7 +513,7 @@ def _read_metadata(bag):
         return None
 
 
-def cmd_analyze(args):
+def cmd_analyze(args: argparse.Namespace) -> int:
     """Summarize a bag: duration, size, and per-topic counts and rates."""
     if args.bag:
         bag = Path(args.bag).expanduser()
@@ -563,7 +574,7 @@ def cmd_analyze(args):
     return 0
 
 
-def cmd_config(args):
+def cmd_config(args: argparse.Namespace) -> int:
     """Show, set, or clear the persisted defaults."""
     if args.reset:
         try:
@@ -593,7 +604,7 @@ def cmd_config(args):
     return 0
 
 
-def build_parser():
+def build_parser() -> argparse.ArgumentParser:
     """Assemble the argument parser for every `racecar log` subcommand."""
     parser = argparse.ArgumentParser(
         prog='racecar log',
@@ -647,7 +658,7 @@ def build_parser():
     return parser
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     """Dispatch a `racecar log` subcommand; status is the default."""
     parser = build_parser()
     args = parser.parse_args(argv)

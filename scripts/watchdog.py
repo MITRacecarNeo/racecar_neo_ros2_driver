@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """RACECAR Neo node watchdog: monitor + restart the control pipeline and sensors."""
 
+from __future__ import annotations
+
+from collections.abc import Callable, Iterable
 from datetime import datetime
 import logging
 import os
@@ -10,10 +13,16 @@ import subprocess
 import sys
 import threading
 import time
+from types import FrameType
+from typing import Any, IO
 
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from sysinfo import under_voltage_alarm_path  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -21,7 +30,6 @@ from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReli
 
 POLL_INTERVAL = 5  # seconds between health checks
 RESTART_COOLDOWN = 30  # minimum seconds between restarts of the same node
-STARTUP_GRACE = 15  # seconds to wait before first check (systemd matches)
 SHM_CLEANUP_INTERVAL = 60  # seconds between FastRTPS shm orphan sweeps
 PGREP_FAIL_THRESHOLD = 5  # consecutive pgrep failures before assuming "not running"
 
@@ -35,13 +43,12 @@ SLLIDAR_LIB = '/install/sllidar_ros2/lib/sllidar_ros2/sllidar_node'
 REALSENSE_EXECUTABLE_PATH = '/realsense2_camera/realsense2_camera_node'
 
 
-def _is_running(path_substring: str):
+def _is_running(path_substring: str) -> Callable[[], bool]:
     """
     Return a process_check callable that pgreps for the given path substring.
 
-    Consecutive pgrep exceptions return True (conservative — don't restart blindly),
-    but after PGREP_FAIL_THRESHOLD failures we flip to pessimistic False so a
-    broken pgrep doesn't mask a real outage forever.
+    A pgrep error counts as running until PGREP_FAIL_THRESHOLD consecutive
+    errors, then as down.
     """
     state = {'fails': 0}
 
@@ -58,7 +65,7 @@ def _is_running(path_substring: str):
             state['fails'] += 1
             if state['fails'] >= PGREP_FAIL_THRESHOLD:
                 log.error(
-                    'pgrep(%s) failed %d times in a row: %s — treating as down',
+                    'pgrep(%s) failed %d times in a row: %s; treating as down',
                     path_substring,
                     state['fails'],
                     exc,
@@ -76,23 +83,6 @@ def _is_running(path_substring: str):
     return check
 
 
-def _i2c_probe(bus: int, addr: int) -> bool:
-    """Try to address a device on the I2C bus without a smbus dependency."""
-    try:
-        import smbus
-
-        b = smbus.SMBus(bus)
-        try:
-            b.read_byte(addr)
-            return True
-        except OSError:
-            return False
-        finally:
-            b.close()
-    except Exception:  # noqa: BLE001
-        return False
-
-
 def _usb_device_present(usb_id: str) -> bool:
     """Check whether a USB vendor:product ID appears in lsusb output."""
     try:
@@ -103,11 +93,11 @@ def _usb_device_present(usb_id: str) -> bool:
             timeout=5,
         )
         return usb_id.lower() in result.stdout.lower()
-    except (subprocess.TimeoutExpired, FileNotFoundError):
+    except (subprocess.TimeoutExpired, OSError):
         return False
 
 
-NODES = {
+NODES: dict[str, dict[str, Any]] = {
     # ----- Control pipeline (safety-critical) -----
     'pit': {
         'topic': '/imu/lsm9ds1',  # pit_node's steady telemetry output proves the UART link
@@ -120,7 +110,7 @@ NODES = {
     'throttle': {
         'topic': '/motor',  # downstream of throttle, alive iff throttle alive
         'launch': 'throttle.launch.py',
-        'device_check': lambda: True,  # software node
+        'device_check': lambda: True,
         'device_label': 'throttle_node (software)',
         'kill_pattern': f'{DRIVER_LIB}/throttle_node',
         'process_check': _is_running(f'{DRIVER_LIB}/throttle_node'),
@@ -136,18 +126,17 @@ NODES = {
     'gamepad': {
         'topic': '/gamepad_drive',
         'launch': 'gamepad.launch.py',
-        'device_check': lambda: True,  # software node (joy_node is upstream)
+        'device_check': lambda: True,
         'device_label': 'gamepad_node (software)',
         'kill_pattern': f'{DRIVER_LIB}/gamepad_node',
         'process_check': _is_running(f'{DRIVER_LIB}/gamepad_node'),
     },
     # ----- Sensors -----
-    # /imu/fused merges the RealSense IMU (/imu/realsense) with the Teensy
-    # LSM9DS1 (published by pit_node) once the board is on.
+    # /imu/fused merges /imu/realsense with pit_node's /imu/lsm9ds1.
     'imu_fusion': {
         'topic': '/imu/fused',
         'launch': 'imu_fusion.launch.py',
-        'device_check': lambda: True,  # software node; merges the live IMU sources
+        'device_check': lambda: True,
         'device_label': 'imu_fusion_node (software)',
         'kill_pattern': f'{DRIVER_LIB}/imu_fusion_node',
         'process_check': _is_running(f'{DRIVER_LIB}/imu_fusion_node'),
@@ -159,9 +148,8 @@ NODES = {
         'device_label': '/dev/lidar (RPLIDAR)',
         'kill_pattern': SLLIDAR_LIB,
         'process_check': _is_running(SLLIDAR_LIB),
-        # sllidar can silently desync from the CP2102 (the SDK swallows transient
-        # read errors and never logs); process + advertisement both stay alive.
-        # 5s is well above the 10 Hz scan period and well below restart cooldown.
+        # sllidar can stall silently while its process and advertisement stay
+        # up. 5 s spans many 7.2 Hz scans and stays under RESTART_COOLDOWN.
         'freshness_sec': 5.0,
     },
     'realsense': {
@@ -180,8 +168,8 @@ NODES = {
 # ---------------------------------------------------------------------------
 
 _running = True
-_child_procs: dict = {}
-_last_restart: dict = {}
+_child_procs: dict[str, tuple[subprocess.Popen[bytes], IO[str]]] = {}
+_last_restart: dict[str, float] = {}
 
 log = logging.getLogger('watchdog')
 
@@ -189,25 +177,6 @@ log = logging.getLogger('watchdog')
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _find_rpi_volt_alarm():
-    """
-    Locate the Pi 5 PMIC low-voltage sticky alarm flag.
-
-    hwmon enumeration order is not stable, so resolve by the driver's name
-    attribute. Reads as 0 normally; flips to 1 after the first under-voltage
-    event since boot and stays 1 until reboot.
-    """
-    for h in Path('/sys/class/hwmon').glob('hwmon*'):
-        try:
-            if (h / 'name').read_text().strip() == 'rpi_volt':
-                alarm = h / 'in0_lcrit_alarm'
-                if alarm.exists():
-                    return alarm
-        except OSError:
-            continue
-    return None
 
 
 def _clean_fastrtps_orphans() -> int:
@@ -223,7 +192,7 @@ def _clean_fastrtps_orphans() -> int:
                 (shm / f'sem.{port.name}_mutex').unlink(missing_ok=True)
                 port.unlink(missing_ok=True)
                 removed += 1
-        except (OSError, FileNotFoundError):
+        except OSError:
             pass
     for el in shm.glob('fastrtps_port*_el'):
         data = shm / el.name[: -len('_el')]
@@ -232,7 +201,7 @@ def _clean_fastrtps_orphans() -> int:
                 (shm / f'sem.{data.name}_mutex').unlink(missing_ok=True)
                 el.unlink(missing_ok=True)
                 removed += 1
-            except (OSError, FileNotFoundError):
+            except OSError:
                 pass
     return removed
 
@@ -252,14 +221,14 @@ class _FreshnessMonitor:
         durability=QoSDurabilityPolicy.VOLATILE,
     )
 
-    def __init__(self, node: Node, topics):
+    def __init__(self, node: Node, topics: Iterable[str]) -> None:
         self._node = node
         self._topics = list(topics)
         self._lock = threading.Lock()
-        self._last: dict = {}
-        self._subs: dict = {}
+        self._last: dict[str, float] = {}
+        self._subs: dict[str, Any] = {}
 
-    def attach(self):
+    def attach(self) -> None:
         names_types = dict(self._node.get_topic_names_and_types())
         for topic in self._topics:
             if topic in self._subs:
@@ -276,17 +245,17 @@ class _FreshnessMonitor:
                 log.debug('freshness: cannot subscribe to %s: %s', topic, exc)
                 continue
             self._subs[topic] = self._node.create_subscription(
-                msg_cls,
-                topic,
-                lambda _msg, t=topic: self._mark(t),
-                self._QOS,
+                msg_cls, topic, self._mark_callback(topic), self._QOS
             )
 
-    def _mark(self, topic: str):
+    def _mark_callback(self, topic: str) -> Callable[[Any], None]:
+        return lambda _msg: self._mark(topic)
+
+    def _mark(self, topic: str) -> None:
         with self._lock:
             self._last[topic] = time.monotonic()
 
-    def reset(self, topic: str):
+    def reset(self, topic: str) -> None:
         """Forget the last-seen time for a topic (call after a restart kick)."""
         with self._lock:
             self._last.pop(topic, None)
@@ -297,7 +266,7 @@ class _FreshnessMonitor:
             except Exception:  # noqa: BLE001
                 pass
 
-    def age(self, topic: str):
+    def age(self, topic: str) -> float | None:
         """Seconds since last message on topic, or None if never seen."""
         with self._lock:
             ts = self._last.get(topic)
@@ -306,32 +275,65 @@ class _FreshnessMonitor:
         return time.monotonic() - ts
 
 
-def _get_active_topics(node=None) -> set:
-    """
-    Return the set of currently advertised ROS2 topics.
-
-    Prefers `node.get_topic_names_and_types()` (fast, in-process). Falls back to
-    `ros2 topic list` subprocess only if no node is given — kept so module-level
-    helpers stay importable without rclpy.init.
-    """
-    if node is not None:
-        try:
-            return {name for name, _types in node.get_topic_names_and_types()}
-        except Exception as exc:  # noqa: BLE001
-            log.warning('node.get_topic_names_and_types failed: %s', exc)
-            return set()
+def _get_active_topics(node: Node) -> set[str]:
+    """Return the set of currently advertised ROS 2 topics."""
     try:
-        result = subprocess.run(
-            ['ros2', 'topic', 'list'],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode == 0:
-            return set(result.stdout.strip().splitlines())
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        log.warning('Failed to query ros2 topic list')
-    return set()
+        return {name for name, _types in node.get_topic_names_and_types()}
+    except Exception as exc:  # noqa: BLE001
+        log.warning('node.get_topic_names_and_types failed: %s', exc)
+        return set()
+
+
+def stale_age(
+    fresh_window: float | None,
+    topic_alive: bool,
+    proc_alive: bool,
+    since_restart: float,
+    age: float | None,
+) -> float | None:
+    """
+    Return the topic's message age when it counts as stale, else None.
+
+    Only nodes with a freshness window are judged, only while the topic and
+    process are up, and only once a full window has passed since the last restart.
+    """
+    if not fresh_window or not (topic_alive and proc_alive) or since_restart < fresh_window:
+        return None
+    if age is not None and age > fresh_window:
+        return age
+    return None
+
+
+def failure_reason(topic_alive: bool, proc_alive: bool, stale: float | None) -> str | None:
+    """Return why a node counts as down, or None when it is healthy."""
+    if not topic_alive and not proc_alive:
+        return 'topic+process down'
+    if not topic_alive:
+        return 'topic not advertised'
+    if not proc_alive:
+        return 'process not running'
+    if stale is not None:
+        return f'topic stale ({stale:.1f}s)'
+    return None
+
+
+def restart_decision(failure: str | None, device_check: Callable[[], bool]) -> str:
+    """
+    Return 'healthy', 'no-device' or 'restart' for one poll of one node.
+
+    device_check runs only for a failed node; restarting against an unplugged
+    device would only crash-loop.
+    """
+    if failure is None:
+        return 'healthy'
+    return 'restart' if device_check() else 'no-device'
+
+
+def cooldown_remaining(
+    now: float, last_restart: float, cooldown: float = RESTART_COOLDOWN
+) -> float:
+    """Seconds until a node may restart again; 0.0 once the cooldown has passed."""
+    return max(0.0, cooldown - (now - last_restart))
 
 
 def _log_dir() -> Path:
@@ -344,16 +346,14 @@ def _log_dir() -> Path:
     return fallback
 
 
-def _restart_node(name: str, cfg: dict) -> None:
+def _restart_node(name: str, cfg: dict[str, Any]) -> None:
     """Launch an individual node's launch file as a subprocess."""
     now = time.time()
-    last = _last_restart.get(name, 0)
-    if now - last < RESTART_COOLDOWN:
-        remaining = int(RESTART_COOLDOWN - (now - last))
-        log.info('%s: cooldown active, retry in %ds', name, remaining)
+    remaining = cooldown_remaining(now, _last_restart.get(name, 0.0))
+    if remaining > 0:
+        log.info('%s: cooldown active, retry in %ds', name, int(remaining))
         return
 
-    # Kill any previous child we started for this node.
     old = _child_procs.get(name)
     if old:
         old_proc, old_fh = old
@@ -393,17 +393,9 @@ def _restart_node(name: str, cfg: dict) -> None:
         except subprocess.TimeoutExpired:
             pass
 
-    delay = cfg.get('restart_delay', 0)
-    if delay > 0:
-        log.info('%s: waiting %ds before restart (USB settle)', name, delay)
-        for _ in range(delay * 10):
-            if not _running:
-                return
-            time.sleep(0.1)
-
     ts = datetime.now().strftime('%H%M%S')
     restart_log = _log_dir() / f'restart_{name}_{ts}.log'
-    log.info('%s: restarting via %s — log: %s', name, cfg['launch'], restart_log)
+    log.info('%s: restarting via %s; log: %s', name, cfg['launch'], restart_log)
 
     log_fh = open(restart_log, 'w')  # noqa: SIM115
     env = os.environ.copy()
@@ -436,7 +428,7 @@ def _cleanup_children() -> None:
             pass
 
 
-def _signal_handler(signum, _frame):
+def _signal_handler(signum: int, _frame: FrameType | None) -> None:
     global _running
     log.info('Received signal %d, shutting down', signum)
     _running = False
@@ -448,14 +440,10 @@ def _signal_handler(signum, _frame):
 
 
 def main() -> None:
-    global _running
-
-    # Set up logging to both file and stderr (journald).
     logdir = _log_dir()
-    handlers = [logging.StreamHandler(sys.stderr)]
+    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stderr)]
     try:
-        fh = logging.FileHandler(logdir / 'watchdog.log')
-        handlers.append(fh)
+        handlers.append(logging.FileHandler(logdir / 'watchdog.log'))
     except OSError as exc:
         print(f'Warning: cannot open watchdog.log: {exc}', file=sys.stderr)
 
@@ -469,7 +457,7 @@ def main() -> None:
     signal.signal(signal.SIGTERM, _signal_handler)
     signal.signal(signal.SIGINT, _signal_handler)
 
-    log.info('Watchdog started — monitoring: %s', ', '.join(NODES.keys()))
+    log.info('Watchdog started; monitoring: %s', ', '.join(NODES.keys()))
     log.info('Log directory: %s', logdir)
 
     rclpy.init()
@@ -478,7 +466,7 @@ def main() -> None:
     fresh_topics = [cfg['topic'] for cfg in NODES.values() if 'freshness_sec' in cfg]
     freshness = _FreshnessMonitor(intro_node, fresh_topics)
 
-    def _spin():
+    def _spin() -> None:
         try:
             rclpy.spin(intro_node)
         except (KeyboardInterrupt, SystemExit):
@@ -489,7 +477,7 @@ def main() -> None:
     spinner = threading.Thread(target=_spin, daemon=True)
     spinner.start()
 
-    volt_alarm_path = _find_rpi_volt_alarm()
+    volt_alarm_path = under_voltage_alarm_path()
     volt_alarm_seen = False
     if volt_alarm_path is None:
         log.info('Pi under-voltage alarm: rpi_volt hwmon not found (skipping check)')
@@ -525,9 +513,9 @@ def main() -> None:
             try:
                 if volt_alarm_path.read_text().strip() == '1':
                     log.warning(
-                        'Pi under-voltage alarm tripped — 5V rail dipped below '
-                        'threshold (USB devices may have reset). Likely cause: '
-                        'undersized BEC margin under stall current.'
+                        'Pi under-voltage alarm tripped: 5V rail dipped below '
+                        'threshold (USB devices may have reset). See '
+                        'docs/troubleshooting.md, "Boot brownout with ethernet attached".'
                     )
                     volt_alarm_seen = True
             except OSError:
@@ -536,35 +524,16 @@ def main() -> None:
         for name, cfg in NODES.items():
             topic = cfg['topic']
             topic_alive = topic in topics
-            proc_check = cfg.get('process_check')
-            proc_alive = proc_check() if proc_check is not None else True
+            proc_alive = cfg['process_check']()
 
-            # Freshness only applies once the node has been up long enough to
-            # publish — skip while topic isn't advertised or during cooldown
-            # after a restart, so we don't false-positive on a still-warming-up node.
-            fresh_window = cfg.get('freshness_sec')
-            topic_stale = False
-            if fresh_window and topic_alive and proc_alive:
-                last_restart = _last_restart.get(name, 0)
-                if time.time() - last_restart >= fresh_window:
-                    age = freshness.age(topic)
-                    if age is not None and age > fresh_window:
-                        topic_stale = True
-
-            alive = topic_alive and proc_alive and not topic_stale
-            failure = (
-                'topic+process down'
-                if not topic_alive and not proc_alive
-                else (
-                    'topic not advertised'
-                    if not topic_alive
-                    else (
-                        'process not running'
-                        if not proc_alive
-                        else f'topic stale ({freshness.age(topic):.1f}s)' if topic_stale else None
-                    )
-                )
+            stale = stale_age(
+                cfg.get('freshness_sec'),
+                topic_alive,
+                proc_alive,
+                time.time() - _last_restart.get(name, 0.0),
+                freshness.age(topic),
             )
+            failure = failure_reason(topic_alive, proc_alive, stale)
 
             child = _child_procs.get(name)
             if child:
@@ -582,13 +551,12 @@ def main() -> None:
                         pass
                     _child_procs.pop(name, None)
 
-            if alive:
+            decision = restart_decision(failure, cfg['device_check'])
+            if decision == 'healthy':
                 continue
-
-            device_ok = cfg['device_check']()
-            if not device_ok:
+            if decision == 'no-device':
                 log.warning(
-                    '%s: %s — device %s NOT connected, skipping restart',
+                    '%s: %s; device %s NOT connected, skipping restart',
                     name,
                     failure,
                     cfg['device_label'],
@@ -596,7 +564,7 @@ def main() -> None:
                 continue
 
             log.warning(
-                '%s: %s — device %s connected, attempting restart',
+                '%s: %s; device %s connected, attempting restart',
                 name,
                 failure,
                 cfg['device_label'],

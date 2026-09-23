@@ -10,8 +10,6 @@ __pycache__/
 *.egg
 *.egg-info/
 .eggs/
-*.pyc
-*.pyo
 .pytest_cache/
 .coverage
 htmlcov/

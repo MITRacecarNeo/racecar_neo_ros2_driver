@@ -16,7 +16,6 @@ def _build_telemetry(
     ekf=(0.0,) * 3,
     good_crc=True,
 ):
-    """Assemble a telemetry packet the way the firmware would, for decode tests."""
     header = struct.pack(
         '<IBBHIHH',
         pit.TX_MAGIC,
@@ -151,11 +150,7 @@ class TestDecodeTelemetry:
         assert above.rc_link_up is False
 
     def test_no_signal_is_distinguishable_from_switch_low(self):
-        """
-        Guard the regression this property exists to prevent.
-
-        rc_normalized clamps both to -1.0; rc_link_up must not.
-        """
+        # rc_normalized clamps both to -1.0; rc_link_up must not.
         dead = pit.decode_telemetry(_build_telemetry(rc=(0,) * 8))
         low = pit.decode_telemetry(_build_telemetry(rc=(1000,) * 8))
         assert dead.rc_normalized[5] == low.rc_normalized[5] == pytest.approx(-1.0)

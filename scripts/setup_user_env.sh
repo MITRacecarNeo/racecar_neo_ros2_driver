@@ -1,6 +1,6 @@
 #!/bin/bash
-# Add the invoking user to hardware groups, grant NetworkManager control,
-# source ROS2 in .bashrc, and install convenience aliases.
+# Add the invoking user to hardware groups, grant NetworkManager control, and
+# write .bashrc blocks for ROS2, ~/.local/bin on PATH and the racecar tool.
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -40,9 +40,7 @@ if [ ! -f "$POLKIT_SRC" ]; then
     exit 1
 fi
 if [ ! -d /etc/polkit-1/rules.d ]; then
-    # polkit older than 0.106 reads .pkla files instead and has no rules.d.
-    # No RACECAR image ships one, so name it rather than install a file the
-    # local polkit will never read.
+    # polkit < 0.106 reads .pkla files and has no rules.d.
     echo "  WARNING: /etc/polkit-1/rules.d does not exist; skipping the" >&2
     echo "           NetworkManager polkit rule. 'racecar wifi connect' will" >&2
     echo "           need sudo on this system." >&2
@@ -76,7 +74,15 @@ export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
 EOF
 echo "  ROS2 sourcing block written to $BASHRC"
 
-# Block 2: source the `racecar` shell tool.
+# Block 2: per-user pip tools (ruff, black, mypy, jupyter). ~/.profile adds
+# ~/.local/bin only for login shells.
+PATH_MARKER="# RACECAR Neo - user bin on PATH"
+replace_block "$PATH_MARKER" <<'EOF'
+case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac
+EOF
+echo "  ~/.local/bin PATH block written to $BASHRC"
+
+# Block 3: source the `racecar` shell tool.
 TOOL_MARKER="# RACECAR Neo - shell tool"
 replace_block "$TOOL_MARKER" <<'EOF'
 [ -f "$HOME/ros2_ws/src/racecar_neo_ros2_driver/scripts/racecar-tool.sh" ] && \
@@ -84,11 +90,9 @@ replace_block "$TOOL_MARKER" <<'EOF'
 EOF
 echo "  racecar-tool block written to $BASHRC"
 
-# Block 3: clean up the legacy aliases (anyone who ran an earlier setup_user_env
-# still has them; the new `racecar` function replaces them).
+# Remove the alias block that predates the `racecar` function (marker + 5).
 LEGACY_ALIAS_MARKER="# RACECAR Neo - aliases"
 if grep -qF "$LEGACY_ALIAS_MARKER" "$BASHRC" 2>/dev/null; then
-    # Delete the 6 lines starting at the marker (5 aliases + the marker line).
     sed -i "/^${LEGACY_ALIAS_MARKER}$/,+5d" "$BASHRC"
     echo "  removed legacy racecar-* aliases from $BASHRC"
 fi

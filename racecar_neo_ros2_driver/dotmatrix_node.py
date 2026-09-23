@@ -1,20 +1,22 @@
 """
 Dot-matrix rasterizer that composites the idle/student display into a frame.
 
-Renders the same content the old Pi-SPI node did -- student pixels or text, an
-intro splash, and the drive-mode glyph + label -- but publishes an 8x24 frame on
-/dotmatrix/frame instead of driving SPI. pit_node forwards the frame to the
-Teensy, which owns the MAX7219 since v0.3.0. The Teensy keeps a minimal splash +
-letter glyph of its own as a fallback for when the Pi driver is down.
+Composites student pixels or text, an intro splash, and the drive-mode glyph +
+label into an 8x24 frame on /dotmatrix/frame. pit_node forwards the frame to the
+Teensy, which drives the MAX7219. The Teensy keeps a minimal splash and letter
+glyph of its own as a fallback for when the Pi driver is down.
 """
 
+from collections.abc import Iterable, Sequence
 import time
+from typing import Any
 
 from luma.core.legacy import text
 from luma.core.legacy.font import proportional, TINY_FONT as _LUMA_TINY_FONT
 from PIL import Image, ImageDraw
 from racecar_neo_ros2_driver.mux_node import MuxMode, select_mode
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import Joy
@@ -64,9 +66,8 @@ MODE_GLYPH_BITMAP = {
     MuxMode.AUTONOMY: GLYPH_AUTO,
 }
 
-# User-facing labels shown to the right of the glyph in TINY_FONT. GAMEPAD ->
-# "MAN": "MANUAL" renders at 23 px and overflows the 16-px label region on a
-# 24-px display; "MAN" fits at 11 px. IDLE / AUTO render at 15 px and fit.
+# Labels shown right of the glyph in TINY_FONT. GAMEPAD shows 'MAN': 'MANUAL'
+# (23 px) overflows the 16-px label region.
 MODE_LABEL = {
     MuxMode.IDLE: 'IDLE',
     MuxMode.GAMEPAD: 'MAN',
@@ -74,7 +75,7 @@ MODE_LABEL = {
 }
 
 
-def mode_glyph(mode: MuxMode):
+def mode_glyph(mode: MuxMode) -> tuple[str, ...]:
     """Return the 8x8 bitmap (tuple of row strings) for the given mux mode."""
     return MODE_GLYPH_BITMAP.get(mode, GLYPH_IDLE)
 
@@ -84,7 +85,9 @@ def mode_label(mode: MuxMode) -> str:
     return MODE_LABEL.get(mode, 'IDLE')
 
 
-def draw_glyph(draw, glyph, origin_x: int, origin_y: int = 0):
+def draw_glyph(
+    draw: ImageDraw.ImageDraw, glyph: Sequence[str], origin_x: int, origin_y: int = 0
+) -> None:
     """Paint an 8-row bitmap onto a PIL/luma draw at (origin_x, origin_y)."""
     for row_idx, row in enumerate(glyph):
         for col_idx, cell in enumerate(row):
@@ -92,10 +95,10 @@ def draw_glyph(draw, glyph, origin_x: int, origin_y: int = 0):
                 draw.point((origin_x + col_idx, origin_y + row_idx), fill='white')
 
 
-_RENDERED_WIDTH_CACHE: dict = {}
+_RENDERED_WIDTH_CACHE: dict[tuple[str, int, int], int] = {}
 
 
-def rendered_text_width(message: str, font, height: int = 8) -> int:
+def rendered_text_width(message: str, font: Any, height: int = 8) -> int:
     """Pixel width of `message` as luma's `text()` actually paints it (memoized)."""
     key = (message, id(font), height)
     cached = _RENDERED_WIDTH_CACHE.get(key)
@@ -109,7 +112,9 @@ def rendered_text_width(message: str, font, height: int = 8) -> int:
     return width
 
 
-def decode_pixel_array(data, expected_height: int, expected_width: int):
+def decode_pixel_array(
+    data: Iterable[int], expected_height: int, expected_width: int
+) -> list[str]:
     """
     Decode a flat 0/1 (or 0/255) byte sequence into row strings of '.'/'X'.
 
@@ -144,7 +149,7 @@ def scroll_offset(
 
 
 class DotMatrixNode(Node):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__('dotmatrix_node')
 
         self.declare_parameter('cascaded', 3)  # 8-px modules -> width
@@ -183,7 +188,7 @@ class DotMatrixNode(Node):
         self._user_text = ''
         self._text_start = time.monotonic()
         self._text_stamp = 0.0
-        self._pixels_rows: list = []
+        self._pixels_rows: list[str] = []
         self._pixels_stamp = 0.0
         self._mode = MuxMode.IDLE
         self._splash_start = time.monotonic()
@@ -208,7 +213,7 @@ class DotMatrixNode(Node):
             f'refresh={refresh_rate}Hz -> {self.get_parameter("frame_topic").value}'
         )
 
-    def _text_cb(self, msg: String):
+    def _text_cb(self, msg: String) -> None:
         # Stamp every message for the freshness timeout (re-publishing the same
         # text keeps it up); reset the scroll origin only when the text changes.
         self._text_stamp = time.monotonic()
@@ -216,7 +221,7 @@ class DotMatrixNode(Node):
             self._user_text = msg.data
             self._text_start = self._text_stamp
 
-    def _pixels_cb(self, msg: UInt8MultiArray):
+    def _pixels_cb(self, msg: UInt8MultiArray) -> None:
         try:
             self._pixels_rows = decode_pixel_array(
                 msg.data, expected_height=self._height, expected_width=self._width
@@ -225,20 +230,19 @@ class DotMatrixNode(Node):
         except ValueError as e:
             self.get_logger().warn(f'Invalid /dotmatrix/pixels message: {e}')
 
-    def _joy_cb(self, msg: Joy):
+    def _joy_cb(self, msg: Joy) -> None:
         self._mode = select_mode(msg.buttons, self._gamepad_btn, self._auto_btn)
 
-    def _new_image(self):
-        """Return a blank (1-bit) width x height image and its draw handle."""
+    def _new_image(self) -> tuple[Image.Image, ImageDraw.ImageDraw]:
         img = Image.new('1', (self._width, self._height))
         return img, ImageDraw.Draw(img)
 
-    def _to_frame(self, img) -> list:
+    def _to_frame(self, img: Image.Image) -> list[int]:
         """Flatten a width x height 1-bit image to a row-major 0/1 list."""
         px = img.load()
         return [1 if px[c, r] else 0 for r in range(self._height) for c in range(self._width)]
 
-    def _rows_to_frame(self, rows) -> list:
+    def _rows_to_frame(self, rows: Sequence[str]) -> list[int]:
         frame = []
         for r in range(self._height):
             row = rows[r] if r < len(rows) else ''
@@ -246,27 +250,19 @@ class DotMatrixNode(Node):
                 frame.append(1 if c < len(row) and row[c] == 'X' else 0)
         return frame
 
-    def _text_frame(self, message: str) -> list:
-        width = rendered_text_width(message, self._font)
-        offset = (
-            0
-            if width <= self._width
-            else scroll_offset(
-                time.monotonic() - self._text_start, width, self._width, self._scroll_period
-            )
+    def _text_frame(self, message: str) -> list[int]:
+        return self._scroll_frame(
+            message, time.monotonic() - self._text_start, self._scroll_period
         )
-        img, draw = self._new_image()
-        text(draw, (-offset, 1), message, fill='white', font=self._font)
-        return self._to_frame(img)
 
-    def _scroll_frame(self, message: str, elapsed: float, period: float) -> list:
+    def _scroll_frame(self, message: str, elapsed: float, period: float) -> list[int]:
         width = rendered_text_width(message, self._font)
         offset = scroll_offset(elapsed, width, self._width, period)
         img, draw = self._new_image()
         text(draw, (-offset, 1), message, fill='white', font=self._font)
         return self._to_frame(img)
 
-    def _glyph_label_frame(self) -> list:
+    def _glyph_label_frame(self) -> list[int]:
         img, draw = self._new_image()
         draw_glyph(draw, mode_glyph(self._mode), 0, 0)
         label_x = self._label_origin.get(self._mode, 8)
@@ -274,7 +270,7 @@ class DotMatrixNode(Node):
             text(draw, (label_x, 1), mode_label(self._mode), fill='white', font=self._font)
         return self._to_frame(img)
 
-    def _render(self):
+    def _render(self) -> None:
         # Priority: fresh pixels > text > splash (one pass) > glyph + label.
         # Idle always renders a frame so the Teensy shows the rich display.
         now = time.monotonic()
@@ -294,12 +290,12 @@ class DotMatrixNode(Node):
         self._pub.publish(UInt8MultiArray(data=frame))
 
 
-def main(args=None):
+def main(args: list[str] | None = None) -> None:
     rclpy.init(args=args)
     node = DotMatrixNode()
     try:
         rclpy.spin(node)
-    except (KeyboardInterrupt, SystemExit):
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.destroy_node()

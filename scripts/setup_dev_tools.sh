@@ -1,5 +1,6 @@
 #!/bin/bash
-# Build tools, Python hardware libraries, and CLI utilities used across phases.
+# Build tools, Python hardware libraries, CLI utilities used across phases, and
+# the pinned Python linters behind `racecar lint`.
 set -eo pipefail
 
 sudo apt-get install -y \
@@ -15,3 +16,9 @@ sudo apt-get install -y \
     gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly \
     gstreamer1.0-libav \
     libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+
+# Linters, pinned so every car agrees with pyproject.toml. Per-user install
+# (PEP 668 blocks system-wide); binaries land in ~/.local/bin, which
+# setup_user_env.sh puts on PATH.
+LINTERS=(ruff==0.16.8 black==26.5.1 mypy==2.3.1)
+pip3 install --user --break-system-packages "${LINTERS[@]}"

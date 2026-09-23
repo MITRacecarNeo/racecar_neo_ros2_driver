@@ -1,7 +1,7 @@
 #!/bin/bash
-# MAX7219 dot matrix — install luma.led_matrix.
-# (SPI is enabled in setup_raspi_config.sh which runs earlier in setup_all.sh.)
+# luma.led_matrix for dotmatrix_node, which renders text with its fonts. The
+# MAX7219 itself is driven by the Teensy, not over the Pi's SPI.
 set -eo pipefail
 
-# luma.led_matrix isn't in apt; install per-user (PEP 668 blocks system-wide).
+# Not in apt; install per-user (PEP 668 blocks system-wide).
 pip3 install --user --break-system-packages luma.led_matrix

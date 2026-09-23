@@ -13,12 +13,17 @@ comment in the source can point here instead of carrying the full account.
 - [Shell block rewriting](#shell-block-rewriting)
 - [Desktop toggle scope](#desktop-toggle-scope)
 - [Jupyter dependency pins](#jupyter-dependency-pins)
+- [LSM9DS1 axis mapping](#lsm9ds1-axis-mapping)
+- [EdgeTPU inference rate and threshold](#edgetpu-inference-rate-and-threshold)
 - [Coral M.2 interrupts](#coral-m2-interrupts)
 - [RealSense firmware flash privileges](#realsense-firmware-flash-privileges)
 - [raspi-config on Ubuntu](#raspi-config-on-ubuntu)
+- [Gamepad hid_nintendo blacklist](#gamepad-hid_nintendo-blacklist)
+- [Lidar /scan stalls](#lidar-scan-stalls)
 - [Lab dashboard checkouts](#lab-dashboard-checkouts)
 - [WiFi persistence](#wifi-persistence)
 - [Boot brownout with ethernet attached](#boot-brownout-with-ethernet-attached)
+  - [Not a flat pack](#not-a-flat-pack)
 
 ## Diagnostic rate checks
 
@@ -100,16 +105,17 @@ are still `proto ra`, because NetworkManager handles RA itself.
 
 `scripts/setup_networking.sh`, step 1.
 
-The dispatcher is socket-activated by `NetworkManager-dispatcher.service`,
-shipped enabled on Ubuntu Server but often disabled on Desktop and Raspberry
-Pi OS images. Without it the script never runs and the iptables isolation
-rules silently never apply, which is the failure mode v0.0.6 hit on first
-install.
+NetworkManager runs dispatcher scripts through
+`NetworkManager-dispatcher.service`, shipped enabled on Ubuntu Server but often
+disabled on Desktop and Raspberry Pi OS images. Without it the script never
+runs and the iptables isolation rules silently never apply, which is the
+failure mode v0.0.6 hit on first install.
 
-The service is `Type=simple` with no `RemainAfterExit`, so it reads
-"inactive" whenever no script is currently running. `is-active` is therefore
-the wrong probe; `is-enabled` answers the question that matters, which is
-whether systemd will start it on the next connection event.
+The service is D-Bus activated (`Type=dbus`, bus name
+`org.freedesktop.nm_dispatcher`) and exits when idle, so it reads "inactive"
+whenever no script is running. `is-active` is therefore the wrong probe;
+`is-enabled` answers the question that matters, which is whether NetworkManager
+can activate it on the next connection event.
 
 ## NetworkManager authorization
 
@@ -121,7 +127,7 @@ policy answers `auth`. polkit collects a password through an agent and an SSH
 session has none, so `racecar wifi connect` failed at the activation call with
 `Not authorized to control networking`, after the passphrase had been typed
 and with nothing said about the remedy. A headless car driven from a terminal
-is the normal case, not an edge case.
+is the normal case.
 
 The rule grants five NetworkManager actions to the `sudo` group. The `49-`
 prefix sorts it ahead of polkit's own `50-default.rules`, which is what lets
@@ -183,6 +189,47 @@ seconds to a cold import. MITUavNeo/uav-neo-library hit the same wall and
 dropped the dependency, shipping a two-line inline `NDArray` stub in each
 module that needs the syntax; racecar-neo-library v1.2.0 mirrors that.
 
+## LSM9DS1 axis mapping
+
+`config/pit.yaml`: `imu.accel_gyro_axis_order`, `imu.accel_gyro_axis_sign`,
+`imu.mag_axis_order`, `imu.mag_axis_sign`; applied by
+`racecar_neo_ros2_driver/pit_node.py` `remap_axes`.
+
+`imu_fusion_node` averages the LSM9DS1 with the RealSense IMU, so both must
+report in the camera's body frame. The mapping was derived on the car on
+2026-07-07 from static gravity in about ten orientations and confirmed against
+the camera gyro (per-axis correlation +1.00):
+
+```
+RS_X = -LSM_Y    RS_Y = +LSM_Z    RS_Z = +LSM_X
+```
+
+It is a reflection (determinant -1): the frame the firmware publishes for accel
+and gyro is left-handed relative to the camera, so a rotation-only solver
+cannot express it. Accel and gyro share the convention, so one order and sign
+serve both.
+
+The magnetometer keeps the identity mapping, so `/mag` is not yet in the camera
+frame. Correlation also says nothing about scale: `imu.gyro_scale` and
+`imu.mag_scale` are unverified, and a deg/s versus rad/s mismatch on the gyro
+would be a factor of 57. Check both against the RealSense during a known
+rotation before trusting `/imu/fused` angular velocity or `/mag` heading.
+
+## EdgeTPU inference rate and threshold
+
+`config/edgetpu.yaml`: `inference_rate_hz`, `score_threshold`;
+`racecar_neo_ros2_driver/edgetpu_node.py` `_rate_limited`.
+
+The color stream runs at 60 fps, and nothing downstream reads detections faster
+than a dashboard redraws them. Frames above `inference_rate_hz` (15) are
+dropped before the image decode, where the cost is. `frames_dropped` in the
+node's `/diagnostics` entry counts them. On 2026-09-22 the node held 14.7 Hz at
+59 to 67 ms per inference with the Pi throttled for under-voltage, so there is
+little headroom above the cap on this car.
+
+`score_threshold` 0.4 is the Coral examples' default and the value the COCO
+model was evaluated at. At 0.5 an ordinary indoor scene reported no detections.
+
 ## Coral M.2 interrupts
 
 `scripts/setup_coral.sh`, with `scripts/coral-msi.dts` and
@@ -194,7 +241,8 @@ patch that falls back from MSI-X to MSI. The device-tree overlay routes the Pi
 5 external PCIe MSIs to pcie1's own controller, which has enough vectors;
 without it apex fails with `Couldn't initialize interrupts: -28`. Both take
 effect at boot, so the M.2 path requires a reboot. The USB accelerator needs
-neither and gets non-root access from the udev rules instead.
+neither and gets non-root access from the udev rules instead. Full procedure,
+verification and removal: docs/specifics/coral-m2-migration.md.
 
 ## RealSense firmware flash privileges
 
@@ -223,6 +271,33 @@ The `DTOVERLAY[warn]: no matching platform found` that `do_i2c` and `do_spi`
 emit on Ubuntu is benign. The dtparam edits still take effect; verify with
 `ls /dev/i2c-1 /dev/spidev0.0` after a reboot.
 
+## Gamepad hid_nintendo blacklist
+
+`scripts/modprobe.d/blacklist-hid-nintendo.conf`, installed by
+`scripts/setup_udev.sh`.
+
+The EasySMX KC-8236 and similar controllers spoof the Switch Pro ID
+`057e:2009`. hid_nintendo binds them with the wrong button map and no
+`/dev/input/js0`. Pi 4 kernel images lacked the module; Pi 5 kernels (6.x)
+load it on every boot. Per-device unbinding through udev does not work,
+because hid_nintendo re-grabs the device immediately and the controller never
+sees the rejection long enough to fall back to Xbox 360 mode (`2f24:016d`,
+bound by `xpad`). A module-wide blacklist does, at the cost of genuine Switch
+Pro controllers.
+
+## Lidar /scan stalls
+
+`scripts/udev/99-racecar.rules` (lidar rule), `scripts/watchdog.py` (`NODES`
+lidar entry, `freshness_sec`).
+
+During the 2026-05-12 endurance run, a ModemManager probe of the lidar's CP2102
+tty desynced the sllidar SDK's binary frame reader mid-stream. `/scan` went
+silent while the process kept running and the topic stayed advertised, because
+the SDK swallows transient read errors. Two guards cover it. The udev rule sets
+`ID_MM_DEVICE_IGNORE=1`, so ModemManager never opens the port. The watchdog
+restarts the lidar when `/scan` is older than `freshness_sec` (5 s), which
+catches a stall from any other cause.
+
 ## Lab dashboard checkouts
 
 `scripts/setup_dashboards.sh`.
@@ -240,6 +315,11 @@ project's prefix so both land on the same `racecar-<name>.service`.
 
 Updates are `git pull --ff-only` and never `reset --hard`, so a car's tuned
 YAML survives.
+
+The script also stops, disables and removes the units of the four retired
+dashboards (`camlabel`, `eps`, `pursuit`, `smartfollow`), so a car upgraded
+from v0.8.0 does not keep a second `/drive` publisher installed. Their
+checkouts under `scripts/dashboards/` are left in place; delete them by hand.
 
 ## WiFi persistence
 
@@ -266,7 +346,7 @@ guaranteed either one:
 `racecar wifi status` reports the result as one line, because a car that reads
 "connected" can still be one reboot from no link.
 
-Note when testing this by hand: `nmcli device disconnect` leaves the device in
+When testing this by hand: `nmcli device disconnect` leaves the device in
 NetworkManager's user-requested disconnected state, and NM will not
 auto-activate out of it however the flags are set, until something activates a
 connection explicitly. That state does not survive a reboot, so a
@@ -297,7 +377,7 @@ Evidence:
   that instant. The successful boot brought the same AP up at 19 seconds and
   held.
 - The pack's final boot before the cut logged 15 undervoltage events against
-  one for every boot since, which is the decline that preceded it.
+  one for every boot since.
 
 Read the ethernet cable as margin, not cause. The Pi 5 gigabit PHY draws a few
 hundred milliwatts once linked; removing it left just enough headroom for the
@@ -307,9 +387,38 @@ AP to come up. A car whose supply is in spec carries both without trouble.
 `scripts/setup_raspi_config.sh`, is an aggravating factor here. It tells the
 firmware the supply can deliver 5 A so that USB peripherals are not capped at
 600 mA, which is correct for a healthy BEC feed that cannot negotiate USB-PD.
-On a sagging pack it removes the last guard: the firmware permits a draw the
-supply cannot sustain. Do not lower it to work around a weak battery; fix the
+When the supply cannot hold 5 V it removes the last guard: the firmware permits
+a draw the supply cannot sustain. Do not lower it to mask a brownout; fix the
 supply.
+
+### Not a flat pack
+
+Measurement on 2026-09-10 rules out a depleted battery; do not start by
+charging the pack.
+
+- A fresh pack did not lift the rail. It read lower than the tired one had.
+- The BEC output measures 4.94 V on a multimeter while the Pi reads 4.49 V,
+  and after recovery the drop from the same BEC is 36 to 68 mV under a
+  four-core load step. A large steady drop and a small one cannot both be the
+  harness.
+- Within a single boot, with no reboot and no pack change, `EXT5V` went 4.49 V
+  faulted, then 4.87 to 4.90 V with the live throttle bits clear, then 4.64 V
+  faulted again. A discharging pack does not recover and re-sag like that.
+- The recovery coincided with the top half of the chassis being removed.
+
+That profile is an intermittent connection rather than a depleted cell, and it
+is mechanical: it changes when the car is handled. This hardware has failed
+this way before, with a bulk capacitor on the BEC output unseated by the power
+wire resting against it. A missing output bulk capacitor also explains the
+apparent contradiction above, since a multimeter averages while the Pi's
+undervoltage detector trips on excursions below roughly 4.63 V; both readings
+can be true at once with no drop across the harness at all.
+
+Confirming it needs a scope on the BEC output under load, or an inspection of
+whether that capacitor is seated and whether the power wire bears on it.
+Neither is visible from software: `EXT5V` is the furthest upstream the PMIC
+sees, and its ADC samples far too slowly to distinguish ripple from a low
+average.
 
 `racecar status` reports this condition already, under `throttling` and
 `under-voltage` in the SYSTEM section. Treat any measurement taken while those

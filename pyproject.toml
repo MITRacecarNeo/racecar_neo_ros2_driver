@@ -26,5 +26,7 @@ files = ['racecar_neo_ros2_driver', 'launch', 'scripts']
 exclude = ['^scripts/dashboards/']
 # rclpy, message packages, pycoral and luma ship no type stubs.
 ignore_missing_imports = true
+# launch/ has no __init__.py; as a namespace package it would shadow ROS launch.
+namespace_packages = false
 disallow_untyped_defs = true
 warn_unused_ignores = true

@@ -1,6 +1,6 @@
 throttle_node:
   ros__parameters:
-    # As of v0.4.0 the Teensy owns the physical PWM limits (speed_pwm_*/
+    # The Teensy owns the physical PWM limits (speed_pwm_*/
     # angle_pwm_* in the firmware config), so the Pi passes the full [-1, 1]
     # range through by default. Steering is a straight pass-through; lower
     # max_speed_forward/backward below 1.0 for finer speed control.

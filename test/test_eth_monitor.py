@@ -1,43 +1,19 @@
 """Unit tests for scripts/eth_monitor.py (the eth0 address and link logger)."""
 
-import importlib.util
-import os
 from pathlib import Path
 import subprocess
-import sys
 
+from conftest import load_script
 import pytest
 
-SCRIPT = Path(__file__).parent.parent / 'scripts' / 'eth_monitor.py'
-UNIT = Path(__file__).parent.parent / 'scripts' / 'racecar-eth-monitor.service'
-
-
-def _load():
-    spec = importlib.util.spec_from_file_location('eth_monitor', SCRIPT)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules['eth_monitor'] = module
-    spec.loader.exec_module(module)
-    return module
+SCRIPTS = Path(__file__).resolve().parent.parent / 'scripts'
+SCRIPT = SCRIPTS / 'eth_monitor.py'
+UNIT = SCRIPTS / 'racecar-eth-monitor.service'
 
 
 @pytest.fixture(scope='module')
 def mon():
-    return _load()
-
-
-def test_script_exists_and_executable():
-    assert SCRIPT.is_file()
-    assert os.access(SCRIPT, os.X_OK)
-
-
-def test_py_compile_clean():
-    result = subprocess.run(
-        ['python3', '-m', 'py_compile', str(SCRIPT)],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    assert result.returncode == 0, result.stderr
+    return load_script('eth_monitor')
 
 
 class TestStateRendering:
@@ -97,8 +73,6 @@ class TestClassify:
         assert 'ADDR_GAINED:192.168.52.200/24' in mon.classify(prev, cur)
 
     def test_carrier_transition_is_named(self, mon):
-        # The reported failure recovers only when the cable is reseated, so a
-        # carrier drop is the transition most worth spotting in the log.
         prev = self._st(mon, carrier='1')
         cur = self._st(mon, carrier='0')
         assert 'CARRIER:1->0' in mon.classify(prev, cur)

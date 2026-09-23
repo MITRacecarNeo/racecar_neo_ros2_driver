@@ -2,18 +2,10 @@
 """
 Record eth0's addressing and link state so an address drop can be caught.
 
-Carrier and operstate are sampled alongside the addresses, because a link
-wedged at the carrier level is a different failure from an address that was
-withdrawn and the two are indistinguishable from the address list alone.
-What this logger is evidence for: docs/troubleshooting.md, "eth0 addressing".
-
-Writes a line whenever the observed state changes, plus a periodic heartbeat
-so a quiet log is distinguishable from a dead logger. Runs for days at a few
-kilobytes an hour.
-
-Usage:
-    python3 eth_monitor.py [--iface eth0] [--interval 5] [--heartbeat 900]
-                           [--log PATH] [--once]
+Samples carrier and operstate with the addresses; see docs/troubleshooting.md,
+"eth0 addressing". Writes a line whenever the observed state changes, plus a
+periodic heartbeat so a quiet log is distinguishable from a dead logger. Runs
+for days at a few kilobytes an hour.
 """
 
 from __future__ import annotations
@@ -22,19 +14,14 @@ import argparse
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-import subprocess
 import sys
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from sysinfo import run_cmd as _run  # noqa: E402
+
 DEFAULT_LOG = Path.home() / 'logs' / 'eth-monitor.log'
-
-
-def _run(cmd: list[str], timeout: float = 5.0) -> str:
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        return ''
-    return r.stdout if r.returncode == 0 else ''
 
 
 def _read(path: str) -> str:
@@ -102,7 +89,7 @@ def sample(iface: str) -> State:
     return st
 
 
-def classify(prev: State, cur: State) -> str:
+def classify(prev: State | None, cur: State) -> str:
     """Name the transition so the log can be skimmed for the interesting one."""
     if prev is None:
         return 'START'
@@ -132,7 +119,6 @@ def write(log: Path, tag: str, state: State) -> None:
         log.parent.mkdir(parents=True, exist_ok=True)
         with open(log, 'a') as f:
             f.write(line)
-            f.flush()
     except OSError as exc:
         print(f'eth_monitor: cannot write {log}: {exc}', file=sys.stderr)
     sys.stdout.write(line)

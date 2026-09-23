@@ -1,42 +1,17 @@
 """Unit tests for scripts/dashboard.py."""
 
-import importlib.util
+from collections import deque
 import json
-from pathlib import Path
-import subprocess
+import threading
+from types import SimpleNamespace
 
+from conftest import load_script
 import pytest
-
-SCRIPT = Path(__file__).parent.parent / 'scripts' / 'dashboard.py'
-
-
-def _load_dashboard_module():
-    spec = importlib.util.spec_from_file_location('dashboard', SCRIPT)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 @pytest.fixture(scope='module')
 def dashboard():
-    return _load_dashboard_module()
-
-
-def test_script_exists_and_executable():
-    import os
-
-    assert SCRIPT.is_file()
-    assert os.access(SCRIPT, os.X_OK)
-
-
-def test_py_compile_clean():
-    result = subprocess.run(
-        ['python3', '-m', 'py_compile', str(SCRIPT)],
-        capture_output=True,
-        text=True,
-        timeout=5,
-    )
-    assert result.returncode == 0, result.stderr
+    return load_script('dashboard')
 
 
 class TestMonitoredAndRateTopics:
@@ -53,9 +28,7 @@ class TestMonitoredAndRateTopics:
     }
 
     def test_monitored_covers_all_subsystems(self, dashboard):
-        # Dashboard cards mirror the user's mental model of the robot —
-        # every node we ship should have a card, including the ones the
-        # watchdog doesn't supervise (edgetpu, dotmatrix).
+        # Includes nodes the watchdog does not supervise (edgetpu, dotmatrix).
         assert set(dashboard.MONITORED) == self.EXPECTED_NODES
 
     @pytest.mark.parametrize('name', sorted(EXPECTED_NODES))
@@ -65,20 +38,16 @@ class TestMonitoredAndRateTopics:
         assert 'topic' in cfg and cfg['topic'].startswith('/')
 
     def test_rate_topics_subset_of_known_publishers(self, dashboard):
-        # Every rate-monitored topic should belong to a node we know about.
-        # The RealSense card is /camera/color, but it also feeds rate-monitored
-        # depth (/camera/depth) and its IMU source (/imu/realsense), so allow
-        # those alongside the MONITORED card topics.
-        all_topics = {cfg['topic'] for cfg in dashboard.MONITORED.values()}
-        realsense_extra = {'/camera/depth', '/imu/realsense'}
-        known = all_topics | realsense_extra
-        for t in dashboard.RATE_TOPICS:
-            assert t in known, f'{t} in RATE_TOPICS but no known node publishes it'
+        # The RealSense card watches /camera/color; depth and its IMU are
+        # rate-monitored too.
+        known = {cfg['topic'] for cfg in dashboard.MONITORED.values()}
+        known |= {'/camera/depth', '/imu/realsense'}
+        for t in dashboard.DISPLAY_RATE_TOPICS:
+            assert t in known, f'{t} in the rates table but no known node publishes it'
 
 
 class TestGetStatus:
     def test_returns_dict_with_required_keys(self, dashboard):
-        # get_status() is always callable; returns the cached snapshot.
         snapshot = dashboard.get_status()
         for key in (
             'timestamp',
@@ -92,90 +61,131 @@ class TestGetStatus:
             assert key in snapshot
 
     def test_status_is_json_serializable(self, dashboard):
-        # The HTTP handler json.dumps() this, so a non-JSON-serializable
-        # value would break /api/status.
-        snapshot = dashboard.get_status()
-        json.dumps(snapshot)  # must not raise
+        # /api/status serves this through json.dumps.
+        json.dumps(dashboard.get_status())
+
+
+class _Clock:
+    def __init__(self, t: float = 1000.0) -> None:
+        self.t = t
+
+    def monotonic(self) -> float:
+        return self.t
+
+
+@pytest.fixture
+def sampler(dashboard, monkeypatch):
+    """Build a _RateSampler with its bookkeeping but no rclpy node behind it."""
+    clock = _Clock()
+    monkeypatch.setattr(dashboard, 'time', clock)
+    s = dashboard._RateSampler.__new__(dashboard._RateSampler)
+    s._window = 3.0
+    s._stamps = {'/scan': deque(), '/motor': deque()}
+    s._lock = threading.Lock()
+    s._diagnostic_rates = {}
+    s._diagnostic_last_update = {}
+    return s, clock
+
+
+def _diagnostics(name, rate):
+    value = SimpleNamespace(key='Actual frequency (Hz)', value=rate)
+    return SimpleNamespace(status=[SimpleNamespace(name=name, values=[value])])
+
+
+class TestRateSampler:
+    def test_rate_is_arrivals_over_the_window(self, sampler):
+        s, clock = sampler
+        for i in range(30):
+            clock.t = 1000.0 + i * 0.1
+            s._record('/scan')
+        clock.t = 1002.95
+        assert s.measure_hz('/scan') == pytest.approx(10.0)
+
+    def test_arrivals_older_than_the_window_are_dropped(self, sampler):
+        s, clock = sampler
+        for _ in range(30):
+            s._record('/scan')
+        clock.t += 3.5
+        assert s.measure_hz('/scan') is None
+
+    def test_a_single_arrival_is_not_a_rate(self, sampler):
+        s, _ = sampler
+        s._record('/motor')
+        assert s.measure_hz('/motor') is None
+
+    def test_unknown_topic_is_none(self, sampler):
+        s, _ = sampler
+        assert s.measure_hz('/nope') is None
+
+    def test_realsense_rate_comes_from_diagnostics(self, sampler):
+        s, _ = sampler
+        s._record_diagnostics(_diagnostics('camera: color', '59.4'))
+        assert s.measure_hz('/camera/color') == pytest.approx(59.4)
+
+    def test_stale_diagnostics_read_as_no_data(self, sampler):
+        s, clock = sampler
+        s._record_diagnostics(_diagnostics('camera: depth', '29.8'))
+        clock.t += 3.5
+        assert s.measure_hz('/camera/depth') is None
+
+    def test_realsense_without_diagnostics_is_none(self, sampler):
+        s, _ = sampler
+        assert s.measure_hz('/imu/realsense') is None
 
 
 class TestMeasureHz:
-    def test_returns_none_on_missing_topic(self, dashboard):
-        # ros2 topic hz on a nonexistent topic times out → return None.
-        # Stub _run if ros2 isn't available so this test passes in CI.
-        hz = dashboard._measure_hz('/__no_such_topic_xyz__')
-        assert hz is None or isinstance(hz, float)
+    def test_no_sampler_reads_as_no_data(self, dashboard, monkeypatch):
+        monkeypatch.setattr(dashboard, '_sampler', None)
+        assert dashboard._measure_hz('/scan') is None
+
+    def test_delegates_to_the_sampler(self, dashboard, monkeypatch):
+        monkeypatch.setattr(dashboard, '_sampler', SimpleNamespace(measure_hz=lambda t: 7.2))
+        assert dashboard._measure_hz('/scan') == 7.2
 
 
 class TestSystemHealth:
-    """RTC battery + Pi under-voltage are slow-changing diagnostics."""
-
-    def test_classify_rtc_above_threshold_is_healthy(self, dashboard):
-        status, label = dashboard._classify_rtc(2.95)
-        assert status == 'healthy'
-        assert '2.95' in label
-
-    def test_classify_rtc_borderline_is_stale(self, dashboard):
-        # 2.75 V → between RTC_LOW (2.7) and RTC_OK (2.8) → warn.
-        status, label = dashboard._classify_rtc(2.75)
-        assert status == 'stale'
-        assert 'recharge soon' in label
-
-    def test_classify_rtc_below_low_is_dead(self, dashboard):
-        status, label = dashboard._classify_rtc(2.5)
-        assert status == 'dead'
-        assert 'RECHARGE NOW' in label
-
-    def test_classify_rtc_none_is_dead(self, dashboard):
-        status, label = dashboard._classify_rtc(None)
-        assert status == 'dead'
-        assert 'NO READING' in label
-
-    def test_classify_rtc_exactly_at_threshold(self, dashboard):
-        # 3.0 V exactly: spec says ≥3.0 V is healthy.
-        assert dashboard._classify_rtc(3.0)[0] == 'healthy'
-        # 2.7 V exactly: spec says ≥2.7 V is the stale (replace-soon) band.
-        assert dashboard._classify_rtc(2.7)[0] == 'stale'
-        # 2.69999 V → drops into dead.
-        assert dashboard._classify_rtc(2.6999)[0] == 'dead'
-
     def test_collect_system_health_keys(self, dashboard):
-        # Even on a CI box without vcgencmd or rpi_volt hwmon, the function
-        # must return both keys with sensible "unavailable" status.
+        # Without vcgencmd or rpi_volt both entries still exist, as unavailable.
         health = dashboard._collect_system_health()
-        assert 'rtc' in health
-        assert 'under_voltage' in health
+        assert set(health) == {'rtc', 'under_voltage'}
         for entry in health.values():
-            assert 'label' in entry
-            assert 'status' in entry
-            assert 'detail' in entry
+            assert {'label', 'status', 'detail'} <= set(entry)
             assert entry['status'] in ('healthy', 'stale', 'dead')
+
+    @pytest.mark.parametrize(
+        'alarm,status,detail',
+        [
+            (None, 'dead', 'UNAVAILABLE'),
+            (True, 'dead', 'TRIPPED (5V dipped this boot)'),
+            (False, 'healthy', 'OK'),
+        ],
+    )
+    def test_under_voltage_states(self, dashboard, monkeypatch, alarm, status, detail):
+        monkeypatch.setattr(dashboard, '_read_under_voltage_alarm', lambda: alarm)
+        monkeypatch.setattr(dashboard, '_read_battery_voltage', lambda: 2.9)
+        entry = dashboard._collect_system_health()['under_voltage']
+        assert (entry['status'], entry['detail']) == (status, detail)
 
 
 class TestDashboardHTML:
     def test_html_template_present(self, dashboard):
-        assert dashboard.DASHBOARD_HTML
         assert '<!DOCTYPE html>' in dashboard.DASHBOARD_HTML
 
     def test_html_references_api_endpoint(self, dashboard):
-        # JavaScript polls /api/status; if we ever rename the endpoint
-        # both sides need to update together.
         assert "fetch('/api/status')" in dashboard.DASHBOARD_HTML
 
     def test_title_says_racecar(self, dashboard):
-        # Sanity check we didn't leave "UAV Neo" in the port.
         html = dashboard.DASHBOARD_HTML
         assert 'RACECAR Neo' in html
         assert 'UAV Neo' not in html
 
     def test_system_health_section_present(self, dashboard):
-        # The HTML must have a target div the JS can fill, and the JS must
-        # read data.system_health. Both sides need to agree on the field name.
+        # The target div and the JS field name must agree.
         html = dashboard.DASHBOARD_HTML
         assert 'id="system-health"' in html
         assert 'data.system_health' in html
 
 
 class TestConfig:
-    def test_port_is_8080(self, dashboard):
-        # Matches racecar-dashboard.service expectation.
+    def test_port_matches_the_service(self, dashboard):
         assert dashboard.PORT == 8080

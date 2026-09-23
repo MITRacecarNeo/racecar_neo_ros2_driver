@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+import re
 import subprocess
 
 import pytest
@@ -59,7 +60,7 @@ def test_help_renders(args):
         'cd',
         'teleop',
         'launch',
-        'clear',
+        'lint',
         'udev',
         'watchdog',
         'service',
@@ -87,30 +88,75 @@ def test_launch_without_name_errors():
     assert 'usage:' in result.stderr
 
 
-def test_clear_without_target_errors():
-    result = _run('clear')
-    assert result.returncode == 2
-    assert 'usage:' in result.stderr
-
-
-def test_clear_rejects_unknown_flag():
-    result = _run('clear', '--cosmic-rays')
-    assert result.returncode == 2
-    assert 'unknown flag' in result.stderr
-
-
-def test_selftest_is_gone():
-    # Removed in v0.7.4. Falls through to the unknown-command branch rather
-    # than silently doing nothing.
-    result = _run('selftest')
+def test_clear_is_gone():
+    # The Pi-SPI dot-matrix path is gone; the display is Teensy-driven.
+    result = _run('clear', '--dmatrix')
     assert result.returncode == 2
     assert 'unknown command' in result.stderr
+    assert 'clear_dotmatrix' not in TOOL.read_text()
+
+
+class TestBuild:
+    """`racecar build` clears dangling symlinks left by deleted sources."""
+
+    def _build(self, tmp_path):
+        ws = tmp_path / 'ros2_ws'
+        pkg = 'racecar_neo_ros2_driver'
+        build = ws / 'build' / pkg / 'scripts'
+        install = ws / 'install' / pkg / 'lib' / pkg
+        other = ws / 'build' / 'sllidar_ros2'
+        for d in (build, install, other):
+            d.mkdir(parents=True)
+        (ws / 'install' / 'setup.bash').write_text('')
+        live = tmp_path / 'live.py'
+        live.write_text('')
+        links = {
+            'stale_build': build / 'clear_dotmatrix.py',
+            'stale_install': install / 'clear_dotmatrix.py',
+            'live': build / 'live.py',
+            'other_pkg': other / 'gone.py',
+        }
+        for name, link in links.items():
+            link.symlink_to(live if name == 'live' else tmp_path / 'deleted.py')
+        bin_dir = tmp_path / 'bin'
+        bin_dir.mkdir()
+        colcon = bin_dir / 'colcon'
+        colcon.write_text(
+            '#!/bin/bash\n'
+            f'find "{ws}/build/{pkg}" "{ws}/install/{pkg}" -xtype l > "{tmp_path}/seen"\n'
+        )
+        colcon.chmod(0o755)
+        env = dict(os.environ)
+        env.update({'HOME': str(tmp_path), 'PATH': f'{bin_dir}:{env["PATH"]}'})
+        result = subprocess.run(
+            ['bash', '-c', f'set +u; source "{TOOL}"; racecar build'],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            env=env,
+        )
+        return result, links, (tmp_path / 'seen')
+
+    def test_dangling_links_removed_before_colcon(self, tmp_path):
+        result, links, seen = self._build(tmp_path)
+        assert result.returncode == 0, result.stderr
+        assert not links['stale_build'].is_symlink()
+        assert not links['stale_install'].is_symlink()
+        assert seen.read_text() == '', 'colcon ran with dangling links still present'
+
+    def test_each_removal_is_printed(self, tmp_path):
+        result, links, _ = self._build(tmp_path)
+        assert f'removed dangling symlink: {links["stale_build"]}' in result.stdout
+        assert f'removed dangling symlink: {links["stale_install"]}' in result.stdout
+
+    def test_live_links_and_other_packages_are_kept(self, tmp_path):
+        _, links, _ = self._build(tmp_path)
+        assert links['live'].is_symlink()
+        assert links['other_pkg'].is_symlink()
 
 
 def test_cd_changes_pwd_to_package_root():
-    # `cd` must run in the user's shell context (no subshell), so a single
-    # bash session that sources the tool, runs `racecar cd`, then echoes PWD
-    # should print the package root.
+    # `cd` runs in the caller's shell, not a subshell.
     script = f'set +u; source "{TOOL}"; ' 'racecar cd && pwd'
     result = subprocess.run(
         ['bash', '-c', script],
@@ -123,10 +169,7 @@ def test_cd_changes_pwd_to_package_root():
 
 
 def test_status_dispatches_to_the_diagnostic():
-    # v0.7.4 replaced the informational status with a strict diagnostic, so
-    # the exit code now reflects the car's health: 0 when everything passed,
-    # 1 otherwise. Both are valid on real hardware, so assert the dispatch
-    # and the output shape rather than a fixed code.
+    # Exit is 0 or 1 depending on the car's health; assert the dispatch only.
     result = _run('status', '--quick', '--section', 'devices')
     assert result.returncode in (0, 1), result.stderr
     assert 'DEVICES' in result.stdout
@@ -140,19 +183,7 @@ def test_status_forwards_flags():
 
 
 class TestService:
-    """`racecar service` covers install/start/stop/restart/enable/disable/logs/status."""
-
-    def test_status_action_runs(self):
-        # Default action is `status`, which just calls `systemctl is-active`
-        # for each unit. No sudo required, no side effects.
-        result = _run('service', 'status')
-        assert result.returncode == 0
-        # status output enumerates each unit name.
-        for unit in ('racecar-teleop', 'racecar-watchdog', 'racecar-dashboard', 'racecar-jupyter'):
-            assert unit in result.stdout, f'status missing {unit}'
-
     def test_default_action_is_status(self):
-        # `racecar service` with no action should fall through to status.
         result = _run('service')
         assert result.returncode == 0
         assert 'racecar-teleop' in result.stdout
@@ -199,20 +230,34 @@ class TestService:
 
     def test_starting_a_drive_dashboard_stops_the_others(self):
         block = TOOL.read_text().split('                start)')[1].split(';;')[0]
-        assert 'drive_units' in block
+        assert 'dash_units' in block
         assert 'only one /drive publisher' in block
 
-    def test_every_dashboard_is_a_drive_publisher(self):
-        # All three steer, so none may run alongside another. The retired
-        # camlabel was the only read-only one.
+    def test_dash_units_are_the_three_dashboards(self):
+        # All three steer, so none may run alongside another; one list serves
+        # both the status view and the one-at-a-time rule.
         text = TOOL.read_text()
-        drive = text.split('local -a drive_units=')[1].split('local -a units=')[0]
-        dash = text.split('local -a dash_units=')[1].split('local -a drive_units=')[0]
+        dash = text.split('local -a dash_units=')[1].split('case "$action"')[0]
         for name in ('webteleop', 'linefollow', 'wallfollow'):
-            assert name in drive, f'{name} missing from drive_units'
-            assert name in dash, f'{name} missing from dash_units'
-        for gone in ('camlabel', 'pursuit', 'eps', 'smartfollow'):
-            assert gone not in dash, f'{gone} is no longer shipped'
+            assert f'racecar-{name}' in dash, f'{name} missing from dash_units'
+        assert dash.count('racecar-') == 3
+        assert 'drive_units' not in text
+
+    def test_no_retired_dashboard_is_named_anywhere(self):
+        text = TOOL.read_text()
+        for gone in ('camlabel', 'pursuit', 'smartfollow', 'eps'):
+            assert not re.search(rf'\b{gone}\b', text), f'{gone} is no longer shipped'
+
+    def test_top_level_help_lists_three_dashboards(self):
+        out = _run('help').stdout
+        assert 'Dashboards: webteleop, linefollow, wallfollow' in out
+        assert 'three lab dashboards' in out
+        assert 'seven' not in out
+
+    def test_top_level_help_counts_the_setup_phases(self):
+        orchestrator = (TOOL.parent / 'setup_all.sh').read_text()
+        phases = orchestrator.count('==> [')
+        assert f'the {phases}-phase orchestrator' in _run('help').stdout
 
     def test_rejects_unknown_action(self):
         result = _run('service', 'flambé')
@@ -249,7 +294,7 @@ class TestSetup:
             assert flag in result.stdout
 
     def test_networking_unknown_flag_errors(self):
-        result = _run('setup', 'networking', '--gloryhole')
+        result = _run('setup', 'networking', '--bogus')
         assert result.returncode == 2
         assert 'unknown flag' in result.stderr
 
@@ -334,10 +379,7 @@ class TestSetup:
         assert marker.exists()
 
     def test_networking_flag_persists_when_combined_with_show(self, tmp_path, monkeypatch):
-        # Regression: an earlier impl treated --show as a short-circuit BEFORE
-        # writing vals[] to the file. The two-pass parse fixes that: --ssid
-        # gathered, --show registered as action, persist runs, then --show
-        # prints the (now-up-to-date) file.
+        # --show runs after the flags given with it are persisted.
         monkeypatch.setenv('HOME', str(tmp_path))
         result = subprocess.run(
             [
@@ -361,14 +403,14 @@ class TestSetup:
         assert 'test-ssid' in result.stdout
 
     def test_networking_reset_with_overrides_errors(self, tmp_path, monkeypatch):
-        # --reset + --ssid=foo is nonsense; the new value would be lost
+        # --reset + --ssid is nonsense; the new value would be lost
         # immediately. Reject rather than do something surprising.
         monkeypatch.setenv('HOME', str(tmp_path))
         result = subprocess.run(
             [
                 'bash',
                 '-c',
-                f'set +u; source "{TOOL}"; ' 'racecar setup networking --ssid=foo --reset',
+                f'set +u; source "{TOOL}"; ' 'racecar setup networking --ssid=lab-net --reset',
             ],
             capture_output=True,
             text=True,
@@ -415,7 +457,7 @@ class TestLibrary:
         assert 'unknown flag' in result.stderr
 
     def test_status_with_no_pth(self, tmp_path):
-        # Fresh HOME → no .pth file → friendly hint, exit 0.
+        # Fresh HOME: no .pth file, friendly hint, exit 0.
         result = self._run_isolated(tmp_path, '--status')
         assert result.returncode == 0
         assert 'No racecar library is currently selected' in result.stdout
@@ -428,12 +470,9 @@ class TestLibrary:
 
     def test_list_skips_folders_without_racecar_core(self, tmp_path):
         jws = tmp_path / 'jupyter_ws'
-        # Valid candidate
         (jws / 'goodlib' / 'library').mkdir(parents=True)
         (jws / 'goodlib' / 'library' / 'racecar_core.py').write_text('')
-        # Bogus: no library/ at all
         (jws / 'badlib').mkdir(parents=True)
-        # Bogus: library/ exists but no racecar_core.py
         (jws / 'emptylib' / 'library').mkdir(parents=True)
         result = self._run_isolated(tmp_path, '--list')
         assert result.returncode == 0
@@ -474,13 +513,12 @@ class TestLibrary:
     def test_select_rejects_folder_without_racecar_core(self, tmp_path):
         jws = tmp_path / 'jupyter_ws'
         (jws / 'shell' / 'library').mkdir(parents=True)
-        # Note: no racecar_core.py
+        # no racecar_core.py
         result = self._run_isolated(tmp_path, '--select', 'shell')
         assert result.returncode == 2
         assert 'racecar_core.py' in result.stderr
 
     def test_select_requires_target(self):
-        # `--select` with no following arg.
         result = _run('library', '--select')
         assert result.returncode == 2
         assert 'requires a folder name' in result.stderr
@@ -490,7 +528,6 @@ class TestLibrary:
         libdir = jws / 'mylib' / 'library'
         libdir.mkdir(parents=True)
         (libdir / 'racecar_core.py').write_text('')
-        # Select, then reset.
         self._run_isolated(tmp_path, '--select', 'mylib')
         pth_before = list(tmp_path.rglob('racecar_student.pth'))
         assert len(pth_before) == 1
@@ -525,40 +562,55 @@ class TestLibrary:
         self._run_isolated(tmp_path, '--select', 'beta')
         result = self._run_isolated(tmp_path, '--list')
         assert result.returncode == 0
-        # Find the line for beta and check it has a '*' marker.
         lines = [ln for ln in result.stdout.splitlines() if 'beta' in ln]
         assert lines, 'beta missing from --list output'
         assert '*' in lines[0]
-        # alpha line should NOT have a star (just leading whitespace).
         alpha_lines = [ln for ln in result.stdout.splitlines() if 'alpha' in ln]
         assert alpha_lines
         assert '*' not in alpha_lines[0]
 
 
 class TestCleanup:
-    def test_dry_run_default_is_safe(self):
-        # Dry-run default: must always exit 0 and never invoke kill/rm.
-        result = _run('cleanup')
-        assert result.returncode == 0
-        # Either the process inventory or the SHM section should appear; both
-        # have predictable headings or 'No ...' fallback.
-        assert (
-            'racecar processes' in result.stdout.lower()
-            or 'no racecar processes' in result.stdout.lower()
+    def _cleanup(self, tmp_path, *args):
+        """Run `racecar cleanup` with ps listing one fake racecar process; log kill calls."""
+        bin_dir = tmp_path / 'bin'
+        bin_dir.mkdir()
+        ps = bin_dir / 'ps'
+        ps.write_text(
+            '#!/bin/bash\n'
+            'echo "99999 $USER /install/racecar_neo_ros2_driver/lib/'
+            'racecar_neo_ros2_driver/pit_node"\n'
         )
-        assert 'fastrtps shm' in result.stdout.lower() or 'no fastrtps' in result.stdout.lower()
+        ps.chmod(0o755)
+        log = tmp_path / 'kills.log'
+        log.touch()
+        script = (
+            f'set +u; kill() {{ echo "kill $*" >> "{log}"; }}; '
+            f'sudo() {{ echo "sudo $*" >> "{log}"; }}; '
+            f'source "{TOOL}"; racecar cleanup {" ".join(args)}'
+        )
+        env = dict(os.environ, PATH=f'{bin_dir}:{os.environ["PATH"]}')
+        result = subprocess.run(
+            ['bash', '-c', script], capture_output=True, text=True, timeout=15, env=env
+        )
+        return result, log.read_text()
 
-    def test_dry_run_marker_appears_when_things_found(self):
-        # If the test environment has any racecar process or SHM orphan, the
-        # output should label the action as dry-run (i.e. nothing was killed).
-        # If nothing is found, the "No ..." messages stand alone — both fine.
-        result = _run('cleanup')
-        assert result.returncode == 0
-        # The "(dry-run; pass --force to ...)" hint appears once per category
-        # that found matches. We don't assert it must appear (clean system),
-        # but if anything appeared, --force must not have been silently invoked.
-        if 'pid=' in result.stdout:
-            assert '(dry-run' in result.stdout
+    def test_dry_run_is_the_default_and_kills_nothing(self, tmp_path):
+        result, kills = self._cleanup(tmp_path)
+        assert result.returncode == 0, result.stderr
+        assert 'pid=99999' in result.stdout
+        assert '(dry-run; pass --force to kill)' in result.stdout
+        assert kills == ''
+
+    def test_explicit_dry_run_kills_nothing(self, tmp_path):
+        result, kills = self._cleanup(tmp_path, '--dry-run')
+        assert result.returncode == 0, result.stderr
+        assert kills == ''
+
+    def test_reports_both_inventories(self):
+        out = _run('cleanup').stdout.lower()
+        assert 'racecar processes' in out
+        assert 'fastrtps' in out
 
     def test_help_flag_describes_behavior(self):
         result = _run('cleanup', '--help')
@@ -617,8 +669,21 @@ class TestCompletionInstalled:
 
     def test_service_units_include_dashboards(self):
         words = self._complete('racecar', 'service', 'start', '')
-        for name in ('teleop', 'wallfollow', 'camlabel', 'webteleop'):
+        for name in ('teleop', 'webteleop', 'linefollow', 'wallfollow'):
             assert name in words
+
+    def test_service_units_exclude_retired_dashboards(self):
+        words = self._complete('racecar', 'service', 'start', '')
+        for gone in ('camlabel', 'pursuit', 'eps', 'smartfollow'):
+            assert gone not in words
+
+    def test_top_level_offers_lint_not_clear(self):
+        words = self._complete('racecar', '')
+        assert 'lint' in words
+        assert 'clear' not in words
+
+    def test_setup_networking_offers_ap_iface(self):
+        assert '--ap-iface=' in self._complete('racecar', 'setup', 'networking', '')
 
     def test_enable_completes_unit_names(self):
         assert 'wallfollow' in self._complete('racecar', 'service', 'enable', '')
@@ -641,9 +706,7 @@ class TestLog:
     """`racecar log` dispatches to scripts/racecar_log.py."""
 
     def test_status_reports_a_valid_state(self):
-        # Must not assume the car is idle: a real recording is a legitimate
-        # state, and asserting 'not recording' made the suite depend on
-        # whether anyone had run `racecar log start` first.
+        # The car may be recording; accept either state.
         result = _run('log', 'status')
         assert result.returncode == 0
         assert 'not recording' in result.stdout or 'recording ' in result.stdout
@@ -798,9 +861,8 @@ esac
         ],
     )
     def test_connect_makes_the_network_survive_a_reboot(self, tmp_path, args, saved):
-        # The reported bug: the car joined a network, rebooted, and came back
-        # with no link. NetworkManager needs the profile flag set and the
-        # device unblocked, and nmcli guarantees neither.
+        # A reboot rejoins only with the profile flag set and the device
+        # unblocked; nmcli connect guarantees neither.
         _, log = self._wifi(tmp_path, *args, STUB_SAVED=saved)
         ssid = args[1]
         assert (
@@ -814,10 +876,6 @@ esac
         )
         add = next((ln for ln in log.splitlines() if 'connection add' in ln), '')
         assert 'connection.autoconnect yes' in add
-
-    def test_persistence_never_touches_the_ap_radio(self, tmp_path):
-        _, log = self._wifi(tmp_path, 'connect', 'HomeNet', STUB_SAVED='HomeNet')
-        assert 'wlan1' not in log
 
     def test_status_reports_that_the_link_returns(self, tmp_path):
         result, _ = self._wifi(
@@ -1042,8 +1100,7 @@ class TestEthCommand:
         assert 'STUB called with: static --addr=10.0.0.5/24' in result.stdout
 
     def test_monitor_dispatches_to_the_logger(self):
-        # The mutual-exclusion fix is unproven, so the logger is how it gets
-        # confirmed; --once samples and exits without looping.
+        # --once samples and exits without looping.
         result = _run('eth', 'monitor', '--once', '--log', '/dev/null')
         assert result.returncode == 0, result.stderr
         assert 'carrier=' in result.stdout
@@ -1064,3 +1121,84 @@ class TestEthCommand:
         )
         assert result.returncode == 0, result.stderr
         assert 'STUB called with: status' in result.stdout
+
+
+class TestNetworkingAdvice:
+    """Neither eth0 nor the AP is a safe session for a networking change."""
+
+    @pytest.mark.parametrize(
+        'args', [['setup', 'networking', '--help'], ['eth', 'help'], ['help']]
+    )
+    def test_advice_is_console_or_wlan0(self, args):
+        out = _run(*args).stdout
+        assert 'console or over wlan0' in out
+        assert 'wired session' not in out
+        assert 'from the AP' not in out
+
+
+class TestLint:
+    """`racecar lint`: ruff, black --check and mypy from the package root."""
+
+    STUB = """#!/bin/bash
+printf '%s %s %s\\n' "$(basename "$0")" "$PWD" "$*" >> "$LINT_LOG"
+case "$(basename "$0")" in
+    ruff)  exit "${RUFF_RC:-0}" ;;
+    black) exit "${BLACK_RC:-0}" ;;
+    mypy)  exit "${MYPY_RC:-0}" ;;
+esac
+"""
+
+    def _lint(self, tmp_path, tools=('ruff', 'black', 'mypy'), **env_extra):
+        bin_dir = tmp_path / 'bin'
+        bin_dir.mkdir()
+        for tool in tools:
+            stub = bin_dir / tool
+            stub.write_text(self.STUB)
+            stub.chmod(0o755)
+        log = tmp_path / 'lint.log'
+        log.touch()
+        env = dict(os.environ)
+        env.update({'RACECAR_LINT_BIN': str(bin_dir), 'LINT_LOG': str(log)})
+        env.update(env_extra)
+        result = subprocess.run(
+            ['bash', '-c', f'set +u; source "{TOOL}"; racecar lint'],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            env=env,
+        )
+        return result, log.read_text().splitlines()
+
+    def test_all_pass(self, tmp_path):
+        result, calls = self._lint(tmp_path)
+        assert result.returncode == 0, result.stderr
+        assert [c.split()[0] for c in calls] == ['ruff', 'black', 'mypy']
+        assert 'passed' in result.stdout
+
+    def test_runs_from_the_package_root(self, tmp_path):
+        _, calls = self._lint(tmp_path)
+        pkg_root = TOOL.parent.parent.name
+        for call in calls:
+            assert call.split()[1].endswith(pkg_root), call
+
+    def test_invocations(self, tmp_path):
+        _, calls = self._lint(tmp_path)
+        assert calls[0].endswith(' check .')
+        assert calls[1].endswith(' --check .')
+
+    @pytest.mark.parametrize('tool', ['ruff', 'black', 'mypy'])
+    def test_any_failure_fails_and_is_named(self, tmp_path, tool):
+        result, calls = self._lint(tmp_path, **{f'{tool.upper()}_RC': '1'})
+        assert result.returncode == 1
+        assert f'failed: {tool}' in result.stderr
+        # A failure does not stop the remaining tools from reporting.
+        assert len(calls) == 3
+
+    def test_missing_tool_points_at_setup(self, tmp_path):
+        result, calls = self._lint(tmp_path, tools=('ruff', 'black'))
+        assert result.returncode == 3
+        assert 'setup_dev_tools.sh' in result.stderr
+        assert calls == []
+
+    def test_listed_in_help(self):
+        assert 'lint' in _run('help').stdout

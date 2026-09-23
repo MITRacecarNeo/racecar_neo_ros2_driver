@@ -10,6 +10,7 @@ This package is the v2 successor to [`racecar-neo-ros2-backend`](https://github.
 - [Architecture](#architecture)
 - [Quickstart (fresh Ubuntu 24.04 install)](#quickstart-fresh-ubuntu-2404-install)
 - [The `racecar` shell tool](#the-racecar-shell-tool)
+- [Linters](#linters)
 - [Networking (optional)](#networking-optional)
 - [Ethernet addressing](#ethernet-addressing)
 - [WiFi client](#wifi-client)
@@ -59,16 +60,16 @@ Sensor and ML nodes publish independently:
 - `/edgetpu/inference` (vision_msgs/Detection2DArray): `edgetpu_node` consumes `/camera/color`
 
 Display node subscribes:
-- `/dotmatrix/text` (std_msgs/String): renders user messages; falls back to a mode glyph (IDLE / TELEOP / AUTO) tied to the gamepad state
+- `/dotmatrix/text` (std_msgs/String): renders user messages; falls back to a mode glyph (IDLE / MAN / AUTO) tied to the gamepad state
 
-Safety/uptime layers (inherited from UAV Neo, shipped in v0.0.4):
+Safety and uptime layers:
 - **Mux** enforces speed/steer limits and gates commands behind controller bumpers; zeroes output on joystick disconnect (500 ms timeout).
-- **Watchdog** (`scripts/watchdog.py`) supervises 7 nodes with two-signal liveness (ROS topic + `pgrep` on the entry-point path), 30 s restart cooldown, SIGTERM to SIGKILL escalation, FastRTPS SHM orphan sweep every 60 s, Pi 5 PMIC under-voltage alarm. Hardware-aware: skips restart when the device is physically missing.
+- **Watchdog** (`scripts/watchdog.py`) supervises 7 nodes with two liveness signals (ROS topic + `pgrep` on the entry-point path) and restarts a node when either fails. 30 s restart cooldown, SIGTERM to SIGKILL escalation, FastRTPS SHM orphan sweep every 60 s, Pi 5 PMIC under-voltage alarm. Restart is skipped when the device is physically missing.
 - **Four core systemd units** (`racecar-{teleop,watchdog,dashboard,jupyter}.service`) wired with `BindsTo=` so watchdog dies when teleop dies, and `Wants=` so watchdog auto-starts when teleop starts. Three more units carry the lab dashboards; they install disabled and are started one at a time.
 - **Launch wrapper** (`scripts/launch_teleop.sh`) creates `~/logs/<timestamp>/`, updates `~/logs/latest` atomically, sweeps FastRTPS SHM orphans, and `exec`s `ros2 launch` so systemd tracks the launch PID directly.
 - **Web dashboard** at `http://<robot>:8080`: 9 node cards, 9 topic-rate rows, System Health (RTC battery + Pi under-voltage alarm), watchdog log tail. Auto-refresh.
 - **JupyterLab** at `http://<robot>:8888` with PYTHONPATH/AMENT_PREFIX_PATH pre-set so `import rclpy` works in notebooks.
-- **Pre-flight `colcon test` suite** (365 tests) asserting every peripheral, embedding fix commands in failure messages.
+- **`colcon test` suite** covering the nodes, scripts, setup phases and attached peripherals, with fix commands in the failure messages.
 
 Node responsibilities, the full topic reference, launch composition, and the
 calibration data flow are in [docs/architecture.md](./docs/architecture.md).
@@ -80,19 +81,19 @@ arbitrary at the call site, are in
 
 Target: Raspberry Pi 5 running **Ubuntu Server 24.04 LTS for arm64** (Noble). ROS2 Jazzy is the only supported distro for this driver; older Ubuntu releases (22.04 Jammy) are **not** supported because Jazzy doesn't install there.
 
-### 1. Image the SD card / NVMe
+### 1. SD card or NVMe image
 
 Use Raspberry Pi Imager -> *Other general-purpose OS* -> *Ubuntu* -> *Ubuntu Server 24.04 LTS (64-bit)*. Before writing, click the gear icon and pre-set:
 
 - **Hostname**: `racecar-neo` (matches what the systemd services + dashboard expect)
 - **Username**: `racecar` (the `racecar` shell tool, udev groups, and service unit `User=` are all hard-coded to this name; don't change it)
 - **Password**: your choice
-- **Wireless LAN**: your home/lab SSID (only needed for the initial setup; later replaced by the AP via `racecar setup networking`)
+- **Wireless LAN**: your home/lab SSID. The Pi's built-in `wlan0` stays a client of this network; the AP set up later runs on a separate dongle.
 - **SSH**: enabled, password auth
 
 Boot the Pi, find its IP (`ip neigh` from another machine, or check your router), then `ssh racecar@<ip>`.
 
-### 2. Silence `needrestart` so `apt full-upgrade` doesn't prompt
+### 2. needrestart configuration
 
 Ubuntu Server 24.04 ships with `needrestart`, which throws an interactive "restart services?" dialog mid-`apt` if any library upgrade affects a running daemon. Configure it to auto-restart silently before the big upgrade so the rest of setup is unattended:
 
@@ -110,7 +111,7 @@ sudo apt -y full-upgrade
 
 Largest single block of the install (~8-15 min on a fresh image at 10 MB/s). With needrestart silenced above, this runs hands-off.
 
-### 4. Clone and run the orchestrator
+### 4. Repository clone and setup run
 
 ```sh
 mkdir -p ~/ros2_ws/src
@@ -121,17 +122,17 @@ bash racecar_neo_ros2_driver/scripts/setup_all.sh
 
 `setup_all.sh` is idempotent; re-running is safe (each phase checks for existing state and skips when already applied). Sudo password is prompted **once** at the top of the run and cached via a background keepalive for the remaining ~45 min; you can walk away after that prompt.
 
-### 5. Apply group memberships
+### 5. Group membership activation
 
 The setup adds your user to `dialout`, `i2c`, `spi`, `gpio`, and `video`. Group membership applies to **new login sessions only**, so:
 
 ```sh
 exit                     # close SSH
-ssh racecar@<ip>         # back in — groups now active
+ssh racecar@<ip>         # back in; groups now active
 groups                   # verify: dialout i2c spi gpio video should appear
 ```
 
-### 6. Plug in the hardware and reboot
+### 6. Hardware connection and reboot
 
 With the Pi powered off: connect the NEO-PIT PCB (motor, steering, IMU, and the dot matrix chain all hang off it), the RealSense camera, the lidar, the Coral Edge TPU M.2 card, and the EasySMX gamepad's USB dongle. Power on and:
 
@@ -143,37 +144,37 @@ After reboot, `racecar-teleop.service` auto-starts and pulls the watchdog via `W
 
 ```sh
 racecar status              # full diagnostic; exits non-zero unless everything passed
-racecar service status      # all 4 racecar-* units should be active+enabled
+racecar service status      # the 4 core racecar-* units should be active+enabled
 ```
 
 Browse to `http://racecar-neo.local:8080` for the live dashboard.
 
-### 7. (Optional) Switch to AP-mode networking
+### 7. AP networking (optional)
 
-Once the wired setup works, you can untether the robot from your home WiFi by running:
+To add the robot's own isolated access point:
 
 ```sh
 racecar setup networking --ssid=racecar-neo-1 --psk='your-password'
 ```
 
-This brings up an isolated AP on the ALFA dongle (`wlan1`) and configures eth0 with both a static IP and DHCP. See [Networking (optional)](#networking-optional). **Run this from a wired (eth0) session or directly on the console**; it reconfigures the AP interface and will drop SSH-over-WiFi.
+This brings up an isolated AP on the ALFA dongle (`wlan1`) and puts eth0 in one addressing mode, static by default. See [Networking (optional)](#networking-optional). **Run it from the console or over `wlan0`**; the AP is reconfigured, and the eth0 step can drop an SSH session arriving over eth0.
 
-### What `setup_all.sh` actually does
+### `setup_all.sh` phases
 
 Twelve phases, all under `scripts/`:
 
 1. **`setup_ros2.sh`**: ROS2 Jazzy apt repo + message/driver packages
-2. **`setup_dev_tools.sh`**: build tools, Python hardware libs (`smbus` / `serial` / `spidev`)
-3. **`setup_user_env.sh`**: joins `dialout` / `i2c` / `spi` / `gpio` / `video` groups; installs `/etc/polkit-1/rules.d/49-racecar-network.rules` so `racecar wifi` can control NetworkManager from a terminal; sources ROS2 + the `racecar` shell tool in `.bashrc`
-4. **`setup_raspi_config.sh`**: boot-level configuration: enable I2C, enable SPI, disable serial console (frees the GPIO UART / `ttyAMA0` for the NEO-PIT link), enable RTC backup-cell trickle charging (`RTC_VCHG_UV=0` skips it; see [RTC backup cell](#rtc-backup-cell)), and reconcile the bootloader EEPROM (`RACECAR_EEPROM=0` skips it; see [Bootloader EEPROM](#bootloader-eeprom))
+2. **`setup_dev_tools.sh`**: build tools, Python hardware libs (`smbus` / `serial` / `spidev`), and the pinned linters (`ruff`, `black`, `mypy`) per-user
+3. **`setup_user_env.sh`**: joins `dialout` / `i2c` / `spi` / `gpio` / `video` groups; installs `/etc/polkit-1/rules.d/49-racecar-network.rules` so `racecar wifi` can control NetworkManager from a terminal; sources ROS2 + the `racecar` shell tool in `.bashrc` and puts `~/.local/bin` on `PATH`
+4. **`setup_raspi_config.sh`**: boot-level configuration: enable I2C, enable SPI, disable serial console (frees the GPIO UART / `ttyAMA0` for the NEO-PIT link), enable RTC backup-cell trickle charging (`RTC_VCHG_UV=0` turns it off; see [RTC backup cell](#rtc-backup-cell)), and reconcile the bootloader EEPROM (`RACECAR_EEPROM=0` skips it; see [Bootloader EEPROM](#bootloader-eeprom))
 5. **`setup_udev.sh`**: installs `/etc/udev/rules.d/99-racecar.rules` (stable `/dev/neo-pit-pcb`, `/dev/lidar`)
-6. **`setup_dotmatrix.sh`**: `pip install --user luma.led_matrix`
-7. **`setup_coral.sh`**: installs `libedgetpu1-std`, `tflite_runtime`, `pycoral` from vendored `depend/` artifacts
+6. **`setup_dotmatrix.sh`**: `pip install --user luma.led_matrix`, the font source for the `dotmatrix_node` rasterizer
+7. **`setup_coral.sh`**: installs `libedgetpu1-std`, `tflite_runtime`, `pycoral` from vendored `depend/` artifacts; with the M.2 card present, also the gasket DKMS driver and the `coral-msi` overlay (reboot required)
 8. **`setup_realsense.sh`**: installs `realsense2_camera` (apt) + the Pi 5 IMU IIO permission fix (script, udev rule, boot service)
 9. **`setup_workspace.sh`**: clones `sllidar_ros2` and runs `colcon build --symlink-install`
 10. **`setup_jupyter.sh`**: `pip install --user jupyterlab`, creates `~/jupyter_ws/`
 11. **`setup_services.sh`**: installs and enables the four core systemd units (`racecar-{teleop,watchdog,dashboard,jupyter}.service`)
-12. **`setup_dashboards.sh`**: clones or fast-forwards the three lab-dashboard checkouts into `scripts/dashboards/` and installs a stopped, disabled `racecar-*` unit for each (`RACECAR_DASHBOARDS=0` skips it)
+12. **`setup_dashboards.sh`**: clones or fast-forwards the three lab-dashboard checkouts into `scripts/dashboards/`, installs a stopped, disabled `racecar-*` unit for each, and removes units left by retired dashboards (`RACECAR_DASHBOARDS=0` skips it)
 
 Individual phase scripts can be run on their own to re-do or skip steps (e.g. `racecar setup networking` for just the networking phase, or `bash scripts/setup_udev.sh` to reinstall the udev rules after a hardware swap).
 
@@ -184,6 +185,7 @@ Individual phase scripts can be run on their own to re-do or skip steps (e.g. `r
 ```sh
 racecar build               # colcon build --symlink-install + source overlay
 racecar test                # colcon test + verbose results
+racecar lint                # ruff, black --check and mypy over the package
 racecar source              # source the workspace overlay
 racecar cd                  # chdir to the package source root
 racecar teleop              # launch the full stack via launch_teleop.sh
@@ -196,13 +198,14 @@ racecar service start       # default: start teleop (watchdog follows via Wants=
 racecar service stop        # default: stop teleop (watchdog follows via BindsTo=)
 racecar service logs teleop # journalctl -u racecar-teleop -f
 racecar service start wallfollow  # a lab dashboard; stops the other /drive publishers
+racecar service enable wallfollow # enable one unit; bare `enable` covers the core four
 
 racecar setup all                       # run the 12-phase orchestrator
-racecar setup networking --ssid=foo     # configure eth0 addressing + ALFA-dongle AP
+racecar setup networking --ssid=racecar-neo-2   # configure eth0 addressing + ALFA-dongle AP
 racecar setup networking --show         # print persisted overrides
 racecar setup dashboards                # clone the lab dashboards + install units
+racecar setup realsense                 # offline D435i firmware flash
 
-racecar clear --dmatrix             # flash + clear the MAX7219 display
 racecar udev                        # re-install the udev rules
 racecar cleanup [--force]           # list / kill stale racecar processes + SHM orphans
 racecar status                      # full diagnostic (devices, sensors, system, network)
@@ -212,12 +215,13 @@ racecar wifi list                   # visible networks on wlan0
 racecar desktop status              # GNOME on/off for the next boot
 racecar log start lap3              # record a bag; racecar log stop to finalize
 racecar log analyze                 # summarize the newest bag
+racecar library --list              # student library folders under ~/jupyter_ws
 racecar help                        # full usage
 ```
 
 Tab completion is registered for subcommands; `racecar launch <TAB>` discovers launch files dynamically, `racecar service <TAB>` offers actions, etc.
 
-The dot matrix pattern sweep is no longer wrapped by a subcommand. Run it directly when bringing up the display hardware, with `dotmatrix_node` already running:
+The dot matrix self-test is `scripts/dmatrix_patterns.py`. It publishes patterns to `/dotmatrix/pixels`, so `dotmatrix_node` must be running:
 
 ```sh
 racecar launch dotmatrix                                    # in another shell
@@ -226,9 +230,23 @@ python3 ~/ros2_ws/src/racecar_neo_ros2_driver/scripts/dmatrix_patterns.py all
 
 Patterns: `all` (default), `checkerboard`, `all-on`, `sweep`, `module-id`, `font`.
 
+## Linters
+
+`racecar lint` runs three checks from the package source root and exits non-zero if any fails:
+
+| Tool | Checks | Scope |
+|---|---|---|
+| `ruff check` | pycodestyle, pyflakes, bugbear, comprehensions, quotes, pyupgrade | whole package |
+| `black --check` | formatting (99 columns, single quotes kept) | whole package |
+| `mypy` | types; every function signature must be annotated | `racecar_neo_ros2_driver/`, `launch/`, `scripts/` |
+
+Settings live in `pyproject.toml`; `scripts/dashboards/` and the colcon `build/`, `install/`, `log/` trees are excluded. `setup_dev_tools.sh` installs pinned versions per-user into `~/.local/bin`, and `setup_user_env.sh` puts that directory on `PATH`. To reformat rather than check, run `black .` from the package root.
+
+`racecar test` still runs `ament_flake8` and `ament_pep257` (`test/test_flake8.py`, `test/test_pep257.py`), which own import order and docstring style.
+
 ## Networking (optional)
 
-`scripts/setup_networking.sh` configures two things and is **not** invoked by `setup_all.sh`; it's a separate step because it reconfigures the AP interface and would drop SSH-over-WiFi sessions during a fresh install. Run it from a wired (eth0) session or directly on the console:
+`scripts/setup_networking.sh` configures two things and is **not** invoked by `setup_all.sh`. Run it from the console or over `wlan0` (client WiFi): it reconfigures the AP, so a session over the AP drops, and switching the eth0 mode drops a session over eth0.
 
 ```sh
 racecar setup networking --psk='your-password'
@@ -238,8 +256,8 @@ With no `--ssid` or saved car ID, it prompts for this car's ID and sets the SSID
 
 What it does:
 
-1. **eth0 addressing** via `setup_eth.sh`; eth0 is put in exactly one IPv4 mode, static by default at `192.168.52.200/24`, so the robot is reachable at a known IP on a bare switch. See [Ethernet addressing](#ethernet-addressing).
-2. **ALFA-dongle isolated AP** via NetworkManager; the AP runs on the ALFA MT7612U dongle (pinned to `wlan1` by the udev rule), hosting its own 2.4 GHz WiFi network. Clients can SSH / browse the dashboard / use jupyter, but a NetworkManager dispatcher installs `iptables FORWARD REJECT` rules so AP clients **cannot** route through the Pi to the internet (intentional isolation; it keeps the robot's WiFi from becoming a janky general-purpose gateway). The Pi's built-in `wlan0` is left in default client mode.
+1. **eth0 addressing** via `setup_eth.sh`; eth0 is put in exactly one IPv4 mode, static by default at `192.168.52.200/24`, so the robot is reachable at a known IP on a bare switch. The eth0-SSH check in `setup_eth.sh` applies here too: a mode switch asks first when the session arrives over eth0. See [Ethernet addressing](#ethernet-addressing).
+2. **ALFA-dongle isolated AP** via NetworkManager; the AP runs on the ALFA MT7612U dongle (pinned to `wlan1` by the udev rule), hosting its own 2.4 GHz WiFi network. Clients can SSH / browse the dashboard / use jupyter, but a NetworkManager dispatcher installs `iptables FORWARD REJECT` rules so AP clients **cannot** route through the Pi to the internet. The Pi's built-in `wlan0` is left in default client mode.
 
 Tunables (persisted to `~/.config/racecar/networking.env` and replayed on every re-run):
 
@@ -268,12 +286,14 @@ Verify after running:
 racecar eth status              # exactly one IPv4 address, no conflict
 iw dev wlan1 info               # type AP, your SSID, channel 6 (ALFA dongle)
 iw dev wlan0 info               # type managed (Pi built-in, client/default)
-sudo iptables -L FORWARD -n     # two REJECT rules for wlan1
+sudo iptables-nft -L FORWARD -nv   # two REJECT rules for wlan1, above nm-sh-fw-wlan1
 ```
+
+Use `iptables-nft ... -nv`. NetworkManager installs its shared-mode forward rules through nftables and the dispatcher adds its REJECT rules through `iptables-nft`; without `-v` the listing hides the `in`/`out` columns, so the two REJECT rules (one `in wlan1`, one `out wlan1`) look like they match nothing. `sudo nft list ruleset` shows both tables. From a client joined to the AP, `curl -m 3 https://google.com` must time out.
 
 ## Ethernet addressing
 
-eth0 holds exactly one IPv4 addressing mode. Carrying a static address and a DHCP lease at the same time is what made the static drop periodically: NetworkManager re-applies the whole IPv4 config on every lease event, and in the field the link would come back only after the cable was reseated.
+eth0 holds exactly one IPv4 addressing mode. Carrying a static address and a DHCP lease at once made the static drop; the reasoning is in [docs/troubleshooting.md](docs/troubleshooting.md#eth0-addressing).
 
 ```sh
 racecar eth                 # or: racecar eth status
@@ -282,17 +302,15 @@ racecar eth dynamic         # address and default route from DHCP
 racecar eth static --addr=10.0.0.50/24
 ```
 
-Static is the default because a known address is what makes a car debuggable on a bare switch. It carries no gateway or DNS, so a static car reaches the internet over `wlan0` or not at all; switch to `dynamic` when you need `apt` over the wire.
+Static carries no gateway, no DNS and no IPv6 default route, so a static car reaches the internet over `wlan0` or not at all; switch to `dynamic` when you need `apt` over the wire.
 
-`status` reports the configured mode, the live addresses, both default routes, and fails when it finds more than one global IPv4 address on eth0. The conflict check is IPv4-scoped: the link-local `fe80::` address is always present and SLAAC may add more, so counting every address would report a conflict on a healthy car.
+`status` reports the configured mode, the live addresses, both default routes, and fails when it finds more than one global IPv4 address on eth0. The link-local `fe80::` address and SLAAC addresses do not count.
 
-In static mode eth0 keeps its IPv6 addresses but never a default route (`ipv6.never-default`). Router advertisements would otherwise hand eth0 a v6 default route despite the absence of a v4 gateway, and since most large destinations are dual-stack a "gateway-less" car would still send most of its traffic out the wire.
+**Switching modes drops an SSH session arriving over eth0.** The command detects that and asks first; use `wlan0`, the AP, or an HDMI console, or pass `--force`.
 
-**Switching modes drops an SSH session arriving over eth0.** The command detects that and asks first; use the AP, `wlan0`, or an HDMI console, or pass `--force`.
+### Link monitor
 
-### Confirming the fix
-
-Making the modes mutually exclusive removes the structural cause of the drop, but that reasoning is not the same as evidence: the symptom is periodic and recovers only when the cable is reseated, so a quiet afternoon proves nothing. `racecar eth monitor` records the addresses, both default routes, carrier, operstate and NetworkManager state, logging a line whenever any of them changes plus a heartbeat every 15 minutes.
+`racecar eth monitor` records the addresses, both default routes, carrier, operstate and NetworkManager state, logging a line whenever any of them changes plus a heartbeat every 15 minutes.
 
 ```sh
 racecar eth monitor                     # foreground, Ctrl-C to stop
@@ -308,7 +326,7 @@ sudo systemctl enable --now racecar-eth-monitor
 grep -v '\[OK\]' ~/logs/eth-monitor.log     # every state change, heartbeats hidden
 ```
 
-A clean run is `START` followed by heartbeats. Any `ADDR_LOST`, `CARRIER` or `OPERSTATE` line is the event worth reading. Disable the unit once the question is settled; it is a diagnostic, not part of the running car.
+A clean run is `START` followed by heartbeats. Any `ADDR_LOST`, `CARRIER` or `OPERSTATE` line is the event worth reading. The unit is a diagnostic; disable it once the soak is done.
 
 ## WiFi client
 
@@ -324,29 +342,25 @@ racecar wifi disconnect
 
 `list` groups the scan by SSID and keeps the strongest signal, because a scan returns one row per BSSID: on a car parked in a lab that is 30-plus rows for about a dozen real networks. Hidden networks are collapsed into a count.
 
-`connect` brings up a saved profile as-is, whatever its security type. For a new network it asks for a passphrase, or for an identity and password on an enterprise (802.1X) network, and nothing else. Server validation is not optional: every enterprise profile gets system CA certificates plus a `domain-suffix-match` derived from the identity's realm, so credentials are never offered to an access point that cannot prove who it is. Use `--ca-cert=` and `--domain-suffix-match=` where that derivation does not fit.
+`connect` brings up a saved profile as-is, whatever its security type. For a new network it asks for a passphrase, or for an identity and password on an enterprise (802.1X) network, and nothing else. Every enterprise profile gets system CA certificates plus a `domain-suffix-match` derived from the identity's realm, so credentials are never offered to an access point that cannot prove who it is. Use `--ca-cert=` and `--domain-suffix-match=` where that derivation does not fit.
 
-`disconnect` puts the device into NetworkManager's manually-disconnected state, so it will not rejoin on its own until the next `connect`.
-
-A joined network survives a reboot. Two flags decide that and `nmcli` guarantees neither, so `connect` sets both: `connection.autoconnect` on the profile, which is the part that persists, and the device's own autoconnect flag, which `disconnect` clears. `racecar wifi status` reports the outcome on its `after boot` line, since a car that reads `connected` can still come back with no link.
+A joined network survives a reboot: `connect` sets both the profile's `connection.autoconnect` and the device's autoconnect flag. `disconnect` drops the link until the next `connect` or reboot; to stop the car rejoining after a reboot, delete the profile with `nmcli connection delete <ssid>`. `racecar wifi status` reports the boot outcome on its `after boot` line. Details: [docs/troubleshooting.md](docs/troubleshooting.md#wifi-persistence).
 
 ### Networking authorization
 
-NetworkManager asks polkit before it activates a connection or edits a profile, and polkit can only collect a password through an agent. An SSH session has none, so on a car whose polkit still carries the stock policy, `connect` and `disconnect` fail inside `nmcli`:
+On a car whose polkit still carries the stock policy, `connect` and `disconnect` fail over SSH with:
 
 ```
 Error: Connection activation failed: Not authorized to control networking.
 ```
 
-`setup_user_env.sh` installs `/etc/polkit-1/rules.d/49-racecar-network.rules`, which answers those NetworkManager actions with an unconditional yes for the `sudo` group. Cars imaged before v0.8.1 need one run to pick it up:
+`setup_user_env.sh` installs `/etc/polkit-1/rules.d/49-racecar-network.rules`, which grants the five NetworkManager actions `racecar wifi` needs to the `sudo` group. Cars imaged before v0.8.1 need one run; it takes effect without a restart:
 
 ```sh
 bash ~/ros2_ws/src/racecar_neo_ros2_driver/scripts/setup_user_env.sh
 ```
 
-The rule takes effect as soon as it lands; polkit re-reads `rules.d` on change, and neither NetworkManager nor a login is restarted. `racecar wifi connect` checks the permission before it prompts, so an unprovisioned car names this remedy rather than failing at the activation call.
-
-The grant covers five NetworkManager actions and nothing else. Members of the `sudo` group can already reach the same operations through `sudo nmcli`; what the rule removes is the password on those actions, which means anyone holding an unlocked shell on the car can change its networking. That is the intended trade for a shared lab robot driven from a terminal.
+`racecar wifi connect` checks the permission before it prompts and names this remedy. The trade-off is in [docs/troubleshooting.md](docs/troubleshooting.md#networkmanager-authorization).
 
 ## Desktop toggle
 
@@ -358,20 +372,18 @@ racecar desktop disable     # boot to multi-user.target
 racecar desktop enable      # boot to graphical.target
 ```
 
-The boot target is the only lever and is sufficient on its own: the display manager unit is `static` (no `[Install]` section), so `systemctl enable`/`disable` on it cannot work, and `graphical.target` is what pulls it in.
-
-Changes apply on the **next boot**. There is deliberately no immediate variant, so the command can never tear down a desktop session someone is using; `status` reports a pending change when the default and active targets disagree. Packages are never removed, so the toggle works on a car with no network.
+Changes apply on the **next boot**; `status` reports a pending change when the default and active targets disagree. Packages are never removed, so the toggle works on a car with no network. Scope: [docs/troubleshooting.md](docs/troubleshooting.md#desktop-toggle-scope).
 
 ## Web dashboard
 
 Once `racecar-teleop.service` is running, browse to `http://<robot>:8080` for a live status page:
 
-- **Nodes**: one card per monitored subsystem (9 total): green when the expected topic is being advertised, red when not.
+- **Nodes**: one card per monitored subsystem (9 total): green when the expected topic is being advertised, red when not. EdgeTPU and dot matrix, which the watchdog does not restart, show grey (`unsupervised`) instead of red.
 - **System Health**: RTC backup battery voltage (green >= 3.0 V, yellow 2.7-3.0 V, red < 2.7 V) and the Pi 5 PMIC sticky under-voltage alarm.
 - **Topic Rates**: live Hz for `/motor`, `/mux_out`, `/imu/fused`, `/imu/lsm9ds1`, `/scan`, `/edgetpu/inference`, `/camera/color`, `/camera/depth`, and `/imu/realsense`. Yellow when stale (< 0.5 Hz), red when missing. The three RealSense rows are read from the camera's own `/diagnostics` stream; the rest are counted from raw subscriptions, which keeps the dashboard's own CPU cost near 20%.
 - **Watchdog Log**: tail of `~/logs/latest/watchdog.log` so you can see restart events.
 
-Refreshes every 3 s; System Health refreshes on a slower 60 s cadence (RTC drifts on the order of weeks, not seconds).
+Refreshes every 3 s; System Health refreshes every 60 s, since the cell voltage changes over weeks.
 
 ## Lab dashboards
 
@@ -380,37 +392,13 @@ Three browser-based labs, each a fork under the
 corresponding [Neobotics
 Foundation](https://github.com/Neobotics-Foundation-Inc) repository, installed
 as `racecar-*` systemd units. The forks carry this platform's lidar convention,
-ports and branding; the four dashboards that shipped in v0.8.0 and were never
-forked (`camlabel`, `pursuit`, `eps`, `smartfollow`) are no longer installed.
+ports and branding.
 
 | Dashboard | Port | Reads | Publishes |
 |---|---|---|---|
 | `webteleop` | 8081 | `/camera/color`, `/camera/depth`, `/scan`, `/odom`, `/edgetpu/inference` | `/drive` |
-
 | `linefollow` | 8082 | `/camera/color`, `/odom` | `/drive` |
 | `wallfollow` | 8083 | `/scan`, `/odom` | `/drive` |
-
-Each checkout carries a `VERSION` tracking this driver's release rather than
-a count of its own, so a dashboard reading `0.8.1` is the one this release was
-tested against. `setup_dashboards.sh` pins the expected version and reports a
-checkout that does not match, the same shape as the RealSense firmware target
-the driver pins and `racecar setup realsense` reconciles:
-
-```
-==> Dashboard versions (driver pins 0.8.1)
-  teleop_dashboard: 0.8.1
-  linefollow_dashboard: 0.7.9, driver pins 0.8.1
-  wallfollow_dashboard: 0.8.1
-```
-
-The checkouts track the `racecar-neo` branch, not the forks' default: the
-default is still the Neobotics original, with upstream ports, neoracer unit
-names and the forward-facing lidar convention. `setup_dashboards.sh` clones
-that branch by name; `RACECAR_DASHBOARD_BRANCH` overrides it.
-
-A mismatch is reported and the install continues; the units still work, and
-which release to run is your call. `racecar setup dashboards --update`
-fast-forwards. `RACECAR_DASHBOARD_VERSION` pins a different release.
 
 Install (also runs as phase 12 of `setup_all.sh`):
 
@@ -419,6 +407,10 @@ racecar setup dashboards          # clone or fast-forward, install units
 racecar setup dashboards --update # pull only
 racecar service update            # same, from the service subcommand
 ```
+
+The install also stops, disables and removes the units of the four retired
+dashboards (`camlabel`, `eps`, `pursuit`, `smartfollow`) if a car still has
+them.
 
 Run one:
 
@@ -432,77 +424,41 @@ racecar service stop wallfollow
 **One at a time.** All three publish `/drive`, and a second publisher fights the
 mux, so `racecar service start` stops the others before starting the one you
 asked for. Units install disabled; `racecar service enable <name>` makes one
-survive a reboot, and bare `racecar service enable` deliberately covers only the
-core four.
+survive a reboot, and bare `racecar service enable` covers only the core four.
 
-**Checkouts live in `scripts/dashboards/`**, gitignored. Updates are
-`git pull --ff-only` and never `reset --hard`, so a car's tuned `wallfollow.yaml`
-survives. The unit is still rendered from the checkout's template rather than
-copied, so a car keeps working if a fork is later synced from Neobotics
-upstream and comes back carrying Humble and the neoracer names.
+**Checkouts live in `scripts/dashboards/`**, gitignored, on the forks'
+`racecar-neo` branch (`RACECAR_DASHBOARD_BRANCH` overrides). Updates are
+`git pull --ff-only`, so a car's tuned `wallfollow.yaml` survives. Each unit is
+rendered from its checkout's `.service.in` template.
 
-**The upstream safety text does not describe this car.** Every dashboard README
-says the mux forwards `/drive` with no software deadman and the transmitter's
-SWB switch is the only gate. Here, `mux_node` requires the RB bumper held, and
+**Versions.** Each checkout carries a `VERSION` tracking this driver's release.
+`setup_dashboards.sh` pins the expected version (`RACECAR_DASHBOARD_VERSION`
+overrides) and reports a mismatch without stopping the install:
+
+```
+==> Dashboard versions (driver pins 0.8.1)
+  teleop_dashboard: 0.8.1
+  linefollow_dashboard: 0.7.9, driver pins 0.8.1
+  wallfollow_dashboard: 0.8.1
+```
+
+**Safety.** `mux_node` forwards `/drive` only while the RB bumper is held, and
 zeroes the output when `/joy` or the active source goes stale. See
-[Autonomy gate](#autonomy-gate) for the case where a transmitter does hold the
+[Autonomy gate](#autonomy-gate) for the case where a transmitter holds the
 gate.
 
-### Lidar convention
+**Tuning.** The shipped YAML is tuned for the NeoRacer's chassis and lidar.
+Expect to retune `max_mps`, `kp`, `kd`, `lookahead` and the `linefollow` HSV
+thresholds per car.
 
-`wallfollow` reads `/scan` and does its own angle arithmetic in the student
-convention: 0 is the car's nose, positive is its right. The RACECAR Neo mounts
-its RPLIDAR facing aft over a 360 degree sweep of 1080 points, so the nose sits
-at the raw 180 degree edge; the neoracer read 0 there over a 270 degree sweep.
-Measured on hardware, an object in front reports at raw 180 and one off the
-car's right at raw +90, which is a 180 degree yaw rather than a handedness
-flip.
-
-The fork carries `LIDAR_MOUNT_YAW_DEG` in `wallfollow.py` for that offset:
-
-```
-student_deg = LIDAR_MOUNT_YAW_DEG - raw_deg
-```
-
-Ray indices come from the message's own `angle_min` and `angle_increment` and
-wrap modulo the point count, so the 360 degree scan and a 270 degree one both
-work, and a forward-facing lidar needs only `LIDAR_MOUNT_YAW_DEG = 0.0`.
-`tests/test_wallfollow.py` exercises both patterns without a lidar attached.
-
-This settles the convention for the fork only. The question of where
-normalization belongs for every consumer is still open with the Neobotics
-Foundation; the preferred direction remains for the dashboards to consume the
-`racecar-neo-library` API, which normalizes orientation and units once, rather
-than raw `/scan`.
-
-### Branding
-
-The three forks carry the RACECAR Neo mark, wordmark and palette rather than
-the Neobotics set, so a dashboard on screen names the vehicle it drives. The
-source art is in [docs/img/](docs/img/); the crimson-to-orange gradient
-(`#A01936` to `#EC8B48`) and the wordmark ink (`#231F20`) are sampled from it.
-
-Orange leads. The two ends of the gradient are near inverses in contrast, so
-neither can stand in for the other: crimson reaches 7.8:1 on white and 2.1:1
-on tarmac, orange 2.5:1 on white and 6.5:1 on tarmac. Each is used only where
-it is legible, which splits the palette by role rather than by taste:
-
-| Role | Light surface | Dark surface |
-|---|---|---|
-| Brand rule, wordmark, live dot | ember `#A55312` | orange `#EC8B48` |
-| Interactive: buttons, sliders, focus | ember `#A55312` | orange `#EC8B48` |
-| Plot traces and overlays | n/a, plots are always dark | orange `#EC8B48` |
-| Stop, fault, line lost | crimson `#A01936` | crimson lifted to `#E4525A` |
-
-Ember is the same 26 degree hue as the brand orange held down to L 0.36, so
-the light surfaces read as the same colour family at 5.5:1 rather than as a
-second accent. Crimson is reserved: on a dashboard that drives a real car one
-colour should mean stop and nothing else, so the state box now reads ember
-while moving and crimson only on a fault, where it used to be red for both.
-
-**These are NeoRacer numbers.** The shipped YAML is tuned for a different
-chassis and lidar. Expect to retune `max_mps`, `kp`, `kd`, `lookahead` and the
-`linefollow` HSV thresholds per car.
+The lidar mounting convention (`LIDAR_MOUNT_YAW_DEG` for this car's aft-facing
+RPLIDAR) is documented in the
+[wallfollow architecture notes](https://github.com/MITRacecarNeo/wallfollow_dashboard/blob/racecar-neo/docs/architecture.md),
+and the shared palette in the
+[webteleop architecture notes](https://github.com/MITRacecarNeo/teleop_dashboard/blob/racecar-neo/docs/architecture.md).
+Where lidar normalization belongs for every consumer is still open with the
+Neobotics Foundation; the preferred direction is for the dashboards to consume
+the `racecar-neo-library` API rather than raw `/scan`.
 
 ## Autonomy gate
 
@@ -577,7 +533,7 @@ source install/setup.bash
 ```sh
 racecar teleop                          # or: ros2 launch racecar_neo_ros2_driver teleop.launch.py
 racecar launch realsense                # individual nodes too: RealSense D435i (color + depth + IMU)
-racecar launch imu
+racecar launch imu_fusion
 racecar launch lidar
 racecar launch edgetpu
 racecar launch dotmatrix
@@ -585,37 +541,47 @@ racecar launch dotmatrix
 
 RealSense topics, profiles, and known issues: see [docs/specifics/realsense_topics.md](docs/specifics/realsense_topics.md).
 
-
 For boot-time startup, see [scripts/](./scripts/) for systemd units and the `setup_all.sh` idempotent installer.
 
 ## Sensor calibration
 
-Bias and scale are per-board, so each car needs its own calibration run. All
-three utilities write their YAML to both the install tree and the source tree,
-so a later `colcon build` does not discard the result.
+Bias and scale are per-board, so each car needs its own calibration run. The
+committed `config/lsm9ds1_cal.yaml`, `config/lsm9ds1_mag_cal.yaml` and
+`config/realsense_cal.yaml` hold zero defaults; a car's own values go in a
+gitignored `config/<name>.local.yaml` beside each, which the launch files load
+after the committed file.
 
 ```sh
 ros2 run racecar_neo_ros2_driver calibrate_imu.py         # LSM9DS1 accel + gyro bias
 ros2 run racecar_neo_ros2_driver calibrate_mag.py         # LSM9DS1 hard/soft iron
 ros2 run racecar_neo_ros2_driver calibrate_realsense_imu.py   # D435i accel + gyro bias
+racecar build                                             # installs the new .local.yaml
+racecar service restart teleop                            # nodes read it at start
 ```
 
 | Utility | Reads | Writes | Consumed by |
 |---|---|---|---|
-| `calibrate_imu.py` | `/imu/lsm9ds1/raw` | `config/lsm9ds1_cal.yaml` | `pit_node` |
-| `calibrate_mag.py` | `/mag/raw` | `config/lsm9ds1_mag_cal.yaml` | `pit_node` |
-| `calibrate_realsense_imu.py` | `/imu/realsense` | `config/realsense_cal.yaml` | `imu_fusion_node` |
+| `calibrate_imu.py` | `/imu/lsm9ds1/raw` | `config/lsm9ds1_cal.local.yaml` | `pit_node` |
+| `calibrate_mag.py` | `/mag/raw` | `config/lsm9ds1_mag_cal.local.yaml` | `pit_node` |
+| `calibrate_realsense_imu.py` | `/imu/realsense` | `config/realsense_cal.local.yaml` | `imu_fusion_node` |
+
+Each utility writes the file to the source `config/` directory and, when it
+exists, the install share `config/` directory. It writes nothing and exits
+non-zero when the fit fails or it has too little data.
 
 `calibrate_imu.py` walks a 6-position sequence (each axis up and down) and
 averages the gravity vector per pose. `calibrate_mag.py` needs rotation about
 all three axes and fits an ellipsoid, then plots raw against corrected samples
 so you can confirm the sphere closed up.
 
+The `.local.yaml` files are untracked, so a fresh clone or reimage loses them.
+Keep a copy in `~/.config/racecar/calibration/`; each utility prints a reminder.
+
 A car that has never been calibrated runs with zero bias and an identity
 soft-iron matrix, and nothing is logged to say so, so run the two LSM9DS1
-utilities on every new car. Note that ROS ignores a parameter file whose
-top-level key names no running node, without warning; if a calibration appears
-to have no effect, check that the key matches the node the launch file starts.
+utilities on every new car. ROS ignores a parameter file whose top-level key
+names no running node, without warning; if a calibration appears to have no
+effect, check that the key matches the node the launch file starts.
 
 ## RTC backup cell
 
@@ -640,8 +606,9 @@ cat /sys/class/rtc/rtc0/battery_voltage     # climbs over the following days
 
 Only enable charging for a **rechargeable** cell. Forcing charge current into a
 primary CR2032 can make it vent or leak. If a car has a non-rechargeable cell
-fitted, run the phase with `RTC_VCHG_UV=0 bash scripts/setup_raspi_config.sh`
-and swap the cell before enabling it.
+fitted, run `RTC_VCHG_UV=0 bash scripts/setup_raspi_config.sh`: it removes the
+`dtparam=rtc_bbat_vchg=` line, so charging is off from the next boot. Swap the
+cell before enabling it again.
 
 ## Bootloader EEPROM
 
@@ -673,15 +640,18 @@ od -An -tu4 --endian=big /proc/device-tree/chosen/power/max_current
 All-zero PD objects mean no negotiation happened; `max_current` should still
 read `5000` because the EEPROM forced it.
 
-Changes take effect on the next boot. `RACECAR_EEPROM=0` skips the whole step.
+Changes take effect on the next boot. `RACECAR_EEPROM=0` skips the step on a
+car not yet configured; it does not undo keys already written (use
+`sudo rpi-eeprom-config --edit` for that).
 
 ## ROS discovery scope
 
 `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST` is set in `launch_teleop.sh`, the
-dashboard / watchdog / jupyter units, and the `.bashrc` block written by
-`setup_user_env.sh`. Every node in this stack runs on the robot, so restricting
-discovery to the loopback interface costs nothing on-board and keeps discovery
-chatter off the ALFA dongle, where it was driving CPU spikes.
+dashboard / watchdog / jupyter units, the lab-dashboard units rendered by
+`setup_dashboards.sh`, and the `.bashrc` block written by `setup_user_env.sh`.
+Every node in this stack runs on the robot, so restricting discovery to the
+loopback interface costs nothing on-board and keeps discovery chatter off the
+ALFA dongle, where it was driving CPU spikes.
 
 The tradeoff: a laptop cannot see the robot's topics. `rviz`,
 `ros2 topic echo`, and remote nodes will find nothing. For a session where you
@@ -695,12 +665,18 @@ export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
 
 Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
 
-- **0.8.1** (2026-09-10): EfficientDet-Lite0 on COCO as the default detection
-  model, with inference capped at 15 Hz; a detections overlay and the depth
+- **0.8.2** (2026-09-22): cleanup release. `racecar lint` with pinned ruff,
+  black and mypy; per-car calibration in gitignored `config/*.local.yaml`, which
+  `pit.launch.py` now loads; `calibrate_mag.py` no longer overwrites a good
+  calibration on a failed fit; `RTC_VCHG_UV=0` turns RTC charging off;
+  retired dashboard units removed; `racecar clear` removed.
+- **0.8.1** (2026-09-10): dashboards moved to ports 8081 to 8083;
+  EfficientDet-Lite0 on COCO as the default detection model, with inference
+  capped at 15 Hz; a detections overlay and the depth
   stream on `webteleop`, whose lidar view was 180 degrees out; the dashboard
   palette led by orange and split by contrast; each dashboard checkout carries
   a `VERSION` this driver pins and `setup_dashboards.sh` verifies.
-- **0.8.0** (2026-09-06): three lab dashboards as `racecar-*` units, a
+- **0.8.0** (2026-09-06): seven lab dashboards as `racecar-*` units, a
   transmitter-held autonomy gate, bag recording behind `racecar log`, `/odom`
   and `/rc/link` from `pit_node`.
 - **0.7.4** (2026-09-06): eth0 holds one IPv4 addressing mode, never both, via

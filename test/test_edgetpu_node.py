@@ -37,7 +37,7 @@ class TestImageMsgToRgb:
         assert arr[0, 0].tolist() == [255, 0, 0]
 
     def test_bgr8_is_swapped_to_rgb(self):
-        # Single pixel: stored as B=255, G=0, R=0 → should come back as RGB (0, 0, 255).
+        # Single pixel: stored as B=255, G=0, R=0 -> should come back as RGB (0, 0, 255).
         msg = _make_image(1, 1, 'bgr8', [255, 0, 0])
         arr = image_msg_to_rgb(msg)
         assert arr[0, 0].tolist() == [0, 0, 255]
@@ -81,9 +81,7 @@ class TestLoadLabels:
         assert load_labels(str(f)) == {0: 'cat', 1: 'dog', 2: 'bird'}
 
     def test_blank_lines_skipped_but_indices_consume_position(self, tmp_path):
-        # `enumerate` on the file object increments for every line including
-        # blanks, but blanks are dropped from the result. Reflects current
-        # behavior so the test fails loudly if we ever change it.
+        # Blank lines are dropped but still advance the class index.
         f = tmp_path / 'labels.txt'
         f.write_text('cat\n\ndog\n')
         labels = load_labels(str(f))
@@ -104,10 +102,10 @@ class TestMapOutputTensors:
     def test_efficientdet_lite_layout(self):
         # EfficientDet-Lite0 emits (1,25) scores, (1,25,4) boxes, (1,) count, (1,25) classes.
         details = [
-            self._od((1, 25)),       # scores
-            self._od((1, 25, 4)),    # boxes
-            self._od((1,)),          # count
-            self._od((1, 25)),       # classes
+            self._od((1, 25)),  # scores
+            self._od((1, 25, 4)),  # boxes
+            self._od((1,)),  # count
+            self._od((1, 25)),  # classes
         ]
         boxes, scores, classes, count = map_output_tensors(details)
         assert boxes == 1
@@ -152,12 +150,11 @@ class TestInferenceRateCap:
     def test_the_interval_is_measured_from_the_last_inference(self):
         """Not from the last frame, or a fast camera would starve the gate."""
         g = _Gate(10.0)
-        assert g._rate_limited(now=100.0) is False   # inferred
-        assert g._rate_limited(now=100.05) is True   # too soon
-        assert g._rate_limited(now=100.09) is True   # still too soon
-        # Just past the interval, not exactly on it: 100.10 - 100.0 is
-        # 0.0999999... in binary float, so an exact-boundary frame is the
-        # gate's to drop. That only costs a rate a hair under the cap.
+        assert g._rate_limited(now=100.0) is False  # inferred
+        assert g._rate_limited(now=100.05) is True  # too soon
+        assert g._rate_limited(now=100.09) is True  # still too soon
+        # 100.10 - 100.0 falls just short of 0.1 in binary float, so the
+        # first frame past the interval is 100.11.
         assert g._rate_limited(now=100.11) is False  # a full interval on
 
     def test_zero_disables_the_cap(self):
@@ -170,6 +167,8 @@ class TestInferenceRateCap:
         g = _Gate(15.0)
         assert [g._rate_limited(now=100.0 + t / 5.0) for t in range(5)] == [False] * 5
 
+
+class TestShippedConfig:
     def test_the_shipped_config_caps_at_15(self):
         cfg = (MODELS.parent / 'config' / 'edgetpu.yaml').read_text()
         assert re.search(r'^\s*inference_rate_hz:\s*15\.0\s*$', cfg, re.M)
@@ -179,8 +178,9 @@ class TestInferenceRateCap:
         cfg = (MODELS.parent / 'config' / 'edgetpu.yaml').read_text()
         rate = float(re.search(r'inference_rate_hz:\s*([\d.]+)', cfg).group(1))
         diag = (MODELS.parent / 'scripts' / 'diagnose.py').read_text()
-        nominal = float(re.search(
-            r"TopicSpec\('/edgetpu/inference',[^,]+,\s*([\d.]+)", diag).group(1))
+        nominal = float(
+            re.search(r"TopicSpec\('/edgetpu/inference',[^,]+,\s*([\d.]+)", diag).group(1)
+        )
         assert nominal == rate
 
     def test_the_shipped_score_threshold(self):
@@ -203,27 +203,28 @@ class TestRolesFromNames:
     def test_names_beat_position(self):
         # The COCO model's order: boxes, classes, scores, count. Position
         # would call index 1 the scores; the name says it is the classes.
-        details = [_named((1, 25, 4), 3), _named((1, 25), 2),
-                   _named((1, 25), 1), _named((1,), 0)]
+        details = [_named((1, 25, 4), 3), _named((1, 25), 2), _named((1, 25), 1), _named((1,), 0)]
         boxes, scores, classes, count = map_output_tensors(details)
         assert (boxes, scores, classes, count) == (0, 2, 1, 3)
 
     def test_shapes_must_agree_with_the_names(self):
         # A name claiming :3 on a tensor that is not (1, N, 4) is not
         # trustworthy, so the mapping falls back to shape.
-        details = [_named((1, 25), 3), _named((1, 25), 2),
-                   _named((1, 25, 4), 1), _named((1,), 0)]
+        details = [_named((1, 25), 3), _named((1, 25), 2), _named((1, 25, 4), 1), _named((1,), 0)]
         assert roles_from_names(details) is None
 
     def test_unnamed_outputs_fall_back_to_shape(self):
-        details = [{'shape': np.array((1, 25, 4))}, {'shape': np.array((1, 25))},
-                   {'shape': np.array((1, 25))}, {'shape': np.array((1,))}]
+        details = [
+            {'shape': np.array((1, 25, 4))},
+            {'shape': np.array((1, 25))},
+            {'shape': np.array((1, 25))},
+            {'shape': np.array((1,))},
+        ]
         assert roles_from_names(details) is None
         assert map_output_tensors(details) == (0, 1, 2, 3)
 
     def test_duplicate_suffixes_are_rejected(self):
-        details = [_named((1, 25, 4), 3), _named((1, 25), 1),
-                   _named((1, 25), 1), _named((1,), 0)]
+        details = [_named((1, 25, 4), 3), _named((1, 25), 1), _named((1, 25), 1), _named((1,), 0)]
         assert roles_from_names(details) is None
 
 
@@ -243,10 +244,13 @@ class TestShippedModels:
             pytest.skip(f'{name} not present')
         return tflite.Interpreter(model_path=str(path)).get_output_details()
 
-    @pytest.mark.parametrize('model', [
-        'efficientdet_lite0_320_coco_edgetpu.tflite',
-        'efficientdet_lite0_generic_edgetpu.tflite',
-    ])
+    @pytest.mark.parametrize(
+        'model',
+        [
+            'efficientdet_lite0_320_coco_edgetpu.tflite',
+            'efficientdet_lite0_generic_edgetpu.tflite',
+        ],
+    )
     def test_scores_and_classes_are_not_swapped(self, model):
         details = self._details(model)
         _, scores, classes, _ = map_output_tensors(details)

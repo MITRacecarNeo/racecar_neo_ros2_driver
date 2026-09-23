@@ -1,9 +1,10 @@
 imu_fusion_node:
   ros__parameters:
-    # RealSense IMU today; the Teensy LSM9DS1 (/imu/lsm9ds1) joins when the PIT
-    # driver lands. With both fresh, accel + gyro are averaged; with one, it is
-    # passed through as the source of truth.
+    # With both fresh, accel + gyro are averaged; a single fresh source passes
+    # through.
     sources: ["/imu/realsense", "/imu/lsm9ds1"]
+    # Source that realsense_cal.yaml's biases apply to.
+    realsense_topic: "/imu/realsense"
     output_topic: "/imu/fused"
     publish_rate_hz: 100.0
     source_timeout_sec: 0.25

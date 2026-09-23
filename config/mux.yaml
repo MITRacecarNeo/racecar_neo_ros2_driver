@@ -1,7 +1,7 @@
 mux_node:
   ros__parameters:
-    gamepad_enable_button: 4   # LB → manual
-    autonomy_enable_button: 5  # RB → /drive passthrough
+    gamepad_enable_button: 4   # LB -> manual
+    autonomy_enable_button: 5  # RB -> /drive passthrough
 
     # Publish zero if /joy goes stale (controller disconnect).
     joystick_timeout_sec: 0.5
@@ -9,19 +9,19 @@ mux_node:
     # Publish zero if the active source goes stale (upstream node crash).
     command_timeout_sec: 0.5
 
-    # Fixed rate keeps the Maestro fed and gives the watchdog a steady signal.
+    # Fixed rate gives pit_node and the watchdog a steady signal.
     publish_rate_hz: 50.0
 
     # Arming gate: at boot, wait this long AND require a centered Joy frame
     # before bumpers can leave IDLE. Defends against stuck-stick-at-power-on.
     startup_grace_sec: 1.0
     arm_axis_threshold: 0.2
-    # Xbox-mode triggers (LT/RT) rest at +1.0, not 0.0 — exclude from the
+    # Xbox-mode triggers (LT/RT) rest at +1.0, not 0.0; exclude from the
     # centered check or the mux never arms on EasySMX-in-Xbox-360-mode.
     arm_ignore_axes: [2, 5]
 
-    # ---- FlySky authority (off by default) ----
-    # With no transmitter the bumpers govern, exactly as they always have.
+    # FlySky authority (off by default)
+    # With no transmitter the bumpers govern.
     # Enabled and with a live transmitter, the mode channel takes the gate:
     # middle idle, up manual (the USB gamepad drives), down autonomous.
     # Turn this on per car in config/mux.local.yaml, after confirming on the
@@ -32,8 +32,7 @@ mux_node:
     rc_mode_deadband: 0.35    # |value| below this reads as the middle position
     rc_timeout_sec: 0.5       # stale /rc/link or /rc/channels drops authority
     # The link must look good continuously for this long before it takes the
-    # gate; one bad frame hands the gate straight back. Granting is slow and
-    # revoking immediate on purpose.
+    # gate; one bad frame hands the gate straight back.
     rc_link_hold_sec: 1.0
     rc_link_topic: "/rc/link"
     rc_channels_topic: "/rc/channels"

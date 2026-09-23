@@ -1,8 +1,8 @@
 """
-Sanity tests for scripts/setup_*.sh.
+Static and dry-run checks for the files under scripts/.
 
-Catches the most common breakages: missing files, missing exec bit, bash
-syntax errors, and the orchestrator forgetting to call a phase script.
+Covers the setup and runtime shell scripts, the Python entry points, and the
+systemd, udev, polkit and modprobe files they install.
 """
 
 import os
@@ -30,7 +30,7 @@ PHASE_SCRIPTS = [
 ]
 ORCHESTRATOR = 'setup_all.sh'
 
-# Scripts that ship with the package but are NOT called by setup_all.sh —
+# Scripts that ship with the package but are NOT called by setup_all.sh;
 # the user runs them manually (or via `racecar setup <phase>`) because their
 # side-effects are too disruptive to include in a one-shot install.
 STANDALONE_SCRIPTS = [
@@ -40,7 +40,15 @@ STANDALONE_SCRIPTS = [
     'setup_nvme.sh',  # erases the target disk; must be an explicit, typed choice
 ]
 
-ALL_SCRIPTS = PHASE_SCRIPTS + [ORCHESTRATOR] + STANDALONE_SCRIPTS
+RUNTIME_SCRIPTS = ['launch_teleop.sh']
+
+ALL_SCRIPTS = PHASE_SCRIPTS + [ORCHESTRATOR] + STANDALONE_SCRIPTS + RUNTIME_SCRIPTS
+
+PY_SCRIPTS = sorted(p.name for p in SCRIPTS_DIR.glob('*.py'))
+# Entry points run by path or by `ros2 run`; the rest are imported siblings.
+PY_ENTRY_POINTS = [
+    name for name in PY_SCRIPTS if "if __name__ == '__main__':" in (SCRIPTS_DIR / name).read_text()
+]
 
 
 @pytest.mark.parametrize('name', ALL_SCRIPTS)
@@ -62,7 +70,6 @@ def test_script_has_bash_hashbang(name):
 
 @pytest.mark.parametrize('name', ALL_SCRIPTS)
 def test_script_passes_bash_syntax(name):
-    """`bash -n` parses without executing — catches typos and unclosed quotes."""
     result = subprocess.run(
         ['bash', '-n', str(SCRIPTS_DIR / name)],
         capture_output=True,
@@ -72,15 +79,35 @@ def test_script_passes_bash_syntax(name):
     assert result.returncode == 0, f'{name} fails bash -n:\n{result.stderr}'
 
 
+@pytest.mark.parametrize('name', PY_SCRIPTS)
+def test_python_script_compiles(name):
+    result = subprocess.run(
+        ['python3', '-m', 'py_compile', str(SCRIPTS_DIR / name)],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize('name', PY_ENTRY_POINTS)
+def test_python_entry_point_is_executable(name):
+    path = SCRIPTS_DIR / name
+    assert path.read_text().startswith('#!/usr/bin/env python3\n'), f'{name} missing shebang'
+    assert os.access(path, os.X_OK), f'{name} missing +x bit'
+
+
+def test_python_entry_points_found():
+    assert {'dashboard.py', 'diagnose.py', 'watchdog.py'} <= set(PY_ENTRY_POINTS)
+
+
 def test_orchestrator_calls_every_phase_script():
-    """setup_all.sh must invoke every phase script we ship."""
     text = (SCRIPTS_DIR / ORCHESTRATOR).read_text()
     for phase in PHASE_SCRIPTS:
         assert phase in text, f'{ORCHESTRATOR} does not reference {phase}'
 
 
 def test_scripts_use_set_dash_e():
-    """Phase scripts should exit on first error so partial setup is loud."""
     for name in PHASE_SCRIPTS + [ORCHESTRATOR]:
         text = (SCRIPTS_DIR / name).read_text()
         assert 'set -e' in text, f'{name} should `set -e` for fail-fast'
@@ -104,36 +131,19 @@ def test_no_stray_colcon_dirs_in_package():
         )
 
 
+@pytest.mark.parametrize('name', STANDALONE_SCRIPTS)
+def test_standalone_scripts_stay_out_of_the_orchestrator(name):
+    text = (SCRIPTS_DIR / ORCHESTRATOR).read_text()
+    assert name not in text, f'{name} is disruptive and must stay out of {ORCHESTRATOR}'
+
+
 class TestNetworkingScript:
-    """setup_networking.sh: eth0 addressing + wlan0 isolated AP (standalone)."""
+    """setup_networking.sh: eth0 addressing + wlan1 isolated AP (standalone)."""
 
     SCRIPT = SCRIPTS_DIR / 'setup_networking.sh'
 
-    def test_exists_and_executable(self):
-        assert self.SCRIPT.is_file()
-        assert os.access(self.SCRIPT, os.X_OK)
-
-    def test_bash_syntax_clean(self):
-        result = subprocess.run(
-            ['bash', '-n', str(self.SCRIPT)],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        assert result.returncode == 0, result.stderr
-
-    def test_not_in_orchestrator(self):
-        # setup_networking.sh must NOT be in setup_all.sh — it reconfigures
-        # wlan0 and would drop SSH-over-WiFi sessions during a fresh install.
-        text = (SCRIPTS_DIR / 'setup_all.sh').read_text()
-        assert 'setup_networking.sh' not in text, (
-            'setup_networking.sh should be standalone; running it from '
-            'setup_all.sh can drop SSH-over-WiFi sessions during install.'
-        )
-
     def test_parameterized_via_env_vars(self):
-        # Each tunable should be readable from an environment variable so
-        # the racecar-tool can pass overrides without editing the script.
+        # racecar-tool passes overrides through the environment.
         text = self.SCRIPT.read_text()
         for var in (
             'RACECAR_AP_SSID',
@@ -146,9 +156,7 @@ class TestNetworkingScript:
             assert var in text, f'{var} not referenced in setup_networking.sh'
 
     def test_ap_on_alfa_dongle_not_wlan0(self):
-        # v0.7.0 moved the AP onto the ALFA dongle (default wlan1) and returns
-        # wlan0 to default client mode. The AP interface must be parameterized,
-        # and the script must reset wlan0 (set it managed).
+        # The AP runs on the ALFA dongle (wlan1); wlan0 is reset to a managed client.
         text = self.SCRIPT.read_text()
         assert 'AP_IFACE' in text, 'AP interface should be parameterized'
         assert 'wlan1' in text, 'default AP interface (wlan1) not referenced'
@@ -170,10 +178,7 @@ class TestNetworkingScript:
         assert 'racecar-neo' in text, 'SSID base not referenced'
 
     def test_eth0_delegated_to_setup_eth(self):
-        # v0.7.4: this script no longer renders its own eth0 netplan block.
-        # It used to emit a dual-IP stanza (static AND dhcp4 together), which
-        # is what made the static drop. setup_eth.sh is the only writer now,
-        # so the two paths cannot disagree about the file.
+        # setup_eth.sh is the only writer of the eth0 netplan file.
         text = self.SCRIPT.read_text()
         assert 'setup_eth.sh' in text, 'eth0 config must delegate to setup_eth.sh'
         assert (
@@ -181,25 +186,31 @@ class TestNetworkingScript:
         ), 'setup_networking.sh must not render netplan YAML itself'
         assert 'RACECAR_ETH_MODE' in text, 'eth0 mode must be parameterized'
 
+    def test_eth_guard_is_not_bypassed(self):
+        # setup_eth.sh asks before cutting off an eth0 SSH session; --force
+        # would skip that.
+        call = [ln for ln in self.SCRIPT.read_text().splitlines() if 'bash "$SETUP_ETH"' in ln]
+        assert call, 'setup_eth.sh is not invoked'
+        assert all('--force' not in ln and '-y' not in ln.split() for ln in call)
+
+    def test_advice_is_console_or_wlan0(self):
+        text = self.SCRIPT.read_text()
+        assert 'console or over wlan0' in text
+        assert 'wired (eth0)' not in text
+
     def test_loads_persisted_config(self):
-        # The script must source the ~/.config/racecar/networking.env file
-        # so the user's persisted overrides apply on every run.
         text = self.SCRIPT.read_text()
         assert 'networking.env' in text
 
     def test_ap_isolation_dispatcher_configured(self):
-        # The whole point of "isolated AP" is the iptables FORWARD reject
-        # rules. Make sure the dispatcher script body is wired up.
+        # Isolation is the iptables FORWARD reject in the dispatcher script.
         text = self.SCRIPT.read_text()
         assert 'iptables' in text
         assert 'FORWARD' in text
         assert '99-racecar-ap-isolate' in text
 
     def test_enables_networkmanager_dispatcher_service(self):
-        # On Ubuntu Server the dispatcher service is enabled by default, but
-        # on Desktop / Raspberry Pi OS it's typically inactive. Without it
-        # the dispatcher script never gets invoked and the isolation rules
-        # silently never apply — exactly the bug v0.0.6 hit on first install.
+        # See docs/troubleshooting.md, "AP isolation dispatcher".
         text = self.SCRIPT.read_text()
         assert 'NetworkManager-dispatcher.service' in text
         assert 'systemctl enable' in text
@@ -210,24 +221,18 @@ class TestLaunchWrapper:
 
     WRAPPER = SCRIPTS_DIR / 'launch_teleop.sh'
 
-    def test_exists_and_executable(self):
-        assert self.WRAPPER.is_file()
-        assert os.access(self.WRAPPER, os.X_OK)
-
-    def test_bash_syntax_clean(self):
-        result = subprocess.run(
-            ['bash', '-n', str(self.WRAPPER)],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        assert result.returncode == 0, result.stderr
-
     def test_creates_log_dir_and_symlink(self):
+        # Timestamped session dir; 'latest' is swapped in with a rename.
         text = self.WRAPPER.read_text()
-        # Two-part contract: timestamped subdir + atomic 'latest' symlink.
         assert 'mkdir -p "$LOG_DIR"' in text
-        assert 'ln -sfn "$LOG_DIR" "$HOME/logs/latest"' in text
+        assert 'ln -sfn "$LOG_DIR" "$HOME/logs/latest.tmp"' in text
+        assert 'mv -Tf "$HOME/logs/latest.tmp" "$HOME/logs/latest"' in text
+
+    def test_log_mirror_starts_before_any_output(self):
+        # Every echo, the SHM sweep included, must reach teleop.log.
+        text = self.WRAPPER.read_text()
+        tee = text.index('exec &> >(tee -a "$LOG_DIR/teleop.log")')
+        assert tee < text.index('echo ')
 
     def test_sweeps_fastrtps_shm_orphans(self):
         text = self.WRAPPER.read_text()
@@ -240,8 +245,6 @@ class TestLaunchWrapper:
 
 
 class TestSystemdServices:
-    """The four racecar-*.service files ship with the package."""
-
     SERVICES = (
         'racecar-teleop.service',
         'racecar-watchdog.service',
@@ -271,14 +274,13 @@ class TestSystemdServices:
         assert 'Group=racecar' in text
 
     def test_watchdog_bindsto_teleop(self):
-        # BindsTo means watchdog stops when teleop stops — exactly what we want.
+        # BindsTo means watchdog stops when teleop stops.
         text = (SCRIPTS_DIR / 'racecar-watchdog.service').read_text()
         assert 'BindsTo=racecar-teleop.service' in text
         assert 'After=racecar-teleop.service' in text
 
     def test_teleop_wants_watchdog(self):
-        # Wants= pulls watchdog along whenever teleop starts (manual or boot).
-        # Without this, `systemctl start racecar-teleop` only starts teleop.
+        # Starting teleop, by hand or at boot, pulls the watchdog along.
         text = (SCRIPTS_DIR / 'racecar-teleop.service').read_text()
         assert 'Wants=racecar-watchdog.service' in text
 
@@ -336,8 +338,6 @@ class TestNetworkPolkitRule:
 
 
 class TestUdevRules:
-    """The 99-racecar.rules file ships with the package and binds each peripheral."""
-
     RULES_FILE = SCRIPTS_DIR / 'udev' / '99-racecar.rules'
 
     def test_rules_file_exists(self):
@@ -363,16 +363,13 @@ class TestUdevRules:
         ],
     )
     def test_rules_match_known_usb_ids(self, vid_pid):
-        # Maestro uses ENV-style matching (see test below) — exempted.
         vid, pid = vid_pid
         text = self.RULES_FILE.read_text()
         assert f'ATTRS{{idVendor}}=="{vid}"' in text, f'VID {vid} not matched'
         assert f'ATTRS{{idProduct}}=="{pid}"' in text, f'PID {pid} not matched'
 
     def test_alfa_ap_dongle_renamed_to_wlan1(self):
-        # v0.7.0: the ALFA MT7612U (0e8d:7612) hosts the WiFi AP and must be
-        # renamed to a stable wlan1 so setup_networking.sh binds a fixed name
-        # instead of the per-unit MAC-derived wlx<mac>.
+        # A stable name for setup_networking.sh instead of the MAC-derived wlx<mac>.
         text = self.RULES_FILE.read_text()
         alfa = [
             ln
@@ -385,17 +382,13 @@ class TestUdevRules:
         ), 'ALFA rule must rename the dongle to wlan1'
 
     def test_realsense_autosuspend_rule_present(self):
-        # RealSense D435i (USB 8086:0b3a). The autosuspend rule matches the usb
-        # device node directly, so it uses ATTR (singular), not ATTRS.
+        # The autosuspend rule matches the usb device itself: ATTR, not ATTRS.
         text = self.RULES_FILE.read_text()
         assert 'ATTR{idVendor}=="8086"' in text, 'RealSense VID not matched'
         assert 'ATTR{idProduct}=="0b3a"' in text, 'RealSense PID not matched'
 
     def test_lidar_rule_ignores_modemmanager(self):
-        # ModemManager will probe any tty unless told otherwise. For the lidar's
-        # CP2102, that probe desynced the sllidar SDK's binary frame reader
-        # mid-stream during the 2026-05-12 endurance test and /scan went silent
-        # without the process dying. ID_MM_DEVICE_IGNORE=1 prevents recurrence.
+        # A ModemManager probe desyncs the sllidar frame reader and /scan goes silent.
         text = self.RULES_FILE.read_text()
         lidar_lines = [ln for ln in text.splitlines() if 'SYMLINK+="lidar"' in ln]
         assert lidar_lines, 'lidar rule missing'
@@ -404,16 +397,14 @@ class TestUdevRules:
         ), 'lidar rule must set ID_MM_DEVICE_IGNORE=1 to block ModemManager probes'
 
     def test_neo_pit_rule_matches_gpio_uart(self):
-        # The NEO-PIT PCB is on the Pi's GPIO UART, which enumerates as ttyAMA0
-        # on Pi 5 / Ubuntu (there is no /dev/serial0). Pin the symlink to that
-        # kernel name so ttyAMA10 (the SoC debug UART) is never matched.
+        # GPIO UART is ttyAMA0 on Pi 5 / Ubuntu; ttyAMA10 is the SoC debug UART.
         text = self.RULES_FILE.read_text()
         assert 'KERNEL=="ttyAMA0"' in text, 'neo-pit-pcb rule must match ttyAMA0'
         assert 'SYMLINK+="neo-pit-pcb"' in text, 'neo-pit-pcb symlink rule missing'
 
 
 class TestHidNintendoBlacklist:
-    """The kernel blacklist that unbreaks the EasySMX KC-8236 on Pi 5."""
+    """Kernel blacklist; see docs/troubleshooting.md, "Gamepad hid_nintendo blacklist"."""
 
     CONF = SCRIPTS_DIR / 'modprobe.d' / 'blacklist-hid-nintendo.conf'
 
@@ -421,24 +412,18 @@ class TestHidNintendoBlacklist:
         assert self.CONF.is_file()
 
     def test_blacklists_hid_nintendo(self):
-        # Must blacklist with the underscore-form module name (`hid_nintendo`,
-        # not `hid-nintendo`); modprobe accepts either, but the underscore
-        # form matches what `lsmod` reports and what the kernel uses internally.
+        # The underscore form matches lsmod.
         text = self.CONF.read_text()
         assert 'blacklist hid_nintendo' in text
 
     def test_setup_udev_installs_blacklist(self):
-        # The setup script must copy the .conf to /etc/modprobe.d/ AND
-        # regenerate the initramfs (since hid_nintendo can be loaded from
-        # initramfs before /etc/modprobe.d/ is read).
+        # hid_nintendo can load from the initramfs before /etc/modprobe.d is
+        # read, so the initramfs is rebuilt too; the running module is unloaded
+        # so the change applies this boot.
         text = (SCRIPTS_DIR / 'setup_udev.sh').read_text()
         assert 'blacklist-hid-nintendo.conf' in text
         assert '/etc/modprobe.d/' in text
-        # initramfs regen MUST be conditional on a content change — a fresh
-        # update-initramfs takes ~30s and we'd run it on every setup_all.sh.
         assert 'update-initramfs' in text
-        # And we should unload the running module so the change applies in
-        # this boot (otherwise it only takes effect on the next reboot).
         assert 'modprobe -r hid_nintendo' in text
 
 
@@ -470,19 +455,6 @@ class TestEthScript:
         assert result.returncode == 0, result.stderr
         return (tmp_path / '99-racecar-eth0.yaml').read_text()
 
-    def test_exists_and_executable(self):
-        assert self.SCRIPT.is_file()
-        assert os.access(self.SCRIPT, os.X_OK)
-
-    def test_bash_syntax_clean(self):
-        result = subprocess.run(
-            ['bash', '-n', str(self.SCRIPT)],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        assert result.returncode == 0, result.stderr
-
     def test_static_render(self, tmp_path):
         yaml = self._render(tmp_path, 'static')
         assert 'dhcp4: false' in yaml
@@ -495,9 +467,7 @@ class TestEthScript:
         assert 'route-metric: 100' in yaml
 
     def test_modes_are_mutually_exclusive(self, tmp_path):
-        # The point of v0.7.4: eth0 never carries a static address and a DHCP
-        # lease at the same time. Static must not enable dhcp4, and dynamic
-        # must not declare a fixed address.
+        # eth0 never carries a static address and a DHCP lease together.
         static = self._render(tmp_path, 'static')
         assert 'dhcp4: true' not in static, 'static mode must not enable DHCP'
 
@@ -628,7 +598,6 @@ class TestDashboardScript:
         assert 'DASHBOARD_VERSION="${RACECAR_DASHBOARD_VERSION:-' in text
 
     def test_the_pin_matches_the_driver_version(self, text):
-        """The whole point of the pin is that it names this release."""
         pinned = re.search(r'DASHBOARD_VERSION="\$\{RACECAR_DASHBOARD_VERSION:-([^}]+)\}"', text)
         assert pinned, 'no pinned dashboard version'
         setup_py = (SCRIPTS_DIR.parent / 'setup.py').read_text()
@@ -645,11 +614,11 @@ class TestDashboardScript:
     def test_a_failed_install_is_not_reported_as_success(self, text):
         # install_unit runs under `|| true`, which suppresses errexit for its
         # whole body, so the install has to be tested explicitly.
-        assert 'elif sudo install -m 0644' in text
+        assert 'elif $SUDO install -m 0644' in text
         assert 'install failed' in text
 
     def test_a_failed_daemon_reload_still_reaches_the_summary(self, text):
-        assert 'if sudo systemctl daemon-reload; then' in text
+        assert 'if $SYSTEMCTL daemon-reload; then' in text
 
     def _check_version(self, tmp_path, contents, pinned='0.8.1'):
         """Run the shipped check_version() against a throwaway checkout."""
@@ -680,8 +649,7 @@ class TestDashboardScript:
         assert '0.8.0' in r.stdout.split('MISMATCHED:')[1]
 
     def test_a_checkout_with_no_version_is_caught(self, tmp_path):
-        # The pre-0.8.1 checkout is exactly what the check exists to find, so
-        # a missing file must not read as a pass.
+        # A checkout with no VERSION file must not pass.
         r = self._check_version(tmp_path, None)
         assert 'no VERSION' in r.stderr
         assert 'no VERSION' in r.stdout.split('MISMATCHED:')[1]
@@ -710,3 +678,178 @@ class TestDashboardScript:
         cfg = (SCRIPTS_DIR.parent / 'setup.cfg').read_text()
         assert 'norecursedirs' in cfg
         assert 'scripts/dashboards' in cfg
+
+    def _retired(self, tmp_path, installed):
+        """Run the shipped remove_retired_unit() against a throwaway unit dir."""
+        text = self.SCRIPT.read_text()
+        body = text.split('remove_retired_unit() {', 1)[1].split('\n}\n', 1)[0]
+        retired = text.split('RETIRED_UNITS=(', 1)[1].split(')', 1)[0].split()
+        units = tmp_path / 'units'
+        units.mkdir()
+        for name in installed:
+            (units / f'{name}.service').write_text('[Unit]\n')
+        log = tmp_path / 'systemctl.log'
+        stub = tmp_path / 'systemctl'
+        stub.write_text(f'#!/bin/bash\necho "$*" >> "{log}"\n')
+        stub.chmod(0o755)
+        script = (
+            f'SYSTEMD_DIR={units}\n'
+            'SUDO=\n'
+            f'SYSTEMCTL={stub}\n'
+            'changed=0\n'
+            'failed=()\n'
+            'remove_retired_unit() {' + body + '\n}\n'
+            f'for unit in {" ".join(retired)}; do remove_retired_unit "$unit"; done\n'
+            'printf "CHANGED:%s\\n" "$changed"\n'
+        )
+        result = subprocess.run(['bash', '-c', script], capture_output=True, text=True)
+        calls = log.read_text().splitlines() if log.exists() else []
+        return result, units, calls, retired
+
+    def test_retired_dashboards_are_listed(self, text):
+        retired = text.split('RETIRED_UNITS=(', 1)[1].split(')', 1)[0].split()
+        assert sorted(retired) == [
+            'racecar-camlabel',
+            'racecar-eps',
+            'racecar-pursuit',
+            'racecar-smartfollow',
+        ]
+
+    def test_retired_units_are_stopped_disabled_and_removed(self, tmp_path):
+        result, units, calls, _ = self._retired(
+            tmp_path, ['racecar-camlabel', 'racecar-eps', 'racecar-webteleop']
+        )
+        assert result.returncode == 0, result.stderr
+        assert not (units / 'racecar-camlabel.service').exists()
+        assert not (units / 'racecar-eps.service').exists()
+        assert (units / 'racecar-webteleop.service').exists(), 'a live dashboard was removed'
+        for unit in ('racecar-camlabel.service', 'racecar-eps.service'):
+            assert f'stop {unit}' in calls
+            assert f'disable {unit}' in calls
+        assert 'CHANGED:1' in result.stdout
+
+    def test_nothing_retired_means_no_change(self, tmp_path):
+        result, _, calls, _ = self._retired(tmp_path, ['racecar-webteleop'])
+        assert result.returncode == 0, result.stderr
+        assert calls == []
+        assert 'CHANGED:0' in result.stdout
+
+    def test_removal_is_followed_by_daemon_reload(self, text):
+        removal = text.index('remove_retired_unit "$unit"')
+        reload_block = text.index('if [[ $changed -eq 1 ]]; then')
+        assert removal < reload_block
+
+
+class TestRaspiConfig:
+    """setup_raspi_config.sh: config.txt edits for the UART and the RTC cell."""
+
+    SCRIPT = SCRIPTS_DIR / 'setup_raspi_config.sh'
+
+    FIXTURE = """# Ubuntu Pi config.txt
+[pi4]
+max_framebuffers=2
+enable_uart=1
+
+[all]
+kernel=vmlinuz
+enable_uart=0
+dtparam=i2c_arm=on
+enable_uart=1
+dtparam=rtc_bbat_vchg=3000000
+
+[cm4]
+otg_mode=1
+"""
+
+    def _call(self, tmp_path, func, config, **env):
+        """Run one shipped function from the script against a temp config.txt."""
+        text = self.SCRIPT.read_text()
+        body = text.split(f'{func}() {{', 1)[1].split('\n}\n', 1)[0]
+        cfg = tmp_path / 'config.txt'
+        if not cfg.exists():
+            cfg.write_text(config)
+        assigns = ''.join(f'{k}={v}\n' for k, v in env.items())
+        script = f'CONFIG_TXT={cfg}\nSUDO=\n{assigns}{func}() {{{body}\n}}\n{func}\n'
+        result = subprocess.run(['bash', '-c', script], capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        return cfg.read_text()
+
+    @staticmethod
+    def _all_scope(text):
+        """Lines in the [all] scope: before any header, or under [all]."""
+        in_all = True
+        lines = []
+        for line in text.splitlines():
+            if line.startswith('['):
+                in_all = line.startswith('[all]')
+                continue
+            if in_all:
+                lines.append(line.strip())
+        return lines
+
+    def test_exactly_one_enable_uart_in_all(self, tmp_path):
+        out = self._call(tmp_path, 'ensure_enable_uart', self.FIXTURE)
+        uart = [ln for ln in self._all_scope(out) if ln.startswith('enable_uart=')]
+        assert uart == ['enable_uart=1']
+
+    def test_other_sections_are_untouched(self, tmp_path):
+        out = self._call(tmp_path, 'ensure_enable_uart', self.FIXTURE)
+        pi4 = out.split('[pi4]')[1].split('[all]')[0]
+        assert 'enable_uart=1' in pi4
+        assert 'otg_mode=1' in out
+        assert 'dtparam=i2c_arm=on' in out
+
+    def test_enable_uart_is_idempotent(self, tmp_path):
+        first = self._call(tmp_path, 'ensure_enable_uart', self.FIXTURE)
+        second = self._call(tmp_path, 'ensure_enable_uart', first)
+        assert first == second
+
+    def test_enable_uart_added_when_missing(self, tmp_path):
+        out = self._call(tmp_path, 'ensure_enable_uart', '[all]\nkernel=vmlinuz\n')
+        assert self._all_scope(out) == ['kernel=vmlinuz', 'enable_uart=1']
+
+    def test_header_names_the_neo_pit_link(self):
+        head = self.SCRIPT.read_text().split('set -eo pipefail')[0]
+        assert 'NEO-PIT' in head
+        assert 'future modules' not in head
+
+    def test_rtc_zero_turns_charging_off(self, tmp_path):
+        out = self._call(tmp_path, 'apply_rtc_charge', self.FIXTURE, RTC_VCHG_UV='0')
+        assert 'rtc_bbat_vchg' not in out
+
+    def test_rtc_zero_without_a_line_is_a_no_op(self, tmp_path):
+        cfg = '[all]\nkernel=vmlinuz\n'
+        assert self._call(tmp_path, 'apply_rtc_charge', cfg, RTC_VCHG_UV='0') == cfg
+
+    def test_rtc_value_is_updated_in_place(self, tmp_path):
+        out = self._call(tmp_path, 'apply_rtc_charge', self.FIXTURE, RTC_VCHG_UV='2900000')
+        assert out.count('dtparam=rtc_bbat_vchg=') == 1
+        assert 'dtparam=rtc_bbat_vchg=2900000' in out
+
+    def test_rtc_value_is_added_when_missing(self, tmp_path):
+        out = self._call(
+            tmp_path, 'apply_rtc_charge', '[all]\nkernel=vmlinuz\n', RTC_VCHG_UV='3000000'
+        )
+        assert out.endswith('dtparam=rtc_bbat_vchg=3000000\n')
+
+
+class TestLinterInstall:
+    """setup_dev_tools.sh pins the linters behind `racecar lint`."""
+
+    def test_linters_are_pinned(self):
+        text = (SCRIPTS_DIR / 'setup_dev_tools.sh').read_text()
+        for pin in ('ruff==0.16.8', 'black==26.5.1', 'mypy==2.3.1'):
+            assert pin in text
+        assert 'pip3 install --user --break-system-packages' in text
+
+    def test_user_bin_is_on_path(self):
+        # pip --user puts ruff/black/mypy in ~/.local/bin; ~/.profile adds it
+        # only for login shells.
+        text = (SCRIPTS_DIR / 'setup_user_env.sh').read_text()
+        assert 'export PATH="$HOME/.local/bin:$PATH"' in text
+
+    def test_path_block_is_a_single_line(self):
+        # replace_block deletes from the marker to the next blank line.
+        text = (SCRIPTS_DIR / 'setup_user_env.sh').read_text()
+        block = text.split('replace_block "$PATH_MARKER" <<\'EOF\'\n', 1)[1].split('\nEOF\n')[0]
+        assert block.strip() and '\n\n' not in block

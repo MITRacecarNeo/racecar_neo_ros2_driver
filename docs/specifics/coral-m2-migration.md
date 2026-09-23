@@ -2,9 +2,7 @@
 
 The kit moved from the Coral USB accelerator to the M.2 (PCIe) Coral, the Apex
 device `1ac1:089a`. On a Raspberry Pi 5 this needs a kernel driver, a
-device-tree change, and a group for non-root access. uav-neo was the first
-successful build and deployment; racecar-neo runs the same Pi 5 / BCM2712, so
-the same recipe is ported here (see Provenance below).
+device-tree change, and a group for non-root access.
 
 ## Problem
 
@@ -31,8 +29,7 @@ inference never runs.
    MSI-X.
 3. `coral-msi` overlay (`scripts/coral-msi.dts`): repoints `pcie@110000`
    `msi-parent` from `mip1` to `pcie1`'s own MSI controller, which has enough
-   vectors. This is the key fix; equivalent to `dtoverlay=pineboards-hat-ai`, but
-   board-agnostic.
+   vectors. Equivalent to `dtoverlay=pineboards-hat-ai`, but board-agnostic.
 4. Access group: udev rule `SUBSYSTEM=="apex", GROUP="apex"` (shipped by the
    `.deb`) plus the current user in the `apex` group.
 
@@ -69,15 +66,9 @@ python3 -c "from pycoral.utils.edgetpu import list_edge_tpus; print(list_edge_tp
 `edgetpu_node` logs `EdgeTPU found: pci at /dev/apex_0` and publishes to
 `/edgetpu/inference`. Reference benchmark: mobilenet_v2_224 at ~3 ms/inference.
 
-## Provenance and port
+## Provenance
 
-Ported from `uav_neo_ros2_driver` PR #8 (uav-neo, done and deployed). racecar-neo
-is the same Pi 5 / BCM2712, so the recipe transfers directly. The port copies
-into this repo:
-
-- `depend/gasket-dkms_*.deb`
-- `scripts/coral-msi.dts` and `scripts/gasket-msi-fallback.patch`
-- the M.2 branch of `setup_coral.sh`
+Ported from `uav_neo_ros2_driver` PR #8, which runs the same Pi 5 / BCM2712.
 
 The overlay targets `&pcie1` and the DTB fixup resolves it per-board, so no
 phandle editing is needed. After reboot, confirm `msi-parent` reads `pcie1`'s

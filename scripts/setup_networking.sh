@@ -1,5 +1,5 @@
 #!/bin/bash
-# setup_networking.sh — configure eth0 addressing and an isolated AP on the ALFA
+# setup_networking.sh: configure eth0 addressing and an isolated AP on the ALFA
 # dongle for racecar.
 #
 # This script:
@@ -13,11 +13,11 @@
 #      (static by default, at 192.168.52.200/24), which is the only writer of
 #      the netplan file. See docs/troubleshooting.md, "eth0 addressing".
 #   4. Resets the Pi's built-in wlan0 to default (client) mode, removing any AP
-#      connection a pre-v0.7.0 setup left bound to it.
+#      connection bound to it (images older than v0.7.0 put the AP there).
 #
-# WARNING: this script reconfigures the AP interface. If you're SSH'd in over
-# the AP, the connection will drop when the AP cycles. Run from a wired (eth0)
-# session or directly on the console.
+# WARNING: this script cycles the AP and can switch eth0 addressing, so an SSH
+# session over the AP or eth0 can drop. Run it from the console or over wlan0
+# (client WiFi). setup_eth.sh asks before cutting off an eth0 session.
 #
 # Reset mode: RACECAR_AP_RESET=1 disables the AP only (downs and deletes the
 # AP connection on the AP interface), leaves eth0 untouched, and exits. Each car
@@ -25,20 +25,21 @@
 # setup networking --reset` uses this before imaging.
 #
 # Parameters (override via environment variables before running):
-#   RACECAR_AP_IFACE      (default: wlan1 — the ALFA dongle)
-#   RACECAR_AP_ID         (default: 1 — the number appended to the SSID base)
-#   RACECAR_AP_SSID       (default: racecar-neo-<id> — full SSID override)
+#   RACECAR_AP_IFACE      (default: wlan1, the ALFA dongle)
+#   RACECAR_AP_ID         (default: 1; the number appended to the SSID base)
+#   RACECAR_AP_SSID_BASE  (default: racecar-neo)
+#   RACECAR_AP_SSID       (default: racecar-neo-<id>; full SSID override)
 #   RACECAR_AP_PSK        (default: racecar@mit)
 #   RACECAR_AP_CHANNEL    (default: 6)
 #   RACECAR_AP_ADDR       (default: 10.42.0.1/24)
 #   RACECAR_ETH_STATIC    (default: 192.168.52.200/24)
 #   RACECAR_ETH_MODE      (default: static; or dynamic)
 #
-# All steps are idempotent — re-running is safe.
+# All steps are idempotent.
 
 set -eo pipefail
 
-# Persisted overrides — `racecar setup networking --ssid=...` writes here.
+# Persisted overrides; `racecar setup networking --ssid=...` writes here.
 # Precedence: env vars in the current shell > persisted file > defaults.
 USER_HOME="$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)"
 PERSIST_FILE="${USER_HOME}/.config/racecar/networking.env"
@@ -49,7 +50,7 @@ if [ -f "$PERSIST_FILE" ]; then
         [ -z "$key" ] && continue
         [[ "$key" =~ ^[A-Z_][A-Z0-9_]*$ ]] || continue
         if [ -z "${!key:-}" ]; then
-            # Strip leading/trailing quotes from val (sh writes "value").
+            # racecar setup networking writes KEY="value"; strip the quotes.
             val="${val%\"}"
             val="${val#\"}"
             export "$key=$val"
@@ -126,7 +127,7 @@ echo "[1/4] Installing AP isolation dispatcher at $DISPATCHER_PATH..."
 TMP_DISPATCHER=$(mktemp)
 cat >"$TMP_DISPATCHER" <<SCRIPT
 #!/bin/sh
-# RACECAR Neo hotspot isolation — NM's ipv4.method=shared enables IP forwarding
+# RACECAR Neo hotspot isolation. NM's ipv4.method=shared enables IP forwarding
 # and sets up NAT, which would let AP clients route out through eth0. Block
 # FORWARD in/out of the AP interface so clients can reach the Pi's own services
 # (dashboard, jupyter, SSH) but cannot use the Pi as an internet gateway.
@@ -170,17 +171,11 @@ if ! systemctl is-enabled --quiet NetworkManager-dispatcher.service; then
 fi
 
 # --- 2. Create or update the AP connection -----------------------------------
-# Order matters: the AP must be up BEFORE we reset wlan0 below. If any step from
-# here through netplan-apply fails under `set -e`, the prior config is still
-# intact for recovery.
 echo "[2/4] Configuring AP connection '$AP_CON_NAME' on $AP_IFACE (SSID: $AP_SSID)..."
 if nmcli -t -f NAME con show | grep -qx "$AP_CON_NAME"; then
-    # Diff each user-tunable setting against what nmcli reports; only call
-    # `nmcli connection modify` when at least one field differs. (modify
-    # always returns 0 even on no-op, so we can't rely on its exit code
-    # to detect change.) PSK is hidden by default — use `--show-secrets`.
-    # connection.interface-name is included so a pre-v0.7.0 AP pinned to wlan0
-    # migrates onto the ALFA interface.
+    # Modify only when a field differs; `nmcli connection modify` returns 0 on
+    # a no-op. --show-secrets exposes the PSK for comparison, and
+    # connection.interface-name moves an AP still pinned to wlan0.
     nmcli_get() { sudo nmcli --show-secrets -g "$1" con show "$AP_CON_NAME" 2>/dev/null; }
     diff_ap=false
     for spec in \
@@ -202,7 +197,7 @@ if nmcli -t -f NAME con show | grep -qx "$AP_CON_NAME"; then
         fi
     done
     if [ "$diff_ap" = "true" ]; then
-        echo "  Settings differ — applying."
+        echo "  Settings differ; applying."
         sudo nmcli connection modify "$AP_CON_NAME" \
             connection.interface-name "$AP_IFACE" \
             802-11-wireless.ssid "$AP_SSID" \
@@ -246,10 +241,7 @@ if [ "$CHANGES_MADE" = "true" ] || [ "$ap_state" != "activated" ]; then
 fi
 
 # --- 3. eth0 addressing mode -------------------------------------------------
-# Delegated to setup_eth.sh, which is the only writer of the eth0 netplan file.
-# This step used to render its own dual-IP block here (static AND DHCP at the
-# same time), which is what made the static address drop periodically. Keeping
-# one writer means this script and `racecar eth` cannot disagree.
+# Delegated to setup_eth.sh, the only writer of the eth0 netplan file.
 ETH_MODE="${RACECAR_ETH_MODE:-static}"
 echo "[3/4] Configuring eth0 ($ETH_MODE)..."
 SETUP_ETH="$(dirname "$0")/setup_eth.sh"
@@ -259,12 +251,14 @@ if [ ! -x "$SETUP_ETH" ]; then
 fi
 # setup_eth.sh applies and verifies on its own, so its work is not folded into
 # CHANGES_MADE; the netplan apply below is for the AP/dispatcher changes only.
-RACECAR_ETH_STATIC="$ETH_STATIC_ADDR" bash "$SETUP_ETH" "$ETH_MODE" --force
+# No --force: its eth0-SSH guard stays in effect. A declined or failed switch
+# leaves eth0 as it was and the remaining steps still run.
+if ! RACECAR_ETH_STATIC="$ETH_STATIC_ADDR" bash "$SETUP_ETH" "$ETH_MODE"; then
+    echo "WARNING: eth0 not switched to $ETH_MODE. Re-run 'racecar eth $ETH_MODE'" >&2
+    echo "         from the console or over wlan0 (client WiFi)." >&2
+fi
 
-
-# Only `netplan apply` when something actually changed — it triggers a
-# NetworkManager reconfigure that briefly bounces eth0 (and on some systems
-# logs noisy systemd-networkd warnings even when we render via NM).
+# `netplan apply` briefly bounces eth0, so run it only when something changed.
 if [ "$CHANGES_MADE" = "true" ]; then
     echo
     echo "Applying netplan..."
@@ -279,9 +273,9 @@ if [ "$CHANGES_MADE" = "true" ]; then
 fi
 
 # --- 4. Reset the Pi's built-in wlan0 to default (client) mode ---------------
-# Done LAST: by this point the AP is up on the ALFA interface, so removing an
-# AP connection left on wlan0 by a pre-v0.7.0 setup can't strand the box. If
-# anything above failed under `set -e`, we never get here.
+# Done last: the AP is already up on the ALFA interface, so removing an AP
+# connection left on wlan0 cannot strand the car. If anything above failed
+# under `set -e`, this step never runs.
 echo "[4/4] Resetting the Pi's built-in wlan0 to default (client) mode..."
 mapfile -t wlan0_aps < <(
     nmcli -t -f NAME,TYPE con show |
@@ -299,7 +293,6 @@ for con in "${wlan0_aps[@]}"; do
         reset_any=true
     fi
 done
-# Ensure wlan0 is NetworkManager-managed (available as a normal client).
 sudo nmcli device set wlan0 managed yes >/dev/null 2>&1 || true
 if [ "$reset_any" = "false" ]; then
     echo "  No AP connection bound to wlan0; left as a managed client interface."
@@ -321,5 +314,5 @@ echo "  Password: $AP_PSK"
 echo "  Pi reachable at $AP_ADDR (or http://racecar-neo.local)"
 if [ "$CHANGES_MADE" = "false" ]; then
     echo
-    echo "(No configuration changes were necessary — system already matched.)"
+    echo "(No configuration changes were necessary; system already matched.)"
 fi

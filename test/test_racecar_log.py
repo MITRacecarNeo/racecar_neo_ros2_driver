@@ -1,24 +1,13 @@
 """Unit tests for scripts/racecar_log.py (the `racecar log` implementation)."""
 
-import importlib.util
 import json
-from pathlib import Path
+import os
 import time
 
+from conftest import load_script
 import pytest
 
-SCRIPT = Path(__file__).parent.parent / 'scripts' / 'racecar_log.py'
-
-
-def _load():
-    """Import the script by path; scripts/ is not a package."""
-    spec = importlib.util.spec_from_file_location('racecar_log', SCRIPT)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-rl = _load()
+rl = load_script('racecar_log')
 
 
 class TestNaming:
@@ -188,8 +177,6 @@ class TestState:
         assert rl.read_state(path) is None
 
     def test_pid_alive_on_self(self):
-        import os
-
         assert rl.pid_alive(os.getpid()) is True
 
     def test_pid_alive_rejects_garbage(self):

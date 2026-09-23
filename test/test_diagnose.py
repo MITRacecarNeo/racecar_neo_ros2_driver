@@ -1,31 +1,19 @@
 """Unit tests for scripts/diagnose.py (the `racecar status` diagnostic)."""
 
-import importlib.util
 import json
-import os
 from pathlib import Path
 import subprocess
-import sys
 from types import SimpleNamespace
 
+from conftest import load_script
 import pytest
 
-SCRIPT = Path(__file__).parent.parent / 'scripts' / 'diagnose.py'
-
-
-def _load():
-    # dataclasses resolves annotations through sys.modules[cls.__module__],
-    # so the module has to be registered before it is executed.
-    spec = importlib.util.spec_from_file_location('diagnose', SCRIPT)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules['diagnose'] = module
-    spec.loader.exec_module(module)
-    return module
+SCRIPT = Path(__file__).resolve().parent.parent / 'scripts' / 'diagnose.py'
 
 
 @pytest.fixture(scope='module')
 def diag():
-    return _load()
+    return load_script('diagnose')
 
 
 def _run(*args, timeout=60):
@@ -35,21 +23,6 @@ def _run(*args, timeout=60):
         text=True,
         timeout=timeout,
     )
-
-
-def test_script_exists_and_executable():
-    assert SCRIPT.is_file()
-    assert os.access(SCRIPT, os.X_OK)
-
-
-def test_py_compile_clean():
-    result = subprocess.run(
-        ['python3', '-m', 'py_compile', str(SCRIPT)],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    assert result.returncode == 0, result.stderr
 
 
 class TestTopicSpecs:
@@ -83,24 +56,19 @@ class TestTopicSpecs:
             assert spec.floor > 68.0, 'floor must still catch a halved frame rate'
 
     def test_lidar_nominal_matches_the_delivered_rate(self, diag):
-        # 8.0 through v0.8.0 put the floor at 6.4 on a lidar delivering 7.2.
         scan = next(s for s in diag.SENSOR_TOPICS if s.topic == '/scan')
         assert scan.nominal == pytest.approx(7.2)
         assert scan.floor < 6.2, 'an ordinary dip must not fail a healthy lidar'
         assert scan.floor > 2.0, 'a lidar desynced to 2 Hz must still fail'
 
     def test_camera_nominal_is_the_configured_rate(self, diag):
-        # Until v0.8.1 these were declared at 25 and 12 against a note calling
-        # the gap a hardware shortfall. /diagnostics reports the camera node
-        # delivering 59.0 and 29.6 against targets of 60 and 30; the shortfall
-        # was this tool's own subscription cost.
+        # The camera node reports 59.0 and 29.6 against these on /diagnostics.
         by_topic = {s.topic: s for s in diag.SENSOR_TOPICS}
         assert by_topic['/camera/color'].nominal == 60.0
         assert by_topic['/camera/depth'].nominal == 30.0
 
     def test_realsense_rates_come_from_diagnostics(self, diag):
-        # Subscribing to the two image streams cost 40% of the PIT telemetry
-        # rate, which the PIT topics were then failed for.
+        # Subscribing to the image streams would starve the PIT telemetry rate.
         assert diag.DIAGNOSTIC_SOURCED == {'/camera/color', '/camera/depth', '/imu/realsense'}
         for topic in diag.DIAGNOSTIC_SOURCED:
             spec = next(s for s in diag.SENSOR_TOPICS if s.topic == topic)
@@ -141,8 +109,7 @@ class TestRateChecks:
         assert diag.rate_checks('sensors', [spec], ros)[0].status == diag.OK
 
     def test_rate_below_floor_fails(self, diag):
-        # A desynced lidar still has a live topic, so presence alone is not
-        # enough; the floor is the whole point of the check.
+        # A desynced lidar still advertises its topic; only the rate floor catches it.
         spec = diag.TopicSpec('/t', 'T', 100.0, 0.8)
         ros = self._ros(diag, {'/t': 20})  # 10 Hz
         check = diag.rate_checks('sensors', [spec], ros)[0]
@@ -212,60 +179,11 @@ class TestRateChecks:
 
 class TestSampleWindow:
     def test_window_is_long_enough_for_the_pit_stream(self, diag):
-        # At 2.0 s the PIT stream measured to a standard deviation of 32 Hz on
-        # a ~136 Hz signal, which is what produced the spurious failures.
+        # Shorter windows measure the ~136 Hz PIT stream too noisily to judge.
         assert diag.DEFAULT_WINDOW >= 5.0
 
     def test_diagnostic_names_cover_every_diagnostic_sourced_topic(self, diag):
         assert set(diag.REALSENSE_DIAGNOSTIC_NAMES.values()) == diag.DIAGNOSTIC_SOURCED
-
-    def test_diagnostic_parser_extracts_the_actual_frequency(self, diag):
-        class _Value:
-            def __init__(self, key, value):
-                self.key, self.value = key, value
-
-        class _Status:
-            def __init__(self, name, values):
-                self.name, self.values = name, values
-
-        class _Msg:
-            def __init__(self, status):
-                self.status = status
-
-        msg = _Msg(
-            [
-                _Status(
-                    'camera: color',
-                    [
-                        _Value('Target frequency (Hz)', '60.0'),
-                        _Value('Actual frequency (Hz)', '59.4'),
-                    ],
-                ),
-                _Status('camera: Temperatures', [_Value('Asic Temperature', '54')]),
-            ]
-        )
-        out = {}
-        diag._read_diagnostic_rates(msg, out)
-        assert out == {'/camera/color': pytest.approx(59.4)}
-
-    def test_diagnostic_parser_ignores_an_unparsable_rate(self, diag):
-        class _Value:
-            def __init__(self, key, value):
-                self.key, self.value = key, value
-
-        class _Status:
-            def __init__(self, name, values):
-                self.name, self.values = name, values
-
-        class _Msg:
-            def __init__(self, status):
-                self.status = status
-
-        out = {}
-        diag._read_diagnostic_rates(
-            _Msg([_Status('camera: depth', [_Value('Actual frequency (Hz)', 'n/a')])]), out
-        )
-        assert out == {}
 
 
 class TestValueChecks:
@@ -313,8 +231,7 @@ class TestValueChecks:
         assert check.status == diag.OK
 
     def test_unexpected_lidar_sample_count_warns(self, diag):
-        # The sim publishes 720; that is worth surfacing but is not a fault of
-        # the hardware being diagnosed.
+        # The sim publishes 720: worth surfacing, not a hardware fault.
         ros = self._ros_with(diag, {'/scan': SimpleNamespace(ranges=[0.0] * 720)})
         check = next(c for c in diag.value_checks(ros) if c.name == 'LIDAR samples')
         assert check.status == diag.WARN
@@ -393,11 +310,11 @@ class TestCommandLine:
             assert set(check) == {'group', 'name', 'status', 'detail'}
             assert check['status'] in ('OK', 'WARN', 'FAIL', 'SKIP')
 
-    def test_json_round_trips_every_section(self):
+    def test_json_groups_are_known_sections(self, diag):
         result = _run('--quick', '--json', timeout=30)
         payload = json.loads(result.stdout)
         groups = {c['group'] for c in payload['checks']}
-        assert groups <= set(_load().SECTIONS)
+        assert groups <= set(diag.SECTIONS)
 
     def test_help_documents_strictness(self):
         result = _run('--help')
@@ -406,18 +323,108 @@ class TestCommandLine:
 
 
 class TestStrictness:
-    """The exit code is the contract: anything but OK is a failure."""
+    def test_all_ok_passes(self, diag):
+        assert diag.exit_code_for([diag.Check('devices', 'a', diag.OK)]) == 0
 
-    def test_all_ok_exits_zero(self, diag):
-        checks = [diag.Check('devices', 'a', diag.OK)]
-        assert all(c.status == diag.OK for c in checks)
+    def test_nothing_checked_passes(self, diag):
+        assert diag.exit_code_for([]) == 0
 
     @pytest.mark.parametrize('status', ['WARN', 'FAIL', 'SKIP'])
     def test_non_ok_status_is_not_a_pass(self, diag, status):
-        # Mirrors the exit-code rule in main(): a skipped sensor check on a
-        # car with teleop stopped must not read as a healthy car.
+        # A skipped sensor check on a car with teleop stopped is not a healthy car.
         checks = [
             diag.Check('devices', 'a', diag.OK),
             diag.Check('sensors', 'b', getattr(diag, status)),
         ]
-        assert not all(c.status == diag.OK for c in checks)
+        assert diag.exit_code_for(checks) == 1
+
+
+def _eth(*addrs):
+    return ''.join(f'2: eth0    inet {a} brd 192.168.52.255 scope global eth0\n' for a in addrs)
+
+
+V6_DEFAULT = 'default via fe80::1 dev eth0 proto ra metric 100\n'
+
+
+@pytest.fixture
+def network(diag, monkeypatch, tmp_path):
+    """Run check_network against canned command output; returns {check name: Check}."""
+    monkeypatch.setenv('HOME', str(tmp_path))
+    monkeypatch.delenv('RACECAR_ETH_MODE', raising=False)
+
+    def run(eth='', wlan0='', v6='', nmcli='', target=''):
+        table = {
+            'ip -4 -o addr show eth0': eth,
+            'ip -4 -o addr show wlan0': wlan0,
+            'ip -6 route show default dev eth0': v6,
+            'nmcli': nmcli,
+            'systemctl get-default': target,
+        }
+
+        def fake(cmd, timeout=5.0):
+            key = ' '.join(cmd)
+            return next((out for prefix, out in table.items() if key.startswith(prefix)), '')
+
+        monkeypatch.setattr(diag, '_run', fake)
+        return {c.name: c for c in diag.check_network()}
+
+    return run
+
+
+class TestCheckNetwork:
+    def test_one_address_is_ok(self, network, diag):
+        check = network(eth=_eth('192.168.52.200/24'))['eth0 address']
+        assert (check.status, check.detail) == (diag.OK, '192.168.52.200/24')
+
+    def test_two_addresses_fail_and_name_the_fix(self, network, diag):
+        check = network(eth=_eth('192.168.52.200/24', '10.0.0.7/24'))['eth0 address']
+        assert check.status == diag.FAIL
+        assert '2 IPv4 addresses (192.168.52.200/24, 10.0.0.7/24)' in check.detail
+        assert 'racecar eth static' in check.detail
+
+    def test_no_address_warns(self, network, diag):
+        assert network()['eth0 address'].status == diag.WARN
+
+    def test_v6_default_fails_in_static_mode(self, network, diag):
+        # No persisted config under HOME, so the mode reads as static.
+        assert network(v6=V6_DEFAULT)['eth0 v6 default'].status == diag.FAIL
+
+    def test_no_v6_default_in_static_mode_is_ok(self, network, diag):
+        assert network()['eth0 v6 default'].status == diag.OK
+
+    def test_v6_default_allowed_in_dynamic_mode(self, network, diag, tmp_path):
+        cfg = tmp_path / '.config' / 'racecar'
+        cfg.mkdir(parents=True)
+        (cfg / 'networking.env').write_text('RACECAR_ETH_MODE="dynamic"\n')
+        check = network(v6=V6_DEFAULT)['eth0 v6 default']
+        assert check.status == diag.OK
+        assert 'dynamic' in check.detail
+
+    def test_environment_mode_wins(self, network, diag, monkeypatch):
+        monkeypatch.setenv('RACECAR_ETH_MODE', 'dynamic')
+        assert network(v6=V6_DEFAULT)['eth0 v6 default'].status == diag.OK
+
+    def test_wlan0_is_informational(self, network, diag):
+        assert network()['wlan0 client'].status == diag.OK
+        assert network(wlan0=_eth('10.1.2.3/16'))['wlan0 client'].detail == '10.1.2.3/16'
+
+    def test_ap_states(self, network, diag):
+        assert network()['wlan1 AP'].status == diag.SKIP
+        assert network(nmcli='racecar-neo-ap:wlan1\nHomeNet:wlan0\n')['wlan1 AP'].status == diag.OK
+        assert network(nmcli='HomeNet:wlan0\n')['wlan1 AP'].status == diag.WARN
+
+    def test_desktop_target(self, network, diag):
+        assert network(target='graphical.target\n')['desktop'].detail == 'enabled'
+        headless = network(target='multi-user.target\n')['desktop'].detail
+        assert headless == 'headless (multi-user.target)'
+        assert network()['desktop'].status == diag.SKIP
+
+
+class TestActuatorChecks:
+    def test_display_rows_follow_the_running_nodes(self, diag, monkeypatch):
+        monkeypatch.setattr(
+            diag, '_run', lambda cmd, timeout=5.0: '123\n' if cmd[-1] == 'pit_node' else ''
+        )
+        checks = {c.name: c for c in diag.actuator_checks(diag.RosResult())}
+        assert checks['Dot matrix'].status == diag.WARN
+        assert checks['LED strip'].status == diag.OK

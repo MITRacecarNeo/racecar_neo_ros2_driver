@@ -27,7 +27,6 @@ setup(
     maintainer_email='chrisclai02@gmail.com',
     description='ROS2 driver for MIT RACECAR Neo v2',
     license='GPL-3.0-or-later',
-    tests_require=['pytest'],
     entry_points={
         'console_scripts': [
             'dotmatrix_node = racecar_neo_ros2_driver.dotmatrix_node:main',

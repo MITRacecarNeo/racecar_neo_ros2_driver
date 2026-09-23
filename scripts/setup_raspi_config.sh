@@ -1,16 +1,16 @@
 #!/bin/bash
-# Boot-level configuration consolidated in one place: raspi-config flags, the
-# boot config.txt dtparams, and the bootloader EEPROM.
-#   I2C   (do_i2c 0)        : required by the LSM9DS1 IMU (bus 1)
-#   SPI   (do_spi 0)        : legacy MAX7219 path; the display now hangs
-#                             off the Teensy, but SPI stays enabled for
-#                             bench use of the old driver
-#   serial console off      : frees the Pi's UART pins for future modules and
-#                              stops getty from grabbing /dev/serial0
-#   serial hw on            : keeps the underlying hardware UART available
+# Boot-level configuration: raspi-config flags, config.txt dtparams, and the
+# bootloader EEPROM.
+#   I2C   (do_i2c 0)        : LSM9DS1 IMU (bus 1)
+#   SPI   (do_spi 0)        : /dev/spidev* for add-on SPI peripherals; the car's
+#                             MAX7219 is driven by the Teensy, not over SPI
+#   serial console off      : keeps getty off the GPIO UART (ttyAMA0)
+#   serial hw on            : the GPIO UART carries the NEO-PIT PCB link
+#                             (/dev/neo-pit-pcb); config.txt ends up with exactly
+#                             one enable_uart=1 in [all]
 #
 # Idempotent: raspi-config nonint do_* is a no-op if already in the requested
-# state. Safe to re-run.
+# state, and config.txt is rewritten only when a line changes.
 #
 # Ubuntu's raspi-config fork differs from upstream Raspberry Pi OS, so the
 # serial calls feature-detect and fall back, and do_i2c / do_spi emit a benign
@@ -18,9 +18,11 @@
 set -eo pipefail
 
 if ! command -v raspi-config >/dev/null; then
-    echo "raspi-config not found; skipping (likely not a Raspberry Pi OS install)."
+    echo "raspi-config not found; skipping (not a Raspberry Pi image)."
     exit 0
 fi
+
+SUDO="${RACECAR_SUDO-sudo}"
 
 if [ -f /boot/firmware/config.txt ]; then
     CONFIG_TXT=/boot/firmware/config.txt
@@ -29,6 +31,55 @@ else
     CONFIG_TXT=/boot/config.txt
     CMDLINE_TXT=/boot/cmdline.txt
 fi
+
+# Leave exactly one enable_uart=1 in the [all] scope (lines before the first
+# section header count as [all]). raspi-config variants may write enable_uart=0
+# or a second enable_uart line.
+ensure_enable_uart() {
+    local scan tmp
+    scan="$(awk 'BEGIN { all = 1 }
+        /^\[/ { all = ($0 ~ /^\[all\]/) }
+        all && /^[[:space:]]*enable_uart=/ { gsub(/[[:space:]]/, ""); print }' "$CONFIG_TXT")"
+    if [ "$scan" = "enable_uart=1" ]; then
+        echo "  enable_uart=1 already set"
+        return 0
+    fi
+    tmp="$(mktemp)"
+    awk 'BEGIN { all = 1 }
+        /^\[/ { all = ($0 ~ /^\[all\]/) }
+        all && /^[[:space:]]*enable_uart=/ { next }
+        { print }
+        END { if (!all) print "[all]"; print "enable_uart=1" }' "$CONFIG_TXT" > "$tmp"
+    $SUDO tee "$CONFIG_TXT" < "$tmp" > /dev/null
+    rm "$tmp"
+    echo "  enable_uart=1 set in [all]"
+}
+
+# RTC backup cell trickle charge. The Pi 5 RTC sits in the PMIC and ships with
+# charging off, so the cell drains until the clock stops surviving a power cut.
+# 3.0 V suits the official Raspberry Pi RTC battery (ML2032).
+#
+# Only enable this for a RECHARGEABLE cell. Pushing charge current into a
+# primary CR2032 can make it vent or leak. RTC_VCHG_UV=0 turns charging off by
+# removing the dtparam line.
+apply_rtc_charge() {
+    if [ "$RTC_VCHG_UV" = "0" ]; then
+        if grep -qE '^dtparam=rtc_bbat_vchg=' "$CONFIG_TXT"; then
+            $SUDO sed -i -E '/^dtparam=rtc_bbat_vchg=/d' "$CONFIG_TXT"
+            echo "  RTC trickle charge: turned off (RTC_VCHG_UV=0)"
+        else
+            echo "  RTC trickle charge: already off (RTC_VCHG_UV=0)"
+        fi
+    elif grep -qE "^dtparam=rtc_bbat_vchg=${RTC_VCHG_UV}\s*$" "$CONFIG_TXT"; then
+        echo "  RTC trickle charge: already ${RTC_VCHG_UV} uV"
+    elif grep -qE '^dtparam=rtc_bbat_vchg=' "$CONFIG_TXT"; then
+        $SUDO sed -i -E "s/^dtparam=rtc_bbat_vchg=.*/dtparam=rtc_bbat_vchg=${RTC_VCHG_UV}/" "$CONFIG_TXT"
+        echo "  RTC trickle charge: updated to ${RTC_VCHG_UV} uV"
+    else
+        echo "dtparam=rtc_bbat_vchg=${RTC_VCHG_UV}" | $SUDO tee -a "$CONFIG_TXT" >/dev/null
+        echo "  RTC trickle charge: enabled at ${RTC_VCHG_UV} uV"
+    fi
+}
 
 if grep -q '^do_serial_cons\b' /usr/bin/raspi-config; then
     HAS_SERIAL_CONS=1
@@ -47,36 +98,16 @@ if [ "$HAS_SERIAL_CONS" = "1" ]; then
     sudo raspi-config nonint do_serial_cons 1   # 1 = disable console
     sudo raspi-config nonint do_serial_hw 0     # 0 = enable hw UART
 else
-    # Ubuntu fork: do_serial <console> <hw>, where 0=enable, 1=disable. Calling
-    # 'do_serial 1 1' disables both, then we re-enable the hardware UART
-    # ourselves via enable_uart=1 in config.txt. Belt-and-suspenders sed to
-    # scrub stray console= entries from cmdline.txt in case do_serial missed it.
+    # Ubuntu fork: do_serial <console> <hw>, where 0=enable, 1=disable.
+    # 'do_serial 1 1' disables both; ensure_enable_uart below re-enables the
+    # hardware UART. Also strip console= from cmdline.txt.
     sudo raspi-config nonint do_serial 1 1
-    if ! grep -qE '^enable_uart=1' "$CONFIG_TXT"; then
-        echo "enable_uart=1" | sudo tee -a "$CONFIG_TXT" >/dev/null
-    fi
     sudo sed -i -E 's/console=(serial0|ttyAMA0|ttyS0),[0-9]+ ?//g' "$CMDLINE_TXT"
 fi
+ensure_enable_uart
 
-# RTC backup cell trickle charge. The Pi 5 RTC sits in the PMIC and ships with
-# charging off, so the cell drains until the clock stops surviving a power cut.
-# 3.0 V suits the official Raspberry Pi RTC battery (ML2032).
-#
-# Only enable this for a RECHARGEABLE cell. Pushing charge current into a
-# primary CR2032 can make it vent or leak. Set RTC_VCHG_UV=0 to skip.
 RTC_VCHG_UV="${RTC_VCHG_UV:-3000000}"
-
-if [ "$RTC_VCHG_UV" = "0" ]; then
-    echo "  RTC trickle charge: skipped (RTC_VCHG_UV=0)"
-elif grep -qE "^dtparam=rtc_bbat_vchg=${RTC_VCHG_UV}\s*$" "$CONFIG_TXT"; then
-    echo "  RTC trickle charge: already ${RTC_VCHG_UV} uV"
-elif grep -qE '^dtparam=rtc_bbat_vchg=' "$CONFIG_TXT"; then
-    sudo sed -i -E "s/^dtparam=rtc_bbat_vchg=.*/dtparam=rtc_bbat_vchg=${RTC_VCHG_UV}/" "$CONFIG_TXT"
-    echo "  RTC trickle charge: updated to ${RTC_VCHG_UV} uV"
-else
-    echo "dtparam=rtc_bbat_vchg=${RTC_VCHG_UV}" | sudo tee -a "$CONFIG_TXT" >/dev/null
-    echo "  RTC trickle charge: enabled at ${RTC_VCHG_UV} uV"
-fi
+apply_rtc_charge
 
 # Bootloader EEPROM. A car fed from a BEC never negotiates USB-PD, so the
 # firmware cannot learn what the supply can deliver, assumes 3 A, and caps total
