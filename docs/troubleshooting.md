@@ -25,6 +25,7 @@ comment in the source can point here instead of carrying the full account.
 - [WiFi persistence](#wifi-persistence)
 - [Boot brownout with ethernet attached](#boot-brownout-with-ethernet-attached)
   - [Not a flat pack](#not-a-flat-pack)
+  - [Root cause and repair](#root-cause-and-repair)
 
 ## Diagnostic rate checks
 
@@ -95,7 +96,9 @@ busy across all cores, 7 to 14 runnable threads, no I/O wait.
 The cause was the clock. `vcgencmd get_throttled` read 0x50005, and the
 firmware had capped the ARM at 1000 MHz of 2400 while cpufreq still reported
 2400. The same teleop stack then needs about 2.4 times the CPU share it uses
-at full clock. The top consumers at the time, in percent of one core:
+at full clock. The under-voltage came from a bad supply wire on this car,
+replaced 2026-10-03; see [Root cause and repair](#root-cause-and-repair). The
+top consumers at the time, in percent of one core:
 
 | process | CPU |
 | --- | --- |
@@ -267,7 +270,9 @@ than a dashboard redraws them. Frames above `inference_rate_hz` (15) are
 dropped before the image decode, where the cost is. `frames_dropped` in the
 node's `/diagnostics` entry counts them. On 2026-09-22 the node held 14.7 Hz at
 59 to 67 ms per inference with the Pi throttled for under-voltage, so there is
-little headroom above the cap on this car.
+little headroom above the cap on this car. That throttling came from a bad
+supply wire, since replaced; see
+[Root cause and repair](#root-cause-and-repair).
 
 `score_threshold` 0.4 is the Coral examples' default and the value the COCO
 model was evaluated at. At 0.5 an ordinary indoor scene reported no detections.
@@ -401,6 +406,12 @@ Symptom, seen 2026-09-09: after the pack died, the car failed to boot three
 times in a row with the ethernet cable attached, and booted normally once the
 cable was pulled.
 
+Known causes are an unseated BEC bulk capacitor and a bad contact in the
+supply harness; see [Not a flat pack](#not-a-flat-pack). One car was repaired
+on 2026-10-03 by replacing the buck to Pi 5 V wire; see
+[Root cause and repair](#root-cause-and-repair) for that fix and the check
+that confirms it.
+
 Not a network fault. The supply was out of spec and the ethernet PHY was the
 last straw.
 
@@ -449,19 +460,91 @@ charging the pack.
 - The recovery coincided with the top half of the chassis being removed.
 
 That profile is an intermittent connection rather than a depleted cell, and it
-is mechanical: it changes when the car is handled. This hardware has failed
-this way before, with a bulk capacitor on the BEC output unseated by the power
-wire resting against it. A missing output bulk capacitor also explains the
-apparent contradiction above, since a multimeter averages while the Pi's
-undervoltage detector trips on excursions below roughly 4.63 V; both readings
-can be true at once with no drop across the harness at all.
+is mechanical: it changes when the car is handled. Two known causes produce it:
 
-Confirming it needs a scope on the BEC output under load, or an inspection of
-whether that capacitor is seated and whether the power wire bears on it.
-Neither is visible from software: `EXT5V` is the furthest upstream the PMIC
-sees, and its ADC samples far too slowly to distinguish ripple from a low
-average.
+- A bulk capacitor on the BEC output unseated by the power wire resting
+  against it. This hardware has failed this way before. A missing output bulk
+  capacitor also explains the apparent contradiction above, since a multimeter
+  averages while the Pi's undervoltage detector trips on excursions below
+  roughly 4.63 V; both readings can be true at once with no drop across the
+  harness at all. Confirming it needs a scope on the BEC output under load, or
+  an inspection of whether that capacitor is seated and whether the power wire
+  bears on it.
+- A resistive or intermittent contact in the supply harness. This was the
+  cause on the car repaired 2026-10-03; see
+  [Root cause and repair](#root-cause-and-repair).
+
+Check both on a car showing this profile. Neither is visible from software:
+`EXT5V` is the furthest upstream the PMIC sees, and its ADC samples far too
+slowly to distinguish ripple from a low average.
 
 `racecar status` reports this condition already, under `throttling` and
 `under-voltage` in the SYSTEM section. Treat any measurement taken while those
 are set as suspect, since a throttled car also reads low on every topic rate.
+
+### Root cause and repair
+
+This section covers one car, repaired 2026-10-03. The fix there was
+replacing the buck to Pi GPIO 5 V wire. It does not rule out the BEC bulk
+capacitor in [Not a flat pack](#not-a-flat-pack) as the cause on another car.
+
+Supply chain, pack to Pi:
+
+```
+7.4 V pack -> switch -> INA226 shunt -> boost (Pololu U3V70F9, 9 V)
+           -> buck (Pololu D24V90F5, 5 V) -> Pi 5 GPIO header 5 V pins
+```
+
+The Pi is fed through the GPIO header, not USB-C. Two contacts in that chain
+were intermittent:
+
+- The switch to INA226 `I+` connection. Flexing that wire on 2026-09-27
+  reproduced the fault: 26 dips under 4.75 V, 11 kernel undervoltage events,
+  then a 4 s sag to 4.39 V and a brownout reset. With the top closed, the RC
+  receiver dongle pressed on that wire. While loose, `/battery/current` read
+  0.0 A.
+- The buck to Pi GPIO 5 V wire. Probing along it produced a step recovery
+  from about 4.65 V to 4.87 V, and touching the header end reset the Pi
+  with no sag first. A step in both directions is a contact making and
+  breaking, not heat or load.
+
+Ruled out: the pack (sag persisted on a full 8.2 V pack), the buck (4.95 V
+metered, within its 4.80 to 5.20 V tolerance), the boost (about 3 A load
+against a 6 A input rating), the BEC bulk capacitor (inspected and seated on
+this car), and the Pi and its peripherals (16 min on wall power at 5.01 to
+5.09 V, `0x0`, RealSense attached). An earlier fix that only secured both
+contacts held for about 1.5 h, then failed again under load the same day.
+
+Repair: replacing the buck to GPIO 5 V wire fixed it. The INA226 connection
+was repaired at the same time. Measured on 2026-10-03, teleop stack running:
+
+| Measure | 2026-09-27 18:48, faulty | 2026-10-03, repaired |
+| ------- | ------------------------ | -------------------- |
+| `EXT5V` mean | 4.713 V | 4.914 V |
+| `EXT5V` min | 4.544 V | 4.886 V |
+| Samples under 4.75 V | 82% | 0 of 10112 |
+| PMIC under-voltage alarm set | 48% of samples | 0 |
+| `get_throttled` | 0x50005 | 0x0, sticky bits clear |
+| Kernel undervoltage events | 5 to 9 per minute | 0 |
+| INA226 | 0.0 A while loose | 7.93 V, 2.21 A at 147 Hz |
+
+The rail held with no alarm while the harness was flexed and the car was shaken
+hard. A multimeter at the rail read 4.916 V against the PMIC's 4.914 V. Before
+the repair the PMIC read about 85 mV under the meter; that gap was drop across
+the old wire, not ADC offset.
+
+Margin: the buck sits near the low end of its tolerance, so the rail has about
+165 mV above the 4.75 V floor. A new harness fault eats that quickly.
+
+Check after any work on the power harness, and after a drive:
+
+```bash
+vcgencmd get_throttled                        # 0x0; bits 16 and 18 are sticky since boot
+vcgencmd pmic_read_adc EXT5V_V                # above 4.80 V under teleop load
+journalctl -b -k | grep -ci undervoltage      # 0
+last -x -n 6                                  # no "crash" on the previous boot
+```
+
+A nonzero sticky bit means the rail dipped at some point since boot, even if it
+reads clean now. A previous boot that ends in `crash` without a power cut is a
+brownout reset.

@@ -4,8 +4,20 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
-Planned as 0.8.3: a `racecar status` cleanup, so its verdict matches whether
-the car is usable.
+### Changed
+
+- `docs/troubleshooting.md`, "Boot brownout with ethernet attached": new
+  "Root cause and repair" subsection. On the affected car the 5 V brownout
+  came from an intermittent buck to Pi GPIO 5 V wire, fixed by replacing it
+  on 2026-10-03 (EXT5V 4.914 V mean, 0 undervoltage events with the harness
+  flexed), plus a post-repair check. The unseated BEC bulk capacitor stays
+  listed as a known cause on other cars. Brownout references in the
+  troubleshooting guide and the v0.9.0 autonomy plan point to the fix.
+
+## [0.8.3] - 2026-09-22
+
+A `racecar status` cleanup, so its verdict matches whether the car is
+usable.
 
 ### Added
 
@@ -929,7 +941,8 @@ Design notes and migration from v1:
 - Parameter YAMLs: `config/gamepad.yaml`, `mux.yaml`, `throttle.yaml`, `pwm.yaml`
 - Project files: `README.md`, `LICENSE` (GPLv3), `.gitignore`, `.gitattributes`
 
-[Unreleased]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.8.2...HEAD
+[Unreleased]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.8.3...HEAD
+[0.8.3]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.7.4...v0.8.0

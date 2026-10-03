@@ -666,7 +666,10 @@ export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
 
 Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
 
-- **0.8.3** (unreleased): `racecar status` exits non-zero only on a FAIL, with
+- **Unreleased**: troubleshooting guide documents the 5 V brownout root cause
+  (an intermittent buck to Pi 5 V wire, replaced 2026-10-03) and a
+  post-repair check; the BEC bulk capacitor stays a known cause on other cars.
+- **0.8.3** (2026-09-22): `racecar status` exits non-zero only on a FAIL, with
   `--strict` for the old rule; slow-but-delivering streams and dual-mode eth0
   warn instead of failing; each sensor row shows a sample of its data; a
   CPU busy share and ARM clock replace the load average; OK, WARN and FAIL
