@@ -450,7 +450,8 @@ racecar_neo_ros2_driver/
 ├── docs/                      this file, changelog, troubleshooting,
 │   │                          advanced settings
 │   ├── img/                   RACECAR Neo logo set
-│   └── specifics/             RealSense topics, Coral M.2 migration
+│   └── specifics/             RealSense topics, Coral M.2 migration,
+│                              autonomy service plan (v0.9.0)
 ├── package.xml, setup.py, setup.cfg
 └── pyproject.toml             ruff, black and mypy settings
 ```
