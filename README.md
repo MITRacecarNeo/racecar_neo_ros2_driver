@@ -666,7 +666,10 @@ export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
 
 Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
 
-- **Unreleased**: troubleshooting guide documents the 5 V brownout root cause
+- **Unreleased**: v0.9.0 autonomy plan in
+  `docs/specifics/autonomy-service-plan.md` (SLAM, `racecar map`, web map
+  viewer on 8084, optional Foxglove bridge, documented in advanced settings);
+  troubleshooting guide documents the 5 V brownout root cause
   (an intermittent buck to Pi 5 V wire, replaced 2026-10-03) and a
   post-repair check; the BEC bulk capacitor stays a known cause on other cars.
 - **0.8.3** (2026-09-22): `racecar status` exits non-zero only on a FAIL, with

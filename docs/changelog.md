@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+### Added
+
+- `docs/specifics/autonomy-service-plan.md`: the v0.9.0 plan for 2D lidar
+  SLAM (slam_toolbox mapping, AMCL localization), the on-demand
+  `racecar-autonomy.service`, `autonomy_node`, the `racecar map` CLI, a web
+  map viewer on port 8084, and an optional `foxglove_bridge`. Planning only;
+  no code.
+- `docs/advanced-settings.md`, "Foxglove bridge": the developer bridge that
+  arrives with the v0.9.0 autonomy unit; switch, Lichtblick connection, and
+  what a client may publish.
+
 ### Changed
 
 - `docs/troubleshooting.md`, "Boot brownout with ethernet attached": new
