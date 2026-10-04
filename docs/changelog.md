@@ -6,6 +6,29 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Added
 
+- Static frame tree, phase 1 of the v0.9.0 autonomy plan.
+  `urdf/racecar_neo.urdf.xacro` defines `base_link` (floor under the rear axle
+  midpoint), `laser` (yaw 180 deg), `imu_link` (labels the optical-axis IMU
+  data), `camera_bottom_screw_frame`, and `camera_link`, which joins the
+  RealSense driver's own subtree. Offsets come from `config/frames.yaml` in
+  millimetres and degrees, with per-car keys in `frames.local.yaml`, loaded by
+  `racecar_neo_ros2_driver/frames.py`. `launch/frames.launch.py` runs
+  `robot_state_publisher` with respawn (5 retries); `teleop.launch.py`
+  includes it behind `frames_enable`. Values are the measurement sheet's model
+  values except the lidar height, roll, pitch and yaw, measured on the
+  reference car.
+- `calibrate_lidar.py`: lidar yaw from a line fit to a flat wall ahead,
+  written to `frames.local.yaml`; `--check` for a pass or fail report.
+  `calibrate_common.update_local_values()` sets keys in a plain local YAML
+  while keeping the others.
+- `package.xml` exec depends: `robot_state_publisher`, `xacro`, `python3-yaml`.
+
+### Fixed
+
+- `racecar test` ran no tests since 0.8.2: the cleanup in `7ebc79c` removed
+  `tests_require=['pytest']` from `setup.py`, so colcon fell back to unittest,
+  found nothing, and reported success. `setup.py` now declares
+  `extras_require={'test': ['pytest']}`; the suite runs 946 tests.
 - `docs/specifics/autonomy-service-plan.md`: the v0.9.0 plan for 2D lidar
   SLAM (slam_toolbox mapping, AMCL localization), the on-demand
   `racecar-autonomy.service`, `autonomy_node`, the `racecar map` CLI, a web

@@ -207,8 +207,9 @@ ALFA dongle together.
 Each launch file loads `config/<name>.local.yaml` after the committed file of
 the same name, so its keys win. The files are gitignored and never dirty the
 tree. The calibration utilities (`calibrate_imu.py`, `calibrate_mag.py`,
-`calibrate_realsense_imu.py`) write `lsm9ds1_cal.local.yaml`,
-`lsm9ds1_mag_cal.local.yaml` and `realsense_cal.local.yaml`; see README
+`calibrate_realsense_imu.py`, `calibrate_lidar.py`) write
+`lsm9ds1_cal.local.yaml`, `lsm9ds1_mag_cal.local.yaml`,
+`realsense_cal.local.yaml` and `frames.local.yaml`; see README
 "Sensor calibration". A reimage or fresh clone loses them, so keep a copy in
 `~/.config/racecar/calibration/`.
 

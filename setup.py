@@ -13,6 +13,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', glob.glob('launch/*.launch.py')),
         ('share/' + package_name + '/config', glob.glob('config/*.yaml')),
+        ('share/' + package_name + '/urdf', glob.glob('urdf/*.xacro')),
         (
             'share/' + package_name + '/scripts',
             glob.glob('scripts/*.sh') + glob.glob('scripts/*.py'),
@@ -22,6 +23,9 @@ setup(
         ('share/' + package_name + '/models', glob.glob('models/*')),
     ],
     install_requires=['setuptools'],
+    # colcon runs pytest only when it is declared here; without it `racecar test`
+    # falls back to unittest and finds no tests.
+    extras_require={'test': ['pytest']},
     zip_safe=True,
     maintainer='racecar',
     maintainer_email='chrisclai02@gmail.com',

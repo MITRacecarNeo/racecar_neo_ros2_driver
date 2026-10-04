@@ -6,6 +6,9 @@ pit_node owns the Teensy UART and drives the servo/ESC. imu_fusion merges the
 RealSense and Teensy LSM9DS1 IMUs into /imu/fused; the RealSense D435i is the
 camera.
 
+frames publishes the static TF tree (base_link -> laser, imu_link,
+camera_link) from config/frames.yaml.
+
 Each sensor/ML/display subsystem can be disabled via a name_enable arg
 (default 'true'); edgetpu_enable:=false skips the Coral. EdgeTPU is staggered
 3s so the camera topics are up before it subscribes.
@@ -22,6 +25,7 @@ from launch.substitutions import EqualsSubstitution, LaunchConfiguration
 from launch_ros.actions import Node
 
 _SUBSYSTEMS = (
+    'frames',
     'imu_fusion',
     'lidar',
     'realsense',
@@ -126,6 +130,7 @@ def generate_launch_description() -> LaunchDescription:
             ),
         )
 
+    frames_launch = _gated_include('frames')
     imu_fusion_launch = _gated_include('imu_fusion')
     lidar_launch = _gated_include('lidar')
     realsense_launch = _gated_include('realsense')
@@ -148,6 +153,7 @@ def generate_launch_description() -> LaunchDescription:
             mux,
             throttle,
             pit,
+            frames_launch,
             imu_fusion_launch,
             lidar_launch,
             realsense_launch,

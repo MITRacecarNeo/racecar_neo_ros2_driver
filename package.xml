@@ -27,7 +27,10 @@
   <exec_depend>python3-numpy</exec_depend>
   <exec_depend>python3-pil</exec_depend>
   <exec_depend>python3-serial</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
   <exec_depend>sllidar_ros2</exec_depend>
+  <exec_depend>xacro</exec_depend>
   <!-- pycoral and luma.core have no rosdep keys; setup_coral.sh and
        setup_dotmatrix.sh install them. -->
 

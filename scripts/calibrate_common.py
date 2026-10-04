@@ -87,6 +87,30 @@ def write_local_yaml(
     return written
 
 
+def update_local_values(
+    name: str, values: dict[str, float], dirs: list[Path], tool: str
+) -> list[Path]:
+    """
+    Set `values` in `<name>.local.yaml` in each dir, keeping its other keys.
+
+    For plain key: value files such as frames.local.yaml, which several tools
+    write into (not ROS parameter files).
+    """
+    stamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    header = (
+        f'# Per-car values; last written by {tool}, {stamp}. Not tracked in git;\n'
+        f'# keep a copy in {BACKUP_DIR}/.\n'
+    )
+    written = []
+    for d in dirs:
+        path = d / f'{name}.local.yaml'
+        current = yaml.safe_load(path.read_text()) if path.exists() else None
+        merged = {**(current or {}), **values}
+        path.write_text(header + yaml.safe_dump(merged, sort_keys=True))
+        written.append(path)
+    return written
+
+
 def backup_reminder(paths: list[Path]) -> str:
     """Return the post-write message: where the file went and how to back it up."""
     lines = [f'Wrote {p}' for p in paths]

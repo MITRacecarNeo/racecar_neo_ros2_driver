@@ -556,6 +556,7 @@ after the committed file.
 ros2 run racecar_neo_ros2_driver calibrate_imu.py         # LSM9DS1 accel + gyro bias
 ros2 run racecar_neo_ros2_driver calibrate_mag.py         # LSM9DS1 hard/soft iron
 ros2 run racecar_neo_ros2_driver calibrate_realsense_imu.py   # D435i accel + gyro bias
+ros2 run racecar_neo_ros2_driver calibrate_lidar.py       # lidar yaw, car squared to a wall
 racecar build                                             # installs the new .local.yaml
 racecar service restart teleop                            # nodes read it at start
 ```
@@ -565,10 +566,18 @@ racecar service restart teleop                            # nodes read it at sta
 | `calibrate_imu.py` | `/imu/lsm9ds1/raw` | `config/lsm9ds1_cal.local.yaml` | `pit_node` |
 | `calibrate_mag.py` | `/mag/raw` | `config/lsm9ds1_mag_cal.local.yaml` | `pit_node` |
 | `calibrate_realsense_imu.py` | `/imu/realsense` | `config/realsense_cal.local.yaml` | `imu_fusion_node` |
+| `calibrate_lidar.py` | `/scan` | `config/frames.local.yaml` (`laser_yaw_deg`) | `frames.launch.py` |
 
 Each utility writes the file to the source `config/` directory and, when it
 exists, the install share `config/` directory. It writes nothing and exits
 non-zero when the fit fails or it has too little data.
+
+`calibrate_lidar.py` needs the car facing a flat wall 0.5 to 2 m away, squared
+so both front corners are the same distance from it. It fits a line to the
+wall in `base_link` and writes the lidar yaw that makes the wall perpendicular
+to the car. `--check` reports the fit without writing and exits 1 when the wall
+is more than 0.5 deg off square; `--wall-distance-mm` takes a taped distance
+from `base_link` to the wall and reports the lidar x error it implies.
 
 `calibrate_imu.py` walks a 6-position sequence (each axis up and down) and
 averages the gravity vector per pose. `calibrate_mag.py` needs rotation about
@@ -666,7 +675,11 @@ export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
 
 Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
 
-- **Unreleased**: v0.9.0 autonomy plan in
+- **Unreleased**: static frame tree (`base_link`, `laser`, `imu_link`,
+  `camera_link`) from `urdf/racecar_neo.urdf.xacro` and `config/frames.yaml`,
+  started by teleop; `calibrate_lidar.py` for lidar yaw against a wall;
+  `racecar test` runs the pytest suite again (it ran none since 0.8.2);
+  v0.9.0 autonomy plan in
   `docs/specifics/autonomy-service-plan.md` (SLAM, `racecar map`, web map
   viewer on 8084, optional Foxglove bridge, documented in advanced settings);
   troubleshooting guide documents the 5 V brownout root cause

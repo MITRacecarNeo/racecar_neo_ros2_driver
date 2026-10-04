@@ -14,6 +14,7 @@ and what supervises them. Companion to the operational instructions in
 - [Display path](#display-path)
 - [Topic reference](#topic-reference)
 - [Launch structure](#launch-structure)
+- [Frame tree](#frame-tree)
 - [Process model](#process-model)
 - [Supervision and observability](#supervision-and-observability)
 - [Configuration](#configuration)
@@ -94,8 +95,10 @@ Seven nodes ship in this package (`setup.py` console scripts):
 | `dotmatrix_node` | Renders text, student pixel buffers, a startup splash, or a mode glyph into a display frame. |
 | `edgetpu_node` | Runs object detection on the color stream via the Coral Apex. |
 
-Three external nodes complete the graph: `joy_node` (`joy`), `sllidar_node`
-(`sllidar_ros2`), and `realsense2_camera_node` (`realsense2_camera`).
+Four external nodes complete the graph: `joy_node` (`joy`), `sllidar_node`
+(`sllidar_ros2`), `realsense2_camera_node` (`realsense2_camera`), and
+`robot_state_publisher`, which publishes the static frame tree (see
+[Frame tree](#frame-tree)).
 
 ## Control pipeline
 
@@ -266,6 +269,8 @@ patterns on `/dotmatrix/pixels`.
 | `/dotmatrix/text`, `/dotmatrix/pixels` | `std_msgs/String`, `UInt8MultiArray` | user code | `dotmatrix_node` |
 | `/dotmatrix/frame`, `/led/pixels` | `std_msgs/UInt8MultiArray` | `dotmatrix_node`, user code | `pit_node` |
 | `/diagnostics` | `diagnostic_msgs/DiagnosticArray` | camera, `edgetpu_node` | dashboard, `diagnose.py` |
+| `/tf_static` | `tf2_msgs/TFMessage` | `robot_state_publisher`, `realsense2_camera_node` | TF consumers, viewers |
+| `/robot_description` | `std_msgs/String` | `robot_state_publisher` | viewers (RViz, Foxglove) |
 
 Sensor and control topics use BEST_EFFORT, VOLATILE, KEEP_LAST QoS. A
 subscriber built with default RELIABLE QoS will not receive them.
@@ -286,7 +291,8 @@ teleop.launch.py
 ├── mux.launch.py                 │ control chain, started first,
 ├── throttle.launch.py            │ no stagger
 ├── pit.launch.py                ─┘
-├── imu_fusion.launch.py         ─┐
+├── frames.launch.py             ─┐
+├── imu_fusion.launch.py          │
 ├── lidar.launch.py               │ gated by <name>_enable launch args
 ├── realsense.launch.py           │
 ├── edgetpu.launch.py  (+3.0 s)   │ stagger lets camera topics appear first
@@ -300,6 +306,32 @@ when it exists. Two load extra files: `pit.launch.py` adds
 `lsm9ds1_cal.yaml` and `lsm9ds1_mag_cal.yaml`, and `imu_fusion.launch.py` adds
 `realsense_cal.yaml`, each followed by its `.local.yaml` when present.
 `realsense.launch.py` wraps the vendor launch and applies the topic remaps.
+`frames.launch.py` does not use `single_node_launch()`; see
+[Frame tree](#frame-tree).
+
+## Frame tree
+
+```
+base_link ──► laser                      lidar; yaw 180 deg, the mount faces aft
+          ├─► imu_link                   rotation only labels the optical-axis IMU data
+          └─► camera_bottom_screw_frame  camera mount; pitch and roll act here
+                └─► camera_link ──► RealSense subtree (published by the camera driver)
+```
+
+REP-103 throughout: body frames x forward, y left, z up; `base_link` is the
+floor point under the rear axle midpoint. The IMU topics carry the RealSense
+IMU's optical axes (x right, y down, z forward; `config/pit.yaml` remaps the
+LSM9DS1 into them), and `imu_link`'s rotation labels them; no IMU data is
+rotated. `odom` and `map` arrive with the v0.9.0 autonomy work
+(`docs/specifics/autonomy-service-plan.md`).
+
+`urdf/racecar_neo.urdf.xacro` defines the tree. `launch/frames.launch.py` loads
+`config/frames.yaml` and `frames.local.yaml` through
+`racecar_neo_ros2_driver/frames.py`, converts millimetres and degrees to metres
+and radians, renders the xacro, and starts `robot_state_publisher` with
+`respawn` (2 s delay, 5 retries). The watchdog does not supervise it: the node
+publishes `/tf_static` once, latched, and the watchdog's rate check would read
+it as dead.
 
 ## Process model
 
@@ -403,6 +435,7 @@ node's `<name>_config` launch argument.
 | `edgetpu.yaml` | `edgetpu_node` | model path, labels, score threshold, image topic, inference rate |
 | `lsm9ds1_cal.yaml`, `lsm9ds1_mag_cal.yaml` | `pit_node` | IMU bias and iron correction, zero defaults |
 | `realsense_cal.yaml` | `imu_fusion_node` | RealSense IMU bias, zero defaults |
+| `frames.yaml` | `frames.launch.py` (not a node parameter file) | frame offsets in mm and deg, fleet base values; see [Frame tree](#frame-tree) |
 
 `config/*.local.yaml` is gitignored. Each launch file loads `<name>.local.yaml`
 after the committed file of the same name, so per-car values (calibration, an
@@ -421,7 +454,11 @@ little data.
   /imu/lsm9ds1/raw ─▶ calibrate_imu.py ──────────▶ lsm9ds1_cal.local.yaml ──────┐
   /mag/raw ────────▶ calibrate_mag.py ──────────▶ lsm9ds1_mag_cal.local.yaml ──┴─▶ pit_node
   /imu/realsense ──▶ calibrate_realsense_imu.py ─▶ realsense_cal.local.yaml ─────▶ imu_fusion_node
+  /scan ───────────▶ calibrate_lidar.py ─────────▶ frames.local.yaml ────────────▶ frames.launch.py
 ```
+
+`calibrate_lidar.py` writes a plain `frames.local.yaml` (no node key) and keeps
+any other keys already in it.
 
 After a run: `racecar build` (installs the new file), then restart teleop. The
 `.local.yaml` files are not in git; keep a backup in
@@ -432,10 +469,12 @@ After a run: `racecar build` (installs the new file), then restart teleop. The
 ```
 racecar_neo_ros2_driver/
 ├── racecar_neo_ros2_driver/   node implementations, launch_common, pit_protocol,
-│                              limits (shared clamp)
+│                              limits (shared clamp), frames (frames.yaml loader)
 ├── launch/                    one file per subsystem plus teleop composite
 ├── config/                    one YAML per node, keyed by node name;
+│                              frames.yaml (frame offsets);
 │                              *.local.yaml per-car overrides (gitignored)
+├── urdf/                      racecar_neo.urdf.xacro (frame tree)
 ├── scripts/                   setup phases, racecar-tool.sh, watchdog, dashboard,
 │                              diagnose, sysinfo, eth_monitor, wifi_scan,
 │                              racecar_log, calibration, dmatrix_patterns,
