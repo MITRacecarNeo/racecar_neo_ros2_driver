@@ -73,6 +73,7 @@ function update() {
           <h2><span class="indicator ${n.status}"></span>${n.label}</h2>
           <div style="color:var(--muted);font-size:0.8rem">${n.topic}</div>
           <div style="margin-top:0.3rem">${n.alive ? 'Publishing' : 'NOT DETECTED'}</div>
+          ${n.detail ? `<div style="margin-top:0.3rem;color:var(--muted);font-size:0.8rem">${n.detail}</div>` : ''}
         </div>`;
       }
       document.getElementById('nodes').innerHTML = nh;

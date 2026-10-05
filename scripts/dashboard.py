@@ -30,6 +30,7 @@ from sysinfo import (  # noqa: E402
     read_diagnostic_rates,
     read_rtc_voltage as _read_battery_voltage,
     read_under_voltage_alarm as _read_under_voltage_alarm,
+    read_watchdog_state,
     REALSENSE_DIAGNOSTIC_NAMES,
 )
 
@@ -259,6 +260,26 @@ def _collect_system_health() -> dict[str, dict[str, str]]:
     }
 
 
+# Watchdog states that change a card; healthy and starting leave the
+# topic-based status alone.
+WATCHDOG_VIEW = {
+    'gave_up': ('dead', 'watchdog gave up; replug the device or restart teleop'),
+    'no_device': ('stale', 'device not connected'),
+    'restarting': ('stale', 'watchdog restarting'),
+    'disabled': ('unsupervised', 'disabled at launch'),
+}
+
+
+def watchdog_view(status: str, watched: dict[str, Any] | None) -> tuple[str, str]:
+    """Return (card status, detail) after applying the watchdog's state for a node."""
+    if not watched or watched.get('state') not in WATCHDOG_VIEW:
+        return status, ''
+    view_status, detail = WATCHDOG_VIEW[watched['state']]
+    if watched['state'] == 'restarting':
+        detail += f" ({watched.get('restarts', 0)} so far)"
+    return view_status, detail
+
+
 def _monitor_loop() -> None:
     """Background thread that continuously refreshes the cached status snapshot."""
     last_system_health = 0.0
@@ -273,6 +294,10 @@ def _monitor_loop() -> None:
             topics = _get_topic_list()
             nodes = _get_node_list()
 
+            watchdog = read_watchdog_state()
+            watched = (
+                (watchdog or {}).get('nodes', {}) if not (watchdog or {}).get('stale') else {}
+            )
             node_status = {}
             for name, cfg in MONITORED.items():
                 present = cfg['topic'] in topics
@@ -282,12 +307,14 @@ def _monitor_loop() -> None:
                     status = 'dead'
                 else:
                     status = 'unsupervised'
+                status, detail = watchdog_view(status, watched.get(name))
                 node_status[name] = {
                     'label': cfg['label'],
                     'topic': cfg['topic'],
                     'alive': present,
                     'supervised': cfg['supervised'],
                     'status': status,
+                    'detail': detail,
                 }
 
             rates = {}

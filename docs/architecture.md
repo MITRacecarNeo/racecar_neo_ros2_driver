@@ -370,17 +370,43 @@ a wrapper shell.
 
 `scripts/watchdog.py` supervises seven nodes (pit, throttle, mux, gamepad,
 imu_fusion, lidar, realsense) using two liveness signals: the expected ROS
-topic advertising, and `pgrep` against the node's entry-point path. A node is
-restarted when either signal fails. `/scan` also carries a freshness window
-(`freshness_sec`, 5 s), so a lidar that stays advertised but stops publishing
-is restarted too. Additional behavior:
+topic advertising, and the node's entry-point path among the process command
+lines (one `/proc` scan per 5 s poll). A node counts as failed when either
+signal fails. `/scan` also carries a freshness window (`freshness_sec`, 5 s),
+so a lidar that stays advertised but stops publishing is restarted too.
 
-- 30 s restart cooldown per node, SIGTERM then SIGKILL escalation
+Each node carries a state (`NodeState`, advanced by `step()`):
+
+```
+starting ──topic seen──► healthy ◄──────── 60 s healthy clears the count
+   │ 60 s grace            │ fails                     ▲
+   └──────────────► restarting ──5 restarts, none held 60 s──► gave_up
+                      │  ▲ backoff 30, 60, 120, 240 s             │
+          device gone ▼  │ device back (count reset)              │ device gone
+                   no_device ◄────────────────────────────────────┘
+disabled: <name>_enable:=false at launch (recorded by launch_teleop.sh)
+```
+
+The startup grace covers the watchdog's first polls, which run before DDS
+discovery lists teleop's topics; without it every node read as down and was
+killed and relaunched as a watchdog child. A node that gave up is restarted
+again when its device is unplugged and replugged, when it recovers on its own,
+or when teleop restarts. Log lines are written on state changes, with a
+reminder every 10 min while a node is in `no_device`, `restarting`, or
+`gave_up`; each node's restart output is appended to `restart_<node>.log`.
+Every poll writes `watchdog_state.json` to the session log directory (by
+rename); `racecar status` turns it into the `watchdog nodes` row (`gave_up` is
+FAIL, `no_device` and `restarting` WARN) and the dashboard into card colours.
+Additional behavior:
+
+- SIGTERM then SIGKILL escalation
 - FastRTPS shared-memory orphan sweep every 60 s
 - Pi 5 PMIC under-voltage alarm via the `rpi_volt` hwmon's `in0_lcrit_alarm`,
   found by driver name because hwmon numbering is not stable
 - Hardware awareness: restart is skipped when the underlying device is absent,
   so an unplugged lidar does not produce a restart loop
+- `robot_state_publisher` (frame tree) is not supervised here; launch respawns
+  it, since its latched `/tf_static` has no rate to check
 
 `edgetpu_node` and `dotmatrix_node` are not supervised; the dashboard shows
 their cards as `unsupervised` rather than dead when they are down.

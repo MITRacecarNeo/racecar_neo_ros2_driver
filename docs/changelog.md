@@ -6,6 +6,21 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Added
 
+- Watchdog restart policy (S1 of the v0.9.0 autonomy plan). A 60 s startup
+  grace, until a node's topic has been seen once, stops the restart storm in
+  which the watchdog's first poll, run before DDS discovery listed teleop's
+  topics, killed and relaunched every node (8 of 88 log sessions on the
+  reference car). Restarts back off 30, 60, 120, 240 s and stop after 5 that
+  do not hold 60 s of health (`gave_up`), re-armed by replugging the device,
+  recovery, or a teleop restart. Logs on state changes with a 10 min reminder
+  in place of a warning every 5 s poll; one appended `restart_<node>.log` per
+  node. `launch_teleop.sh` records its launch arguments so subsystems
+  disabled with `<name>_enable:=false` are not restarted. One `/proc` scan per
+  poll replaces seven `pgrep` calls.
+- `watchdog_state.json` in the session log directory, read through
+  `sysinfo.read_watchdog_state()`: `racecar status` adds a `watchdog nodes`
+  row and the dashboard's node cards show give-ups, missing devices, and
+  restarts.
 - Static frame tree, phase 1 of the v0.9.0 autonomy plan.
   `urdf/racecar_neo.urdf.xacro` defines `base_link` (floor under the rear axle
   midpoint), `laser` (yaw 180 deg), `imu_link` (labels the optical-axis IMU

@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+import json
 from pathlib import Path
 import re
 import shutil
@@ -35,6 +37,11 @@ REALSENSE_DIAGNOSTIC_NAMES = {
     'camera: gyro': '/imu/realsense',
 }
 DIAGNOSTIC_RATE_KEY = 'Actual frequency (Hz)'
+
+# Written by watchdog.py into the session log directory on every poll.
+WATCHDOG_STATE_FILE = 'watchdog_state.json'
+# A state file older than this many polls means the watchdog has stopped.
+WATCHDOG_STALE_POLLS = 4
 
 
 def run_cmd(cmd: list[str], timeout: float = 5.0) -> str:
@@ -279,3 +286,22 @@ def format_uptime(seconds: float) -> str:
     if hours:
         return f'{hours}h {minutes}m'
     return f'{minutes}m'
+
+
+def read_watchdog_state(log_dir: Path | None = None) -> dict[str, Any] | None:
+    """
+    Return the watchdog's state file, or None when it is absent or unreadable.
+
+    Adds `age_sec` (seconds since the watchdog last wrote it) and `stale`
+    (older than WATCHDOG_STALE_POLLS polls).
+    """
+    path = (log_dir or Path.home() / 'logs' / 'latest') / WATCHDOG_STATE_FILE
+    try:
+        state: dict[str, Any] = json.loads(path.read_text())
+        updated = datetime.fromisoformat(state['updated'])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    age = (datetime.now() - updated).total_seconds()
+    state['age_sec'] = age
+    state['stale'] = age > WATCHDOG_STALE_POLLS * float(state.get('poll_sec', 5))
+    return state

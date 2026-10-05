@@ -189,3 +189,25 @@ class TestDashboardHTML:
 class TestConfig:
     def test_port_matches_the_service(self, dashboard):
         assert dashboard.PORT == 8080
+
+
+class TestWatchdogView:
+    def test_no_watchdog_state_keeps_the_topic_status(self, dashboard):
+        assert dashboard.watchdog_view('dead', None) == ('dead', '')
+
+    def test_healthy_keeps_the_topic_status(self, dashboard):
+        assert dashboard.watchdog_view('healthy', {'state': 'healthy'}) == ('healthy', '')
+
+    def test_gave_up_is_dead_with_advice(self, dashboard):
+        status, detail = dashboard.watchdog_view('dead', {'state': 'gave_up'})
+        assert status == 'dead' and 'gave up' in detail
+
+    def test_no_device_is_amber(self, dashboard):
+        assert dashboard.watchdog_view('dead', {'state': 'no_device'})[0] == 'stale'
+
+    def test_restarting_shows_the_count(self, dashboard):
+        status, detail = dashboard.watchdog_view('dead', {'state': 'restarting', 'restarts': 3})
+        assert status == 'stale' and '3' in detail
+
+    def test_disabled_is_grey(self, dashboard):
+        assert dashboard.watchdog_view('dead', {'state': 'disabled'})[0] == 'unsupervised'

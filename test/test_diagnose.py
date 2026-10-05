@@ -609,3 +609,39 @@ class TestUnderVoltageAlarm:
         monkeypatch.setattr(diag.sysinfo, 'read_under_voltage_alarm', lambda: True)
         row = next(c for c in diag.check_system(0) if c.name == 'under-voltage')
         assert row.status == diag.WARN
+
+
+def _wd_state(stale=False, **nodes):
+    return {
+        'stale': stale,
+        'age_sec': 99.0 if stale else 1.0,
+        'nodes': {
+            n: {'state': s, 'restarts': 5, 'reason': 'topic stale'} for n, s in nodes.items()
+        },
+    }
+
+
+class TestWatchdogCheck:
+    def test_no_state_file(self, diag):
+        assert diag.watchdog_check(None).status == diag.SKIP
+
+    def test_stale_state_warns(self, diag):
+        assert diag.watchdog_check(_wd_state(stale=True, pit='healthy')).status == diag.WARN
+
+    def test_all_healthy(self, diag):
+        row = diag.watchdog_check(_wd_state(pit='healthy', lidar='healthy'))
+        assert (row.status, row.detail) == (diag.OK, '2 healthy')
+
+    def test_gave_up_fails(self, diag):
+        row = diag.watchdog_check(_wd_state(pit='healthy', lidar='gave_up'))
+        assert row.status == diag.FAIL
+        assert 'lidar' in row.detail
+
+    @pytest.mark.parametrize('state', ['no_device', 'restarting'])
+    def test_waiting_warns(self, diag, state):
+        assert diag.watchdog_check(_wd_state(realsense=state)).status == diag.WARN
+
+    def test_disabled_and_starting_are_listed_but_ok(self, diag):
+        row = diag.watchdog_check(_wd_state(pit='healthy', lidar='disabled', mux='starting'))
+        assert row.status == diag.OK
+        assert 'disabled: lidar' in row.detail and 'starting: mux' in row.detail

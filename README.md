@@ -64,7 +64,7 @@ Display node subscribes:
 
 Safety and uptime layers:
 - **Mux** enforces speed/steer limits and gates commands behind controller bumpers; zeroes output on joystick disconnect (500 ms timeout).
-- **Watchdog** (`scripts/watchdog.py`) supervises 7 nodes with two liveness signals (ROS topic + `pgrep` on the entry-point path) and restarts a node when either fails. 30 s restart cooldown, SIGTERM to SIGKILL escalation, FastRTPS SHM orphan sweep every 60 s, Pi 5 PMIC under-voltage alarm. Restart is skipped when the device is physically missing.
+- **Watchdog** (`scripts/watchdog.py`) supervises 7 nodes with two liveness signals (ROS topic + the node's entry-point path in `/proc`) and restarts a node when either fails. A 60 s startup grace, backoff of 30, 60, 120 and 240 s between restarts, and a give-up after 5 restarts that do not hold 60 s, re-armed by replugging the device or restarting teleop. Logs on state changes only, skips subsystems disabled at launch, and writes `~/logs/latest/watchdog_state.json`, which `racecar status` and the dashboard read. SIGTERM to SIGKILL escalation, FastRTPS SHM orphan sweep every 60 s, Pi 5 PMIC under-voltage alarm. Restart is skipped when the device is physically missing.
 - **Four core systemd units** (`racecar-{teleop,watchdog,dashboard,jupyter}.service`) wired with `BindsTo=` so watchdog dies when teleop dies, and `Wants=` so watchdog auto-starts when teleop starts. Three more units carry the lab dashboards; they install disabled and are started one at a time.
 - **Launch wrapper** (`scripts/launch_teleop.sh`) creates `~/logs/<timestamp>/`, updates `~/logs/latest` atomically, sweeps FastRTPS SHM orphans, and `exec`s `ros2 launch` so systemd tracks the launch PID directly.
 - **Web dashboard** at `http://<robot>:8080`: 9 node cards, 9 topic-rate rows, System Health (RTC battery + Pi under-voltage alarm), watchdog log tail. Auto-refresh.
@@ -675,7 +675,8 @@ export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
 
 Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
 
-- **Unreleased**: static frame tree (`base_link`, `laser`, `imu_link`,
+- **Unreleased**: watchdog restart policy (startup grace, backoff, give-up,
+  state file shown by `racecar status` and the dashboard); static frame tree (`base_link`, `laser`, `imu_link`,
   `camera_link`) from `urdf/racecar_neo.urdf.xacro` and `config/frames.yaml`,
   started by teleop; `calibrate_lidar.py` for lidar yaw against a wall;
   `racecar test` runs the pytest suite again (it ran none since 0.8.2);

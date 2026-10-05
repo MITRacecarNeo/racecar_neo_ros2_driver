@@ -351,7 +351,39 @@ def check_services() -> list[Check]:
             out.append(
                 Check('services', unit, WARN, f'active={active or "?"} enabled={enabled or "?"}')
             )
+    out.append(watchdog_check(sysinfo.read_watchdog_state()))
     return out
+
+
+def watchdog_check(state: dict[str, Any] | None) -> Check:
+    """Summarise watchdog.py's per-node state file as one services row."""
+    name = 'watchdog nodes'
+    if state is None:
+        return Check('services', name, SKIP, 'no watchdog state file')
+    if state['stale']:
+        return Check('services', name, WARN, f'state not updated for {state["age_sec"]:.0f}s')
+    nodes: dict[str, dict[str, Any]] = state.get('nodes', {})
+    by_state: dict[str, list[str]] = {}
+    for node, info in sorted(nodes.items()):
+        by_state.setdefault(info.get('state', '?'), []).append(node)
+    data = ', '.join(f'{node}={info.get("state")}' for node, info in sorted(nodes.items()))
+    if 'gave_up' in by_state:
+        given_up = ', '.join(
+            f'{node} ({nodes[node].get("reason") or "down"})' for node in by_state['gave_up']
+        )
+        return Check('services', name, FAIL, f'gave up: {given_up}', data)
+    waiting = [
+        f'{label}: {", ".join(by_state[key])}'
+        for key, label in (('no_device', 'no device'), ('restarting', 'restarting'))
+        if key in by_state
+    ]
+    if waiting:
+        return Check('services', name, WARN, '; '.join(waiting), data)
+    parts = [f'{len(by_state.get("healthy", []))} healthy']
+    parts += [
+        f'{key}: {", ".join(by_state[key])}' for key in ('starting', 'disabled') if key in by_state
+    ]
+    return Check('services', name, OK, ', '.join(parts), data)
 
 
 def _iface_v4(iface: str) -> list[str]:
