@@ -65,8 +65,14 @@ class TestTargets:
         assert set(tracked) == {target.node}
         assert set(tracked[target.node]['ros__parameters']) == {
             target.accel_key,
+            target.scale_key,
             target.gyro_key,
         }
+
+    def test_nodes_declare_the_scale_key(self, target):
+        node_file = {'pit_node': 'pit_node.py', 'imu_fusion_node': 'imu_fusion_node.py'}
+        src = (ROOT / 'racecar_neo_ros2_driver' / node_file[target.node]).read_text()
+        assert f"declare_parameter('{target.scale_key}'" in src
 
     def test_realsense_writes_for_the_fusion_node(self):
         tgt = _load('calibrate_realsense_imu').TARGET
@@ -87,7 +93,7 @@ class TestTargets:
 
 class TestBiasParams:
     def test_gravity_cancels_across_six_positions(self, common, target):
-        g, b = 9.81, (0.1, -0.2, 0.05)
+        g, b = common.GRAVITY, (0.1, -0.2, 0.05)
         accel = [
             (b[0] + g, b[1], b[2]),
             (b[0] - g, b[1], b[2]),
@@ -99,7 +105,31 @@ class TestBiasParams:
         gyro = [[0.01, -0.02, 0.03]] * 20
         params = common.imu_bias_params(target, gyro, _positions(accel))
         assert params[target.accel_key] == pytest.approx(list(b))
+        assert params[target.scale_key] == pytest.approx([1.0, 1.0, 1.0])
         assert params[target.gyro_key] == pytest.approx([0.01, -0.02, 0.03])
+
+    def test_low_reading_axis_gets_a_scale_that_restores_g(self, common, target):
+        # The RealSense read gravity 8% low on the reference car.
+        g, k, b = common.GRAVITY, (0.92, 1.0, 1.03), (0.2, 0.0, -0.1)
+        accel = []
+        for axis in range(3):
+            for sign in (1, -1):
+                v = list(b)
+                v[axis] += sign * g * k[axis]
+                accel.append(tuple(v))
+        params = common.imu_bias_params(target, [[0.0, 0.0, 0.0]], _positions(accel))
+        scale, bias = params[target.scale_key], params[target.accel_key]
+        assert bias == pytest.approx(list(b))
+        assert scale == pytest.approx([1 / x for x in k])
+        corrected_up_x = (b[0] + g * k[0] - bias[0]) * scale[0]
+        assert corrected_up_x == pytest.approx(g)
+
+    def test_wrong_position_is_refused(self, common, target):
+        g = common.GRAVITY
+        # Y+ held with Z up: the Y axis never sees gravity.
+        accel = [(g, 0, 0), (-g, 0, 0), (0, 0, g), (0, -g, 0), (0, 0, g), (0, 0, -g)]
+        with pytest.raises(ValueError, match='Y axis'):
+            common.imu_bias_params(target, [[0.0, 0.0, 0.0]], _positions(accel))
 
     def test_missing_position_is_no_result(self, common, target):
         positions = _positions([(0.0, 0.0, 9.81)] * 6)

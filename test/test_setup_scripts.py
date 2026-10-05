@@ -44,7 +44,11 @@ RUNTIME_SCRIPTS = ['launch_teleop.sh']
 
 ALL_SCRIPTS = PHASE_SCRIPTS + [ORCHESTRATOR] + STANDALONE_SCRIPTS + RUNTIME_SCRIPTS
 
-PY_SCRIPTS = sorted(p.name for p in SCRIPTS_DIR.glob('*.py'))
+# Relative to scripts/, so the calibration/ tools are covered too.
+PY_SCRIPTS = sorted(
+    str(p.relative_to(SCRIPTS_DIR))
+    for p in [*SCRIPTS_DIR.glob('*.py'), *SCRIPTS_DIR.glob('calibration/*.py')]
+)
 # Entry points run by path or by `ros2 run`; the rest are imported siblings.
 PY_ENTRY_POINTS = [
     name for name in PY_SCRIPTS if "if __name__ == '__main__':" in (SCRIPTS_DIR / name).read_text()

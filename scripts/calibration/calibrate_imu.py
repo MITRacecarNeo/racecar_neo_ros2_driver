@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-LSM9DS1 accelerometer and gyroscope bias calibration for pit_node.
+LSM9DS1 accelerometer bias and scale, gyroscope bias calibration for pit_node.
 
 Reads /imu/lsm9ds1/raw and writes config/lsm9ds1_cal.local.yaml.
 
@@ -22,6 +22,7 @@ TARGET = ImuTarget(
     accel_key='accelerometer.bias',
     gyro_key='gyroscope.bias',
     tool='calibrate_imu.py',
+    scale_key='accelerometer.scale',
 )
 
 

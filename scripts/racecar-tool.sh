@@ -1061,6 +1061,13 @@ __RC_CLEANUP_HELP__
             python3 "${RACECAR_LOG_SCRIPT:-$pkg_dir/scripts/racecar_log.py}" "$@"
             ;;
 
+        calibrate)
+            # Guided calibration: runs the scripts/calibration/ tools in order,
+            # backs the results up, and offers a teleop restart. Thin wrapper;
+            # the work and its tests live in scripts/calibration/calibrate.py.
+            python3 "${RACECAR_CALIBRATE_SCRIPT:-$pkg_dir/scripts/calibration/calibrate.py}" "$@"
+            ;;
+
         status)
             # Whole-car diagnostic. Read-only: it observes topics and reads
             # sysfs, and never commands the hardware. Exits non-zero when a
@@ -1171,6 +1178,16 @@ Commands:
                           --section a,b       devices, sensors, actuators,
                                               system, services, network
                           --window SEC        ROS sample window (default 5.0)
+    calibrate [steps]   Calibrate the car in one guided session, each step with
+                        its own prompts; old and new values, a backup to
+                        ~/.config/racecar/calibration/, and an offer to
+                        restart teleop at the end. Steps, in order:
+                          imu         LSM9DS1 accel bias and scale, gyro bias
+                          mag         LSM9DS1 magnetometer
+                          realsense   RealSense accel bias and scale, gyro bias
+                          lidar       lidar yaw, car squared to a wall
+                        No steps: all of them. `racecar calibrate status`
+                        lists what is calibrated on this car.
     log <action>        Record and analyze ROS 2 bags. Actions:
                           start [name]        record; bag is <timestamp>_<name>
                                                 --topics A B    default: all
@@ -1211,11 +1228,14 @@ _racecar_complete() {
     local sub="${COMP_WORDS[1]:-}"
 
     if [[ $COMP_CWORD -eq 1 ]]; then
-        COMPREPLY=( $(compgen -W "build test source cd teleop launch lint udev watchdog service setup eth wifi desktop library log cleanup status help" -- "$cur") )
+        COMPREPLY=( $(compgen -W "build test source cd teleop launch lint udev watchdog service setup eth wifi desktop library log calibrate cleanup status help" -- "$cur") )
         return
     fi
 
     case "$sub" in
+        calibrate)
+            COMPREPLY=( $(compgen -W "status imu mag realsense lidar --help" -- "$cur") )
+            ;;
         launch)
             local launch_dir="$HOME/ros2_ws/src/racecar_neo_ros2_driver/launch"
             if [[ -d "$launch_dir" ]]; then

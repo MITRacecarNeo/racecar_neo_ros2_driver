@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-RealSense D435i IMU bias calibration for imu_fusion_node.
+RealSense D435i IMU accelerometer bias and scale, gyroscope bias calibration for imu_fusion_node.
 
 Reads /imu/realsense and writes config/realsense_cal.local.yaml.
 """
@@ -20,6 +20,7 @@ TARGET = ImuTarget(
     accel_key='realsense_accel_bias',
     gyro_key='realsense_gyro_bias',
     tool='calibrate_realsense_imu.py',
+    scale_key='realsense_accel_scale',
 )
 
 

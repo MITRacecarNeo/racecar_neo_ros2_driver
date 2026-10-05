@@ -6,6 +6,8 @@ import sys
 from types import ModuleType
 
 SCRIPTS = Path(__file__).resolve().parent.parent / 'scripts'
+# Script folders searched by load_script, in order.
+SCRIPT_DIRS = (SCRIPTS, SCRIPTS / 'calibration')
 
 
 def load_script(name: str) -> ModuleType:
@@ -17,7 +19,8 @@ def load_script(name: str) -> ModuleType:
     A module already loaded from the same file is returned as is, so every
     test file sees one module object to monkeypatch.
     """
-    path = SCRIPTS / f'{name}.py'
+    path = next((d / f'{name}.py' for d in SCRIPT_DIRS if (d / f'{name}.py').is_file()), None)
+    assert path is not None, f'{name}.py not found in {SCRIPT_DIRS}'
     existing = sys.modules.get(name)
     if existing is not None and Path(getattr(existing, '__file__', '') or '').resolve() == path:
         return existing

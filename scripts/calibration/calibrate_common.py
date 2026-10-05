@@ -45,12 +45,13 @@ def source_config_dir(script: Path | None = None) -> Path | None:
     """
     Return the package's source config dir, or None.
 
-    Checks next to the resolved script first (source checkout or symlink
-    install), then <ws>/src/<package>/config derived from the install prefix.
+    Checks the package root above the resolved script first (source checkout
+    or symlink install), then <ws>/src/<package>/config derived from the
+    install prefix.
     """
-    here = (script or Path(__file__)).resolve().parent.parent
-    if (here / 'setup.py').is_file() and (here / 'config').is_dir():
-        return here / 'config'
+    for here in (script or Path(__file__)).resolve().parents:
+        if (here / 'setup.py').is_file() and (here / 'config').is_dir():
+            return here / 'config'
     share = install_config_dir()
     if share is not None and '/install/' in str(share):
         ws = Path(str(share).split('/install/')[0])
@@ -217,9 +218,14 @@ def spin_until_done(node: CalibratorNode) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Accelerometer and gyroscope bias (calibrate_imu.py, calibrate_realsense_imu.py)
+# Accelerometer bias and scale, gyroscope bias (calibrate_imu.py,
+# calibrate_realsense_imu.py)
 # ---------------------------------------------------------------------------
 
+GRAVITY = 9.80665  # m/s^2, standard gravity
+# A fitted scale outside this band means a position was held wrong, not a
+# sensor gain error.
+SCALE_LIMITS = (0.8, 1.25)
 GYRO_SECONDS = 10.0
 POSITION_SECONDS = 5.0
 POSITIONS = [
@@ -243,21 +249,45 @@ class ImuTarget:
     accel_key: str
     gyro_key: str
     tool: str
+    scale_key: str
 
 
 def imu_bias_params(
     target: ImuTarget, gyro: list[list[float]], positions: list[list[list[float]]]
 ) -> dict[str, list[float]] | None:
     """
-    Return the node parameters for a bias fit, or None when data is missing.
+    Return the node parameters for a fit, or None when data is missing.
 
-    Gyro bias is the mean at rest. Accel bias is the mean of the six
-    orientation means, where gravity cancels.
+    Gyro bias is the mean at rest. For each accelerometer axis, `up` and
+    `down` are its mean with that axis pointing up and down (POSITIONS order):
+    bias = (up + down) / 2 and scale = 2 g / (up - down), applied by the node
+    as (raw - bias) * scale. Raises ValueError when an axis did not read about
+    +g up and -g down, meaning the car was not in the position asked for.
     """
     if not gyro or len(positions) != len(POSITIONS) or not all(positions):
         return None
-    accel = mean_vector([mean_vector(p) for p in positions])
-    return {target.accel_key: accel, target.gyro_key: mean_vector(gyro)}
+    means = [mean_vector(p) for p in positions]
+    bias, scale = [], []
+    for axis in range(3):
+        up, down = means[2 * axis][axis], means[2 * axis + 1][axis]
+        name = 'XYZ'[axis]
+        if up - down <= 0:
+            raise ValueError(
+                f'{name} axis read {up:.2f} up and {down:.2f} down; check the positions'
+            )
+        gain = 2.0 * GRAVITY / (up - down)
+        if not SCALE_LIMITS[0] <= gain <= SCALE_LIMITS[1]:
+            raise ValueError(
+                f'{name} axis read {up:.2f} up and {down:.2f} down m/s^2 (scale {gain:.3f}); '
+                'check the positions'
+            )
+        bias.append((up + down) / 2.0)
+        scale.append(gain)
+    return {
+        target.accel_key: bias,
+        target.scale_key: scale,
+        target.gyro_key: mean_vector(gyro),
+    }
 
 
 class ImuBiasCalibrator(CalibratorNode):
@@ -288,7 +318,11 @@ class ImuBiasCalibrator(CalibratorNode):
             input('Press Enter when in position...')
             positions.append([s[:3] for s in self.collect(POSITION_SECONDS, axis)])
 
-        params = imu_bias_params(self.target, gyro, positions)
+        try:
+            params = imu_bias_params(self.target, gyro, positions)
+        except ValueError as exc:
+            log.error(f'{exc}; nothing written.')
+            return 1
         if params is None:
             log.error('Missing samples for at least one step; nothing written.')
             return 1
@@ -301,6 +335,7 @@ class ImuBiasCalibrator(CalibratorNode):
         )
         log.info(f'Gyroscope bias (rad/s): {params[self.target.gyro_key]}')
         log.info(f'Accelerometer bias (m/s^2): {params[self.target.accel_key]}')
+        log.info(f'Accelerometer scale: {params[self.target.scale_key]}')
         log.info(backup_reminder(written))
         return 0
 

@@ -1202,3 +1202,29 @@ esac
 
     def test_listed_in_help(self):
         assert 'lint' in _run('help').stdout
+
+
+class TestCalibrateCommand:
+    """`racecar calibrate` dispatches to scripts/calibration/calibrate.py."""
+
+    def test_status_lists_every_step(self):
+        result = _run('calibrate', 'status')
+        assert result.returncode == 0, result.stderr
+        for step in ('imu', 'mag', 'realsense', 'lidar', 'camera', 'odom'):
+            assert step in result.stdout
+
+    def test_unknown_step_is_a_usage_error(self):
+        assert _run('calibrate', 'gps').returncode == 2
+
+    def test_top_level_help_documents_calibrate(self):
+        assert 'calibrate [steps]' in _run('help').stdout
+
+    def test_completion(self):
+        script = (
+            f'set +u; source "{TOOL}"; COMP_WORDS=(racecar calibrate ""); COMP_CWORD=2; '
+            '_racecar_complete; printf "%s\\n" "${COMPREPLY[@]}"'
+        )
+        words = subprocess.run(
+            ['bash', '-c', script], capture_output=True, text=True
+        ).stdout.split()
+        assert {'status', 'imu', 'mag', 'realsense', 'lidar'} <= set(words)

@@ -6,6 +6,18 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Added
 
+- `racecar calibrate` (S2 of the v0.9.0 autonomy plan, first part):
+  `scripts/calibration/calibrate.py` runs the calibration tools in order (IMU,
+  magnetometer, RealSense IMU, lidar yaw), each run or skipped at a prompt,
+  then prints old and new values, copies the changed `.local.yaml` files to
+  `~/.config/racecar/calibration/`, and offers a teleop restart.
+  `racecar calibrate status` lists each calibration's date and backup state.
+- Accelerometer scale for both IMUs. `calibrate_imu.py` and
+  `calibrate_realsense_imu.py` fit per-axis bias and scale from the six
+  orientations and refuse a position held wrong; `pit_node`
+  (`accelerometer.scale`) and `imu_fusion_node` (`realsense_accel_scale`)
+  apply (raw - bias) * scale, unit by default. On the reference car the
+  RealSense read gravity as 9.03 m/s^2 (8% low).
 - Watchdog restart policy (S1 of the v0.9.0 autonomy plan). A 60 s startup
   grace, until a node's topic has been seen once, stops the restart storm in
   which the watchdog's first poll, run before DDS discovery listed teleop's
@@ -37,6 +49,13 @@ All notable changes to this project will be documented in this file. The format 
   `calibrate_common.update_local_values()` sets keys in a plain local YAML
   while keeping the others.
 - `package.xml` exec depends: `robot_state_publisher`, `xacro`, `python3-yaml`.
+
+### Changed
+
+- Calibration tools moved from `scripts/` to `scripts/calibration/`; the
+  `ros2 run` names are unchanged. Per-axis accelerometer bias is now
+  (up + down) / 2 from that axis's two orientations, in place of the mean of
+  all six.
 
 ### Fixed
 

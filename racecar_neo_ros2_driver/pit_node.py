@@ -155,6 +155,7 @@ class PitNode(Node):
         self.declare_parameter('imu.mag_scale', 1.0e-6)  # firmware uT -> Tesla
         # Keys match config/lsm9ds1_cal.yaml and config/lsm9ds1_mag_cal.yaml.
         self.declare_parameter('accelerometer.bias', [0.0, 0.0, 0.0])
+        self.declare_parameter('accelerometer.scale', [1.0, 1.0, 1.0])
         self.declare_parameter('gyroscope.bias', [0.0, 0.0, 0.0])
         self.declare_parameter('magnetometer.hard_iron_bias', [0.0, 0.0, 0.0])
         self.declare_parameter(
@@ -196,6 +197,7 @@ class PitNode(Node):
         self._gyro_scale = float(self.get_parameter('imu.gyro_scale').value)
         self._mag_scale = float(self.get_parameter('imu.mag_scale').value)
         self._accel_bias = np.array(self.get_parameter('accelerometer.bias').value, float)
+        self._accel_cal_scale = np.array(self.get_parameter('accelerometer.scale').value, float)
         self._gyro_bias = np.array(self.get_parameter('gyroscope.bias').value, float)
         self._mag_hard = np.array(self.get_parameter('magnetometer.hard_iron_bias').value, float)
         self._mag_soft = np.array(
@@ -357,7 +359,7 @@ class PitNode(Node):
         stamp = self.get_clock().now().to_msg()
         raw_accel = remap_axes(telem.accel, self._ag_order, self._ag_sign, self._accel_scale)
         raw_gyro = remap_axes(telem.gyro, self._ag_order, self._ag_sign, self._gyro_scale)
-        accel = raw_accel - self._accel_bias
+        accel = (raw_accel - self._accel_bias) * self._accel_cal_scale
         gyro = raw_gyro - self._gyro_bias
 
         imu = Imu()

@@ -486,7 +486,13 @@ little data.
 `calibrate_lidar.py` writes a plain `frames.local.yaml` (no node key) and keeps
 any other keys already in it.
 
-After a run: `racecar build` (installs the new file), then restart teleop. The
+The tools live in `scripts/calibration/`; `calibrate.py` (behind `racecar
+calibrate`) runs them in order, reports old and new values, backs the results
+up, and offers a teleop restart. The IMU tools fit accelerometer bias and
+scale per axis from the six orientations, applied by `pit_node` and
+`imu_fusion_node` as (raw - bias) * scale (`accelerometer.scale`,
+`realsense_accel_scale`, unit by default). After a run, restart teleop; the
+tools also write the install share `config/`, so no rebuild is needed. The
 `.local.yaml` files are not in git; keep a backup in
 `~/.config/racecar/calibration/`.
 
@@ -503,9 +509,11 @@ racecar_neo_ros2_driver/
 ├── urdf/                      racecar_neo.urdf.xacro (frame tree)
 ├── scripts/                   setup phases, racecar-tool.sh, watchdog, dashboard,
 │                              diagnose, sysinfo, eth_monitor, wifi_scan,
-│                              racecar_log, calibration, dmatrix_patterns,
+│                              racecar_log, dmatrix_patterns,
 │                              systemd units, udev, polkit and modprobe rules,
 │   │                          Coral overlay and gasket patch
+│   ├── calibration/           calibrate.py (`racecar calibrate`), the
+│   │                          calibrate_*.py tools, calibrate_common
 │   └── dashboards/            lab-dashboard checkouts (gitignored)
 ├── test/                      pytest suite (ament convention; not tests/)
 ├── models/                    EdgeTPU models: COCO EfficientDet-Lite0 (default)

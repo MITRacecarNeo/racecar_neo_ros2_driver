@@ -547,18 +547,31 @@ For boot-time startup, see [scripts/](./scripts/) for systemd units and the `set
 ## Sensor calibration
 
 Bias and scale are per-board, so each car needs its own calibration run. The
-committed `config/lsm9ds1_cal.yaml`, `config/lsm9ds1_mag_cal.yaml` and
-`config/realsense_cal.yaml` hold zero defaults; a car's own values go in a
-gitignored `config/<name>.local.yaml` beside each, which the launch files load
-after the committed file.
+committed `config/lsm9ds1_cal.yaml`, `config/lsm9ds1_mag_cal.yaml`,
+`config/realsense_cal.yaml` and `config/frames.yaml` hold the defaults; a car's
+own values go in a gitignored `config/<name>.local.yaml` beside each, which the
+launch files load after the committed file.
 
 ```sh
-ros2 run racecar_neo_ros2_driver calibrate_imu.py         # LSM9DS1 accel + gyro bias
+racecar calibrate status      # what is calibrated on this car, and backed up
+racecar calibrate             # every step in order, one guided session
+racecar calibrate imu lidar   # chosen steps only
+```
+
+`racecar calibrate` runs the tools in `scripts/calibration/` in this order:
+the hand-held steps first (`imu`, `mag`, `realsense`), then `lidar` with the
+car on the floor. Each step can be run or skipped at its prompt. At the end it
+prints old and new values, copies the changed files to
+`~/.config/racecar/calibration/`, and offers to restart teleop so the nodes
+load them. Teleop must be running, since the tools read its topics. The tools
+also run on their own:
+
+```sh
+ros2 run racecar_neo_ros2_driver calibrate_imu.py         # LSM9DS1 accel bias + scale, gyro bias
 ros2 run racecar_neo_ros2_driver calibrate_mag.py         # LSM9DS1 hard/soft iron
-ros2 run racecar_neo_ros2_driver calibrate_realsense_imu.py   # D435i accel + gyro bias
+ros2 run racecar_neo_ros2_driver calibrate_realsense_imu.py   # D435i accel bias + scale, gyro bias
 ros2 run racecar_neo_ros2_driver calibrate_lidar.py       # lidar yaw, car squared to a wall
-racecar build                                             # installs the new .local.yaml
-racecar service restart teleop                            # nodes read it at start
+racecar service restart teleop                            # nodes read the values at start
 ```
 
 | Utility | Reads | Writes | Consumed by |
@@ -569,8 +582,9 @@ racecar service restart teleop                            # nodes read it at sta
 | `calibrate_lidar.py` | `/scan` | `config/frames.local.yaml` (`laser_yaw_deg`) | `frames.launch.py` |
 
 Each utility writes the file to the source `config/` directory and, when it
-exists, the install share `config/` directory. It writes nothing and exits
-non-zero when the fit fails or it has too little data.
+exists, the install share `config/` directory, so no rebuild is needed. It
+writes nothing and exits non-zero when the fit fails or it has too little
+data.
 
 `calibrate_lidar.py` needs the car facing a flat wall 0.5 to 2 m away, squared
 so both front corners are the same distance from it. It fits a line to the
@@ -579,13 +593,18 @@ to the car. `--check` reports the fit without writing and exits 1 when the wall
 is more than 0.5 deg off square; `--wall-distance-mm` takes a taped distance
 from `base_link` to the wall and reports the lidar x error it implies.
 
-`calibrate_imu.py` walks a 6-position sequence (each axis up and down) and
-averages the gravity vector per pose. `calibrate_mag.py` needs rotation about
+`calibrate_imu.py` and `calibrate_realsense_imu.py` walk a 6-position sequence
+(each axis up and down). For each accelerometer axis, the readings up and down
+give its bias, (up + down) / 2, and its scale, 2 g / (up - down); the node
+applies (raw - bias) * scale. A position held wrong shows as a scale outside
+0.8 to 1.25, and the tool refuses to write. `calibrate_mag.py` needs rotation about
 all three axes and fits an ellipsoid, then plots raw against corrected samples
 so you can confirm the sphere closed up.
 
 The `.local.yaml` files are untracked, so a fresh clone or reimage loses them.
-Keep a copy in `~/.config/racecar/calibration/`; each utility prints a reminder.
+`racecar calibrate` copies them to `~/.config/racecar/calibration/`; the
+individual utilities print a reminder instead, and `racecar calibrate status`
+shows which files have no backup.
 
 A car that has never been calibrated runs with zero bias and an identity
 soft-iron matrix, and nothing is logged to say so, so run the two LSM9DS1
@@ -675,7 +694,9 @@ export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
 
 Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
 
-- **Unreleased**: watchdog restart policy (startup grace, backoff, give-up,
+- **Unreleased**: `racecar calibrate` (guided calibration, status, backup;
+  tools moved to `scripts/calibration/`); accelerometer scale for both IMUs;
+  watchdog restart policy (startup grace, backoff, give-up,
   state file shown by `racecar status` and the dashboard); static frame tree (`base_link`, `laser`, `imu_link`,
   `camera_link`) from `urdf/racecar_neo.urdf.xacro` and `config/frames.yaml`,
   started by teleop; `calibrate_lidar.py` for lidar yaw against a wall;

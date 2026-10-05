@@ -59,7 +59,9 @@ class ImuFusionNode(Node):
         self.declare_parameter('realsense_topic', '/imu/realsense')
         self.declare_parameter('realsense_accel_bias', [0.0, 0.0, 0.0])
         self.declare_parameter('realsense_gyro_bias', [0.0, 0.0, 0.0])
+        self.declare_parameter('realsense_accel_scale', [1.0, 1.0, 1.0])
         self._rs_accel_bias = np.array(self.get_parameter('realsense_accel_bias').value, float)
+        self._rs_accel_scale = np.array(self.get_parameter('realsense_accel_scale').value, float)
         self._rs_gyro_bias = np.array(self.get_parameter('realsense_gyro_bias').value, float)
 
         self._rs_topic = self.get_parameter('realsense_topic').value
@@ -86,11 +88,13 @@ class ImuFusionNode(Node):
 
     def _make_cb(self, topic: str) -> Callable[[Imu], None]:
         def cb(msg: Imu) -> None:
-            # Bias applied on arrival; _publish re-reads the cached message each tick.
+            # Calibration applied on arrival; _publish re-reads the cached message
+            # each tick. Accel is (raw - bias) * scale.
             if topic == self._rs_topic:
-                msg.linear_acceleration.x -= float(self._rs_accel_bias[0])
-                msg.linear_acceleration.y -= float(self._rs_accel_bias[1])
-                msg.linear_acceleration.z -= float(self._rs_accel_bias[2])
+                a = msg.linear_acceleration
+                a.x = (a.x - float(self._rs_accel_bias[0])) * float(self._rs_accel_scale[0])
+                a.y = (a.y - float(self._rs_accel_bias[1])) * float(self._rs_accel_scale[1])
+                a.z = (a.z - float(self._rs_accel_bias[2])) * float(self._rs_accel_scale[2])
                 msg.angular_velocity.x -= float(self._rs_gyro_bias[0])
                 msg.angular_velocity.y -= float(self._rs_gyro_bias[1])
                 msg.angular_velocity.z -= float(self._rs_gyro_bias[2])
