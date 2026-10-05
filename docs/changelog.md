@@ -21,7 +21,10 @@ All notable changes to this project will be documented in this file. The format 
   alongside for contrast; field strength outside 20 to 70 uT warns. Each
   check writes its criteria (measured, limit, PASS/WARN/FAIL/INFO, advice) to
   a JSON report (`--report`), and `racecar calibrate check` ends with a
-  summary of every criterion and lists steps skipped or not reached. Prompts
+  summary of every criterion, coloured green, yellow, and red on a terminal
+  as in `racecar status` (`NO_COLOR` opts out), and lists steps skipped or
+  not reached. The lidar wall angle passes within 0.5 deg, warns to 2 deg
+  (hand-squaring precision), and fails beyond. Prompts
   read one line at a time, so a scripted run (one line per prompt) completes.
 - `docs/troubleshooting.md`: the magnetometer reads about 2.07x Earth's field
   on the reference car, matching a +/-8 versus +/-4 gauss sensitivity

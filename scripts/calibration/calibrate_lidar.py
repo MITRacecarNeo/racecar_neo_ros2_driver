@@ -57,6 +57,10 @@ MAX_TILT_DEG = 5.0
 # Exit-check limits: yaw to 0.5 deg (plan, "Physical measurements"); RMS
 # residual above 10 mm means a cluttered or curved wall.
 PASS_ANGLE_DEG = 0.5
+# Hand squaring at the wheel centres is good to about 1 deg (0.32 deg per mm),
+# so up to WARN_ANGLE_DEG warns; beyond it the mount moved or the car is badly
+# placed. The drive-based method (S2 --drive) replaces squaring.
+WARN_ANGLE_DEG = 2.0
 PASS_RMS_MM = 10.0
 
 
@@ -143,14 +147,25 @@ def corrected_yaw_deg(current_deg: float, fit: WallFit) -> float:
 
 def check_criteria(fit: WallFit, yaw_deg: float) -> list[Criterion]:
     """Return the --check result for a wall fit made with the configured yaw."""
+    angle = abs(fit.angle_deg)
+    if angle <= PASS_ANGLE_DEG:
+        status, advice = 'PASS', ''
+    elif angle <= WARN_ANGLE_DEG:
+        status = 'WARN'
+        advice = (
+            'within hand-squaring precision (1 mm at the wheel centres is 0.32 deg); '
+            'lidar yaw by driving arrives with S2 --drive'
+        )
+    else:
+        status = 'FAIL'
+        advice = 'beyond hand-squaring error: check the lidar mount, re-square, recalibrate'
     return [
         Criterion(
             'wall angle',
             f'{fit.angle_deg:+.2f} deg (fits {corrected_yaw_deg(yaw_deg, fit):.2f})',
-            f'within {PASS_ANGLE_DEG} deg',
-            'PASS' if abs(fit.angle_deg) <= PASS_ANGLE_DEG else 'FAIL',
-            'car not square to the wall (1 mm at the wheel centres is 0.32 deg), '
-            'or the mount moved; lidar yaw by driving arrives with S2 --drive',
+            f'within {PASS_ANGLE_DEG} deg (warn to {WARN_ANGLE_DEG})',
+            status,
+            advice,
         ),
         Criterion(
             'wall straightness',

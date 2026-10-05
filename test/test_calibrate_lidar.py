@@ -118,8 +118,12 @@ class TestCheckCriteria:
             'wall distance': 'INFO',
         }
 
-    def test_angle_off_fails_with_the_fitted_yaw(self, cal):
+    def test_within_hand_squaring_warns_with_the_fitted_yaw(self, cal):
         fit = _fit(cal, _wall_scan(180.7, 1.0))
         angle = cal.check_criteria(fit, 180.0)[0]
-        assert angle.status == 'FAIL'
+        assert angle.status == 'WARN'
         assert '180.70' in angle.measured
+
+    def test_beyond_hand_squaring_fails(self, cal):
+        fit = _fit(cal, _wall_scan(183.0, 1.0))
+        assert cal.check_criteria(fit, 180.0)[0].status == 'FAIL'

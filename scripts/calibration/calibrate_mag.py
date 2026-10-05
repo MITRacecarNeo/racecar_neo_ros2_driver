@@ -154,8 +154,9 @@ class CircleCheck:
             out.append(
                 Criterion(
                     'raw, for contrast',
-                    f'{raw.offset:.1%} off centre, {raw.roundness:.1%} out of round',
+                    f'{raw.offset:.1%} off centre, {raw.roundness:.1%} out of round, '
                     f'{raw.field_ut:.1f} uT',
+                    '',
                     'INFO',
                 )
             )

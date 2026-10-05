@@ -166,11 +166,34 @@ def overall(criteria: list[Criterion]) -> str:
     return max(judged, key=STATUS_ORDER.index) if judged else 'PASS'
 
 
-def criteria_lines(criteria: list[Criterion], indent: str = '  ') -> list[str]:
+# Same colours and opt-outs as `racecar status` (scripts/diagnose.py).
+ANSI = {'PASS': '32', 'WARN': '33', 'FAIL': '31'}
+
+
+def use_color() -> bool:
+    """Colour only an interactive terminal; NO_COLOR (no-color.org) opts out."""
+    return (
+        sys.stdout.isatty()
+        and 'NO_COLOR' not in os.environ
+        and os.environ.get('TERM', '') != 'dumb'
+    )
+
+
+def paint(text: str, status: str, color: bool, bold: bool = False) -> str:
+    code = ANSI.get(status)
+    if not color or code is None:
+        return text
+    return f'\033[{"1;" if bold else ""}{code}m{text}\033[0m'
+
+
+def criteria_lines(
+    criteria: list[Criterion], indent: str = '  ', color: bool = False
+) -> list[str]:
     """Render criteria as aligned table lines, advice on its own line below a WARN or FAIL."""
     lines = []
     for c in criteria:
-        lines.append(f'{indent}{c.status:5s} {c.name:18s} {c.measured:28s} {c.limit}')
+        status = paint(f'{c.status:5s}', c.status, color)
+        lines.append(f'{indent}{status} {c.name:18s} {c.measured:28s} {c.limit}'.rstrip())
         if c.advice and c.status in ('WARN', 'FAIL'):
             lines.append(f'{indent}      -> {c.advice}')
     return lines

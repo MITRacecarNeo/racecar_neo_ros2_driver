@@ -190,7 +190,7 @@ class TestChecks:
         assert 'lidar      skipped' in summary
         assert 'FAIL  centre offset' in summary and '-> recalibrate' in summary
         assert 'WARN  field strength' in summary
-        assert 'RESULT  1 pass  0 warn  1 fail  1 skipped' in summary
+        assert 'RESULT FAIL  1 pass  0 warn  1 fail  1 skipped' in summary
         assert all('--check' in cmd for cmd in ran)
 
     def test_tool_without_a_report_counts_as_a_fail(self, cal, monkeypatch, capsys):
@@ -252,3 +252,41 @@ class TestNotRun:
         monkeypatch.setattr(common.os, 'read', lambda fd, n: b'')
         with pytest.raises(EOFError):
             common.read_line()
+
+
+class TestColor:
+    def _results(self, cal):
+        common = load_script('calibrate_common')
+        step = next(s for s in cal.STEPS if s.key == 'mag')
+        crit = [
+            common.Criterion('centre offset', '4.8%', 'under 10%', 'PASS'),
+            common.Criterion('field strength', '104 uT', '20 to 70', 'WARN', 'gain?'),
+        ]
+        return [(step, 'WARN', crit)]
+
+    def test_plain_without_color(self, cal):
+        text = '\n'.join(cal.summary_lines(self._results(cal), color=False))
+        assert '\033[' not in text
+        assert 'RESULT WARN  0 pass  1 warn  0 fail  0 skipped' in text
+
+    def test_colors_match_racecar_status(self, cal):
+        text = '\n'.join(cal.summary_lines(self._results(cal), color=True))
+        assert '\033[32mPASS ' in text  # green criterion
+        assert '\033[33mWARN ' in text  # yellow criterion
+        assert '\033[1;33mWARN' in text  # bold verdict and result
+        assert '\033[33m1 warn\033[0m' in text
+        assert '0 fail' in text and '\033[31m0 fail' not in text  # zero counts stay plain
+
+    def test_no_color_opt_out(self, cal, monkeypatch):
+        common = load_script('calibrate_common')
+        monkeypatch.setattr(common.sys.stdout, 'isatty', lambda: True)
+        monkeypatch.setenv('TERM', 'xterm')
+        monkeypatch.delenv('NO_COLOR', raising=False)
+        assert common.use_color() is True
+        monkeypatch.setenv('NO_COLOR', '1')
+        assert common.use_color() is False
+
+    def test_not_a_terminal(self, cal, monkeypatch):
+        common = load_script('calibrate_common')
+        monkeypatch.setattr(common.sys.stdout, 'isatty', lambda: False)
+        assert common.use_color() is False

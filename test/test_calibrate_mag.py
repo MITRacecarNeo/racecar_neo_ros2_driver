@@ -149,7 +149,8 @@ class TestCheckCircle:
         good = mag.check_circle(_turn((20.0, 5.0, 40.0)))
         raw = mag.check_circle(_turn((20.0, 5.0, 40.0), hard=(30.0, 0.0, 0.0)))
         line = good.criteria(raw)[-1]
-        assert (line.name, line.status) == ('raw, for contrast', 'INFO')
+        assert (line.name, line.status, line.limit) == ('raw, for contrast', 'INFO', '')
+        assert line.measured.endswith('uT')
 
     def test_too_few_samples(self, mag):
         assert mag.check_circle(_turn((20.0, 5.0, 40.0), n=mag.MIN_SAMPLES - 1)) is None

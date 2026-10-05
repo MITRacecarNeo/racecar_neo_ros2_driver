@@ -37,8 +37,10 @@ from calibrate_common import (  # noqa: E402, I100
     BACKUP_DIR,
     criteria_lines,
     Criterion,
+    paint,
     read_line,
     source_config_dir,
+    use_color,
 )
 
 TELEOP_UNIT = 'racecar-teleop'
@@ -244,20 +246,28 @@ def read_report(path: Path) -> tuple[str, list[Criterion]] | None:
         return None
 
 
-def summary_lines(results: list[tuple[Step, str, list[Criterion]]]) -> list[str]:
+def summary_lines(
+    results: list[tuple[Step, str, list[Criterion]]], color: bool = False
+) -> list[str]:
     """Render the end-of-run table: each step's verdict, then each criterion."""
     lines = ['', '=== Check summary ===']
     for step, verdict, criteria in results:
-        lines.append(f'{step.key:10s} {verdict:7s} {step.label}')
-        lines += criteria_lines(criteria, indent='    ')
+        mark = paint(f'{verdict:7s}', verdict, color, bold=True)
+        lines.append(f'{step.key:10s} {mark} {step.label}')
+        lines += criteria_lines(criteria, indent='    ', color=color)
     counts = {
         v: sum(1 for _, verdict, _ in results if verdict == v) for v in ('PASS', 'WARN', 'FAIL')
     }
     skipped = sum(1 for _, verdict, _ in results if verdict == 'skipped')
     not_run = sum(1 for _, verdict, _ in results if verdict == 'not run')
+    tallies = '  '.join(
+        paint(f'{counts[v]} {v.lower()}', v, color and counts[v] > 0)
+        for v in ('PASS', 'WARN', 'FAIL')
+    )
+    worst = 'FAIL' if counts['FAIL'] else 'WARN' if counts['WARN'] else 'PASS'
     lines.append(
-        f'RESULT  {counts["PASS"]} pass  {counts["WARN"]} warn  {counts["FAIL"]} fail  '
-        f'{skipped} skipped' + (f'  {not_run} not run' if not_run else '')
+        f'RESULT {paint(worst, worst, color, bold=True)}  {tallies}  {skipped} skipped'
+        + (f'  {not_run} not run' if not_run else '')
     )
     return lines
 
@@ -289,7 +299,7 @@ def run_checks(steps: list[Step]) -> int:
             else:
                 verdict, criteria = parsed
             results.append((step, verdict, criteria))
-    print('\n'.join(summary_lines(results)))
+    print('\n'.join(summary_lines(results, use_color())))
     return 1 if any(verdict == 'FAIL' for _, verdict, _ in results) else 0
 
 

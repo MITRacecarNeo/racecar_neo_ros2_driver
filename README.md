@@ -562,8 +562,9 @@ racecar calibrate check       # verify each calibration against the live sensors
 Car prep is three commands: `racecar calibrate`, a teleop restart (offered at
 the end), then `racecar calibrate check`. Each check runs or skips at its
 prompt. A summary at the end lists every criterion of every check with the
-measured value, the limit, and PASS, WARN, or FAIL, with what to do under each
-WARN or FAIL; steps skipped or not reached are listed too. The command exits 1
+measured value, the limit, and PASS, WARN, or FAIL (green, yellow, red on a
+terminal, as in `racecar status`; `NO_COLOR` turns it off), with what to do
+under each WARN or FAIL; steps skipped or not reached are listed too. The command exits 1
 if any check failed. One line per prompt on stdin scripts the whole run.
 
 | Check | Car position | Passes when |
@@ -571,7 +572,7 @@ if any check failed. One line per prompt on stdin scripts the whole run.
 | `imu` | Still and level, 3 s | `/imu/lsm9ds1` gravity within 1% of 9.807 m/s^2; gyro under 0.01 rad/s |
 | `mag` | One full turn flat on the floor, 25 s, away from large metal | `/mag` traces a circle centred on the turning axis (within 10% of its radius) and round to 5%. Field strength outside 20 to 70 uT is a WARN: a uniform scale error leaves a compass heading unchanged (see docs/troubleshooting.md on `imu.mag_scale`). `/mag/raw` is fitted the same way for contrast |
 | `realsense` | Still and level, 3 s | the stored calibration applied to `/imu/realsense` gives gravity within 1%, gyro under 0.01 rad/s |
-| `lidar` | Squared to a flat wall | `calibrate_lidar.py --check`: wall within 0.5 deg of square; hand squaring limits it to about 1 deg |
+| `lidar` | Squared to a flat wall | `calibrate_lidar.py --check`: wall within 0.5 deg of square passes; up to 2 deg warns, since hand squaring is good to about 1 deg; beyond 2 deg fails (mount moved or car badly placed) |
 
 `racecar calibrate` runs the tools in `scripts/calibration/` in this order:
 the hand-held steps first (`imu`, `mag`, `realsense`), then `lidar` with the
