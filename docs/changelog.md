@@ -6,6 +6,17 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Added
 
+- Telemetry stamped with the Teensy's sample time (phase 2 of the v0.9.0
+  autonomy plan). `racecar_neo_ros2_driver/teensy_clock.py` maps each frame's
+  `micros()` onto ROS time: it unwraps the signed 32-bit counter (35.8 min
+  wrap), takes the offset as the minimum of receive minus Teensy time over a
+  10 s window (the least-delayed frame), never steps backwards, and restarts
+  when the two clocks disagree by more than 0.5 s (a Teensy reset, a
+  reconnect, a Pi clock step). `pit_node` stamps `/imu/lsm9ds1`,
+  `/imu/lsm9ds1/raw`, `/mag`, `/mag/raw` and `/odom` with it in place of the
+  Pi receive time, which jittered by up to 17 ms because the serial link
+  delivers frames in bursts. `use_teensy_stamps: false` in `pit.yaml` goes
+  back to receive time.
 - `racecar calibrate` (S2 of the v0.9.0 autonomy plan, first part):
   `scripts/calibration/calibrate.py` runs the calibration tools in order (IMU,
   magnetometer, RealSense IMU, lidar yaw), each run or skipped at a prompt,

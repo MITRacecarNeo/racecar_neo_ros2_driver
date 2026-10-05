@@ -31,6 +31,12 @@ pit_node:
     odom_frame_id: odom
     odom_child_frame_id: base_link
 
+    # Telemetry stamps: the Teensy's sample time (micros() in each frame),
+    # mapped onto ROS time by racecar_neo_ros2_driver/teensy_clock.py. The
+    # Pi's receive time jitters by up to 17 ms because the serial link
+    # delivers frames in bursts. false stamps with receive time.
+    use_teensy_stamps: true
+
     # IMU republish (/imu/lsm9ds1, /mag)
     # imu_fusion_node blends /imu/lsm9ds1 with /imu/realsense into /imu/fused,
     # the single IMU the library reads.

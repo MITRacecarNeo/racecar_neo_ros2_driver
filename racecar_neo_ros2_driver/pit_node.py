@@ -23,6 +23,7 @@ import threading
 import time
 
 from ackermann_msgs.msg import AckermannDriveStamped
+from builtin_interfaces.msg import Time as TimeMsg
 from nav_msgs.msg import Odometry
 import numpy as np
 import rclpy
@@ -34,6 +35,7 @@ from rclpy.qos import (
     QoSProfile,
     QoSReliabilityPolicy,
 )
+from rclpy.time import Time
 from sensor_msgs.msg import Imu, Joy, MagneticField
 import serial
 from std_msgs.msg import Bool, Float32, Float32MultiArray, UInt8MultiArray
@@ -41,6 +43,7 @@ from std_msgs.msg import Bool, Float32, Float32MultiArray, UInt8MultiArray
 from . import pit_protocol as pit
 from .limits import clamp
 from .mux_node import MuxMode, select_mode
+from .teensy_clock import TeensyClock
 
 # RxPacket.SystemState bit layout; mirror of the firmware cfg::SYS_STATE.
 SYS_MODE_MASK = 0x03
@@ -141,6 +144,9 @@ class PitNode(Node):
         self.declare_parameter('gamepad_enable_button', 4)
         self.declare_parameter('autonomy_enable_button', 5)
 
+        # Stamp telemetry with the Teensy's sample time (teensy_clock.py) in
+        # place of the Pi's bursty receive time; false falls back to receive time.
+        self.declare_parameter('use_teensy_stamps', True)
         self.declare_parameter('frame_id', 'imu_link')
         self.declare_parameter('publish_mag', True)
         self.declare_parameter('imu_topic', '/imu/lsm9ds1')
@@ -170,6 +176,9 @@ class PitNode(Node):
         self._speed_sign = int(self.get_parameter('speed_sign').value)
         self._require_crc = bool(self.get_parameter('require_crc').value)
         self._frame = self.get_parameter('frame_id').value
+        self._teensy_clock = (
+            TeensyClock() if self.get_parameter('use_teensy_stamps').value else None
+        )
         self._publish_mag = bool(self.get_parameter('publish_mag').value)
         self._imu_topic = self.get_parameter('imu_topic').value
         self._mag_topic = self.get_parameter('mag_topic').value
@@ -347,6 +356,18 @@ class PitNode(Node):
                 elif consumed == 0:
                     break
 
+    def _telemetry_stamp(self, timestamp_us: int) -> TimeMsg:
+        now = self.get_clock().now()
+        if self._teensy_clock is None:
+            return now.to_msg()
+        restarts = self._teensy_clock.restarts
+        stamp_ns = self._teensy_clock.stamp(timestamp_us, now.nanoseconds)
+        if self._teensy_clock.restarts != restarts:
+            self.get_logger().info(
+                'Teensy clock mapping restarted (Teensy reset, reconnect, or Pi clock step)'
+            )
+        return Time(nanoseconds=stamp_ns).to_msg()
+
     def _publish_telemetry(self, telem: pit.Telemetry) -> None:
         if self._require_crc and not telem.crc_ok:
             self._crc_fail_count += 1
@@ -356,7 +377,7 @@ class PitNode(Node):
                 )
             return
 
-        stamp = self.get_clock().now().to_msg()
+        stamp = self._telemetry_stamp(telem.timestamp_us)
         raw_accel = remap_axes(telem.accel, self._ag_order, self._ag_sign, self._accel_scale)
         raw_gyro = remap_axes(telem.gyro, self._ag_order, self._ag_sign, self._gyro_scale)
         accel = (raw_accel - self._accel_bias) * self._accel_cal_scale

@@ -156,3 +156,64 @@ class TestBuildDisplay:
         assert state & SYS_MODE_MASK == SYS_MODE_MANUAL
         assert state & SYS_DOTMATRIX_ACTIVE
         assert state & SYS_DRIVER_STARTING
+
+
+class _Clock:
+    def __init__(self, ns):
+        self.ns = ns
+
+    def now(self):
+        from rclpy.time import Time
+
+        return Time(nanoseconds=self.ns)
+
+
+class _StampPit:
+    """PitNode._telemetry_stamp over plain attributes."""
+
+    _telemetry_stamp = PitNode._telemetry_stamp
+
+    def __init__(self, use_teensy, receive_ns):
+        from racecar_neo_ros2_driver.teensy_clock import TeensyClock
+
+        self._teensy_clock = TeensyClock() if use_teensy else None
+        self._clock = _Clock(receive_ns)
+        self.logged = []
+
+    def get_clock(self):
+        return self._clock
+
+    def get_logger(self):
+        pit = self
+
+        class _Log:
+            def info(self, msg):
+                pit.logged.append(msg)
+
+        return _Log()
+
+
+class TestTelemetryStamp:
+    def test_receive_time_when_disabled(self):
+        pit = _StampPit(False, 5_000_000_123)
+        stamp = pit._telemetry_stamp(1234)
+        assert (stamp.sec, stamp.nanosec) == (5, 123)
+
+    def test_teensy_spacing_survives_bursty_arrival(self):
+        # A prompt frame (1 ms transport delay) sets the floor; the next four,
+        # 6 ms apart at the Teensy, arrive in a burst 0.5 ms apart.
+        pit = _StampPit(True, 0)
+        stamps = []
+        for i, rx_ms in enumerate([1.0, 30.0, 30.5, 31.0, 31.5]):
+            pit._clock.ns = int(rx_ms * 1e6)
+            s = pit._telemetry_stamp(i * 6000)
+            stamps.append(s.sec * 10**9 + s.nanosec)
+        assert np.diff(stamps).tolist() == [6_000_000] * 4
+        assert stamps[-1] == 25_000_000  # sample time + the 1 ms floor
+
+    def test_restart_is_logged(self):
+        pit = _StampPit(True, 10**9)
+        pit._telemetry_stamp(1_000_000_000)
+        pit._clock.ns = 10**9 + 6_000_000
+        pit._telemetry_stamp(5)  # Teensy reset
+        assert any('restarted' in m for m in pit.logged)

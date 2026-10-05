@@ -272,6 +272,12 @@ patterns on `/dotmatrix/pixels`.
 | `/tf_static` | `tf2_msgs/TFMessage` | `robot_state_publisher`, `realsense2_camera_node` | TF consumers, viewers |
 | `/robot_description` | `std_msgs/String` | `robot_state_publisher` | viewers (RViz, Foxglove) |
 
+`pit_node` stamps its telemetry topics (`/imu/lsm9ds1`, `/mag`, their `/raw`
+twins, `/odom`) with the Teensy's sample time mapped onto ROS time
+(`racecar_neo_ros2_driver/teensy_clock.py`), not the Pi's receive time;
+`use_teensy_stamps: false` in `config/pit.yaml` reverts. `/encoder/speed` is
+a bare `Float32`; a consumer that needs the stamp reads `/odom`.
+
 Sensor and control topics use BEST_EFFORT, VOLATILE, KEEP_LAST QoS. A
 subscriber built with default RELIABLE QoS will not receive them.
 `/edgetpu/inference` and `edgetpu_node`'s `/diagnostics` are published
