@@ -19,6 +19,8 @@
   <depend>ackermann_msgs</depend>
   <depend>vision_msgs</depend>
   <depend>diagnostic_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>tf2_ros</depend>
   <depend>joy</depend>
   <depend>realsense2_camera</depend>
 

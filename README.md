@@ -710,7 +710,9 @@ export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
 
 Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
 
-- **Unreleased**: `racecar calibrate` (guided calibration, status, backup,
+- **Unreleased**: integrated odometry in `pit_node` (`odom -> base_link`,
+  `/odom/integrated`); telemetry stamped with the Teensy sample time;
+  `racecar calibrate` (guided calibration, status, backup,
   `check` against the live sensors including a magnetometer turn test;
   tools moved to `scripts/calibration/`); accelerometer scale for both IMUs;
   watchdog restart policy (startup grace, backoff, give-up,

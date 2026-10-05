@@ -86,6 +86,7 @@ class TestShippedLaunchFiles:
             'pit_config',
             'lsm9ds1_cal_config',
             'lsm9ds1_mag_cal_config',
+            'odom_config',
         ]
 
     def test_imu_fusion_args(self, share):

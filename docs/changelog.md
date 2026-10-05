@@ -6,6 +6,19 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Added
 
+- Integrated odometry in `pit_node` (phase 2 of the v0.9.0 autonomy plan).
+  `racecar_neo_ros2_driver/odometry.py` integrates each telemetry frame's
+  encoder speed and gyro yaw rate as a unicycle at `base_link`, re-estimates
+  the gyro bias while the wheels are stopped (heading held meanwhile), and
+  holds the pose across input gaps. `pit_node` publishes TF
+  `odom -> base_link` and `/odom/integrated` at 50 Hz, stamped with the
+  sample time; settings in `config/odom.yaml` (`odometry.*`), loaded by
+  `pit.launch.py`. A separate node measured 35% of a core (15.7% under the
+  `EventsExecutor`, 11.1% with one subscription); the publishing alone costs
+  3.3%, so it runs inside `pit_node`, which already holds the decoded data.
+  The reader thread publishes on a running 20 ms deadline: a 50 Hz rclpy
+  timer took `pit_node` from 52.5% to 67.3% of a core, the reader thread to
+  60.3%. `/odom` is unchanged.
 - Telemetry stamped with the Teensy's sample time (phase 2 of the v0.9.0
   autonomy plan). `racecar_neo_ros2_driver/teensy_clock.py` maps each frame's
   `micros()` onto ROS time: it unwraps the signed 32-bit counter (35.8 min

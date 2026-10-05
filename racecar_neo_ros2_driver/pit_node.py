@@ -19,11 +19,13 @@ physics.py.
 """
 
 from collections.abc import Sequence
+import math
 import threading
 import time
 
 from ackermann_msgs.msg import AckermannDriveStamped
 from builtin_interfaces.msg import Time as TimeMsg
+from geometry_msgs.msg import TransformStamped
 from nav_msgs.msg import Odometry
 import numpy as np
 import rclpy
@@ -39,10 +41,12 @@ from rclpy.time import Time
 from sensor_msgs.msg import Imu, Joy, MagneticField
 import serial
 from std_msgs.msg import Bool, Float32, Float32MultiArray, UInt8MultiArray
+from tf2_ros import TransformBroadcaster
 
 from . import pit_protocol as pit
 from .limits import clamp
 from .mux_node import MuxMode, select_mode
+from .odometry import OdomIntegrator, OdomState, yaw_quaternion
 from .teensy_clock import TeensyClock
 
 # RxPacket.SystemState bit layout; mirror of the firmware cfg::SYS_STATE.
@@ -103,6 +107,40 @@ def remap_axes(
     return np.array([sign[i] * v[order[i]] for i in range(3)]) * scale
 
 
+# Odometry: logged when the gyro bias estimate moves by more than this.
+ODOM_BIAS_LOG_STEP = math.radians(0.05)
+
+
+def build_integrated_odom(
+    state: OdomState, odom_frame: str, base_frame: str
+) -> tuple[TransformStamped, Odometry]:
+    """Return the odom -> base_link transform and its Odometry message for a pose."""
+    assert state.t is not None
+    stamp = Time(nanoseconds=round(state.t * 1e9)).to_msg()
+    qx, qy, qz, qw = yaw_quaternion(state.theta)
+
+    tf = TransformStamped()
+    tf.header.stamp = stamp
+    tf.header.frame_id = odom_frame
+    tf.child_frame_id = base_frame
+    tf.transform.translation.x = state.x
+    tf.transform.translation.y = state.y
+    tf.transform.rotation.x, tf.transform.rotation.y = qx, qy
+    tf.transform.rotation.z, tf.transform.rotation.w = qz, qw
+
+    odom = Odometry()
+    odom.header.stamp = stamp
+    odom.header.frame_id = odom_frame
+    odom.child_frame_id = base_frame
+    odom.pose.pose.position.x = state.x
+    odom.pose.pose.position.y = state.y
+    odom.pose.pose.orientation.x, odom.pose.pose.orientation.y = qx, qy
+    odom.pose.pose.orientation.z, odom.pose.pose.orientation.w = qz, qw
+    odom.twist.twist.linear.x = state.v
+    odom.twist.twist.angular.z = state.omega
+    return tf, odom
+
+
 class PitNode(Node):
     def __init__(self) -> None:
         super().__init__('pit_node')
@@ -144,6 +182,20 @@ class PitNode(Node):
         self.declare_parameter('gamepad_enable_button', 4)
         self.declare_parameter('autonomy_enable_button', 5)
 
+        # Integrated odometry (odometry.py): TF odom -> base_link and
+        # odometry.topic, from each frame's encoder speed and gyro. Values in
+        # config/odom.yaml; per-car scales in odom.local.yaml.
+        self.declare_parameter('odometry.enable', True)
+        self.declare_parameter('odometry.topic', '/odom/integrated')
+        self.declare_parameter('odometry.yaw_rate_axis', 1)
+        self.declare_parameter('odometry.yaw_rate_sign', -1.0)
+        self.declare_parameter('odometry.speed_scale', 1.0)
+        self.declare_parameter('odometry.yaw_rate_scale', 1.0)
+        self.declare_parameter('odometry.publish_rate_hz', 50.0)
+        self.declare_parameter('odometry.stale_input_sec', 0.25)
+        self.declare_parameter('odometry.zero_hold_sec', 1.0)
+        self.declare_parameter('odometry.zero_max_rate_dps', 2.0)
+        self.declare_parameter('odometry.bias_tau_sec', 30.0)
         # Stamp telemetry with the Teensy's sample time (teensy_clock.py) in
         # place of the Pi's bursty receive time; false falls back to receive time.
         self.declare_parameter('use_teensy_stamps', True)
@@ -235,6 +287,7 @@ class PitNode(Node):
         self.create_subscription(UInt8MultiArray, self._dotmatrix_topic, self._dot_cb, qos)
         self.create_subscription(UInt8MultiArray, self._led_topic, self._led_cb, qos)
         self.create_subscription(Joy, '/joy', self._joy_cb, qos)
+        self._setup_odometry(qos)
 
         self._latest_speed = 0.0
         self._latest_steer = 0.0
@@ -356,6 +409,73 @@ class PitNode(Node):
                 elif consumed == 0:
                     break
 
+    def _setup_odometry(self, qos: QoSProfile) -> None:
+        p = self.get_parameter
+        self._odometry: OdomIntegrator | None = None
+        if not p('odometry.enable').value:
+            return
+        axis = int(p('odometry.yaw_rate_axis').value)
+        if axis not in (0, 1, 2):
+            raise ValueError(f'odometry.yaw_rate_axis must be 0, 1 or 2, got {axis}')
+        self._yaw_axis = axis
+        self._yaw_gain = float(p('odometry.yaw_rate_sign').value) * float(
+            p('odometry.yaw_rate_scale').value
+        )
+        self._speed_scale = float(p('odometry.speed_scale').value)
+        self._odometry = OdomIntegrator(
+            zero_hold_sec=float(p('odometry.zero_hold_sec').value),
+            zero_max_rate=math.radians(float(p('odometry.zero_max_rate_dps').value)),
+            bias_tau_sec=float(p('odometry.bias_tau_sec').value),
+            stale_sec=float(p('odometry.stale_input_sec').value),
+        )
+        # The serial reader thread integrates and publishes. A 50 Hz timer would
+        # wake the default executor 50 more times a second, each wake-up
+        # rebuilding its wait set over every entity of this node; measured at
+        # about 15% of a core, against a few percent for the work itself.
+        self._odom_period = 1.0 / float(p('odometry.publish_rate_hz').value)
+        self._odom_next_pub: float | None = None
+        self._odom_gaps_logged = 0
+        self._odom_bias_logged = 0.0
+        self._pub_odom_integrated = self.create_publisher(
+            Odometry, str(p('odometry.topic').value), qos
+        )
+        self._tf = TransformBroadcaster(self)
+
+    def _integrate_odometry(self, stamp_ns: int, speed: float, gyro: Sequence[float]) -> None:
+        assert self._odometry is not None
+        omega = float(gyro[self._yaw_axis]) * self._yaw_gain
+        t = stamp_ns * 1e-9
+        self._odometry.step(t, speed * self._speed_scale, omega)
+        # A running deadline holds the average at the configured rate; after a
+        # gap it restarts from now rather than publishing a burst.
+        due = self._odom_next_pub
+        if due is None or t >= due:
+            self._publish_odometry()
+            self._odom_next_pub = (
+                t + self._odom_period
+                if due is None or t - due > self._odom_period
+                else due + self._odom_period
+            )
+        gaps, bias = self._odometry.gaps, self._odometry.bias
+        if gaps != self._odom_gaps_logged:
+            self._odom_gaps_logged = gaps
+            self.get_logger().warn(
+                f'Odometry input gap over {self._odometry.stale_sec:g} s; pose held '
+                f'({gaps} so far)'
+            )
+        if abs(bias - self._odom_bias_logged) > ODOM_BIAS_LOG_STEP:
+            self._odom_bias_logged = bias
+            self.get_logger().info(f'Gyro bias estimate {math.degrees(bias):+.3f} deg/s')
+
+    def _publish_odometry(self) -> None:
+        assert self._odometry is not None
+        state = self._odometry.state
+        if state.t is None:
+            return
+        tf, odom = build_integrated_odom(state, self._odom_frame, self._odom_child_frame)
+        self._tf.sendTransform(tf)
+        self._pub_odom_integrated.publish(odom)
+
     def _telemetry_stamp(self, timestamp_us: int) -> TimeMsg:
         now = self.get_clock().now()
         if self._teensy_clock is None:
@@ -404,6 +524,10 @@ class PitNode(Node):
         imu_raw.angular_velocity.y = float(raw_gyro[1])
         imu_raw.angular_velocity.z = float(raw_gyro[2])
         self._pub_imu_raw.publish(imu_raw)
+
+        if self._odometry is not None:
+            stamp_ns = stamp.sec * 10**9 + stamp.nanosec
+            self._integrate_odometry(stamp_ns, float(telem.encoder), gyro)
 
         # Encoder telemetry is vehicle speed in m/s (firmware getCurrentSpeed()).
         enc = Float32()

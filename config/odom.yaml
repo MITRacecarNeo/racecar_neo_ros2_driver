@@ -1,0 +1,26 @@
+# Integrated odometry in pit_node (racecar_neo_ros2_driver/odometry.py):
+# TF odom -> base_link and /odom/integrated from each telemetry frame's
+# encoder speed and gyro. Loaded by pit.launch.py after pit.yaml. Per-car
+# scales go in odom.local.yaml (gitignored), written by calibrate_odom.py.
+# Frame names come from pit.yaml (odom_frame_id, odom_child_frame_id).
+pit_node:
+  ros__parameters:
+    odometry.enable: true
+    odometry.topic: "/odom/integrated"
+
+    # pit_node's gyro is in the RealSense IMU's optical axes (x right, y
+    # down, z forward), so yaw rate about base_link z (up) is -y: axis 1.
+    odometry.yaw_rate_axis: 1
+    odometry.yaw_rate_sign: -1.0
+
+    # Per-car scales: speed from the 3 m tape run, yaw rate from the spin.
+    odometry.speed_scale: 1.0
+    odometry.yaw_rate_scale: 1.0
+
+    odometry.publish_rate_hz: 50.0     # TF and /odom/integrated
+    odometry.stale_input_sec: 0.25     # telemetry gap that holds the pose
+
+    # Stopped-car gyro bias estimate.
+    odometry.zero_hold_sec: 1.0        # encoder at 0 this long before it updates
+    odometry.zero_max_rate_dps: 2.0    # above this the car is being turned by hand
+    odometry.bias_tau_sec: 30.0        # low-pass time constant

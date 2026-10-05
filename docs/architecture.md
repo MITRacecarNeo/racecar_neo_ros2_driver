@@ -87,7 +87,7 @@ Seven nodes ship in this package (`setup.py` console scripts):
 
 | Node | Responsibility |
 |---|---|
-| `pit_node` | Sole owner of the Teensy UART. Encodes drive commands, decodes telemetry, forwards display and LED frames. |
+| `pit_node` | Sole owner of the Teensy UART. Encodes drive commands, decodes telemetry, forwards display and LED frames, and integrates odometry (`odometry.py`) into `odom -> base_link`. |
 | `mux_node` | Arbitrates teleop against autonomy, enforces speed and steering limits, gates on the controller or on a live FlySky transmitter, zeroes output when the joystick drops. |
 | `throttle_node` | Clamps `/mux_out` to `[-1, 1]` and applies per-direction speed and steering caps onto `/motor`. The Teensy maps the normalised command to PWM. |
 | `gamepad_node` | Maps `/joy` axes into an Ackermann drive command. |
@@ -262,6 +262,7 @@ patterns on `/dotmatrix/pixels`.
 | `/rc/channels` | `std_msgs/Float32MultiArray` | `pit_node` | `mux_node` (when `rc_authority_enable`), user code |
 | `/rc/link` | `std_msgs/Bool` | `pit_node` | `mux_node` (when `rc_authority_enable`) |
 | `/odom` | `nav_msgs/Odometry` | `pit_node` | lab dashboards, user code |
+| `/odom/integrated`, `/tf` (`odom -> base_link`) | `nav_msgs/Odometry`, `tf2_msgs/TFMessage` | `pit_node` | SLAM (v0.9.0), user code |
 | `/camera/color` | `sensor_msgs/Image` | `realsense2_camera_node` | `edgetpu_node`, `webteleop`, `linefollow`, user code |
 | `/camera/depth` | `sensor_msgs/Image` | `realsense2_camera_node` | `webteleop`, user code |
 | `/scan` | `sensor_msgs/LaserScan` | `sllidar_node` | `webteleop`, `wallfollow`, user code |
@@ -328,8 +329,14 @@ REP-103 throughout: body frames x forward, y left, z up; `base_link` is the
 floor point under the rear axle midpoint. The IMU topics carry the RealSense
 IMU's optical axes (x right, y down, z forward; `config/pit.yaml` remaps the
 LSM9DS1 into them), and `imu_link`'s rotation labels them; no IMU data is
-rotated. `odom` and `map` arrive with the v0.9.0 autonomy work
-(`docs/specifics/autonomy-service-plan.md`).
+rotated. `odom -> base_link` comes from the odometry in `pit_node`
+(`racecar_neo_ros2_driver/odometry.py`, settings in `config/odom.yaml`): each
+telemetry frame's encoder speed and gyro yaw rate (the optical y axis
+negated) are integrated as a unicycle at `base_link`, with a gyro bias
+re-estimated while the car is stopped, and published at 50 Hz. It runs
+inside `pit_node` because a separate node cost 35% of a core, mostly in
+deserializing messages `pit_node` already holds decoded. `map` arrives with
+the v0.9.0 autonomy work (`docs/specifics/autonomy-service-plan.md`).
 
 `urdf/racecar_neo.urdf.xacro` defines the tree. `launch/frames.launch.py` loads
 `config/frames.yaml` and `frames.local.yaml` through
@@ -467,6 +474,7 @@ node's `<name>_config` launch argument.
 | `edgetpu.yaml` | `edgetpu_node` | model path, labels, score threshold, image topic, inference rate |
 | `lsm9ds1_cal.yaml`, `lsm9ds1_mag_cal.yaml` | `pit_node` | IMU bias and iron correction, zero defaults |
 | `realsense_cal.yaml` | `imu_fusion_node` | RealSense IMU bias, zero defaults |
+| `odom.yaml` | `pit_node` (loaded by `pit.launch.py`) | odometry: yaw axis and sign, speed and yaw-rate scales, publish rate, stopped-car bias settings |
 | `frames.yaml` | `frames.launch.py` (not a node parameter file) | frame offsets in mm and deg, fleet base values; see [Frame tree](#frame-tree) |
 
 `config/*.local.yaml` is gitignored. Each launch file loads `<name>.local.yaml`
