@@ -66,55 +66,55 @@ STEPS = (
         'imu',
         'LSM9DS1 accel bias and scale, gyro bias',
         'calibrate_imu.py',
-        'car held in 6 orientations',
+        'Car in your hands; you will hold it in 6 poses.',
         'lsm9ds1_cal',
         ('accelerometer.bias', 'accelerometer.scale', 'gyroscope.bias'),
-        check='car still and level for 3 s',
+        check='Car on a level surface.',
     ),
     Step(
         'mag',
         'LSM9DS1 magnetometer',
         'calibrate_mag.py',
-        'car rotated by hand about all axes',
+        'Car in your hands, away from large metal; you will turn it about 3 axes.',
         'lsm9ds1_mag_cal',
         ('magnetometer.hard_iron_bias',),
-        check='car turned one full circle flat on the floor, away from large metal',
+        check='Car flat on the floor, away from large metal; you will turn it one full turn.',
     ),
     Step(
         'realsense',
         'RealSense accel bias and scale, gyro bias',
         'calibrate_realsense_imu.py',
-        'car held in 6 orientations',
+        'Car in your hands; you will hold it in 6 poses.',
         'realsense_cal',
         ('realsense_accel_bias', 'realsense_accel_scale', 'realsense_gyro_bias'),
-        check='car still and level for 3 s',
+        check='Car on a level surface.',
     ),
     Step(
         'lidar',
         'Lidar yaw',
         'calibrate_lidar.py',
-        'car squared to a flat wall ahead (wheel centres equal within 1 mm)',
+        'Car facing a flat, clear wall, front bumper 0.5 to 2 m from it.',
         'frames',
         ('laser_yaw_deg',),
-        check='car squared to a flat wall ahead; hand squaring limits it to about 1 deg',
+        check='Car facing a flat, clear wall, front bumper 0.5 to 2 m from it.',
+    ),
+    Step(
+        'odom',
+        'Odometry yaw and speed scale',
+        'calibrate_odom.py',
+        'A strip of tape, 2 m of clear floor to turn in, two marks 3 m apart in a line.',
+        'odom',
+        ('odometry.yaw_rate_scale', 'odometry.speed_scale'),
+        check='A strip of tape on the floor, and 2 m of clear floor to turn the car 2 full turns.',
     ),
     Step(
         'camera',
         'Camera pitch, roll and height',
         None,
-        'car on a flat floor, clear ahead',
+        'Car on a flat floor, nothing in front of it.',
         'frames',
         ('camera_pitch_deg', 'camera_roll_deg', 'camera_bottom_z_mm'),
         'arrives before phase 3',
-    ),
-    Step(
-        'odom',
-        'Odometry scale',
-        None,
-        '3 m tape run and a spin',
-        'odom',
-        (),
-        'arrives with phase 2',
     ),
 )
 STEP_KEYS = [s.key for s in STEPS]
@@ -193,7 +193,7 @@ def run_steps(steps: list[Step], config_dir: Path, backup_dir: Path = BACKUP_DIR
     results: list[tuple[Step, str, dict[str, Any], dict[str, Any]]] = []
     for i, step in enumerate(steps, start=1):
         print(f'\n=== {i}/{len(steps)} {step.label} ===')
-        print(f'Position: {step.position}')
+        print(f'Setup: {step.position}')
         answer = ask('Enter to run, s to skip, q to stop: ')
         if answer == 'q':
             left = i - 1
@@ -278,7 +278,7 @@ def run_checks(steps: list[Step]) -> int:
     with tempfile.TemporaryDirectory() as tmp:
         for i, step in enumerate(steps, start=1):
             print(f'\n=== Check {i}/{len(steps)}: {step.label} ===')
-            print(f'Position: {step.check}')
+            print(f'Setup: {step.check}')
             answer = ask('Enter to run, s to skip, q to stop: ')
             if answer == 'q':
                 left = i - 1

@@ -67,7 +67,8 @@ class TestStatus:
         assert rows['imu'][0] == 'calibrated' and 'no backup' in rows['imu'][1]
         assert rows['lidar'][0] == 'calibrated' and 'backed up' in rows['lidar'][1]
         assert rows['realsense'][0] == 'default'
-        assert rows['odom'] == ('pending', 'arrives with phase 2')
+        assert rows['camera'] == ('pending', 'arrives before phase 3')
+        assert rows['odom'][0] == 'default'
 
     def test_changed_backup_is_flagged(self, cal, config, tmp_path):
         (config / 'frames.local.yaml').write_text('laser_yaw_deg: 179.2\n')
@@ -125,7 +126,7 @@ class TestMain:
         assert cal.main(['gps']) == 2
 
     def test_pending_only_is_a_usage_error(self, cal):
-        assert cal.main(['odom']) == 2
+        assert cal.main(['camera']) == 2
 
     def test_refuses_without_teleop(self, cal, monkeypatch):
         monkeypatch.setattr(cal, 'teleop_active', lambda: False)
@@ -209,10 +210,10 @@ class TestChecks:
             cal, 'run_checks', lambda steps: seen.extend(s.key for s in steps) or 0
         )
         assert cal.main(['check']) == 0
-        assert seen == ['imu', 'mag', 'realsense', 'lidar']
+        assert seen == ['imu', 'mag', 'realsense', 'lidar', 'odom']
 
     def test_check_of_a_pending_step_is_a_usage_error(self, cal):
-        assert cal.main(['check', 'odom']) == 2
+        assert cal.main(['check', 'camera']) == 2
 
 
 class TestAsk:

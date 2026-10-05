@@ -1227,4 +1227,4 @@ class TestCalibrateCommand:
         words = subprocess.run(
             ['bash', '-c', script], capture_output=True, text=True
         ).stdout.split()
-        assert {'status', 'imu', 'mag', 'realsense', 'lidar'} <= set(words)
+        assert {'status', 'check', 'imu', 'mag', 'realsense', 'lidar', 'odom'} <= set(words)

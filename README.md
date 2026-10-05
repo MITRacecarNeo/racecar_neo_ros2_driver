@@ -572,6 +572,7 @@ if any check failed. One line per prompt on stdin scripts the whole run.
 | `imu` | Still and level, 3 s | `/imu/lsm9ds1` gravity within 1% of 9.807 m/s^2; gyro under 0.01 rad/s |
 | `mag` | One full turn flat on the floor, 25 s, away from large metal | `/mag` traces a circle centred on the turning axis (within 10% of its radius) and round to 5%. Field strength outside 20 to 70 uT is a WARN: a uniform scale error leaves a compass heading unchanged (see docs/troubleshooting.md on `imu.mag_scale`). `/mag/raw` is fitted the same way for contrast |
 | `realsense` | Still and level, 3 s | the stored calibration applied to `/imu/realsense` gives gravity within 1%, gyro under 0.01 rad/s |
+| `odom` | Turned 2 full turns (driven in circles or rotated by hand), starting and ending with its left side against a strip of tape (and a drive between two marks with `--tape-m`) | `/odom/integrated` heading within 1% of 720 deg (warn to 3%); the taped distance within 2% (warn to 5%) |
 | `lidar` | Squared to a flat wall | `calibrate_lidar.py --check`: wall within 0.5 deg of square passes; up to 2 deg warns, since hand squaring is good to about 1 deg; beyond 2 deg fails (mount moved or car badly placed) |
 
 `racecar calibrate` runs the tools in `scripts/calibration/` in this order:
@@ -587,6 +588,7 @@ ros2 run racecar_neo_ros2_driver calibrate_imu.py         # LSM9DS1 accel bias +
 ros2 run racecar_neo_ros2_driver calibrate_mag.py         # LSM9DS1 hard/soft iron
 ros2 run racecar_neo_ros2_driver calibrate_realsense_imu.py   # D435i accel bias + scale, gyro bias
 ros2 run racecar_neo_ros2_driver calibrate_lidar.py       # lidar yaw, car squared to a wall
+ros2 run racecar_neo_ros2_driver calibrate_odom.py        # odometry: hand spin, then a taped run
 racecar service restart teleop                            # nodes read the values at start
 ```
 
@@ -596,6 +598,7 @@ racecar service restart teleop                            # nodes read the value
 | `calibrate_mag.py` | `/mag/raw` | `config/lsm9ds1_mag_cal.local.yaml` | `pit_node` |
 | `calibrate_realsense_imu.py` | `/imu/realsense` | `config/realsense_cal.local.yaml` | `imu_fusion_node` |
 | `calibrate_lidar.py` | `/scan` | `config/frames.local.yaml` (`laser_yaw_deg`) | `frames.launch.py` |
+| `calibrate_odom.py` | `/imu/lsm9ds1`, `/odom/integrated` | `config/odom.local.yaml` (`odometry.yaw_rate_scale`, `odometry.speed_scale`) | `pit_node` |
 
 Each utility writes the file to the source `config/` directory and, when it
 exists, the install share `config/` directory, so no rebuild is needed. It
@@ -608,6 +611,17 @@ wall in `base_link` and writes the lidar yaw that makes the wall perpendicular
 to the car. `--check` reports the fit without writing and exits 1 when the wall
 is more than 0.5 deg off square; `--wall-distance-mm` takes a taped distance
 from `base_link` to the wall and reports the lidar x error it implies.
+
+`calibrate_odom.py` has two steps, each skippable. Gyro scale: the car is
+parked with its left side against a strip of tape on the floor, left still for
+3 s, turned 3 full turns (driven in circles with the controller or rotated by
+hand; the gyro counts rotation whatever the path), and parked against the tape
+again; the turn
+count is rounded from the measurement, and a scale outside 0.8 to 1.25 is
+refused, since it means `imu.gyro_scale` is wrong (a deg/s-for-rad/s mix-up
+reads 57x). Speed scale: the car is driven straight from its front bumper on
+one floor mark to the bumper on a second mark about 3 m away. Each step keeps the other's
+value in `odom.local.yaml`.
 
 `calibrate_imu.py` and `calibrate_realsense_imu.py` walk a 6-position sequence
 (each axis up and down). For each accelerometer axis, the readings up and down

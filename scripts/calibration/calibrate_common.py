@@ -73,18 +73,32 @@ def output_dirs() -> list[Path]:
 
 
 def write_local_yaml(
-    name: str, node: str, params: dict[str, Any], dirs: list[Path], tool: str
+    name: str,
+    node: str,
+    params: dict[str, Any],
+    dirs: list[Path],
+    tool: str,
+    merge: bool = False,
 ) -> list[Path]:
-    """Write `<name>.local.yaml` holding `params` for `node` into each dir."""
+    """
+    Write `<name>.local.yaml` holding `params` for `node` into each dir.
+
+    With `merge`, parameters already in the file for `node` are kept unless
+    `params` sets them, so a tool that calibrates in steps can write each step.
+    """
     stamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     header = (
         f'# Per-car calibration from {tool}, {stamp}. Not tracked in git;\n'
         f'# keep a copy in {BACKUP_DIR}/.\n'
     )
-    body = yaml.safe_dump({node: {'ros__parameters': params}}, default_flow_style=None)
     written = []
     for d in dirs:
         path = d / f'{name}.local.yaml'
+        merged = dict(params)
+        if merge and path.exists():
+            old = (yaml.safe_load(path.read_text()) or {}).get(node) or {}
+            merged = {**(old.get('ros__parameters') or {}), **params}
+        body = yaml.safe_dump({node: {'ros__parameters': merged}}, default_flow_style=None)
         path.write_text(header + body)
         written.append(path)
     return written
@@ -343,12 +357,14 @@ SCALE_LIMITS = (0.8, 1.25)
 GYRO_SECONDS = 10.0
 POSITION_SECONDS = 5.0
 POSITIONS = [
-    ('X+', 'X axis pointing up'),
-    ('X-', 'X axis pointing down'),
-    ('Y+', 'Y axis pointing up'),
-    ('Y-', 'Y axis pointing down'),
-    ('Z+', 'Z axis pointing up'),
-    ('Z-', 'Z axis pointing down'),
+    # Both IMUs report in the RealSense IMU's axes (x right, y down, z forward),
+    # so each axis up or down is one pose of the car.
+    ('X+', 'Lay the car on its left side, right side facing up.'),
+    ('X-', 'Lay the car on its right side, left side facing up.'),
+    ('Y+', 'Turn the car upside down.'),
+    ('Y-', 'Set the car upright on its wheels.'),
+    ('Z+', 'Stand the car on its rear end, nose pointing up.'),
+    ('Z-', 'Stand the car on its nose, rear pointing up.'),
 ]
 
 
@@ -426,15 +442,18 @@ class ImuBiasCalibrator(CalibratorNode):
             return 1
         log.info(f'{self.target.label} IMU calibration')
 
-        log.info('1. Gyroscope: place the car on a stable surface and do not move it.')
-        read_line('Press Enter to start...')
+        log.info('Step 1 of 2: gyroscope. Set the car on a stable surface.')
+        read_line(f'Press Enter, then keep your hands off the car for {GYRO_SECONDS:.0f} s...')
         gyro = [s[3:] for s in self.collect(GYRO_SECONDS, 'Gyroscope')]
 
-        log.info('2. Accelerometer: six orientations.')
+        log.info(
+            f'Step 2 of 2: accelerometer. Hold the car still in 6 poses, '
+            f'{POSITION_SECONDS:.0f} s each.'
+        )
         positions = []
         for i, (axis, description) in enumerate(POSITIONS, start=1):
-            log.info(f'Position {i}/{len(POSITIONS)}: {axis}, {description}')
-            read_line('Press Enter when in position...')
+            log.info(f'Pose {i} of {len(POSITIONS)} ({axis}): {description}')
+            read_line('Press Enter when the car is in place, then hold it still...')
             positions.append([s[:3] for s in self.collect(POSITION_SECONDS, axis)])
 
         try:
@@ -552,8 +571,8 @@ class ImuRestChecker(CalibratorNode):
         log = self.get_logger()
         if not self.wait_for_first_message():
             return 1
-        log.info(f'{self.target.label} IMU check: keep the car still on a level surface.')
-        read_line('Press Enter to start...')
+        log.info(f'{self.target.label} IMU check. Set the car on a level surface.')
+        read_line(f'Press Enter, then keep your hands off the car for {REST_SECONDS:.0f} s...')
         samples = self.collect(REST_SECONDS, 'At rest')
         if self.target.check_applies_cal:
             params = node_params(self.target.cal_name, self.target.node)

@@ -495,6 +495,8 @@ little data.
   /mag/raw ────────▶ calibrate_mag.py ──────────▶ lsm9ds1_mag_cal.local.yaml ──┴─▶ pit_node
   /imu/realsense ──▶ calibrate_realsense_imu.py ─▶ realsense_cal.local.yaml ─────▶ imu_fusion_node
   /scan ───────────▶ calibrate_lidar.py ─────────▶ frames.local.yaml ────────────▶ frames.launch.py
+  /imu/lsm9ds1, ───▶ calibrate_odom.py ──────────▶ odom.local.yaml ──────────────▶ pit_node (odometry)
+  /odom/integrated
 ```
 
 `calibrate_lidar.py` writes a plain `frames.local.yaml` (no node key) and keeps

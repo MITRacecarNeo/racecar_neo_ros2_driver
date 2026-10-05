@@ -1186,6 +1186,8 @@ Commands:
                           mag         LSM9DS1 magnetometer
                           realsense   RealSense accel bias and scale, gyro bias
                           lidar       lidar yaw, car squared to a wall
+                          odom        gyro yaw scale (hand spin) and encoder
+                                      speed scale (taped run)
                         No steps: all of them. `racecar calibrate status`
                         lists what is calibrated on this car.
                         `racecar calibrate check [steps]` verifies each
@@ -1237,7 +1239,7 @@ _racecar_complete() {
 
     case "$sub" in
         calibrate)
-            COMPREPLY=( $(compgen -W "status check imu mag realsense lidar --help" -- "$cur") )
+            COMPREPLY=( $(compgen -W "status check imu mag realsense lidar odom --help" -- "$cur") )
             ;;
         launch)
             local launch_dir="$HOME/ros2_ws/src/racecar_neo_ros2_driver/launch"

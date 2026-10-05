@@ -6,6 +6,16 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Added
 
+- `calibrate_odom.py`, the `odom` step of `racecar calibrate`: the gyro yaw
+  scale from 3 full turns, driven or by hand, back against a strip of tape
+  (turn count rounded from the measurement; a scale outside 0.8 to 1.25 is
+  refused as an `imu.gyro_scale` error), and the encoder speed scale from a
+  drive between two marks, into `odom.local.yaml` (`odometry.yaw_rate_scale`,
+  `odometry.speed_scale`).
+  `--check`: a 2-turn spin on `/odom/integrated` within 1% (warn to 3%) and,
+  with `--tape-m`, a taped run within 2% (warn to 5%).
+  `calibrate_common.write_local_yaml(merge=True)` keeps a file's other
+  parameters.
 - `scripts/analyze_odom.py`: judges the phase 2 odometry runs from bags
   recorded with `racecar log` (`/odom/integrated`, `/odom`, `/motor`):
   `circle` (heading closure within 5 deg of 360), `straight --tape-m`

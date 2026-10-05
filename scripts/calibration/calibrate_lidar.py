@@ -214,9 +214,10 @@ class LidarYawCalibrator(CalibratorNode):
             return 1
 
         log.info('Lidar yaw calibration')
-        log.info('Face the car at a flat wall 0.5 to 2 m away, nothing between.')
-        log.info('Square it: both front corners the same distance from the wall, within 1 mm.')
-        read_line('Press Enter to start...')
+        log.info('Park the car facing a flat, clear wall, front bumper 0.5 to 2 m from it.')
+        log.info('Square it: measure from the wall to the centre of each front wheel and make')
+        log.info('the two equal within 1 mm.')
+        read_line(f'Press Enter, then keep the car still for {SCAN_SECONDS:.0f} s...')
         scans = self.collect(SCAN_SECONDS, 'Scan')
         ranges = median_ranges(scans)
         if ranges is None or self.meta is None:

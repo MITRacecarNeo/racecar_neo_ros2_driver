@@ -44,9 +44,9 @@ TOOL = 'calibrate_mag.py'
 MIN_SAMPLES = 100
 STEP_SECONDS = 15.0
 STEPS = [
-    ('Yaw', 'turn the car flat, like driving in a circle'),
-    ('Roll', 'barrel-roll the car about its long axis'),
-    ('Pitch', 'tip the nose up and down'),
+    ('Yaw', 'Hold the car level and turn it around, a full turn or more.'),
+    ('Roll', 'Roll the car over sideways, a full turn about its long axis.'),
+    ('Pitch', 'Tip the car end over end, a full turn, nose down then up.'),
 ]
 
 
@@ -252,8 +252,10 @@ class MagnetometerCalibrator(CalibratorNode):
             return 1
         log.info('LSM9DS1 magnetometer calibration')
         for i, (axis, how) in enumerate(STEPS, start=1):
-            log.info(f'Step {i}/{len(STEPS)}: {axis} axis; {how}.')
-            read_line('Press Enter, then start rotating...')
+            log.info(
+                f'Step {i} of {len(STEPS)} ({axis}): {how} Keep moving for {STEP_SECONDS:.0f} s.'
+            )
+            read_line('Press Enter, then start...')
             self.samples += self.collect(STEP_SECONDS, f'{axis} axis')
 
         dirs = output_dirs()
@@ -297,8 +299,10 @@ class MagnetometerChecker(CalibratorNode):
         if not self.wait_for_first_message():
             log.error('Is pit_node running? Check: ros2 topic echo /mag')
             return 1
-        log.info('LSM9DS1 magnetometer check: car flat on the floor, away from large metal.')
-        log.info(f'Turn it one full circle, slowly and steadily, over {CHECK_SECONDS:.0f} s.')
+        log.info('Magnetometer check. Set the car flat on the floor, away from large metal.')
+        log.info(
+            f'Turn it by hand one full turn, slowly and steadily, over {CHECK_SECONDS:.0f} s.'
+        )
         read_line('Press Enter, then start turning...')
         self._raw_on = True
         samples = self.collect(CHECK_SECONDS, 'Turning')
