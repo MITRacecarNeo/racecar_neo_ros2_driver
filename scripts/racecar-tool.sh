@@ -1185,9 +1185,13 @@ Commands:
                           odom        gyro yaw scale (circles) and encoder
                                       speed scale (straight drive), both
                                       against the lidar
+                          dynamics    steering angles, servo time, speeds
+                                      and stop distances for the simulator;
+                                      the car drives itself while RB is held;
+                                      no check
                         No arguments: all of them.
                         `racecar calibrate status` lists what is calibrated
-                        on this car.
+                        on this car, when, and the stored values.
                         `racecar calibrate check [steps]` verifies each
                         calibration against the live sensors.
                         To fully prepare a car for a project, run the
@@ -1239,7 +1243,7 @@ _racecar_complete() {
 
     case "$sub" in
         calibrate)
-            COMPREPLY=( $(compgen -W "status check imu mag realsense lidar odom --help" -- "$cur") )
+            COMPREPLY=( $(compgen -W "status check imu mag realsense lidar odom dynamics --help" -- "$cur") )
             ;;
         launch)
             local launch_dir="$HOME/ros2_ws/src/racecar_neo_ros2_driver/launch"

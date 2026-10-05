@@ -553,7 +553,7 @@ own values go in a gitignored `config/<name>.local.yaml` beside each, which the
 launch files load after the committed file.
 
 ```sh
-racecar calibrate status      # what is calibrated on this car, and backed up
+racecar calibrate status      # what is calibrated, when, backup state, stored values
 racecar calibrate             # every step in order, one guided session
 racecar calibrate imu lidar   # chosen steps only
 racecar calibrate check       # verify each calibration against the live sensors
@@ -576,8 +576,8 @@ if any check failed. One line per prompt on stdin scripts the whole run.
 | `odom` | Driven 2 circles and stopped anywhere near the start, then driven straight toward a wall and stopped anywhere short of it; parked 2 s before and after each run | `/odom/integrated` heading within 1% of the lidar's (warn to 3%); distance within 2% of the lidar's (warn to 5%); each scan match under 30 mm RMS with at least 50% of points matched; the scales `pit_node` runs with match `odom.local.yaml` |
 
 `racecar calibrate` runs the tools in `scripts/calibration/` in this order:
-the hand-held steps first (`imu`, `mag`, `realsense`), then `lidar` and `odom`
-with the car on the floor. Each step can be run or skipped at its prompt. At the end it
+the hand-held steps first (`imu`, `mag`, `realsense`), then `lidar`, `odom`
+and `dynamics` with the car on the floor. `dynamics` has no check. Each step can be run or skipped at its prompt. At the end it
 prints old and new values, copies the changed files to
 `~/.config/racecar/calibration/`, and offers to restart teleop so the nodes
 load them. Run on their own, the tools print the backup and restart commands
@@ -590,6 +590,7 @@ ros2 run racecar_neo_ros2_driver calibrate_mag.py         # LSM9DS1 hard/soft ir
 ros2 run racecar_neo_ros2_driver calibrate_realsense_imu.py   # D435i accel bias + scale, gyro bias
 ros2 run racecar_neo_ros2_driver calibrate_lidar.py       # lidar yaw, car squared to a wall
 ros2 run racecar_neo_ros2_driver calibrate_odom.py        # odometry against the lidar: circles, then a straight run
+ros2 run racecar_neo_ros2_driver calibrate_dynamics.py    # simulator dynamics; the car drives itself while RB is held
 racecar service restart teleop                            # nodes read the values at start
 ```
 
@@ -600,6 +601,7 @@ racecar service restart teleop                            # nodes read the value
 | `calibrate_realsense_imu.py` | `/imu/realsense` | `config/realsense_cal.local.yaml` | `imu_fusion_node` |
 | `calibrate_lidar.py` | `/scan` | `config/frames.local.yaml` (`laser_yaw_deg`) | `frames.launch.py` |
 | `calibrate_odom.py` | `/imu/lsm9ds1`, `/odom/integrated`, `/scan` | `config/odom.local.yaml` (`odometry.yaw_rate_scale`, `odometry.speed_scale`) | `pit_node` |
+| `calibrate_dynamics.py` | `/scan`, `/imu/lsm9ds1`, `/odom/integrated`, `/motor` (recorded); `/joy` (RB) | `config/dynamics.local.yaml` | the simulator (no node reads it) |
 
 Each utility writes the file to the source `config/` directory and, when it
 exists, the install share `config/` directory, so no rebuild is needed. It
@@ -628,6 +630,22 @@ The scene must stay still between the two scans, and a room works better
 than a long corridor. Each step keeps the other's value in
 `odom.local.yaml`.
 
+`calibrate_dynamics.py` measures the car for the simulator. It drives five
+fixed runs by itself while RB is held, and releasing RB while it drives stops
+the car: straight at speed 0.25, 0.5 and 1.0 (about 3.5 m of clear floor),
+then right-turn and left-turn circles at full lock at 0.25, each after 0.8 s
+straight (about 2.3 by 1.6 m of clear floor). Each run is recorded with
+`ros2 bag` under the `racecar log` directory and analyzed: steady speed, time
+to 90% of it, and stop distance and time after the command goes to 0 (from
+`/odom/integrated`, checked against the lidar between the rest scans); the
+rear-axle turning radius per side from chained lidar scan matches, the
+Ackermann inner and outer wheel angles (230 mm wheelbase, 178 mm track), the
+outer front tire track diameter, and the encoder's over-read in turns; and the
+center-to-lock steering time per side from the yaw rate, an upper bound on
+the servo, summed for lock to lock. Speeds are normalized commands; their m/s
+depends on the firmware ceiling (`config/throttle.yaml`). `--analyze BAG ...`
+re-analyzes recorded runs.
+
 `calibrate_imu.py` and `calibrate_realsense_imu.py` walk a 6-position sequence
 (each axis up and down). For each accelerometer axis, the readings up and down
 give its bias, (up + down) / 2, and its scale, 2 g / (up - down); the node
@@ -641,9 +659,10 @@ The `.local.yaml` files are untracked, so a fresh clone or reimage loses them.
 individual utilities print a reminder instead, and `racecar calibrate status`
 shows which files have no backup.
 
-A car that has never been calibrated runs with zero bias and an identity
-soft-iron matrix, and nothing is logged to say so, so run the two LSM9DS1
-utilities on every new car. ROS ignores a parameter file whose top-level key
+A car that has never been calibrated runs with zero bias, unit scales and an
+identity soft-iron matrix, and nothing is logged to say so. On every new car,
+run the full `racecar calibrate`, restart teleop, then run
+`racecar calibrate check`. ROS ignores a parameter file whose top-level key
 names no running node, without warning; if a calibration appears to have no
 effect, check that the key matches the node the launch file starts.
 

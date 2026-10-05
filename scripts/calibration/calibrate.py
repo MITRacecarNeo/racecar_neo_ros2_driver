@@ -46,6 +46,32 @@ from calibrate_common import (  # noqa: E402, I100
 
 TELEOP_UNIT = 'racecar-teleop'
 RUN_PROMPT = 'Press Enter to run, s to skip, and q to stop: '
+DYNAMICS_SETUP = (
+    'Use a clear straight path of about 4 meters, with walls or furniture within 4 meters of it.\n'
+    'Use a clear area of about 2.3 by 1.6 meters for driving circles.\n'
+    'Connect the controller. Hold RB to autonomously drive the car.'
+)
+# calibrate_dynamics.py writes these; per speed (0.25, 0.5, 1.0) and per side.
+DYNAMICS_KEYS = tuple(
+    [
+        f'{name}_{tag}'
+        for tag in ('025', '05', '10')
+        for name in ('steady_speed_mps', 'rise_90_s', 'stop_distance_mm', 'stop_time_s')
+    ]
+    + [
+        f'{name}_{side}'
+        for side in ('right', 'left')
+        for name in (
+            'turn_radius_mm',
+            'steer_inner_deg',
+            'steer_outer_deg',
+            'outer_front_track_diameter_mm',
+            'encoder_turn_overread',
+            'servo_center_to_lock_s',
+        )
+    ]
+    + ['servo_lock_to_lock_s']
+)
 ODOM_SETUP = (
     'Use a room with walls or furniture within 4 meters of the car.\n'
     'Clear about 2 meters around the car for driving circles.\n'
@@ -118,6 +144,15 @@ STEPS = (
         ('odometry.yaw_rate_scale', 'odometry.speed_scale'),
         check=ODOM_SETUP,
     ),
+    # Measured for the simulator; nothing reads it back, so there is no check.
+    Step(
+        'dynamics',
+        'Vehicle dynamics for the simulator',
+        'calibrate_dynamics.py',
+        DYNAMICS_SETUP,
+        'dynamics',
+        DYNAMICS_KEYS,
+    ),
 )
 STEP_KEYS = [s.key for s in STEPS]
 
@@ -154,6 +189,34 @@ def backup_state(local: Path, backup_dir: Path) -> str:
     return 'backed up' if backup.read_bytes() == local.read_bytes() else 'backup differs'
 
 
+def status_verdict(step: Step, state: str, detail: str) -> str:
+    """Return the color class of a status row: PASS, WARN, or FAIL."""
+    if state == 'calibrated':
+        return 'PASS' if detail.endswith('backed up') else 'WARN'
+    # Uncalibrated sensors run on zero bias and unit scale; dynamics is optional.
+    return 'FAIL' if step.check else 'WARN'
+
+
+def status_lines(
+    config_dir: Path, backup_dir: Path = BACKUP_DIR, color: bool = False
+) -> list[str]:
+    """Return `racecar calibrate status`: one block per step, blank lines between."""
+    lines: list[str] = []
+    for step, (key, state, detail) in zip(STEPS, status_rows(config_dir, backup_dir), strict=True):
+        if lines:
+            lines.append('')
+        header = f'{key}: {step.label}'
+        lines.append(f'\033[1m{header}\033[0m' if color else header)
+        verdict = status_verdict(step, state, detail)
+        lines.append(
+            f'  {paint(state, verdict, color, bold=True)}  {paint(detail, verdict, color)}'
+        )
+        values = step_values(step, config_dir)
+        width = max((len(k) for k in values), default=0)
+        lines += [f'  {k:<{width}}  {fmt(values[k], 7)}' for k in step.keys if k in values]
+    return lines
+
+
 def status_rows(config_dir: Path, backup_dir: Path = BACKUP_DIR) -> list[tuple[str, str, str]]:
     """Return (step, state, detail) for each step."""
     rows = []
@@ -163,15 +226,17 @@ def status_rows(config_dir: Path, backup_dir: Path = BACKUP_DIR) -> list[tuple[s
         if values:
             stamp = datetime.fromtimestamp(local.stat().st_mtime).strftime('%Y-%m-%d %H:%M')
             rows.append((step.key, 'calibrated', f'{stamp}, {backup_state(local, backup_dir)}'))
-        else:
+        elif (config_dir / f'{step.local_name}.yaml').exists():
             rows.append((step.key, 'default', 'committed defaults; not calibrated on this car'))
+        else:
+            rows.append((step.key, 'default', 'not measured on this car'))
     return rows
 
 
-def fmt(value: Any) -> str:
+def fmt(value: Any, digits: int = 4) -> str:
     if isinstance(value, list):
-        return '[' + ', '.join(f'{v:.4g}' if isinstance(v, float) else str(v) for v in value) + ']'
-    return f'{value:.4g}' if isinstance(value, float) else str(value)
+        return '[' + ', '.join(fmt(v, digits) for v in value) + ']'
+    return f'{value:.{digits}g}' if isinstance(value, float) else str(value)
 
 
 def systemctl() -> list[str]:
@@ -316,7 +381,7 @@ def run_checks(steps: list[Step]) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog='racecar calibrate',
-        description='Calibrate the car: IMUs, magnetometer, lidar yaw, odometry. '
+        description='Calibrate the car: IMUs, magnetometer, lidar yaw, odometry, dynamics. '
         '`status` lists what is calibrated.',
     )
     parser.add_argument(
@@ -334,8 +399,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if args.steps == ['status']:
-        for key, state, detail in status_rows(config_dir):
-            print(f'{key:10s} {state:11s} {detail}')
+        print('\n'.join(status_lines(config_dir, color=use_color())))
         return 0
 
     checking = bool(args.steps) and args.steps[0] == 'check'

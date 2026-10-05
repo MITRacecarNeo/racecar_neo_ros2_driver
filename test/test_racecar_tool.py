@@ -1210,7 +1210,7 @@ class TestCalibrateCommand:
     def test_status_lists_every_step(self):
         result = _run('calibrate', 'status')
         assert result.returncode == 0, result.stderr
-        for step in ('imu', 'mag', 'realsense', 'lidar', 'odom'):
+        for step in ('imu', 'mag', 'realsense', 'lidar', 'odom', 'dynamics'):
             assert step in result.stdout
 
     def test_unknown_step_is_a_usage_error(self):

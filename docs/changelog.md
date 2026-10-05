@@ -20,6 +20,24 @@ All notable changes to this project will be documented in this file. The format 
   compared with `odom.local.yaml` (FAIL when teleop was not restarted).
   `calibrate_common.write_local_yaml(merge=True)` keeps a file's other
   parameters.
+- `calibrate_dynamics.py`, the `dynamics` step of `racecar calibrate` (no
+  check): measures the car for the simulator. The car drives five fixed runs
+  by itself while RB is held (straight at speed 0.25, 0.5, 1.0; right-turn
+  and left-turn circles at full lock at 0.25, run separately for small
+  spaces), each recorded as a bag and analyzed: steady speed, time to 90%,
+  stop distance and time; turning radius per side from chained lidar scan
+  matches (deskewed with the odometry), Ackermann inner and outer wheel
+  angles, outer front tire track diameter, encoder over-read in turns;
+  center-to-lock steering time per side from the yaw rate, summed for lock
+  to lock. RB is required only while the car is commanded to move. Writes
+  `config/dynamics.local.yaml`; `--analyze` re-analyzes recorded runs.
+- `racecar calibrate status` shows one block per step: name, state, date,
+  backup state, and the stored values. On a terminal the state is green when
+  calibrated and backed up, yellow when the backup is missing or differs or
+  dynamics is not measured, and red when a sensor runs on its committed
+  defaults.
+- `config/throttle.yaml` documents how a normalized speed becomes m/s in the
+  firmware (floor 0.5 m/s, ceiling 1.0 m/s indoors and 4.0 m/s in the field).
 - `scripts/calibration/scan_match.py`: 2D point-to-line ICP with trimmed
   correspondences (numpy, scipy KD-tree), scan helpers shared with
   `calibrate_lidar.py`, and pose algebra between the laser and `base_link`.

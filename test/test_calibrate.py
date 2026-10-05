@@ -65,6 +65,34 @@ class TestStatus:
         assert rows['realsense'][0] == 'default'
         assert rows['odom'][0] == 'default'
 
+    def test_status_lists_stored_values_under_each_step(self, cal, config, tmp_path):
+        (config / 'frames.local.yaml').write_text('laser_yaw_deg: 179.16\n')
+        (config / 'dynamics.local.yaml').write_text('servo_lock_to_lock_s: 0.12\n')
+        lines = cal.status_lines(config, tmp_path)
+        i = lines.index('lidar: Lidar yaw')
+        assert lines[i + 1].startswith('  calibrated') and 'no backup' in lines[i + 1]
+        assert lines[i + 2] == '  laser_yaw_deg  179.16'
+        j = next(n for n, line in enumerate(lines) if line.startswith('dynamics:'))
+        assert lines[j + 2] == '  servo_lock_to_lock_s  0.12'
+        k = next(n for n, line in enumerate(lines) if line.startswith('realsense:'))
+        assert lines[k + 1].startswith('  default') and lines[k + 2] == ''
+
+    def test_status_colors(self, cal, config, tmp_path):
+        backup = tmp_path / 'b'
+        backup.mkdir()
+        (config / 'frames.local.yaml').write_text('laser_yaw_deg: 179.16\n')
+        (backup / 'frames.local.yaml').write_text('laser_yaw_deg: 179.16\n')
+        text = '\n'.join(cal.status_lines(config, backup, color=True))
+        green, yellow, red = '\033[1;32mcalibrated', '\033[1;33mdefault', '\033[1;31mdefault'
+        assert green in text  # lidar, backed up
+        assert red in text  # an IMU on committed defaults
+        assert yellow in text  # dynamics not measured
+        assert '\033' not in '\n'.join(cal.status_lines(config, backup))
+
+    def test_dynamics_has_no_check(self, cal):
+        (step,) = [s for s in cal.STEPS if s.key == 'dynamics']
+        assert step.check == '' and step.key == cal.STEP_KEYS[-1]
+
     def test_changed_backup_is_flagged(self, cal, config, tmp_path):
         (config / 'frames.local.yaml').write_text('laser_yaw_deg: 179.2\n')
         (tmp_path / 'frames.local.yaml').write_text('laser_yaw_deg: 180.0\n')
