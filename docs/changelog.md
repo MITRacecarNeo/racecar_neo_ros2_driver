@@ -6,19 +6,24 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Added
 
-- `calibrate_odom.py`, the `odom` step of `racecar calibrate`: the gyro yaw
-  scale from 3 full circles at full lock, starting and stopping with both
-  front wheels on a strip of tape (turn count rounded from the measurement; a
-  scale outside 0.8 to 1.25 is refused as an `imu.gyro_scale` error), and the
-  encoder speed scale from a straight drive between two tapes, front wheels on
-  each, into `odom.local.yaml` (`odometry.yaw_rate_scale`,
-  `odometry.speed_scale`).
-  `--check`: a 2-circle spin on `/odom/integrated` within 1% (warn to 3%) and,
-  with `--tape-m`, a straight run within 2% (warn to 5%).
-  `racecar calibrate check odom` asks for the straight-line distance and
-  passes it as `--tape-m`; Enter skips the straight run.
+- `calibrate_odom.py`, the `odom` step of `racecar calibrate`, referenced to
+  the lidar: each run is bracketed by two scans at rest, and scan matching
+  gives the car's true motion, so the car may stop anywhere. Gyro yaw scale
+  from 3 circles (heading modulo one turn from the lidar, turn count from the
+  gyro; a scale outside 0.8 to 1.25 is refused as an `imu.gyro_scale`
+  error); encoder speed scale from a straight drive of at least 2 m toward a
+  wall. Writes `odom.local.yaml` (`odometry.yaw_rate_scale`,
+  `odometry.speed_scale`) and warns when `/odom/integrated` disagrees with the
+  gyro it integrates. `--check`: `/odom/integrated` against the lidar over 2
+  circles (within 1%, warn to 3%) and a straight drive (within 2%, warn to
+  5%), with a scan-match quality gate, and the scales `pit_node` is running
+  compared with `odom.local.yaml` (FAIL when teleop was not restarted).
   `calibrate_common.write_local_yaml(merge=True)` keeps a file's other
   parameters.
+- `scripts/calibration/scan_match.py`: 2D point-to-line ICP with trimmed
+  correspondences (numpy, scipy KD-tree), scan helpers shared with
+  `calibrate_lidar.py`, and pose algebra between the laser and `base_link`.
+  `python3-scipy` added to `package.xml`.
 - `scripts/analyze_odom.py`: judges odometry test runs from bags
   recorded with `racecar log` (`/odom/integrated`, `/odom`, `/motor`):
   `circle` (heading closure within 5 deg of 360), `straight --tape-m`
@@ -119,10 +124,7 @@ All notable changes to this project will be documented in this file. The format 
   longer print their own backup and teleop restart commands, which the session
   does itself. The `calibrate` entry in `racecar help` is reworded.
   The tools print bare messages without the ROS log prefix and report
-  progress every 5 seconds. The odometry straight run must be at least
-  2 meters and asks for its distance after the drive. The odometry check
-  compares the scales `pit_node` runs with against `odom.local.yaml` and
-  fails when teleop was not restarted. The magnetometer plots open only when
+  progress every 5 seconds. The magnetometer plots open only when
   a display is available. The teleop restart prompt says it uses `sudo`.
 - American English spelling throughout code, comments and docs (center, color,
   meter, tire, gray, behavior). The magnetometer check criterion is now

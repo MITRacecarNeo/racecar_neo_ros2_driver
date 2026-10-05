@@ -237,27 +237,6 @@ class TestChecks:
         assert cal.main(['check']) == 0
         assert seen == ['imu', 'mag', 'realsense', 'lidar', 'odom']
 
-    def _odom_check(self, cal, monkeypatch, answer: str) -> list:
-        ran = []
-
-        def fake_run(cmd, check=False, **_kw):
-            ran.append(cmd)
-            return type('R', (), {'returncode': 0})()
-
-        monkeypatch.setattr(cal.subprocess, 'run', fake_run)
-        answers = ['', answer]
-        monkeypatch.setattr(cal, 'ask', lambda _p='': answers.pop(0))
-        cal.run_checks([s for s in cal.STEPS if s.key == 'odom'])
-        return ran[0]
-
-    def test_odom_check_passes_the_straight_line_distance(self, cal, monkeypatch):
-        cmd = self._odom_check(cal, monkeypatch, '3')
-        assert cmd[-2:] == ['--tape-m', '3']
-
-    def test_odom_check_without_a_distance_skips_the_tape_run(self, cal, monkeypatch):
-        cmd = self._odom_check(cal, monkeypatch, '')
-        assert '--tape-m' not in cmd
-
     def test_check_of_an_unknown_step_is_a_usage_error(self, cal):
         assert cal.main(['check', 'gps']) == 2
 
@@ -337,3 +316,21 @@ class TestColor:
         common = load_script('calibrate_common')
         monkeypatch.setattr(common.sys.stdout, 'isatty', lambda: False)
         assert common.use_color() is False
+
+
+class TestTypeAhead:
+    def test_terminal_input_is_flushed_before_the_prompt(self, monkeypatch):
+        common = load_script('calibrate_common')
+        flushed = []
+        monkeypatch.setattr(common.os, 'isatty', lambda fd: True)
+        monkeypatch.setattr(common.termios, 'tcflush', lambda fd, q: flushed.append(fd))
+        monkeypatch.setattr(common.os, 'read', lambda fd, n: b'\n')
+        common.read_line()
+        assert flushed == [0]
+
+    def test_piped_input_is_kept(self, monkeypatch):
+        common = load_script('calibrate_common')
+        monkeypatch.setattr(common.os, 'isatty', lambda fd: False)
+        monkeypatch.setattr(common.termios, 'tcflush', lambda fd, q: pytest.fail('flushed'))
+        monkeypatch.setattr(common.os, 'read', lambda fd, n: b'\n')
+        assert common.read_line() == ''

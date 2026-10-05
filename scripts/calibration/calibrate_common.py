@@ -14,6 +14,7 @@ from datetime import datetime
 import os
 from pathlib import Path
 import sys
+import termios
 import threading
 import time
 from typing import Any
@@ -245,7 +246,12 @@ def read_line(prompt: str = '') -> str:
     input() reads a piped stdin in blocks and would swallow the lines meant for
     the next prompt or the next tool, so a scripted run (one line per prompt)
     stops early. Raises EOFError at end of input, as input() does.
+
+    On a terminal, keys pressed before the prompt appears are discarded, so an
+    extra Enter during a recording cannot answer the next prompt.
     """
+    if os.isatty(0):
+        termios.tcflush(0, termios.TCIFLUSH)
     print(prompt, end='', flush=True)
     line = bytearray()
     while True:

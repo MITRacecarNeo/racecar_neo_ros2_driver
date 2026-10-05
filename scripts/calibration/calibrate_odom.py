@@ -1,23 +1,24 @@
 #!/usr/bin/env python3
 """
-Odometry scale calibration for pit_node: gyro yaw scale and encoder speed scale.
+Odometry scale calibration for pit_node, referenced to the lidar.
 
-Spin: the car starts with both front wheels on a strip of tape laid across
-its path, rests 3 s (the gyro's offset at rest), is driven 3 full circles at
-full lock, and stops with the front wheels back on the tape. The yaw rate
-the odometry uses (gyro axis and sign from config/odom.yaml, bias removed) is
-integrated over the turn; the turn count is rounded from it, and
-odometry.yaw_rate_scale = turns x 360 deg / measured. A scale far from 1 is
-refused: it points at imu.gyro_scale (a deg/s versus rad/s mix-up is 57x).
+Each run is bracketed by two lidar scans at rest. Scan matching
+(scan_match.py) gives base_link's true motion between them, so the car may
+stop anywhere.
 
-Tape: the car is driven straight from front wheels on one tape to front
-wheels on a second; the distance is the straight line between the two poses;
-odometry.speed_scale = current scale x tape / measured, from
-/odom/integrated.
+Spin: the car drives circles and stops near its start. The scan match gives
+the heading change modulo 360 deg; the gyro integral picks the whole-turn
+count. odometry.yaw_rate_scale = current scale x lidar / gyro. A scale far
+from 1 is refused: it points at imu.gyro_scale (deg/s read as rad/s is 57x).
 
-Writes config/odom.local.yaml (pit_node), keeping the other step's value.
---check repeats a 2-turn spin on /odom/integrated, and with --tape-m a tape
-run, and judges them against the scales now in use.
+Drive: the car drives straight toward a wall and stops short of it.
+odometry.speed_scale = current scale x lidar distance / /odom/integrated
+distance.
+
+Both runs also compare /odom/integrated with the lidar, so a fault in
+pit_node's integration shows instead of hiding in a scale. Writes
+config/odom.local.yaml, keeping the other step's value. --check judges
+/odom/integrated against the lidar with the scales in use.
 """
 
 from __future__ import annotations
@@ -33,12 +34,13 @@ from typing import Any
 
 from nav_msgs.msg import Odometry
 import numpy as np
+from racecar_neo_ros2_driver.frames import load_frames
 from rcl_interfaces.msg import ParameterType
 from rcl_interfaces.srv import GetParameters
 import rclpy
 from rclpy.qos import qos_profile_sensor_data
 from rclpy.utilities import remove_ros_args
-from sensor_msgs.msg import Imu
+from sensor_msgs.msg import Imu, LaserScan
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -47,58 +49,70 @@ from calibrate_common import (  # noqa: E402, I100
     CalibratorNode,
     Criterion,
     finish_check,
+    install_config_dir,
     node_params,
     output_dirs,
     read_line,
+    source_config_dir,
     spin_until_done,
     write_local_yaml,
+)
+from scan_match import (  # noqa: E402, I100
+    base_motion,
+    compose,
+    invert,
+    laser_motion,
+    match_scans,
+    MatchResult,
+    median_ranges,
+    Pose,
+    scan_points,
 )
 
 CAL_NAME = 'odom'
 NODE = 'pit_node'
 TOOL = 'calibrate_odom.py'
-REST_SECONDS = 3.0
+REST_SECONDS = 2.0
+STILL_SECONDS = 0.5
+STILL_MAX_RATE = math.radians(2.0)
+SETTLE_TIMEOUT = 20.0
 SCALE_LIMITS = (0.8, 1.25)
-# A turn count is accepted when the measurement is within this of a whole turn.
-WHOLE_TURN_SLACK = 0.15
 SPIN_TURNS = 3
 CHECK_TURNS = 2
+# The gyro picks the whole-turn count; beyond this from the lidar it cannot.
+UNWRAP_LIMIT_DEG = 90.0
+MIN_DRIVE_M = 2.0
+# Scan match quality: a moved scene or a featureless corridor fails these.
+MATCH_MAX_RMS_M = 0.03
+MATCH_MIN_INLIERS = 0.5
+SPIN_PASS, SPIN_WARN = 0.01, 0.03
+DRIVE_PASS, DRIVE_WARN = 0.02, 0.05
 SCALE_KEYS = ('odometry.yaw_rate_scale', 'odometry.speed_scale')
 PARAM_TIMEOUT = 3.0
-SPIN_PASS, SPIN_WARN = 0.01, 0.03
-TAPE_PASS, TAPE_WARN = 0.02, 0.05
-# Mark placement error is about 5 mm at each end: 0.7% over 1 m, 0.35% over 2 m.
-MIN_TAPE_M = 2.0
 
-
-WHEELS_ON_TAPE = (
-    'Place the car on the floor with both front wheels touching the tape, so that the '
-    'tape runs across the car under the wheels.'
-)
-BACK_ON_TAPE = 'Press Enter when the front wheels are back on the tape...'
 STEP_PROMPT = 'Press Enter to run this step, or s to skip it: '
-TAPE_TOO_SHORT = f'The straight line must be at least {MIN_TAPE_M:g} meters long. Nothing written.'
+HANDS_OFF = f'Press Enter, then keep your hands off the car for {REST_SECONDS:.0f} seconds...'
+STOPPED = 'Press Enter when the car has stopped, then keep your hands off it...'
+SPIN_PLACE = 'Place the car on the floor in the middle of the clear space.'
+DRIVE_PLACE = 'Place the car on the floor facing a wall or furniture 3 to 5 meters away.'
 
 
-def drive_circles(turns: int) -> list[str]:
-    """Return the spin instructions, one sentence per line."""
+def spin_lines(turns: int) -> list[str]:
     return [
-        f'Drive the car manually in a circle (fully right or fully left) {turns} times.',
-        'Try to stop the car as close as possible to where it started (align with the tape).',
-        'You can drive slower to help with accuracy.',
+        f'Drive the car in a circle (fully right or fully left) {turns} times.',
+        'Stop the car close to where it started. The exact position does not matter.',
     ]
+
+
+DRIVE_LINES = [
+    'Drive straight toward the wall at a steady speed.',
+    'Stop at least 0.5 meters before the wall. The exact position does not matter.',
+]
 
 
 def log_lines(log: Any, lines: list[str]) -> None:
     for line in lines:
         log.info(line)
-
-
-@dataclass(frozen=True)
-class SpinFit:
-    turns: int
-    measured_deg: float
-    scale: float  # multiplies the current yaw rate
 
 
 def integrate_rate(samples: list[tuple[float, float]], bias: float = 0.0) -> float:
@@ -110,13 +124,15 @@ def integrate_rate(samples: list[tuple[float, float]], bias: float = 0.0) -> flo
     return float(np.sum(0.5 * (rate[1:] + rate[:-1]) * np.diff(data[:, 0])))
 
 
-def fit_spin(measured_rad: float) -> SpinFit | None:
-    """Round a hand spin to whole turns; None unless close to a whole turn."""
-    turns_float = abs(measured_rad) / (2 * math.pi)
-    turns = round(turns_float)
-    if turns < 1 or abs(turns_float - turns) > WHOLE_TURN_SLACK:
-        return None
-    return SpinFit(turns, math.degrees(measured_rad), turns * 2 * math.pi / abs(measured_rad))
+def resolve_turns(lidar_rad: float, gyro_rad: float) -> float | None:
+    """
+    Return the true heading change: the lidar's, plus the whole turns the gyro counted.
+
+    None when the gyro is more than UNWRAP_LIMIT_DEG from every candidate.
+    """
+    turn = 2 * math.pi
+    true = lidar_rad + turn * round((gyro_rad - lidar_rad) / turn)
+    return true if abs(true - gyro_rad) <= math.radians(UNWRAP_LIMIT_DEG) else None
 
 
 def scale_ok(scale: float) -> bool:
@@ -127,25 +143,36 @@ def graded(error: float, passing: float, warning: float) -> str:
     return 'PASS' if abs(error) <= passing else 'WARN' if abs(error) <= warning else 'FAIL'
 
 
-def spin_criterion(measured_deg: float, turns: int) -> Criterion:
-    error = abs(measured_deg) / (turns * 360.0) - 1.0
+def spin_criterion(odom_deg: float, lidar_deg: float) -> Criterion:
+    error = odom_deg / lidar_deg - 1.0
     return Criterion(
         'spin heading',
-        f'{measured_deg:+.1f} deg ({error:+.2%})',
-        f'{turns * 360} within {SPIN_PASS:.0%} (warn to {SPIN_WARN:.0%})',
+        f'{odom_deg:+.1f} deg ({error:+.2%})',
+        f'lidar {lidar_deg:+.1f} within {SPIN_PASS:.0%} (warn to {SPIN_WARN:.0%})',
         graded(error, SPIN_PASS, SPIN_WARN),
         'recalibrate the yaw scale: racecar calibrate odom',
     )
 
 
-def tape_criterion(measured_m: float, tape_m: float) -> Criterion:
-    error = measured_m / tape_m - 1.0
+def drive_criterion(odom_m: float, lidar_m: float) -> Criterion:
+    error = odom_m / lidar_m - 1.0
     return Criterion(
-        'tape distance',
-        f'{measured_m:.3f} m ({error:+.2%})',
-        f'{tape_m:g} m within {TAPE_PASS:.0%} (warn to {TAPE_WARN:.0%})',
-        graded(error, TAPE_PASS, TAPE_WARN),
+        'drive distance',
+        f'{odom_m:.3f} m ({error:+.2%})',
+        f'lidar {lidar_m:.3f} m within {DRIVE_PASS:.0%} (warn to {DRIVE_WARN:.0%})',
+        graded(error, DRIVE_PASS, DRIVE_WARN),
         'recalibrate the speed scale: racecar calibrate odom',
+    )
+
+
+def match_criterion(name: str, match: MatchResult) -> Criterion:
+    ok = match.rms_m <= MATCH_MAX_RMS_M and match.inliers >= MATCH_MIN_INLIERS
+    return Criterion(
+        name,
+        f'{match.rms_m * 1e3:.1f} mm RMS, {match.inliers:.0%} matched',
+        f'under {MATCH_MAX_RMS_M * 1e3:.0f} mm, at least {MATCH_MIN_INLIERS:.0%}',
+        'PASS' if ok else 'FAIL',
+        'keep people and objects still during the run, and use a room, not a corridor',
     )
 
 
@@ -172,23 +199,69 @@ def scales_criterion(
     return Criterion('scales in use', f'yaw {yaw:g}, speed {speed:g}', '', 'INFO')
 
 
-class OdomCalibrator(CalibratorNode):
-    """Gyro yaw rate (raw, for the spin) and /odom/integrated (for tape and checks)."""
+def odom_motion(poses: list[list[float]]) -> Pose:
+    """Return base_link's motion from the first to the last [t, x, y, yaw, v] pose."""
+    start, end = poses[0], poses[-1]
+    heading = float(np.unwrap([p[3] for p in poses])[-1] - start[3])
+    rel = compose(invert((start[1], start[2], start[3])), (end[1], end[2], end[3]))
+    return rel[0], rel[1], heading
 
-    def __init__(self, check: bool, tape_m: float | None, report: str | None) -> None:
+
+@dataclass(frozen=True)
+class Run:
+    """One run between two rest scans: the lidar's account and the odometry's."""
+
+    lidar: Pose  # base_link motion from the scan match; heading modulo 2 pi
+    match: MatchResult
+    odom: Pose  # from /odom/integrated; heading unwrapped
+    gyro_rad: float  # yaw from the gyro, current scale, bias from the first rest
+
+
+# Heading offsets tried around the gyro's guess. ICP converges from about
+# 10 deg; a gyro scale 3% off is 32 deg after 3 turns.
+GUESS_OFFSETS_DEG = tuple(range(-45, 50, 5))
+
+
+def best_match(reference: np.ndarray, scan: np.ndarray, guesses: list[Pose]) -> MatchResult:
+    """Return the best-quality match over the guesses, each fanned out in heading."""
+    results = []
+    for x, y, th in guesses:
+        for offset in GUESS_OFFSETS_DEG:
+            result = match_scans(reference, scan, (x, y, th + math.radians(offset)))
+            results.append(result)
+            if result.inliers >= 0.95 and result.rms_m <= MATCH_MAX_RMS_M / 3:
+                return result
+    return max(results, key=lambda r: (r.inliers, -r.rms_m))
+
+
+class OdomCalibrator(CalibratorNode):
+    """/odom/integrated, the gyro the odometry uses, and /scan at rest."""
+
+    def __init__(self, check: bool, report: str | None) -> None:
         super().__init__('odom_calibrator', Odometry, '/odom/integrated')
         self.check = check
-        self.tape_m = tape_m
         self.report = report
         params = node_params(CAL_NAME, NODE)
         self.axis = int(params.get('odometry.yaw_rate_axis', 1))
         self.sign = float(params.get('odometry.yaw_rate_sign', -1.0))
         self.yaw_scale = float(params.get('odometry.yaw_rate_scale', 1.0))
         self.speed_scale = float(params.get('odometry.speed_scale', 1.0))
+        frames = load_frames(install_config_dir() or source_config_dir())
+        self.laser: Pose = (
+            frames['laser_x_mm'] * 1e-3,
+            frames['laser_y_mm'] * 1e-3,
+            math.radians(frames['laser_yaw_deg']),
+        )
         self._gyro: list[tuple[float, float]] = []
         self._gyro_on = False
-        self._gyro_lock = threading.Lock()
+        self._last_rate = 0.0
+        self._last_speed: float | None = None
+        self._scans: list[list[float]] = []
+        self._scan_on = False
+        self._scan_meta: tuple[float, float, float, float] | None = None
+        self._aux_lock = threading.Lock()
         self.create_subscription(Imu, '/imu/lsm9ds1', self._gyro_cb, qos_profile_sensor_data)
+        self.create_subscription(LaserScan, '/scan', self._scan_cb, qos_profile_sensor_data)
 
     def extract(self, msg: Any) -> list[float]:
         q = msg.pose.pose.orientation
@@ -198,75 +271,128 @@ class OdomCalibrator(CalibratorNode):
             msg.pose.pose.position.x,
             msg.pose.pose.position.y,
             2 * math.atan2(q.z, q.w),
+            msg.twist.twist.linear.x,
         ]
 
+    def _callback(self, msg: Any) -> None:
+        self._last_speed = msg.twist.twist.linear.x
+        super()._callback(msg)
+
     def _gyro_cb(self, msg: Any) -> None:
+        rate = self.sign * float(getattr(msg.angular_velocity, 'xyz'[self.axis]))
+        self._last_rate = rate
         if self._gyro_on:
             stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
-            rate = self.sign * float(getattr(msg.angular_velocity, 'xyz'[self.axis]))
-            with self._gyro_lock:
+            with self._aux_lock:
                 self._gyro.append((stamp, rate))
 
-    def _gyro_window(self, prompt: str) -> list[tuple[float, float]]:
-        with self._gyro_lock:
-            self._gyro = []
-        self._gyro_on = True
-        read_line(prompt)
-        self._gyro_on = False
-        with self._gyro_lock:
-            return list(self._gyro)
+    def _scan_cb(self, msg: Any) -> None:
+        if self._scan_on:
+            with self._aux_lock:
+                self._scan_meta = (
+                    msg.angle_min,
+                    msg.angle_increment,
+                    msg.range_min,
+                    msg.range_max,
+                )
+                self._scans.append(list(msg.ranges))
 
-    def _pose_window(self, prompt: str) -> list[list[float]]:
-        """Record /odom/integrated poses until Enter."""
+    def _rest_scan(self) -> np.ndarray | None:
+        """Return the median scan over REST_SECONDS as laser-frame points."""
+        with self._aux_lock:
+            self._scans = []
+        self._scan_on = True
+        time.sleep(REST_SECONDS)
+        self._scan_on = False
+        with self._aux_lock:
+            ranges, meta = median_ranges(self._scans), self._scan_meta
+        if ranges is None or meta is None:
+            return None
+        return scan_points(ranges, *meta)
+
+    def _wait_still(self) -> bool:
+        """Wait until the wheels and the gyro have been still for STILL_SECONDS."""
+        deadline = time.monotonic() + SETTLE_TIMEOUT
+        still_since: float | None = None
+        while (now := time.monotonic()) < deadline:
+            if self._last_speed == 0.0 and abs(self._last_rate) < STILL_MAX_RATE:
+                still_since = still_since or now
+                if now - still_since >= STILL_SECONDS:
+                    return True
+            else:
+                still_since = None
+            time.sleep(0.05)
+        return False
+
+    def measure(self, place: str, drive: list[str]) -> Run | None:
+        """Run one rest scan, drive, rest scan sequence; return both accounts of it."""
+        log = self.get_logger()
+        log.info(place)
+        read_line(HANDS_OFF)
         with self._lock:
             self._samples = []
-        self._collecting = True
-        read_line(prompt)
-        self._collecting = False
-        with self._lock:
-            return list(self._samples)
-
-    def _rest_bias(self) -> float:
-        self._gyro_on = True
-        with self._gyro_lock:
+        with self._aux_lock:
             self._gyro = []
-        time.sleep(REST_SECONDS)
-        self._gyro_on = False
-        with self._gyro_lock:
-            rates = [r for _, r in self._gyro]
-        return float(np.mean(rates)) if rates else 0.0
-
-    def spin(self) -> SpinFit | None:
-        log = self.get_logger()
-        log.info('Lay a straight strip of tape on the floor.')
-        log.info(WHEELS_ON_TAPE)
-        read_line(
-            f'Press Enter, then keep your hands off the car for {REST_SECONDS:.0f} seconds...'
-        )
-        bias = self._rest_bias()
-        log.info('Done. You can touch the car now.')
-        log_lines(log, drive_circles(SPIN_TURNS))
-        samples = self._gyro_window(BACK_ON_TAPE)
-        measured = integrate_rate(samples, bias) * self.yaw_scale
-        fit = fit_spin(measured)
-        if fit is None:
-            log.error(
-                f'Measured {math.degrees(measured):+.1f} deg, not a whole number of turns. '
-                'Line the front wheels up on the tape and try again.'
-            )
-        return fit
-
-    def tape(self) -> float | None:
-        log = self.get_logger()
-        log.info(WHEELS_ON_TAPE)
-        read_line('Press Enter, then drive straight to the second mark...')
-        poses = self._pose_window(
-            'Stop the car with its front wheels on the second tape, then press Enter...'
-        )
+        self._collecting = True
+        self._gyro_on = True
+        start_scan = self._rest_scan()
+        with self._aux_lock:
+            rest = [r for _, r in self._gyro]
+        bias = float(np.mean(rest)) if rest else 0.0
+        log.info('Done. You can drive now.')
+        log_lines(log, drive)
+        read_line(STOPPED)
+        if not self._wait_still():
+            self._collecting = self._gyro_on = False
+            log.error('The car did not stop. Nothing measured.')
+            return None
+        end_scan = self._rest_scan()
+        self._collecting = self._gyro_on = False
+        log.info('Done. You can move the car now.')
+        with self._lock:
+            poses = list(self._samples)
+        with self._aux_lock:
+            gyro = list(self._gyro)
+        if start_scan is None or end_scan is None or len(start_scan) < 50 or len(end_scan) < 50:
+            log.error('No lidar scans received. Check that teleop is running.')
+            return None
         if len(poses) < 2:
             log.error('No odometry received. Check that teleop is running.')
             return None
-        return math.hypot(poses[-1][1] - poses[0][1], poses[-1][2] - poses[0][2])
+        odom = odom_motion(poses)
+        gyro_rad = integrate_rate(gyro, bias) * self.yaw_scale
+        # The gyro guesses the heading: it is what the scale corrects, and
+        # /odom/integrated is what is under test.
+        guesses = [
+            laser_motion((odom[0], odom[1], gyro_rad), self.laser),
+            laser_motion((0.0, 0.0, gyro_rad), self.laser),
+        ]
+        match = best_match(start_scan, end_scan, guesses)
+        return Run(base_motion(match.pose, self.laser), match, odom, gyro_rad)
+
+    def spin(self, turns: int) -> tuple[Run, float] | None:
+        """Return the spin run and its true heading change (rad), or None."""
+        run = self.measure(SPIN_PLACE, spin_lines(turns))
+        if run is None:
+            return None
+        true = resolve_turns(run.lidar[2], run.gyro_rad)
+        if true is None:
+            self.get_logger().error(
+                f'The gyro measured {math.degrees(run.gyro_rad):+.1f} deg, more than '
+                f'{UNWRAP_LIMIT_DEG:.0f} deg from the lidar. Nothing measured.'
+            )
+            return None
+        return run, true
+
+    def drive(self) -> Run | None:
+        return self.measure(DRIVE_PLACE, DRIVE_LINES)
+
+    def _match_ok(self, run: Run) -> bool:
+        c = match_criterion('scan match', run.match)
+        if c.status != 'PASS':
+            self.get_logger().error(f'Scan match too poor ({c.measured}); {c.advice}.')
+            return False
+        return True
 
     def run(self) -> int:
         log = self.get_logger()
@@ -278,39 +404,45 @@ class OdomCalibrator(CalibratorNode):
 
         log.info('Step 1 of 2: gyro scale')
         if read_line(STEP_PROMPT).strip().lower() != 's':
-            fit = self.spin()
-            if fit is None:
+            spun = self.spin(SPIN_TURNS)
+            if spun is None or not self._match_ok(spun[0]):
                 return 1
-            new = self.yaw_scale * fit.scale
-            log.info(f'{fit.turns} turns measured as {fit.measured_deg:+.1f} deg')
-            if not scale_ok(fit.scale):
+            run, true = spun
+            scale = true / run.gyro_rad
+            log.info(
+                f'Lidar {math.degrees(true):+.1f} deg, gyro {math.degrees(run.gyro_rad):+.1f} '
+                f'deg, odometry {math.degrees(run.odom[2]):+.1f} deg'
+            )
+            if not scale_ok(scale):
                 log.error(
-                    f'Gyro scale {fit.scale:.3f} is outside 0.8 to 1.25, so imu.gyro_scale in '
+                    f'Gyro scale {scale:.3f} is outside 0.8 to 1.25, so imu.gyro_scale in '
                     'config/pit.yaml is likely wrong (deg/s for rad/s). Nothing written.'
                 )
                 return 1
-            params['odometry.yaw_rate_scale'] = round(new, 5)
+            self._warn_odom_mismatch(run.odom[2], run.gyro_rad, 'heading')
+            params['odometry.yaw_rate_scale'] = round(self.yaw_scale * scale, 5)
 
         log.info('Step 2 of 2: speed scale')
         if read_line(STEP_PROMPT).strip().lower() != 's':
-            if self.tape_m is not None and self.tape_m < MIN_TAPE_M:
-                log.error(TAPE_TOO_SHORT)
+            run = self.drive()
+            if run is None or not self._match_ok(run):
                 return 1
-            measured = self.tape()
-            if measured is None or measured <= 0:
-                return 1
-            tape_m = self.tape_m or float(read_line('Distance between the two tapes, in meters: '))
-            if tape_m < MIN_TAPE_M:
-                log.error(TAPE_TOO_SHORT)
-                return 1
-            ratio = tape_m / measured
-            if not scale_ok(ratio):
+            lidar_m = math.hypot(run.lidar[0], run.lidar[1])
+            odom_m = math.hypot(run.odom[0], run.odom[1])
+            log.info(f'Lidar {lidar_m:.3f} m, odometry {odom_m:.3f} m')
+            if lidar_m < MIN_DRIVE_M:
                 log.error(
-                    f'Measured {measured:.3f} m for {tape_m:g} m, off by more than 20%. Check the '
-                    'marks and the distance typed. Nothing written.'
+                    f'The car drove {lidar_m:.2f} meters. Drive at least {MIN_DRIVE_M:g} meters. '
+                    'Nothing written.'
                 )
                 return 1
-            log.info(f'{tape_m:g} m measured as {measured:.3f} m')
+            ratio = lidar_m / odom_m if odom_m > 0 else math.inf
+            if not scale_ok(ratio):
+                log.error(
+                    f'Odometry is off by more than 20% ({odom_m:.3f} m against {lidar_m:.3f} m). '
+                    'Nothing written.'
+                )
+                return 1
             params['odometry.speed_scale'] = round(self.speed_scale * ratio, 5)
 
         if not params:
@@ -326,24 +458,42 @@ class OdomCalibrator(CalibratorNode):
         log.info(backup_reminder(written))
         return 0
 
+    def _warn_odom_mismatch(self, odom_rad: float, gyro_rad: float, what: str) -> None:
+        """Warn when /odom/integrated disagrees with the gyro it integrates."""
+        if gyro_rad and abs(odom_rad / gyro_rad - 1.0) > SPIN_PASS:
+            self.get_logger().warning(
+                f'Odometry {what} {math.degrees(odom_rad):+.1f} deg differs from the gyro '
+                f'{math.degrees(gyro_rad):+.1f} deg: a fault in pit_node, not the scale.'
+            )
+
     def _run_check(self) -> int:
         log = self.get_logger()
         criteria = []
-        log.info(WHEELS_ON_TAPE)
-        read_line('Press Enter to start...')
-        log_lines(log, drive_circles(CHECK_TURNS))
-        poses = self._pose_window(BACK_ON_TAPE)
-        if len(poses) >= 2:
-            heading = math.degrees(float(np.unwrap([p[3] for p in poses])[-1] - poses[0][3]))
-            criteria.append(spin_criterion(heading, CHECK_TURNS))
-        else:
-            criteria.append(
-                Criterion('spin heading', 'no data', '', 'FAIL', 'is pit_node running?')
-            )
-        if self.tape_m:
-            measured = self.tape()
-            if measured is not None:
-                criteria.append(tape_criterion(measured, self.tape_m))
+        log.info(f'Step 1 of 2: spin, {CHECK_TURNS} circles')
+        if read_line(STEP_PROMPT).strip().lower() != 's':
+            spun = self.spin(CHECK_TURNS)
+            if spun is None:
+                criteria.append(Criterion('spin heading', 'no result', '', 'FAIL', 'see above'))
+            else:
+                run, true = spun
+                criteria.append(match_criterion('spin scan match', run.match))
+                criteria.append(spin_criterion(math.degrees(run.odom[2]), math.degrees(true)))
+                criteria.append(
+                    Criterion('gyro', f'{math.degrees(run.gyro_rad):+.1f} deg', '', 'INFO')
+                )
+        log.info('Step 2 of 2: straight drive')
+        if read_line(STEP_PROMPT).strip().lower() != 's':
+            run = self.drive()
+            if run is None:
+                criteria.append(Criterion('drive distance', 'no result', '', 'FAIL', 'see above'))
+            else:
+                criteria.append(match_criterion('drive scan match', run.match))
+                criteria.append(
+                    drive_criterion(
+                        math.hypot(run.odom[0], run.odom[1]),
+                        math.hypot(run.lidar[0], run.lidar[1]),
+                    )
+                )
         file_scales = (self.yaw_scale, self.speed_scale)
         criteria.append(scales_criterion(file_scales, self.live_scales()))
         return finish_check(log, criteria, self.report)
@@ -366,15 +516,12 @@ class OdomCalibrator(CalibratorNode):
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description='Odometry scale calibration (spin and tape).')
-    parser.add_argument(
-        '--tape-m', type=float, help='straight-line distance, m (asked if not given)'
-    )
+    parser = argparse.ArgumentParser(description='Odometry scale calibration against the lidar.')
     parser.add_argument('--check', action='store_true', help='check the scales in use')
     parser.add_argument('--report', help='with --check: write the result as JSON to this file')
     args = parser.parse_args(remove_ros_args(sys.argv)[1:])
     rclpy.init()
-    return spin_until_done(OdomCalibrator(args.check, args.tape_m, args.report))
+    return spin_until_done(OdomCalibrator(args.check, args.report))
 
 
 if __name__ == '__main__':

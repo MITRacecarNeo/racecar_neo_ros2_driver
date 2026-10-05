@@ -1182,8 +1182,9 @@ Commands:
                           mag         LSM9DS1 magnetometer
                           realsense   RealSense accel bias and scale, gyro bias
                           lidar       lidar yaw
-                          odom        gyro yaw scale (circle) and encoder
-                                      speed scale (straight line)
+                          odom        gyro yaw scale (circles) and encoder
+                                      speed scale (straight drive), both
+                                      against the lidar
                         No arguments: all of them.
                         `racecar calibrate status` lists what is calibrated
                         on this car.

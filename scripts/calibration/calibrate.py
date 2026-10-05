@@ -46,6 +46,11 @@ from calibrate_common import (  # noqa: E402, I100
 
 TELEOP_UNIT = 'racecar-teleop'
 RUN_PROMPT = 'Press Enter to run, s to skip, and q to stop: '
+ODOM_SETUP = (
+    'Use a room with walls or furniture within 4 meters of the car.\n'
+    'Clear about 2 meters around the car for driving circles.\n'
+    'Clear a straight path of 3 to 5 meters that ends at a wall or furniture.'
+)
 
 
 @dataclass(frozen=True)
@@ -59,9 +64,6 @@ class Step:
     local_name: str
     keys: tuple[str, ...]
     check: str = ''  # how to place the car for the tool's --check; empty: no check
-    # Optional value asked before the check; an answer is passed as `check_flag VALUE`.
-    check_ask: str = ''
-    check_flag: str = ''
 
 
 # Order: hand-held IMU steps first, then steps with the car on the floor.
@@ -111,17 +113,10 @@ STEPS = (
         'odom',
         'Odometry yaw and speed scale',
         'calibrate_odom.py',
-        'Mark out a calibration track with tape.\n'
-        'Place one piece of tape where the circle will start, with about 2 meters of '
-        'clear floor around it.\n'
-        'Place two more pieces 3 meters apart in a straight line, with 1 meter of clear '
-        'floor past the second.',
+        ODOM_SETUP,
         'odom',
         ('odometry.yaw_rate_scale', 'odometry.speed_scale'),
-        check='Place a strip of tape on the floor, and ensure that there is enough space '
-        'to drive two full turns.',
-        check_ask='Distance of the straight line in meters, or press Enter to skip: ',
-        check_flag='--tape-m',
+        check=ODOM_SETUP,
     ),
 )
 STEP_KEYS = [s.key for s in STEPS]
@@ -304,10 +299,6 @@ def run_checks(steps: list[Step]) -> int:
                 continue
             report = Path(tmp) / f'{step.key}.json'
             cmd = [sys.executable, str(HERE / step.tool), '--check', '--report', str(report)]
-            if step.check_ask:
-                value = ask(step.check_ask)
-                if value:
-                    cmd += [step.check_flag, value]
             rc = subprocess.run(cmd, check=False).returncode
             parsed = read_report(report)
             if parsed is None:

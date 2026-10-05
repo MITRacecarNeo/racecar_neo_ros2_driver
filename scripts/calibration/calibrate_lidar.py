@@ -21,7 +21,6 @@ import math
 from pathlib import Path
 import sys
 from typing import Any
-import warnings
 
 import numpy as np
 from racecar_neo_ros2_driver.frames import load_frames
@@ -43,6 +42,7 @@ from calibrate_common import (  # noqa: E402, I100
     spin_until_done,
     update_local_values,
 )
+from scan_match import median_ranges, scan_points  # noqa: E402, I100
 
 TOOL = 'calibrate_lidar.py'
 SCAN_SECONDS = 5.0
@@ -75,21 +75,6 @@ class WallFit:
     points: int
 
 
-def scan_points(
-    ranges: np.ndarray,
-    angle_min: float,
-    angle_increment: float,
-    range_min: float,
-    range_max: float,
-) -> np.ndarray:
-    """Return (N, 2) points in the laser frame for the valid returns."""
-    ranges = np.asarray(ranges, dtype=float)
-    angles = angle_min + angle_increment * np.arange(ranges.size)
-    ok = np.isfinite(ranges) & (ranges >= range_min) & (ranges <= range_max)
-    r, a = ranges[ok], angles[ok]
-    return np.column_stack((r * np.cos(a), r * np.sin(a)))
-
-
 def to_base(points: np.ndarray, x: float, y: float, yaw: float) -> np.ndarray:
     """Transform laser-frame points into base_link (planar; roll and pitch are 0)."""
     c, s = math.cos(yaw), math.sin(yaw)
@@ -120,20 +105,6 @@ def fit_wall(points: np.ndarray) -> WallFit | None:
         max_mm=float(np.max(np.abs(residuals))) * 1e3,
         points=len(points),
     )
-
-
-def median_ranges(scans: list[list[float]]) -> np.ndarray | None:
-    """Per-beam median over scans of the most common length; inf counts as missing."""
-    if not scans:
-        return None
-    lengths = [len(s) for s in scans]
-    n = max(set(lengths), key=lengths.count)
-    stack = np.array([s for s in scans if len(s) == n], dtype=float)
-    stack[~np.isfinite(stack)] = np.nan
-    # Beams with no return in any scan stay NaN, which scan_points drops.
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore', RuntimeWarning)
-        return np.nanmedian(stack, axis=0)
 
 
 def corrected_yaw_deg(current_deg: float, fit: WallFit) -> float:
