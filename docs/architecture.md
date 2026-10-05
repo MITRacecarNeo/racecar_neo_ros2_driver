@@ -526,7 +526,7 @@ racecar_neo_ros2_driver/
 ├── urdf/                      racecar_neo.urdf.xacro (frame tree)
 ├── scripts/                   setup phases, racecar-tool.sh, watchdog, dashboard,
 │                              diagnose, sysinfo, eth_monitor, wifi_scan,
-│                              racecar_log, dmatrix_patterns,
+│                              racecar_log, analyze_odom, dmatrix_patterns,
 │                              systemd units, udev, polkit and modprobe rules,
 │   │                          Coral overlay and gasket patch
 │   ├── calibration/           calibrate.py (`racecar calibrate`), the

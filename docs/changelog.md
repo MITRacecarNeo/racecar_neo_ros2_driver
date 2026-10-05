@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Added
 
+- `scripts/analyze_odom.py`: judges the phase 2 odometry runs from bags
+  recorded with `racecar log` (`/odom/integrated`, `/odom`, `/motor`):
+  `circle` (heading closure within 5 deg of 360), `straight --tape-m`
+  (distance within 5%, either direction, with heading drift in deg/m),
+  `turn --radius-m` (encoder over-read against laps x 2 pi R, curvature,
+  steering command), and `cpu --baseline` (live `pit_node` CPU, under 10%
+  added). Output in the `racecar calibrate check` PASS/WARN/FAIL format.
 - Integrated odometry in `pit_node` (phase 2 of the v0.9.0 autonomy plan).
   `racecar_neo_ros2_driver/odometry.py` integrates each telemetry frame's
   encoder speed and gyro yaw rate as a unicycle at `base_link`, re-estimates
