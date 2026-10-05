@@ -64,8 +64,12 @@ def _transforms(robot: ET.Element) -> dict[str, np.ndarray]:
 
 
 @pytest.fixture(scope='module')
-def values() -> dict[str, float]:
-    return load_frames(CONFIG)
+def values(tmp_path_factory) -> dict[str, float]:
+    # The committed fleet values only: a car's gitignored frames.local.yaml
+    # (a calibrated lidar yaw, say) must not change what the tests check.
+    fleet = tmp_path_factory.mktemp('fleet')
+    (fleet / 'frames.yaml').write_text((CONFIG / 'frames.yaml').read_text())
+    return load_frames(fleet)
 
 
 @pytest.fixture(scope='module')

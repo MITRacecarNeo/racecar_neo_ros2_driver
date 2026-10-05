@@ -9,13 +9,14 @@
 # same axes: roll about x, pitch about y (positive tips the front down), yaw
 # about z (positive turns left).
 #
-# Sources, from the car measurement sheet (2026-10-04 pull): "C.L" is a
-# measurement on the reference car, "model" is the current model value
-# pending measurement. Sheet row numbers in brackets.
+# Sources, from the car measurement sheet (second 2026-10-04 pull): "C.L" is
+# a measurement on the reference car, "model" is the current model value
+# pending measurement. Sheet row numbers in brackets. The model's heights read
+# 5.5 to 8.5 mm above the C.L measurements (rows 8, 11, 15, 20).
 
 # Lidar (RPLIDAR): rotation axis and scan plane.
-laser_x_mm: 238.3        # model [6]
-laser_y_mm: 0.0          # model [7]
+laser_x_mm: 238.3        # C.L [6], taken from the model
+laser_y_mm: 0.0          # C.L [7]
 laser_z_mm: 195.0        # C.L [8]; model 201.6
 laser_roll_deg: 0.0      # C.L [10]
 laser_pitch_deg: 0.0     # C.L [10]
@@ -24,25 +25,25 @@ laser_yaw_deg: 180.0     # C.L [9]: motor end toward the rear, scan zero faces a
 # IMU: LSM9DS1 breakout centre. The rotation is the convention, not a
 # measurement: config/pit.yaml remaps the LSM9DS1 into the RealSense IMU's
 # optical axes (x right, y down, z forward), and this rotation labels them.
-imu_x_mm: 190.0          # model [11]
-imu_y_mm: 0.0            # model [11]
-imu_z_mm: 113.5          # model [11]
+imu_x_mm: 190.0          # C.L [11]
+imu_y_mm: 0.0            # C.L [11]
+imu_z_mm: 105.0          # C.L [11]; model 113.5
 imu_roll_deg: -90.0
 imu_pitch_deg: 0.0
 imu_yaw_deg: -90.0
 
 # RealSense D435i case. camera_link is derived from these in the URDF, using
 # the case geometry from realsense2_description.
-camera_front_x_mm: 277.9      # model [13]: front aluminium face
-camera_y_mm: 0.0              # model [14]: case centre
-camera_bottom_z_mm: 107.0     # model [15]: underside of the case
+camera_front_x_mm: 277.9      # C.L [13]: front aluminium face
+camera_y_mm: 0.0              # C.L [14]: case centre
+camera_bottom_z_mm: 100.0     # C.L [15]: underside of the case; model 107.0
 camera_roll_deg: 0.0
-camera_pitch_deg: 0.0         # model [16]
+camera_pitch_deg: 0.0         # C.L [16]
 camera_yaw_deg: 0.0
 
 # Footprint, for the URDF visual and later costmaps.
-footprint_front_x_mm: 287.5   # model [17]
-footprint_rear_x_mm: -59.7    # model [18]
-footprint_left_y_mm: 104.5    # model [19]
-footprint_right_y_mm: -107.0  # model [19]
+footprint_front_x_mm: 287.5   # C.L [17]
+footprint_rear_x_mm: -59.7    # C.L [18]
+footprint_left_y_mm: 104.5    # C.L [19]
+footprint_right_y_mm: -104.5  # C.L [19]; model -107 counts the battery connector
 ride_height_mm: 20.5          # model [34]

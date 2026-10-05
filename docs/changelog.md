@@ -14,9 +14,9 @@ All notable changes to this project will be documented in this file. The format 
   millimetres and degrees, with per-car keys in `frames.local.yaml`, loaded by
   `racecar_neo_ros2_driver/frames.py`. `launch/frames.launch.py` runs
   `robot_state_publisher` with respawn (5 retries); `teleop.launch.py`
-  includes it behind `frames_enable`. Values are the measurement sheet's model
-  values except the lidar height, roll, pitch and yaw, measured on the
-  reference car.
+  includes it behind `frames_enable`. Values are measured on the reference
+  car (measurement sheet, C.L column) except the ride height, a model value;
+  the IMU and camera heights replace model values about 7 mm too high.
 - `calibrate_lidar.py`: lidar yaw from a line fit to a flat wall ahead,
   written to `frames.local.yaml`; `--check` for a pass or fail report.
   `calibrate_common.update_local_values()` sets keys in a plain local YAML
