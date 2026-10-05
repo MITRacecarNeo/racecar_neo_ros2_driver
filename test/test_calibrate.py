@@ -29,11 +29,7 @@ def _ros_yaml(path: Path, node: str, params: dict) -> None:
 class TestSteps:
     def test_tools_exist(self, cal):
         for step in cal.STEPS:
-            if step.tool is not None:
-                assert (cal.HERE / step.tool).is_file(), step.tool
-
-    def test_pending_steps_say_when(self, cal):
-        assert all(step.pending for step in cal.STEPS if step.tool is None)
+            assert (cal.HERE / step.tool).is_file(), step.tool
 
     def test_order_puts_hand_held_steps_first(self, cal):
         assert cal.STEP_KEYS[:4] == ['imu', 'mag', 'realsense', 'lidar']
@@ -67,7 +63,6 @@ class TestStatus:
         assert rows['imu'][0] == 'calibrated' and 'no backup' in rows['imu'][1]
         assert rows['lidar'][0] == 'calibrated' and 'backed up' in rows['lidar'][1]
         assert rows['realsense'][0] == 'default'
-        assert rows['camera'] == ('pending', 'arrives before phase 3')
         assert rows['odom'][0] == 'default'
 
     def test_changed_backup_is_flagged(self, cal, config, tmp_path):
@@ -109,7 +104,7 @@ class TestRun:
     def test_skip_and_quit(self, cal, config, tmp_path, harness):
         answers, ran = harness
         answers += ['s', 'q']
-        steps = [s for s in cal.STEPS if s.tool is not None]
+        steps = list(cal.STEPS)
         assert cal.run_steps(steps, config, tmp_path / 'b') == 0
         assert ran == []
 
@@ -120,13 +115,43 @@ class TestRun:
         cal.run_steps(lidar, config, tmp_path / 'b')
         assert ran[-1] == ['systemctl', 'restart', 'racecar-teleop']
 
+    def test_tools_run_in_session_mode(self, cal, config, tmp_path, monkeypatch):
+        envs = []
+
+        def fake_run(cmd, check=False, env=None, **_kw):
+            envs.append(env)
+            return type('R', (), {'returncode': 0})()
+
+        monkeypatch.setattr(cal.subprocess, 'run', fake_run)
+        answers = ['', 'n']
+        monkeypatch.setattr(cal, 'ask', lambda _p='': answers.pop(0))
+        cal.run_steps([s for s in cal.STEPS if s.key == 'imu'], config, tmp_path / 'b')
+        assert envs[0][cal.SESSION_ENV] == '1'
+
+
+class TestBackupReminder:
+    def test_standalone_tool_says_how_to_back_up_and_apply(self, monkeypatch):
+        common = load_script('calibrate_common')
+        monkeypatch.delenv(common.SESSION_ENV, raising=False)
+        text = common.backup_reminder([Path('/x/odom.local.yaml')])
+        assert 'Wrote /x/odom.local.yaml' in text
+        assert 'Back it up' in text and 'Apply it' in text
+
+    def test_session_leaves_backup_and_restart_to_calibrate(self, monkeypatch):
+        common = load_script('calibrate_common')
+        monkeypatch.setenv(common.SESSION_ENV, '1')
+        text = common.backup_reminder([Path('/x/odom.local.yaml')])
+        assert text == 'Wrote /x/odom.local.yaml'
+
+
+class TestSetupText:
+    def test_one_instruction_per_line_under_the_label(self, cal):
+        assert cal.setup_text('Do one.\nDo two.') == 'Setup: Do one.\n       Do two.'
+
 
 class TestMain:
     def test_unknown_step_is_a_usage_error(self, cal):
         assert cal.main(['gps']) == 2
-
-    def test_pending_only_is_a_usage_error(self, cal):
-        assert cal.main(['camera']) == 2
 
     def test_refuses_without_teleop(self, cal, monkeypatch):
         monkeypatch.setattr(cal, 'teleop_active', lambda: False)
@@ -160,7 +185,7 @@ class TestChecks:
             'calibrate_mag.py': (
                 'FAIL',
                 [
-                    ('centre offset', '10.2% of radius', 'under 10%', 'FAIL', 'recalibrate'),
+                    ('center offset', '10.2% of radius', 'under 10%', 'FAIL', 'recalibrate'),
                     ('field strength', '101.3 uT', '20 to 70 uT', 'WARN', 'gain?'),
                 ],
             ),
@@ -189,7 +214,7 @@ class TestChecks:
         summary = out[start:]
         assert 'imu        PASS' in summary and 'mag        FAIL' in summary
         assert 'lidar      skipped' in summary
-        assert 'FAIL  centre offset' in summary and '-> recalibrate' in summary
+        assert 'FAIL  center offset' in summary and '-> recalibrate' in summary
         assert 'WARN  field strength' in summary
         assert 'RESULT FAIL  1 pass  0 warn  1 fail  1 skipped' in summary
         assert all('--check' in cmd for cmd in ran)
@@ -212,8 +237,29 @@ class TestChecks:
         assert cal.main(['check']) == 0
         assert seen == ['imu', 'mag', 'realsense', 'lidar', 'odom']
 
-    def test_check_of_a_pending_step_is_a_usage_error(self, cal):
-        assert cal.main(['check', 'camera']) == 2
+    def _odom_check(self, cal, monkeypatch, answer: str) -> list:
+        ran = []
+
+        def fake_run(cmd, check=False, **_kw):
+            ran.append(cmd)
+            return type('R', (), {'returncode': 0})()
+
+        monkeypatch.setattr(cal.subprocess, 'run', fake_run)
+        answers = ['', answer]
+        monkeypatch.setattr(cal, 'ask', lambda _p='': answers.pop(0))
+        cal.run_checks([s for s in cal.STEPS if s.key == 'odom'])
+        return ran[0]
+
+    def test_odom_check_passes_the_straight_line_distance(self, cal, monkeypatch):
+        cmd = self._odom_check(cal, monkeypatch, '3')
+        assert cmd[-2:] == ['--tape-m', '3']
+
+    def test_odom_check_without_a_distance_skips_the_tape_run(self, cal, monkeypatch):
+        cmd = self._odom_check(cal, monkeypatch, '')
+        assert '--tape-m' not in cmd
+
+    def test_check_of_an_unknown_step_is_a_usage_error(self, cal):
+        assert cal.main(['check', 'gps']) == 2
 
 
 class TestAsk:
@@ -260,7 +306,7 @@ class TestColor:
         common = load_script('calibrate_common')
         step = next(s for s in cal.STEPS if s.key == 'mag')
         crit = [
-            common.Criterion('centre offset', '4.8%', 'under 10%', 'PASS'),
+            common.Criterion('center offset', '4.8%', 'under 10%', 'PASS'),
             common.Criterion('field strength', '104 uT', '20 to 70', 'WARN', 'gain?'),
         ]
         return [(step, 'WARN', crit)]

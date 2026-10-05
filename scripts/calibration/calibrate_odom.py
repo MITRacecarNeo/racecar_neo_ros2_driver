@@ -2,16 +2,16 @@
 """
 Odometry scale calibration for pit_node: gyro yaw scale and encoder speed scale.
 
-Spin: the car is parked with its left side against a strip of tape, rests 3 s
-(the gyro's offset at rest), is turned 3 full turns (driven in circles or
-rotated by hand; the gyro counts rotation whatever the path), and is parked
-against the tape again. The yaw rate
+Spin: the car starts with both front wheels on a strip of tape laid across
+its path, rests 3 s (the gyro's offset at rest), is driven 3 full circles at
+full lock, and stops with the front wheels back on the tape. The yaw rate
 the odometry uses (gyro axis and sign from config/odom.yaml, bias removed) is
 integrated over the turn; the turn count is rounded from it, and
 odometry.yaw_rate_scale = turns x 360 deg / measured. A scale far from 1 is
 refused: it points at imu.gyro_scale (a deg/s versus rad/s mix-up is 57x).
 
-Tape: the car is driven over a taped distance and stopped;
+Tape: the car is driven straight from front wheels on one tape to front
+wheels on a second; the distance is the straight line between the two poses;
 odometry.speed_scale = current scale x tape / measured, from
 /odom/integrated.
 
@@ -33,6 +33,8 @@ from typing import Any
 
 from nav_msgs.msg import Odometry
 import numpy as np
+from rcl_interfaces.msg import ParameterType
+from rcl_interfaces.srv import GetParameters
 import rclpy
 from rclpy.qos import qos_profile_sensor_data
 from rclpy.utilities import remove_ros_args
@@ -59,9 +61,37 @@ REST_SECONDS = 3.0
 SCALE_LIMITS = (0.8, 1.25)
 # A turn count is accepted when the measurement is within this of a whole turn.
 WHOLE_TURN_SLACK = 0.15
+SPIN_TURNS = 3
 CHECK_TURNS = 2
+SCALE_KEYS = ('odometry.yaw_rate_scale', 'odometry.speed_scale')
+PARAM_TIMEOUT = 3.0
 SPIN_PASS, SPIN_WARN = 0.01, 0.03
 TAPE_PASS, TAPE_WARN = 0.02, 0.05
+# Mark placement error is about 5 mm at each end: 0.7% over 1 m, 0.35% over 2 m.
+MIN_TAPE_M = 2.0
+
+
+WHEELS_ON_TAPE = (
+    'Place the car on the floor with both front wheels touching the tape, so that the '
+    'tape runs across the car under the wheels.'
+)
+BACK_ON_TAPE = 'Press Enter when the front wheels are back on the tape...'
+STEP_PROMPT = 'Press Enter to run this step, or s to skip it: '
+TAPE_TOO_SHORT = f'The straight line must be at least {MIN_TAPE_M:g} meters long. Nothing written.'
+
+
+def drive_circles(turns: int) -> list[str]:
+    """Return the spin instructions, one sentence per line."""
+    return [
+        f'Drive the car manually in a circle (fully right or fully left) {turns} times.',
+        'Try to stop the car as close as possible to where it started (align with the tape).',
+        'You can drive slower to help with accuracy.',
+    ]
+
+
+def log_lines(log: Any, lines: list[str]) -> None:
+    for line in lines:
+        log.info(line)
 
 
 @dataclass(frozen=True)
@@ -117,6 +147,29 @@ def tape_criterion(measured_m: float, tape_m: float) -> Criterion:
         graded(error, TAPE_PASS, TAPE_WARN),
         'recalibrate the speed scale: racecar calibrate odom',
     )
+
+
+def scales_criterion(
+    file_scales: tuple[float, float], live: tuple[float, float] | None
+) -> Criterion:
+    """Compare the scales in odom.local.yaml with the ones pit_node is running."""
+    yaw, speed = file_scales
+    if live is None:
+        return Criterion(
+            'scales in use',
+            f'file: yaw {yaw:g}, speed {speed:g}',
+            'pit_node not reachable',
+            'INFO',
+        )
+    if not all(math.isclose(a, b, rel_tol=1e-6) for a, b in zip(file_scales, live, strict=True)):
+        return Criterion(
+            'scales in use',
+            f'pit_node: yaw {live[0]:g}, speed {live[1]:g}; file: yaw {yaw:g}, speed {speed:g}',
+            'pit_node matches the file',
+            'FAIL',
+            'restart teleop to load the file: racecar service restart teleop',
+        )
+    return Criterion('scales in use', f'yaw {yaw:g}, speed {speed:g}', '', 'INFO')
 
 
 class OdomCalibrator(CalibratorNode):
@@ -186,29 +239,29 @@ class OdomCalibrator(CalibratorNode):
     def spin(self) -> SpinFit | None:
         log = self.get_logger()
         log.info('Lay a straight strip of tape on the floor.')
-        log.info('Park the car with its left side touching the tape.')
-        read_line('Press Enter, then keep your hands off the car for 3 s...')
+        log.info(WHEELS_ON_TAPE)
+        read_line(
+            f'Press Enter, then keep your hands off the car for {REST_SECONDS:.0f} seconds...'
+        )
         bias = self._rest_bias()
-        log.info('Turn the car 3 full turns, either direction: drive circles with the')
-        log.info('controller, or rotate it by hand on the spot.')
-        log.info('Then park it with its left side touching the tape again; push it by hand')
-        log.info('to line it up if needed.')
-        samples = self._gyro_window('Press Enter when it is back against the tape...')
+        log.info('Done. You can touch the car now.')
+        log_lines(log, drive_circles(SPIN_TURNS))
+        samples = self._gyro_window(BACK_ON_TAPE)
         measured = integrate_rate(samples, bias) * self.yaw_scale
         fit = fit_spin(measured)
         if fit is None:
             log.error(
                 f'Measured {math.degrees(measured):+.1f} deg, not a whole number of turns. '
-                'Park the car flush against the tape and try again.'
+                'Line the front wheels up on the tape and try again.'
             )
         return fit
 
     def tape(self) -> float | None:
         log = self.get_logger()
-        log.info('Park the car with its front bumper on the first mark, wheels straight.')
+        log.info(WHEELS_ON_TAPE)
         read_line('Press Enter, then drive straight to the second mark...')
         poses = self._pose_window(
-            'Stop with the front bumper on the second mark, then press Enter...'
+            'Stop the car with its front wheels on the second tape, then press Enter...'
         )
         if len(poses) < 2:
             log.error('No odometry received. Check that teleop is running.')
@@ -223,8 +276,8 @@ class OdomCalibrator(CalibratorNode):
             return self._run_check()
         params: dict[str, float] = {}
 
-        log.info('Step 1 of 2: gyro scale. You turn the car 3 full turns on the floor.')
-        if read_line('Enter to run, s to skip: ').strip().lower() != 's':
+        log.info('Step 1 of 2: gyro scale')
+        if read_line(STEP_PROMPT).strip().lower() != 's':
             fit = self.spin()
             if fit is None:
                 return 1
@@ -238,12 +291,17 @@ class OdomCalibrator(CalibratorNode):
                 return 1
             params['odometry.yaw_rate_scale'] = round(new, 5)
 
-        log.info('Step 2 of 2: speed scale. You drive the car straight between two floor')
-        log.info('marks about 3 m apart.')
-        if read_line('Enter to run, s to skip: ').strip().lower() != 's':
-            tape_m = self.tape_m or float(read_line('Distance between the marks, in metres: '))
+        log.info('Step 2 of 2: speed scale')
+        if read_line(STEP_PROMPT).strip().lower() != 's':
+            if self.tape_m is not None and self.tape_m < MIN_TAPE_M:
+                log.error(TAPE_TOO_SHORT)
+                return 1
             measured = self.tape()
             if measured is None or measured <= 0:
+                return 1
+            tape_m = self.tape_m or float(read_line('Distance between the two tapes, in meters: '))
+            if tape_m < MIN_TAPE_M:
+                log.error(TAPE_TOO_SHORT)
                 return 1
             ratio = tape_m / measured
             if not scale_ok(ratio):
@@ -271,11 +329,10 @@ class OdomCalibrator(CalibratorNode):
     def _run_check(self) -> int:
         log = self.get_logger()
         criteria = []
-        log.info('Park the car with its left side touching the strip of tape.')
+        log.info(WHEELS_ON_TAPE)
         read_line('Press Enter to start...')
-        log.info(f'Turn the car {CHECK_TURNS} full turns (drive circles or rotate it by hand),')
-        log.info('then park it with its left side touching the tape again.')
-        poses = self._pose_window('Press Enter when it is back against the tape...')
+        log_lines(log, drive_circles(CHECK_TURNS))
+        poses = self._pose_window(BACK_ON_TAPE)
         if len(poses) >= 2:
             heading = math.degrees(float(np.unwrap([p[3] for p in poses])[-1] - poses[0][3]))
             criteria.append(spin_criterion(heading, CHECK_TURNS))
@@ -287,20 +344,32 @@ class OdomCalibrator(CalibratorNode):
             measured = self.tape()
             if measured is not None:
                 criteria.append(tape_criterion(measured, self.tape_m))
-        criteria.append(
-            Criterion(
-                'scales in use',
-                f'yaw {self.yaw_scale:g}, speed {self.speed_scale:g}',
-                '',
-                'INFO',
-            )
-        )
+        file_scales = (self.yaw_scale, self.speed_scale)
+        criteria.append(scales_criterion(file_scales, self.live_scales()))
         return finish_check(log, criteria, self.report)
+
+    def live_scales(self) -> tuple[float, float] | None:
+        """Return pit_node's (yaw, speed) scales, or None when it does not answer."""
+        client = self.create_client(GetParameters, f'/{NODE}/get_parameters')
+        if not client.wait_for_service(timeout_sec=PARAM_TIMEOUT):
+            return None
+        future = client.call_async(GetParameters.Request(names=list(SCALE_KEYS)))
+        deadline = time.monotonic() + PARAM_TIMEOUT
+        while not future.done() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        values = future.result().values if future.done() and future.result() else []
+        if len(values) != len(SCALE_KEYS):
+            return None
+        if any(v.type != ParameterType.PARAMETER_DOUBLE for v in values):
+            return None
+        return values[0].double_value, values[1].double_value
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description='Odometry scale calibration (spin and tape).')
-    parser.add_argument('--tape-m', type=float, help='taped distance, m (asked if not given)')
+    parser.add_argument(
+        '--tape-m', type=float, help='straight-line distance, m (asked if not given)'
+    )
     parser.add_argument('--check', action='store_true', help='check the scales in use')
     parser.add_argument('--report', help='with --check: write the result as JSON to this file')
     args = parser.parse_args(remove_ros_args(sys.argv)[1:])

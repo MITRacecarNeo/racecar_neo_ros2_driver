@@ -61,9 +61,7 @@ class TestFit:
         assert norms.std() / norms.mean() < 1e-6
 
     def test_offset_larger_than_the_field(self, mag):
-        # Hard iron bigger than the field puts zero field outside the
-        # ellipsoid. The reference car reached this on 2026-10-04 (raw circle
-        # 110.6% off centre) and the fit failed.
+        # Hard iron bigger than the field puts zero field outside the ellipsoid.
         offset, axes = (7.0e-5, -2.0e-5, 1.0e-5), (1.1, 1.0, 0.9)
         samples = _ellipsoid(2000, offset, axes)
         fit = mag.fit_ellipsoid(samples)
@@ -126,10 +124,10 @@ class TestCheckCircle:
         assert result.offset < 0.01 and result.roundness < 0.01
         assert result.field_ut == pytest.approx(np.linalg.norm((20.0, 5.0, 40.0)), rel=1e-6)
 
-    def test_hard_iron_moves_the_centre(self, mag):
+    def test_hard_iron_moves_the_center(self, mag):
         result = mag.check_circle(_turn((20.0, 5.0, 40.0), hard=(8.0, 0.0, 0.0)))
         assert result.offset > mag.CHECK_MAX_OFFSET
-        assert _status(result, 'centre offset') == 'FAIL'
+        assert _status(result, 'center offset') == 'FAIL'
 
     def test_soft_iron_squashes_the_circle(self, mag):
         result = mag.check_circle(_turn((20.0, 5.0, 40.0), squash=0.8))
@@ -143,7 +141,7 @@ class TestCheckCircle:
         # A uniform scale error leaves the heading unchanged.
         result = mag.check_circle(_turn((100.0, 0.0, 60.0)))
         assert _status(result, 'field strength') == 'WARN'
-        assert _status(result, 'centre offset') == 'PASS'
+        assert _status(result, 'center offset') == 'PASS'
 
     def test_raw_fit_is_reported_without_a_verdict(self, mag):
         good = mag.check_circle(_turn((20.0, 5.0, 40.0)))

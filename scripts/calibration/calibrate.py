@@ -39,25 +39,29 @@ from calibrate_common import (  # noqa: E402, I100
     Criterion,
     paint,
     read_line,
+    SESSION_ENV,
     source_config_dir,
     use_color,
 )
 
 TELEOP_UNIT = 'racecar-teleop'
+RUN_PROMPT = 'Press Enter to run, s to skip, and q to stop: '
 
 
 @dataclass(frozen=True)
 class Step:
-    """One calibration in the sequence. tool None: not written yet (`pending` says when)."""
+    """One calibration in the sequence."""
 
     key: str
     label: str
-    tool: str | None
+    tool: str
     position: str
     local_name: str
     keys: tuple[str, ...]
-    pending: str = ''
     check: str = ''  # how to place the car for the tool's --check; empty: no check
+    # Optional value asked before the check; an answer is passed as `check_flag VALUE`.
+    check_ask: str = ''
+    check_flag: str = ''
 
 
 # Order: hand-held IMU steps first, then steps with the car on the floor.
@@ -66,58 +70,66 @@ STEPS = (
         'imu',
         'LSM9DS1 accel bias and scale, gyro bias',
         'calibrate_imu.py',
-        'Car in your hands; you will hold it in 6 poses.',
+        'Place the car on a table.\n'
+        'The instructions will direct you to hold the car in 6 poses.',
         'lsm9ds1_cal',
         ('accelerometer.bias', 'accelerometer.scale', 'gyroscope.bias'),
-        check='Car on a level surface.',
+        check='Place the car on a level surface.',
     ),
     Step(
         'mag',
         'LSM9DS1 magnetometer',
         'calibrate_mag.py',
-        'Car in your hands, away from large metal; you will turn it about 3 axes.',
+        'Hold the car in your hands, away from large metal structures.\n'
+        'The instructions will direct you to turn the car about 3 axes.',
         'lsm9ds1_mag_cal',
         ('magnetometer.hard_iron_bias',),
-        check='Car flat on the floor, away from large metal; you will turn it one full turn.',
+        check='Place the car down flat on the floor and away from large metal structures.',
     ),
     Step(
         'realsense',
         'RealSense accel bias and scale, gyro bias',
         'calibrate_realsense_imu.py',
-        'Car in your hands; you will hold it in 6 poses.',
+        'Place the car on a table.\n'
+        'The instructions will direct you to hold the car in 6 poses.',
         'realsense_cal',
         ('realsense_accel_bias', 'realsense_accel_scale', 'realsense_gyro_bias'),
-        check='Car on a level surface.',
+        check='Place the car on a level surface.',
     ),
     Step(
         'lidar',
         'Lidar yaw',
         'calibrate_lidar.py',
-        'Car facing a flat, clear wall, front bumper 0.5 to 2 m from it.',
+        'Place the car down on the floor facing a flat, clear wall.\n'
+        'Ensure that the front bumper is 0.5 to 2 meters away from the wall.',
         'frames',
         ('laser_yaw_deg',),
-        check='Car facing a flat, clear wall, front bumper 0.5 to 2 m from it.',
+        check='Place the car down facing a flat, clear wall, about 0.5 to 2 meters away '
+        'from it.',
     ),
     Step(
         'odom',
         'Odometry yaw and speed scale',
         'calibrate_odom.py',
-        'A strip of tape, 2 m of clear floor to turn in, two marks 3 m apart in a line.',
+        'Mark out a calibration track with tape.\n'
+        'Place one piece of tape where the circle will start, with about 2 meters of '
+        'clear floor around it.\n'
+        'Place two more pieces 3 meters apart in a straight line, with 1 meter of clear '
+        'floor past the second.',
         'odom',
         ('odometry.yaw_rate_scale', 'odometry.speed_scale'),
-        check='A strip of tape on the floor, and 2 m of clear floor to turn the car 2 full turns.',
-    ),
-    Step(
-        'camera',
-        'Camera pitch, roll and height',
-        None,
-        'Car on a flat floor, nothing in front of it.',
-        'frames',
-        ('camera_pitch_deg', 'camera_roll_deg', 'camera_bottom_z_mm'),
-        'arrives before phase 3',
+        check='Place a strip of tape on the floor, and ensure that there is enough space '
+        'to drive two full turns.',
+        check_ask='Distance of the straight line in meters, or press Enter to skip: ',
+        check_flag='--tape-m',
     ),
 )
 STEP_KEYS = [s.key for s in STEPS]
+
+
+def setup_text(text: str) -> str:
+    """Return a step's setup lines under a `Setup:` label, one instruction per line."""
+    return 'Setup: ' + text.replace('\n', '\n       ')
 
 
 def read_values(path: Path) -> dict[str, Any]:
@@ -153,9 +165,7 @@ def status_rows(config_dir: Path, backup_dir: Path = BACKUP_DIR) -> list[tuple[s
     for step in STEPS:
         local = config_dir / f'{step.local_name}.local.yaml'
         values = step_values(step, config_dir)
-        if step.tool is None:
-            rows.append((step.key, 'pending', step.pending))
-        elif values:
+        if values:
             stamp = datetime.fromtimestamp(local.stat().st_mtime).strftime('%Y-%m-%d %H:%M')
             rows.append((step.key, 'calibrated', f'{stamp}, {backup_state(local, backup_dir)}'))
         else:
@@ -193,8 +203,8 @@ def run_steps(steps: list[Step], config_dir: Path, backup_dir: Path = BACKUP_DIR
     results: list[tuple[Step, str, dict[str, Any], dict[str, Any]]] = []
     for i, step in enumerate(steps, start=1):
         print(f'\n=== {i}/{len(steps)} {step.label} ===')
-        print(f'Setup: {step.position}')
-        answer = ask('Enter to run, s to skip, q to stop: ')
+        print(setup_text(step.position))
+        answer = ask(RUN_PROMPT)
         if answer == 'q':
             left = i - 1
             results += [(rest, 'not run', {}, {}) for rest in steps[left:]]
@@ -203,7 +213,11 @@ def run_steps(steps: list[Step], config_dir: Path, backup_dir: Path = BACKUP_DIR
             results.append((step, 'skipped', {}, {}))
             continue
         before = step_values(step, config_dir)
-        rc = subprocess.run([sys.executable, str(HERE / str(step.tool))], check=False).returncode
+        rc = subprocess.run(
+            [sys.executable, str(HERE / step.tool)],
+            check=False,
+            env={**os.environ, SESSION_ENV: '1'},
+        ).returncode
         results.append(
             (step, 'done' if rc == 0 else 'failed', before, step_values(step, config_dir))
         )
@@ -228,6 +242,7 @@ def run_steps(steps: list[Step], config_dir: Path, backup_dir: Path = BACKUP_DIR
                 print(f'Backed up {local.name} to {backup_dir}/')
         restart = [*shlex.split(os.environ.get('RACECAR_SUDO', 'sudo')), *systemctl()]
         restart += ['restart', TELEOP_UNIT]
+        print('Restarting teleop uses sudo, which may ask for your password.')
         if ask('Restart teleop now so the nodes load the new values? [y/N] ') == 'y':
             subprocess.run(restart, check=False)
         else:
@@ -278,8 +293,8 @@ def run_checks(steps: list[Step]) -> int:
     with tempfile.TemporaryDirectory() as tmp:
         for i, step in enumerate(steps, start=1):
             print(f'\n=== Check {i}/{len(steps)}: {step.label} ===')
-            print(f'Setup: {step.check}')
-            answer = ask('Enter to run, s to skip, q to stop: ')
+            print(setup_text(step.check))
+            answer = ask(RUN_PROMPT)
             if answer == 'q':
                 left = i - 1
                 results += [(rest, 'not run', []) for rest in steps[left:]]
@@ -288,7 +303,11 @@ def run_checks(steps: list[Step]) -> int:
                 results.append((step, 'skipped', []))
                 continue
             report = Path(tmp) / f'{step.key}.json'
-            cmd = [sys.executable, str(HERE / str(step.tool)), '--check', '--report', str(report)]
+            cmd = [sys.executable, str(HERE / step.tool), '--check', '--report', str(report)]
+            if step.check_ask:
+                value = ask(step.check_ask)
+                if value:
+                    cmd += [step.check_flag, value]
             rc = subprocess.run(cmd, check=False).returncode
             parsed = read_report(report)
             if parsed is None:
@@ -306,7 +325,7 @@ def run_checks(steps: list[Step]) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog='racecar calibrate',
-        description='Calibrate the car: IMUs, magnetometer, lidar yaw. '
+        description='Calibrate the car: IMUs, magnetometer, lidar yaw, odometry. '
         '`status` lists what is calibrated.',
     )
     parser.add_argument(
@@ -337,19 +356,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f'unknown step: {", ".join(unknown)}', file=sys.stderr)
         return 2
     chosen = [s for s in STEPS if not args.steps or s.key in args.steps]
-    pending = [s for s in chosen if s.tool is None]
-    for step in pending:
-        print(f'{step.key}: not available yet ({step.pending}); skipped')
-    chosen = [s for s in chosen if s.tool is not None]
-    if not chosen:
-        return 2 if args.steps else 0
-
     if checking:
         chosen = [s for s in chosen if s.check]
         if not chosen:
             return 2
     if not teleop_active():
-        print(f'{TELEOP_UNIT} is not active; the tools read its topics. Start it first.')
+        print(
+            f'{TELEOP_UNIT} is not running. Start it with racecar service start teleop, '
+            'then run racecar calibrate again.'
+        )
         return 1
     return run_checks(chosen) if checking else run_steps(chosen, config_dir)
 

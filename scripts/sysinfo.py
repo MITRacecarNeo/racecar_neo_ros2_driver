@@ -260,7 +260,7 @@ def read_uptime() -> float | None:
 
 
 def ntp_synchronized() -> bool | None:
-    """Return True when the clock is NTP-synchronised, or None if unreadable."""
+    """Return True when the clock is NTP-synchronized, or None if unreadable."""
     try:
         r = subprocess.run(
             ['timedatectl', 'show', '-p', 'NTPSynchronized', '--value'],

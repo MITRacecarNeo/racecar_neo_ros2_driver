@@ -356,7 +356,7 @@ def check_services() -> list[Check]:
 
 
 def watchdog_check(state: dict[str, Any] | None) -> Check:
-    """Summarise watchdog.py's per-node state file as one services row."""
+    """Summarize watchdog.py's per-node state file as one services row."""
     name = 'watchdog nodes'
     if state is None:
         return Check('services', name, SKIP, 'no watchdog state file')
@@ -580,7 +580,7 @@ SAMPLE_READERS: dict[str, Callable[[Any], tuple[str, str]]] = {
 
 
 def read_sample(topic: str, msg: Any) -> tuple[str, str]:
-    """Summarise one message; a payload of an unexpected shape warns."""
+    """Summarize one message; a payload of an unexpected shape warns."""
     reader = SAMPLE_READERS.get(topic)
     if reader is None:
         return OK, ''
@@ -843,7 +843,7 @@ def exit_code_for(checks: list[Check], strict: bool = False) -> int:
 
 
 def use_color() -> bool:
-    """Colour only an interactive terminal; NO_COLOR (no-color.org) opts out."""
+    """Color only an interactive terminal; NO_COLOR (no-color.org) opts out."""
     return (
         sys.stdout.isatty()
         and 'NO_COLOR' not in os.environ

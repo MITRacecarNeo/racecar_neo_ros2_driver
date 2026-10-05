@@ -105,3 +105,31 @@ class TestMergeWrite:
         ).read_text()
         for key in ('odometry.yaw_rate_scale', 'odometry.speed_scale'):
             assert f"declare_parameter('{key}'" in src
+
+
+class TestInstructions:
+    def test_circle_count_is_in_the_text(self):
+        odom = load_script('calibrate_odom')
+        assert 'circle (fully right or fully left) 2 times.' in odom.drive_circles(2)[0]
+
+    def test_one_sentence_per_line(self):
+        odom = load_script('calibrate_odom')
+        for line in odom.drive_circles(3) + [odom.WHEELS_ON_TAPE]:
+            assert line.count('. ') == 0
+
+
+class TestScalesInUse:
+    def test_matching_scales_are_info(self):
+        odom = load_script('calibrate_odom')
+        c = odom.scales_criterion((1.00462, 0.90338), (1.00462, 0.90338))
+        assert c.status == 'INFO'
+
+    def test_teleop_not_restarted_fails(self):
+        odom = load_script('calibrate_odom')
+        c = odom.scales_criterion((1.00462, 0.90338), (1.0, 1.0))
+        assert c.status == 'FAIL' and 'restart teleop' in c.advice
+
+    def test_unreachable_node_is_reported_not_judged(self):
+        odom = load_script('calibrate_odom')
+        c = odom.scales_criterion((1.0, 1.0), None)
+        assert c.status == 'INFO' and 'not reachable' in c.limit

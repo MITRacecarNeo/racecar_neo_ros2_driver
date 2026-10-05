@@ -93,7 +93,7 @@ class TestStraight:
         crit = odom.straight_criteria(self._line(odom, 3.3), 3.0)
         assert _status(crit, 'distance, forward') == 'FAIL'
 
-    def test_reverse_is_labelled(self, odom):
+    def test_reverse_is_labeled(self, odom):
         crit = odom.straight_criteria(self._line(odom, -3.0, v=-0.5), 3.0)
         assert _status(crit, 'distance, reverse') == 'PASS'
 
@@ -119,9 +119,9 @@ class TestTurn:
 
 class TestCpu:
     def test_criteria(self, odom):
-        assert odom.cpu_criteria(60.3, 52.5)[0].status == 'PASS'
-        assert odom.cpu_criteria(67.3, 52.5)[0].status == 'FAIL'
-        assert odom.cpu_criteria(60.3, None)[0].status == 'INFO'
+        assert odom.cpu_criteria(50.0, 40.0)[0].status == 'PASS'
+        assert odom.cpu_criteria(55.0, 40.0)[0].status == 'FAIL'
+        assert odom.cpu_criteria(50.0, None)[0].status == 'INFO'
 
     def test_own_process_cpu_reads(self, odom):
         import os

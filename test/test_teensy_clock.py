@@ -5,7 +5,7 @@ import pytest
 
 from racecar_neo_ros2_driver.teensy_clock import TeensyClock
 
-FRAME_US = 6000  # about 165 Hz, as measured on the reference car
+FRAME_US = 6000  # about 165 Hz
 BASE_NS = 1_791_160_000 * 10**9  # an arbitrary ROS epoch
 
 

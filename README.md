@@ -379,7 +379,7 @@ Changes apply on the **next boot**; `status` reports a pending change when the d
 
 Once `racecar-teleop.service` is running, browse to `http://<robot>:8080` for a live status page:
 
-- **Nodes**: one card per monitored subsystem (9 total): green when the expected topic is being advertised, red when not. EdgeTPU and dot matrix, which the watchdog does not restart, show grey (`unsupervised`) instead of red.
+- **Nodes**: one card per monitored subsystem (9 total): green when the expected topic is being advertised, red when not. EdgeTPU and dot matrix, which the watchdog does not restart, show gray (`unsupervised`) instead of red.
 - **System Health**: RTC backup battery voltage (green >= 3.0 V, yellow 2.7-3.0 V, red < 2.7 V) and the Pi 5 PMIC sticky under-voltage alarm.
 - **Topic Rates**: live Hz for `/motor`, `/mux_out`, `/imu/fused`, `/imu/lsm9ds1`, `/scan`, `/edgetpu/inference`, `/camera/color`, `/camera/depth`, and `/imu/realsense`. Yellow when stale (< 0.5 Hz), red when missing. The three RealSense rows are read from the camera's own `/diagnostics` stream; the rest are counted from raw subscriptions, which keeps the dashboard's own CPU cost near 20%.
 - **Watchdog Log**: tail of `~/logs/latest/watchdog.log` so you can see restart events.
@@ -570,17 +570,18 @@ if any check failed. One line per prompt on stdin scripts the whole run.
 | Check | Car position | Passes when |
 |---|---|---|
 | `imu` | Still and level, 3 s | `/imu/lsm9ds1` gravity within 1% of 9.807 m/s^2; gyro under 0.01 rad/s |
-| `mag` | One full turn flat on the floor, 25 s, away from large metal | `/mag` traces a circle centred on the turning axis (within 10% of its radius) and round to 5%. Field strength outside 20 to 70 uT is a WARN: a uniform scale error leaves a compass heading unchanged (see docs/troubleshooting.md on `imu.mag_scale`). `/mag/raw` is fitted the same way for contrast |
+| `mag` | One full turn flat on the floor, 25 s, away from large metal | `/mag` traces a circle centered on the turning axis (within 10% of its radius) and round to 5%. Field strength outside 20 to 70 uT is a WARN: a uniform scale error leaves a compass heading unchanged (see docs/troubleshooting.md on `imu.mag_scale`). `/mag/raw` is fitted the same way for contrast |
 | `realsense` | Still and level, 3 s | the stored calibration applied to `/imu/realsense` gives gravity within 1%, gyro under 0.01 rad/s |
-| `odom` | Turned 2 full turns (driven in circles or rotated by hand), starting and ending with its left side against a strip of tape (and a drive between two marks with `--tape-m`) | `/odom/integrated` heading within 1% of 720 deg (warn to 3%); the taped distance within 2% (warn to 5%) |
 | `lidar` | Squared to a flat wall | `calibrate_lidar.py --check`: wall within 0.5 deg of square passes; up to 2 deg warns, since hand squaring is good to about 1 deg; beyond 2 deg fails (mount moved or car badly placed) |
+| `odom` | Driven 2 full circles at full lock, starting and stopping with both front wheels on a strip of tape. If a distance is typed at the check's prompt, then also driven straight from front wheels on one tape to front wheels on a second | `/odom/integrated` heading within 1% of 720 deg (warn to 3%); the straight-line distance within 2% (warn to 5%) |
 
 `racecar calibrate` runs the tools in `scripts/calibration/` in this order:
-the hand-held steps first (`imu`, `mag`, `realsense`), then `lidar` with the
-car on the floor. Each step can be run or skipped at its prompt. At the end it
+the hand-held steps first (`imu`, `mag`, `realsense`), then `lidar` and `odom`
+with the car on the floor. Each step can be run or skipped at its prompt. At the end it
 prints old and new values, copies the changed files to
 `~/.config/racecar/calibration/`, and offers to restart teleop so the nodes
-load them. Teleop must be running, since the tools read its topics. The tools
+load them. Run on their own, the tools print the backup and restart commands
+instead. Teleop must be running, since the tools read its topics. The tools
 also run on their own:
 
 ```sh
@@ -588,7 +589,7 @@ ros2 run racecar_neo_ros2_driver calibrate_imu.py         # LSM9DS1 accel bias +
 ros2 run racecar_neo_ros2_driver calibrate_mag.py         # LSM9DS1 hard/soft iron
 ros2 run racecar_neo_ros2_driver calibrate_realsense_imu.py   # D435i accel bias + scale, gyro bias
 ros2 run racecar_neo_ros2_driver calibrate_lidar.py       # lidar yaw, car squared to a wall
-ros2 run racecar_neo_ros2_driver calibrate_odom.py        # odometry: hand spin, then a taped run
+ros2 run racecar_neo_ros2_driver calibrate_odom.py        # odometry: circles, then a straight run
 racecar service restart teleop                            # nodes read the values at start
 ```
 
@@ -606,21 +607,19 @@ writes nothing and exits non-zero when the fit fails or it has too little
 data.
 
 `calibrate_lidar.py` needs the car facing a flat wall 0.5 to 2 m away, squared
-so both front corners are the same distance from it. It fits a line to the
+so both front wheel centers are the same distance from it. It fits a line to the
 wall in `base_link` and writes the lidar yaw that makes the wall perpendicular
 to the car. `--check` reports the fit without writing and exits 1 when the wall
 is more than 0.5 deg off square; `--wall-distance-mm` takes a taped distance
 from `base_link` to the wall and reports the lidar x error it implies.
 
-`calibrate_odom.py` has two steps, each skippable. Gyro scale: the car is
-parked with its left side against a strip of tape on the floor, left still for
-3 s, turned 3 full turns (driven in circles with the controller or rotated by
-hand; the gyro counts rotation whatever the path), and parked against the tape
-again; the turn
-count is rounded from the measurement, and a scale outside 0.8 to 1.25 is
+`calibrate_odom.py` has two steps, each skippable. Gyro scale: the car starts
+with both front wheels on a strip of tape, is left still for 3 s, is driven 3
+full circles at full lock, and stops with the front wheels back on the tape.
+The turn count is rounded from the measurement. A scale outside 0.8 to 1.25 is
 refused, since it means `imu.gyro_scale` is wrong (a deg/s-for-rad/s mix-up
-reads 57x). Speed scale: the car is driven straight from its front bumper on
-one floor mark to the bumper on a second mark about 3 m away. Each step keeps the other's
+reads 57x). Speed scale: the car is driven straight from front wheels on one
+tape to front wheels on a second tape 3 m away. Each step keeps the other's
 value in `odom.local.yaml`.
 
 `calibrate_imu.py` and `calibrate_realsense_imu.py` walk a 6-position sequence
@@ -727,24 +726,23 @@ Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
 - **Unreleased**: integrated odometry in `pit_node` (`odom -> base_link`,
   `/odom/integrated`); telemetry stamped with the Teensy sample time;
   `racecar calibrate` (guided calibration, status, backup,
-  `check` against the live sensors including a magnetometer turn test;
+  `check` against the live sensors including a magnetometer turn test and
+  an odometry circle and straight-line test; rewritten step instructions;
   tools moved to `scripts/calibration/`); accelerometer scale for both IMUs;
   watchdog restart policy (startup grace, backoff, give-up,
   state file shown by `racecar status` and the dashboard); static frame tree (`base_link`, `laser`, `imu_link`,
   `camera_link`) from `urdf/racecar_neo.urdf.xacro` and `config/frames.yaml`,
   started by teleop; `calibrate_lidar.py` for lidar yaw against a wall;
   `racecar test` runs the pytest suite again (it ran none since 0.8.2);
-  v0.9.0 autonomy plan in
-  `docs/specifics/autonomy-service-plan.md` (SLAM, `racecar map`, web map
-  viewer on 8084, optional Foxglove bridge, documented in advanced settings);
   troubleshooting guide documents the 5 V brownout root cause
   (an intermittent buck to Pi 5 V wire, replaced 2026-10-03) and a
-  post-repair check; the BEC bulk capacitor stays a known cause on other cars.
+  post-repair check; the BEC bulk capacitor stays a known cause on other cars;
+  American English spelling throughout.
 - **0.8.3** (2026-09-22): `racecar status` exits non-zero only on a FAIL, with
   `--strict` for the old rule; slow-but-delivering streams and dual-mode eth0
   warn instead of failing; each sensor row shows a sample of its data; a
   CPU busy share and ARM clock replace the load average; OK, WARN and FAIL
-  are coloured on a terminal.
+  are colored on a terminal.
 - **0.8.2** (2026-09-22): cleanup release. `racecar lint` with pinned ruff,
   black and mypy; per-car calibration in gitignored `config/*.local.yaml`, which
   `pit.launch.py` now loads; `calibrate_mag.py` no longer overwrites a good

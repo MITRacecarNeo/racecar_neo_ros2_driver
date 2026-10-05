@@ -43,7 +43,7 @@ RATE_WINDOW_SEC = 3.0
 SYSTEM_HEALTH_REFRESH_SEC = 60.0
 
 # supervised: the watchdog restarts this node. An unsupervised card that loses
-# its topic shows grey instead of red.
+# its topic shows gray instead of red.
 MONITORED = {
     'pit': {'topic': '/imu/lsm9ds1', 'label': 'PIT board (drive + IMU)', 'supervised': True},
     'throttle': {'topic': '/motor', 'label': 'Throttle (clamping)', 'supervised': True},

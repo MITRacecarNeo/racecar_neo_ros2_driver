@@ -8,7 +8,7 @@ base_link with the current config/frames.yaml offsets, fits a line to the wall
 ahead, and writes the yaw that makes it perpendicular to
 config/frames.local.yaml (laser_yaw_deg).
 
---check reports without writing; it is the phase 1 exit check.
+--check reports without writing.
 --wall-distance-mm takes a tape distance from base_link to the wall and
 reports the lidar x error it implies (nothing is written for x).
 """
@@ -54,12 +54,12 @@ MIN_WALL_POINTS = 50
 MAX_CORRECTION_DEG = 10.0
 # The fit is planar; a tilted or upside-down mount needs the full transform.
 MAX_TILT_DEG = 5.0
-# Exit-check limits: yaw to 0.5 deg (plan, "Physical measurements"); RMS
-# residual above 10 mm means a cluttered or curved wall.
+# --check limits: yaw to 0.5 deg; RMS residual above 10 mm means a cluttered
+# or curved wall.
 PASS_ANGLE_DEG = 0.5
-# Hand squaring at the wheel centres is good to about 1 deg (0.32 deg per mm),
+# Hand squaring at the wheel centers is good to about 1 deg (0.32 deg per mm),
 # so up to WARN_ANGLE_DEG warns; beyond it the mount moved or the car is badly
-# placed. The drive-based method (S2 --drive) replaces squaring.
+# placed.
 WARN_ANGLE_DEG = 2.0
 PASS_RMS_MM = 10.0
 
@@ -152,10 +152,7 @@ def check_criteria(fit: WallFit, yaw_deg: float) -> list[Criterion]:
         status, advice = 'PASS', ''
     elif angle <= WARN_ANGLE_DEG:
         status = 'WARN'
-        advice = (
-            'within hand-squaring precision (1 mm at the wheel centres is 0.32 deg); '
-            'lidar yaw by driving arrives with S2 --drive'
-        )
+        advice = 'within hand-squaring precision (1 mm at the wheel centers is 0.32 deg)'
     else:
         status = 'FAIL'
         advice = 'beyond hand-squaring error: check the lidar mount, re-square, recalibrate'
@@ -214,10 +211,11 @@ class LidarYawCalibrator(CalibratorNode):
             return 1
 
         log.info('Lidar yaw calibration')
-        log.info('Park the car facing a flat, clear wall, front bumper 0.5 to 2 m from it.')
-        log.info('Square it: measure from the wall to the centre of each front wheel and make')
-        log.info('the two equal within 1 mm.')
-        read_line(f'Press Enter, then keep the car still for {SCAN_SECONDS:.0f} s...')
+        log.info('Place the car on the ground, facing a flat, clear wall.')
+        log.info('Ensure the front bumper is 0.5 to 2 meters away from the wall.')
+        log.info('Use a tape measure to measure from the wall to the center of each front wheel.')
+        log.info('Turn the car until the two distances are equal.')
+        read_line(f'Press Enter, then keep the car still for {SCAN_SECONDS:.0f} seconds...')
         scans = self.collect(SCAN_SECONDS, 'Scan')
         ranges = median_ranges(scans)
         if ranges is None or self.meta is None:

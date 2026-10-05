@@ -3,7 +3,7 @@
   RACECAR Neo frame tree (REP-103: x forward, y left, z up).
 
   Every argument comes from config/frames.yaml (plus frames.local.yaml),
-  converted to metres and radians by launch/frames.launch.py and passed as
+  converted to meters and radians by launch/frames.launch.py and passed as
   xacro mappings. None is declared with a default, so a missing key fails the
   render with "Undefined substitution argument". All joints are fixed.
 
@@ -15,7 +15,7 @@
 
   <!--
     D435 case geometry, from realsense2_description _d435.urdf.xacro. The
-    tripod screw sits on the case centreline, 14.9 mm behind the front face, on
+    tripod screw sits on the case centerline, 14.9 mm behind the front face, on
     the underside. camera_link (the depth origin) is 10.6 mm ahead of the
     screw, 17.5 mm to its left, and half the case height above it.
   -->

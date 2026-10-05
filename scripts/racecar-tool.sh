@@ -1062,9 +1062,7 @@ __RC_CLEANUP_HELP__
             ;;
 
         calibrate)
-            # Guided calibration: runs the scripts/calibration/ tools in order,
-            # backs the results up, and offers a teleop restart. Thin wrapper;
-            # the work and its tests live in scripts/calibration/calibrate.py.
+            # Guided calibration; see scripts/calibration/calibrate.py.
             python3 "${RACECAR_CALIBRATE_SCRIPT:-$pkg_dir/scripts/calibration/calibrate.py}" "$@"
             ;;
 
@@ -1178,21 +1176,22 @@ Commands:
                           --section a,b       devices, sensors, actuators,
                                               system, services, network
                           --window SEC        ROS sample window (default 5.0)
-    calibrate [steps]   Calibrate the car in one guided session, each step with
-                        its own prompts; old and new values, a backup to
-                        ~/.config/racecar/calibration/, and an offer to
-                        restart teleop at the end. Steps, in order:
+    calibrate [steps]   Calibrate the sensors on the car via a guided session.
+                        Sensors to calibrate include:
                           imu         LSM9DS1 accel bias and scale, gyro bias
                           mag         LSM9DS1 magnetometer
                           realsense   RealSense accel bias and scale, gyro bias
-                          lidar       lidar yaw, car squared to a wall
-                          odom        gyro yaw scale (hand spin) and encoder
-                                      speed scale (taped run)
-                        No steps: all of them. `racecar calibrate status`
-                        lists what is calibrated on this car.
+                          lidar       lidar yaw
+                          odom        gyro yaw scale (circle) and encoder
+                                      speed scale (straight line)
+                        No arguments: all of them.
+                        `racecar calibrate status` lists what is calibrated
+                        on this car.
                         `racecar calibrate check [steps]` verifies each
-                        calibration against the live sensors; car prep is
-                        calibrate, restart teleop, check.
+                        calibration against the live sensors.
+                        To fully prepare a car for a project, run the
+                        calibration step, then restart teleop, and finally
+                        run the check command.
     log <action>        Record and analyze ROS 2 bags. Actions:
                           start [name]        record; bag is <timestamp>_<name>
                                                 --topics A B    default: all

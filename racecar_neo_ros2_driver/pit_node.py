@@ -428,10 +428,9 @@ class PitNode(Node):
             bias_tau_sec=float(p('odometry.bias_tau_sec').value),
             stale_sec=float(p('odometry.stale_input_sec').value),
         )
-        # The serial reader thread integrates and publishes. A 50 Hz timer would
-        # wake the default executor 50 more times a second, each wake-up
-        # rebuilding its wait set over every entity of this node; measured at
-        # about 15% of a core, against a few percent for the work itself.
+        # Published from the serial reader thread, not a timer: each timer wake-up
+        # rebuilds the executor's wait set over every entity of this node, which
+        # costs several times the integration itself.
         self._odom_period = 1.0 / float(p('odometry.publish_rate_hz').value)
         self._odom_next_pub: float | None = None
         self._odom_gaps_logged = 0

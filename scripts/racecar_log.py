@@ -197,7 +197,7 @@ def bandwidth_warning(
     """
     Return a warning when the selection outruns the disk, else None.
 
-    Recording every topic pulls in the RealSense colour and depth streams,
+    Recording every topic pulls in the RealSense color and depth streams,
     which together outrun an SD card by roughly two to one. rosbag2 drops
     messages rather than blocking, so the bag looks healthy until it is read.
     """

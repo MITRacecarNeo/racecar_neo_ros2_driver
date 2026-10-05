@@ -7,7 +7,7 @@ and writes config/lsm9ds1_mag_cal.local.yaml.
 
 --check verifies the stored calibration: with the car turned one full circle
 flat on the floor, pit_node's corrected /mag should trace a round circle
-centred on the turning axis, at Earth-field strength. /mag/raw is fitted the
+centered on the turning axis, at Earth-field strength. /mag/raw is fitted the
 same way for comparison.
 """
 
@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+import os
 from pathlib import Path
 import sys
 from typing import Any
@@ -44,9 +45,21 @@ TOOL = 'calibrate_mag.py'
 MIN_SAMPLES = 100
 STEP_SECONDS = 15.0
 STEPS = [
-    ('Yaw', 'Hold the car level and turn it around, a full turn or more.'),
-    ('Roll', 'Roll the car over sideways, a full turn about its long axis.'),
-    ('Pitch', 'Tip the car end over end, a full turn, nose down then up.'),
+    (
+        'Yaw',
+        'Hold the car with its wheels down and rotate it horizontally, parallel to the '
+        'floor. Turn it a full turn or more for best results.',
+    ),
+    (
+        'Roll',
+        'Roll the car over sideways (barrel roll). Rotate the car a full turn or more '
+        'for best results.',
+    ),
+    (
+        'Pitch',
+        'Rotate the car front to back (pitch down, pitch up). Rotate the car a full turn '
+        'or more for best results.',
+    ),
 ]
 
 
@@ -69,7 +82,7 @@ def fit_ellipsoid(samples: list[list[float]]) -> MagFit | None:
         return None
     data = np.asarray(samples, dtype=float)
     # The quadric below fixes its constant term at 1, which only describes an
-    # ellipsoid around the origin. Centring on the samples' mean (always
+    # ellipsoid around the origin. Centering on the samples' mean (always
     # inside the ellipsoid they lie on) keeps it so when the hard iron exceeds
     # the field; the mean is added back to the offset after the fit.
     centroid = data.mean(axis=0)
@@ -95,7 +108,7 @@ def fit_ellipsoid(samples: list[list[float]]) -> MagFit | None:
 
 
 # --check: one flat turn. Limits: the circle covers CHECK_MIN_COVERAGE_DEG of
-# the turn; its centre lies within CHECK_MAX_OFFSET of its radius from the
+# the turn; its center lies within CHECK_MAX_OFFSET of its radius from the
 # turning axis (a hard-iron error moves it off); its radius varies by under
 # CHECK_MAX_ROUNDNESS (a soft-iron error squashes it); and the field is
 # Earth-like (about 25 to 65 uT; the band allows for indoor steel).
@@ -111,7 +124,7 @@ class CircleCheck:
     """Fit of a flat turn's field vectors to a circle about the turning axis."""
 
     coverage_deg: float
-    offset: float  # circle centre's distance from the turning axis / radius
+    offset: float  # circle center's distance from the turning axis / radius
     roundness: float  # RMS radial residual / radius
     field_ut: float  # mean |B|
 
@@ -126,7 +139,7 @@ class CircleCheck:
                 'turn the car a full circle during the check',
             ),
             Criterion(
-                'centre offset',
+                'center offset',
                 f'{self.offset:.1%} of radius',
                 f'under {CHECK_MAX_OFFSET:.0%}',
                 'PASS' if self.offset <= CHECK_MAX_OFFSET else 'FAIL',
@@ -154,7 +167,7 @@ class CircleCheck:
             out.append(
                 Criterion(
                     'raw, for contrast',
-                    f'{raw.offset:.1%} off centre, {raw.roundness:.1%} out of round, '
+                    f'{raw.offset:.1%} off center, {raw.roundness:.1%} out of round, '
                     f'{raw.field_ut:.1f} uT',
                     '',
                     'INFO',
@@ -169,7 +182,7 @@ def check_circle(samples: list[list[float]]) -> CircleCheck | None:
 
     The turning axis is the direction of least variance. In a correct
     calibration the field's component across that axis keeps a constant
-    length, so the circle is centred where the axis passes through it.
+    length, so the circle is centered where the axis passes through it.
     """
     if len(samples) < MIN_SAMPLES:
         return None
@@ -186,8 +199,8 @@ def check_circle(samples: list[list[float]]) -> CircleCheck | None:
     if not np.isfinite(radius_sq) or radius_sq <= 0.0:
         return None
     radius = float(np.sqrt(radius_sq))
-    centre = centroid + cx * u + cy * v
-    off_axis = centre - (centre @ normal) * normal
+    center = centroid + cx * u + cy * v
+    off_axis = center - (center @ normal) * normal
     radial = np.hypot(p[:, 0] - cx, p[:, 1] - cy) - radius
     angles = np.sort(np.degrees(np.arctan2(p[:, 1] - cy, p[:, 0] - cx)))
     gaps = np.diff(np.append(angles, angles[0] + 360.0))
@@ -253,7 +266,8 @@ class MagnetometerCalibrator(CalibratorNode):
         log.info('LSM9DS1 magnetometer calibration')
         for i, (axis, how) in enumerate(STEPS, start=1):
             log.info(
-                f'Step {i} of {len(STEPS)} ({axis}): {how} Keep moving for {STEP_SECONDS:.0f} s.'
+                f'Step {i} of {len(STEPS)} ({axis}): {how} Keep moving for '
+                f'{STEP_SECONDS:.0f} seconds.'
             )
             read_line('Press Enter, then start...')
             self.samples += self.collect(STEP_SECONDS, f'{axis} axis')
@@ -299,9 +313,13 @@ class MagnetometerChecker(CalibratorNode):
         if not self.wait_for_first_message():
             log.error('Is pit_node running? Check: ros2 topic echo /mag')
             return 1
-        log.info('Magnetometer check. Set the car flat on the floor, away from large metal.')
         log.info(
-            f'Turn it by hand one full turn, slowly and steadily, over {CHECK_SECONDS:.0f} s.'
+            'Magnetometer check. Place the car down on the floor and away from large metal '
+            'structures.'
+        )
+        log.info(
+            'Rotate (yaw) the car on the floor slowly and steadily for one or more full '
+            f'turns, over {CHECK_SECONDS:.0f} seconds.'
         )
         read_line('Press Enter, then start turning...')
         self._raw_on = True
@@ -335,7 +353,8 @@ def main() -> int:
         return spin_until_done(MagnetometerChecker(args.report))
     node = MagnetometerCalibrator()
     code = spin_until_done(node)
-    if code == 0 and node.fit is not None and not args.no_plot:
+    has_display = bool(os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY'))
+    if code == 0 and node.fit is not None and not args.no_plot and has_display:
         plot_results(node.samples, node.fit)
     return code
 

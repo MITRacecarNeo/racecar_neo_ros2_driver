@@ -28,8 +28,13 @@ import yaml
 
 PACKAGE = 'racecar_neo_ros2_driver'
 BACKUP_DIR = Path.home() / '.config' / 'racecar' / 'calibration'
+# Operator-facing output: the message only, without the ROS severity, time and node.
+# rcutils reads this at rclpy.init(), which every tool calls after importing this.
+os.environ.setdefault('RCUTILS_CONSOLE_OUTPUT_FORMAT', '{message}')
+# Set by calibrate.py for the tools it runs; it backs up and restarts teleop itself.
+SESSION_ENV = 'RACECAR_CALIBRATE_SESSION'
 FIRST_MESSAGE_TIMEOUT = 15.0
-PROGRESS_INTERVAL = 2.0
+PROGRESS_INTERVAL = 5.0
 
 
 def install_config_dir() -> Path | None:
@@ -129,9 +134,14 @@ def update_local_values(
 
 
 def backup_reminder(paths: list[Path]) -> str:
-    """Return the post-write message: where the file went and how to back it up."""
+    """
+    Return the post-write message: where the file went and how to back it up.
+
+    Under `racecar calibrate` (SESSION_ENV set) only the paths: the session
+    backs the file up and offers the teleop restart itself.
+    """
     lines = [f'Wrote {p}' for p in paths]
-    if paths:
+    if paths and not os.environ.get(SESSION_ENV):
         lines.append(f'Back it up: mkdir -p {BACKUP_DIR} && cp {paths[0]} {BACKUP_DIR}/')
         lines.append('Apply it: racecar service restart teleop (no rebuild needed).')
     return '\n'.join(lines)
@@ -180,12 +190,12 @@ def overall(criteria: list[Criterion]) -> str:
     return max(judged, key=STATUS_ORDER.index) if judged else 'PASS'
 
 
-# Same colours and opt-outs as `racecar status` (scripts/diagnose.py).
+# Same colors and opt-outs as `racecar status` (scripts/diagnose.py).
 ANSI = {'PASS': '32', 'WARN': '33', 'FAIL': '31'}
 
 
 def use_color() -> bool:
-    """Colour only an interactive terminal; NO_COLOR (no-color.org) opts out."""
+    """Color only an interactive terminal; NO_COLOR (no-color.org) opts out."""
     return (
         sys.stdout.isatty()
         and 'NO_COLOR' not in os.environ
@@ -289,7 +299,7 @@ class CalibratorNode(Node):
         self.get_logger().info(f'Waiting for {self.topic}...')
         if self._first.wait(timeout):
             return True
-        self.get_logger().error(f'No messages on {self.topic} after {timeout:.0f}s.')
+        self.get_logger().error(f'No messages on {self.topic} after {timeout:.0f} seconds.')
         self.get_logger().error(f'Check: ros2 topic hz {self.topic}')
         return False
 
@@ -297,7 +307,7 @@ class CalibratorNode(Node):
         """Record samples for `duration` seconds and return them."""
         with self._lock:
             self._samples = []
-        self.get_logger().info(f'{description}: collecting for {duration:.0f}s')
+        self.get_logger().info(f'{description}: collecting for {duration:.0f} seconds')
         self._collecting = True
         start = time.monotonic()
         next_report = start + PROGRESS_INTERVAL
@@ -306,7 +316,7 @@ class CalibratorNode(Node):
                 with self._lock:
                     n = len(self._samples)
                 remaining = duration - (now - start)
-                self.get_logger().info(f'{description}: {remaining:.0f}s left, {n} samples')
+                self.get_logger().info(f'{description}: {remaining:.0f} seconds left, {n} samples')
                 next_report += PROGRESS_INTERVAL
             time.sleep(0.1)
         self._collecting = False
@@ -443,12 +453,14 @@ class ImuBiasCalibrator(CalibratorNode):
         log.info(f'{self.target.label} IMU calibration')
 
         log.info('Step 1 of 2: gyroscope. Set the car on a stable surface.')
-        read_line(f'Press Enter, then keep your hands off the car for {GYRO_SECONDS:.0f} s...')
+        read_line(
+            f'Press Enter, then keep your hands off the car for {GYRO_SECONDS:.0f} seconds...'
+        )
         gyro = [s[3:] for s in self.collect(GYRO_SECONDS, 'Gyroscope')]
 
         log.info(
             f'Step 2 of 2: accelerometer. Hold the car still in 6 poses, '
-            f'{POSITION_SECONDS:.0f} s each.'
+            f'{POSITION_SECONDS:.0f} seconds each.'
         )
         positions = []
         for i, (axis, description) in enumerate(POSITIONS, start=1):
@@ -488,8 +500,8 @@ def run_imu_calibration(target: ImuTarget) -> int:
 # ---------------------------------------------------------------------------
 
 REST_SECONDS = 3.0
-# Acceptance from the autonomy plan, S2: gravity within 1% at rest; a gyro
-# residual under 0.01 rad/s (0.57 deg/s).
+# --check limits: gravity within 1% at rest; gyro residual under 0.01 rad/s
+# (0.57 deg/s).
 GRAVITY_TOLERANCE = 0.01
 GYRO_REST_LIMIT = 0.01
 
@@ -572,7 +584,9 @@ class ImuRestChecker(CalibratorNode):
         if not self.wait_for_first_message():
             return 1
         log.info(f'{self.target.label} IMU check. Set the car on a level surface.')
-        read_line(f'Press Enter, then keep your hands off the car for {REST_SECONDS:.0f} s...')
+        read_line(
+            f'Press Enter, then keep your hands off the car for {REST_SECONDS:.0f} seconds...'
+        )
         samples = self.collect(REST_SECONDS, 'At rest')
         if self.target.check_applies_cal:
             params = node_params(self.target.cal_name, self.target.node)

@@ -209,5 +209,5 @@ class TestWatchdogView:
         status, detail = dashboard.watchdog_view('dead', {'state': 'restarting', 'restarts': 3})
         assert status == 'stale' and '3' in detail
 
-    def test_disabled_is_grey(self, dashboard):
+    def test_disabled_is_gray(self, dashboard):
         assert dashboard.watchdog_view('dead', {'state': 'disabled'})[0] == 'unsupervised'

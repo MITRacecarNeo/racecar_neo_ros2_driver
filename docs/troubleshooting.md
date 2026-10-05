@@ -38,15 +38,15 @@ section report the tool's own overhead as a hardware fault.
 
 Two subscriptions dominated the cost:
 
-- The RealSense colour and depth streams, worth 40 percent of the PIT
+- The RealSense color and depth streams, worth 40 percent of the PIT
   telemetry rate. Measured A/B on hardware over interleaved trials: 133.6 Hz
   mean without them, 79.9 Hz with. They are now read from `/diagnostics`,
   where the camera node publishes its own per-stream frequency and where
   `scripts/dashboard.py` has read them since v0.7.3.
-- `/scan`, deserialised on arrival for its value check at 1080 ranges plus
+- `/scan`, deserialized on arrival for its value check at 1080 ranges plus
   1080 intensities a message, which put a 7.2 Hz lidar at 4.6. Every
   subscription is raw now, and the one buffer a value check needs is
-  deserialised after the window closes.
+  deserialized after the window closes.
 
 The window is 5 seconds because the PIT stream arrives in clumps and a short
 window samples the clumping rather than the rate. Twelve trials per length on
@@ -411,7 +411,7 @@ When testing this by hand: `nmcli device disconnect` leaves the device in
 NetworkManager's user-requested disconnected state, and NM will not
 auto-activate out of it however the flags are set, until something activates a
 connection explicitly. That state does not survive a reboot, so a
-disconnect-then-wait test says nothing about boot behaviour. The profile flag
+disconnect-then-wait test says nothing about boot behavior. The profile flag
 is the part that persists.
 
 ## Boot brownout with ethernet attached

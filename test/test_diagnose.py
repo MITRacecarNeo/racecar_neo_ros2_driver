@@ -327,7 +327,7 @@ class TestSampleReaders:
 
 
 class TestRender:
-    def test_groups_are_labelled_and_ordered(self, diag):
+    def test_groups_are_labeled_and_ordered(self, diag):
         checks = [
             diag.Check('network', 'eth0', diag.FAIL, 'two addresses'),
             diag.Check('devices', 'lidar', diag.OK, '/dev/ttyUSB0'),

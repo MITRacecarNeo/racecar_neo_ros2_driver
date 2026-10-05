@@ -14,7 +14,6 @@ setting cuts your current connection.
 - [Desktop session](#desktop-session)
 - [WiFi client](#wifi-client)
 - [ROS discovery scope](#ros-discovery-scope)
-- [Foxglove bridge](#foxglove-bridge)
 - [Access point identity](#access-point-identity)
 - [RTC trickle charging](#rtc-trickle-charging)
 - [Bootloader EEPROM](#bootloader-eeprom)
@@ -106,48 +105,7 @@ The cost is that off-robot ROS access does not work: `rviz`, `ros2 topic echo`
 and remote nodes on a laptop will not see the robot's topics. Set the variable
 to `SUBNET` in the shell for a session that needs it. Changing it in
 `setup_user_env.sh` or the systemd units makes it permanent, and gives the CPU
-cost back. For viewing only, the [Foxglove bridge](#foxglove-bridge) needs no
-discovery change.
-
-## Foxglove bridge
-
-| | |
-|---|---|
-| Default | off |
-| Change | `racecar map foxglove on`, then `racecar map start` or `racecar map load` |
-| Revert | `racecar map foxglove off`; applies at the next `start` or `load` |
-| Safe path | any |
-
-Available from v0.9.0, with the autonomy unit. `foxglove_bridge` runs on the
-car inside `racecar-autonomy.service` and serves the ROS graph over one
-WebSocket on port 8765. A laptop sees the map, scan, TF tree, URDF, and pose
-without ROS installed and without widening discovery, because every ROS
-subscription stays on the car. The bridge runs only while the autonomy unit
-does; `racecar map stop` ends it.
-
-Client: Lichtblick, the open-source Foxglove Studio fork, as a desktop app for
-Linux, macOS, or Windows from github.com/Lichtblick-Suite/lichtblick/releases.
-Install it while the laptop has internet; afterwards it runs offline, which is
-what the car's AP gives its clients. The Foxglove app also connects, but needs
-an account and internet, so it works only from a network with a route out.
-
-Connecting:
-
-1. Join the car's AP, or the network the car's `wlan0` is on.
-2. In Lichtblick, open a connection, choose "Foxglove WebSocket", and enter
-   `ws://racecar-neo.local:8765` (or `ws://<car IP>:8765`).
-3. Import the layout `config/foxglove_layout.json`, downloaded from the car
-   through JupyterLab or `scp`: a 3D panel with map, scan, TF, and pose, a
-   status table for `/autonomy/status`, and a pose plot.
-
-The bridge is view-only, with one exception: a client may publish
-`/initialpose`, so Lichtblick's pose-estimate tool can set the car's position
-on the map. Clients cannot publish `/drive`, call services, or set parameters.
-Topics are limited to the map, scan, TF, URDF, odometry, AMCL, and
-`/autonomy/*` set in `config/foxglove.yaml`. Camera streams are left out
-because a client watching them can fill the 2.4 GHz AP; add one in
-`config/foxglove.local.yaml` for a session that needs it, then `racecar build`
-and `start` or `load` again.
+cost back.
 
 ## Access point identity
 

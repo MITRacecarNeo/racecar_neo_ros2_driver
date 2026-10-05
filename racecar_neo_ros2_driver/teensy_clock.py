@@ -2,13 +2,13 @@
 Map the Teensy's micros() telemetry timestamp onto ROS time.
 
 pit_node stamps telemetry when its serial reader parses a frame, and the link
-delivers frames in bursts: receive times jitter by up to 17 ms (99th
-percentile) against a 6 ms frame period. Each frame also carries the
+delivers frames in bursts, so receive times jitter by several frame periods.
+Each frame also carries the
 Teensy's micros() at assembly, which is exact. TeensyClock turns that into a
 ROS time:
 
-- Unwrap: the field is a signed 32-bit microsecond count and wraps every
-  35.8 min (2^31 us); it is extended to a 64-bit count.
+- Unwrap: the field is micros() as a signed 32-bit count (negative after
+  35.8 min, period 71.6 min); it is extended to a 64-bit count.
 - Offset: receive time minus Teensy time is the transport delay plus a
   constant. The minimum over a sliding window (WINDOW_SEC) is the
   least-delayed frame, so stamp = Teensy time + that minimum.

@@ -3,9 +3,9 @@ Odometry: integrate encoder speed and gyro yaw rate into a planar pose.
 
 pit_node feeds every decoded telemetry frame (encoder speed and gyro from the
 same frame, stamped with its Teensy sample time) to OdomIntegrator and
-publishes the result as TF odom -> base_link and /odom/integrated. Running it
-inside pit_node costs about 3% of a core; a separate node paid about 8% per
-subscribed topic to deserialize the same data (autonomy plan, "Odometry").
+publishes the result as TF odom -> base_link and /odom/integrated. It runs
+inside pit_node because a separate node pays to deserialize every
+subscribed topic again.
 
 The model is a unicycle at base_link, the rear axle midpoint, where a
 front-steered car has no sideslip:
@@ -20,7 +20,7 @@ the yaw rate under zero_max_rate, the true yaw rate is 0 (a front-steered car
 cannot turn in place), so the reading feeds a low-pass bias estimate
 (bias_tau_sec) and heading is held. The rate limit skips a car being carried.
 
-No ROS dependency, so it is unit-testable.
+No ROS dependency.
 """
 
 from __future__ import annotations

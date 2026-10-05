@@ -77,7 +77,7 @@ from DHCP. `setup_networking.sh` delegates to the same writer, and the eth0-SSH
 guard in `setup_eth.sh` applies on both paths. Rationale: docs/troubleshooting.md,
 "eth0 addressing".
 
-The Pi drives no display bus directly. `dotmatrix_node` rasterises frames in
+The Pi drives no display bus directly. `dotmatrix_node` rasterizes frames in
 software and hands them to `pit_node`, which forwards them to the Teensy; the
 Teensy owns the MAX7219 chain.
 
@@ -89,7 +89,7 @@ Seven nodes ship in this package (`setup.py` console scripts):
 |---|---|
 | `pit_node` | Sole owner of the Teensy UART. Encodes drive commands, decodes telemetry, forwards display and LED frames, and integrates odometry (`odometry.py`) into `odom -> base_link`. |
 | `mux_node` | Arbitrates teleop against autonomy, enforces speed and steering limits, gates on the controller or on a live FlySky transmitter, zeroes output when the joystick drops. |
-| `throttle_node` | Clamps `/mux_out` to `[-1, 1]` and applies per-direction speed and steering caps onto `/motor`. The Teensy maps the normalised command to PWM. |
+| `throttle_node` | Clamps `/mux_out` to `[-1, 1]` and applies per-direction speed and steering caps onto `/motor`. The Teensy maps the normalized command to PWM. |
 | `gamepad_node` | Maps `/joy` axes into an Ackermann drive command. |
 | `imu_fusion_node` | Merges the RealSense and LSM9DS1 IMUs into one stream; passes through when only one is live. |
 | `dotmatrix_node` | Renders text, student pixel buffers, a startup splash, or a mode glyph into a display frame. |
@@ -239,7 +239,7 @@ rather than on the rate gate. `diagnose.py`'s nominal for
   /joy ─────────────┘   (glyph fallback)
 ```
 
-`dotmatrix_node` uses `luma` only for font rasterisation. Text times out and
+`dotmatrix_node` uses `luma` only for font rasterization. Text times out and
 reverts to a mode glyph and label (IDLE, MAN, AUTO) derived from gamepad
 state. `scripts/dmatrix_patterns.py` is the display self-test; it publishes
 patterns on `/dotmatrix/pixels`.
@@ -262,7 +262,7 @@ patterns on `/dotmatrix/pixels`.
 | `/rc/channels` | `std_msgs/Float32MultiArray` | `pit_node` | `mux_node` (when `rc_authority_enable`), user code |
 | `/rc/link` | `std_msgs/Bool` | `pit_node` | `mux_node` (when `rc_authority_enable`) |
 | `/odom` | `nav_msgs/Odometry` | `pit_node` | lab dashboards, user code |
-| `/odom/integrated`, `/tf` (`odom -> base_link`) | `nav_msgs/Odometry`, `tf2_msgs/TFMessage` | `pit_node` | SLAM (v0.9.0), user code |
+| `/odom/integrated`, `/tf` (`odom -> base_link`) | `nav_msgs/Odometry`, `tf2_msgs/TFMessage` | `pit_node` | user code |
 | `/camera/color` | `sensor_msgs/Image` | `realsense2_camera_node` | `edgetpu_node`, `webteleop`, `linefollow`, user code |
 | `/camera/depth` | `sensor_msgs/Image` | `realsense2_camera_node` | `webteleop`, user code |
 | `/scan` | `sensor_msgs/LaserScan` | `sllidar_node` | `webteleop`, `wallfollow`, user code |
@@ -334,13 +334,12 @@ rotated. `odom -> base_link` comes from the odometry in `pit_node`
 telemetry frame's encoder speed and gyro yaw rate (the optical y axis
 negated) are integrated as a unicycle at `base_link`, with a gyro bias
 re-estimated while the car is stopped, and published at 50 Hz. It runs
-inside `pit_node` because a separate node cost 35% of a core, mostly in
-deserializing messages `pit_node` already holds decoded. `map` arrives with
-the v0.9.0 autonomy work (`docs/specifics/autonomy-service-plan.md`).
+inside `pit_node` because a separate node would deserialize messages
+`pit_node` already holds decoded.
 
 `urdf/racecar_neo.urdf.xacro` defines the tree. `launch/frames.launch.py` loads
 `config/frames.yaml` and `frames.local.yaml` through
-`racecar_neo_ros2_driver/frames.py`, converts millimetres and degrees to metres
+`racecar_neo_ros2_driver/frames.py`, converts millimeters and degrees to meters
 and radians, renders the xacro, and starts `robot_state_publisher` with
 `respawn` (2 s delay, 5 retries). The watchdog does not supervise it: the node
 publishes `/tf_static` once, latched, and the watchdog's rate check would read
@@ -409,7 +408,7 @@ reminder every 10 min while a node is in `no_device`, `restarting`, or
 `gave_up`; each node's restart output is appended to `restart_<node>.log`.
 Every poll writes `watchdog_state.json` to the session log directory (by
 rename); `racecar status` turns it into the `watchdog nodes` row (`gave_up` is
-FAIL, `no_device` and `restarting` WARN) and the dashboard into card colours.
+FAIL, `no_device` and `restarting` WARN) and the dashboard into card colors.
 Additional behavior:
 
 - SIGTERM then SIGKILL escalation
@@ -426,7 +425,7 @@ their cards as `unsupervised` rather than dead when they are down.
 
 `scripts/dashboard.py` serves `/` and `/api/status` on port 8080. Node cards
 resolve from topic advertisement; rate rows come from raw subscriptions
-(counted without deserialising) except the three RealSense streams, which are
+(counted without deserializing) except the three RealSense streams, which are
 read from the camera's `/diagnostics` output. System Health reports the RTC
 backup cell voltage and the sticky PMIC under-voltage alarm.
 
@@ -542,8 +541,7 @@ racecar_neo_ros2_driver/
 ├── docs/                      this file, changelog, troubleshooting,
 │   │                          advanced settings
 │   ├── img/                   RACECAR Neo logo set
-│   └── specifics/             RealSense topics, Coral M.2 migration,
-│                              autonomy service plan (v0.9.0)
+│   └── specifics/             RealSense topics, Coral M.2 migration
 ├── package.xml, setup.py, setup.cfg
 └── pyproject.toml             ruff, black and mypy settings
 ```

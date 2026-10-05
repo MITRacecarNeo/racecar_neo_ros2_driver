@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Judge the phase 2 odometry runs from bags, against the autonomy plan's criteria.
+Judge odometry test runs from bags: circle, straight, turn, and CPU cost.
 
 Record a run with only the topics it needs, for example:
 
@@ -13,7 +13,7 @@ then analyze it (no bag argument: the newest bag):
     analyze_odom.py circle [BAG]                full circle back to a floor mark
     analyze_odom.py straight [BAG] --tape-m 3   taped straight run, either way
     analyze_odom.py turn [BAG] --radius-m 0.74  laps at fixed steering, taped radius
-    analyze_odom.py cpu --baseline 52.5         live pit_node CPU, not from a bag
+    analyze_odom.py cpu --baseline PCT          live pit_node CPU, not from a bag
 
 The run is the span from the first to the last sample with the wheels turning
 (`/odom/integrated` speed not 0). Each command prints its criteria (PASS,
@@ -38,10 +38,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / 'calibration'))
 from calibrate_common import criteria_lines, Criterion, overall, use_color  # noqa: E402, I100
 from racecar_log import load_config, resolve_log_root  # noqa: E402
 
-# Acceptance, from docs/specifics/autonomy-service-plan.md, "Odometry".
+# Acceptance limits.
 CIRCLE_YAW_TOLERANCE_DEG = 5.0
 STRAIGHT_TOLERANCE = 0.05
-TURN_BIAS_LIMIT = 0.03  # above this the odometry needs a steering-indexed correction
+TURN_BIAS_LIMIT = 0.03  # encoder over-read in turns; above this, turns need a correction
 CPU_ADDED_LIMIT = 10.0  # percent of one core added to pit_node
 
 TOPICS = ('/odom/integrated', '/motor')
@@ -223,7 +223,7 @@ def turn_criteria(run: Run, radius_m: float) -> list[Criterion]:
             f'{bias:+.1%} over {laps:.2f} laps',
             f'under {TURN_BIAS_LIMIT:.0%} needs no correction',
             'PASS' if abs(bias) <= TURN_BIAS_LIMIT else 'WARN',
-            'above 3%: the odometry needs the steering-indexed speed correction',
+            'above 3%: the encoder over-reads in turns, so distance runs long when turning',
         ),
         Criterion(
             'curvature',

@@ -110,7 +110,7 @@ class TestBiasParams:
         assert params[target.gyro_key] == pytest.approx([0.01, -0.02, 0.03])
 
     def test_low_reading_axis_gets_a_scale_that_restores_g(self, common, target):
-        # The RealSense read gravity 8% low on the reference car.
+        # A gain error of 8%.
         g, k, b = common.GRAVITY, (0.92, 1.0, 1.03), (0.2, 0.0, -0.1)
         accel = []
         for axis in range(3):

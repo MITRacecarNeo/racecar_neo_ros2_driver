@@ -7,23 +7,26 @@ All notable changes to this project will be documented in this file. The format 
 ### Added
 
 - `calibrate_odom.py`, the `odom` step of `racecar calibrate`: the gyro yaw
-  scale from 3 full turns, driven or by hand, back against a strip of tape
-  (turn count rounded from the measurement; a scale outside 0.8 to 1.25 is
-  refused as an `imu.gyro_scale` error), and the encoder speed scale from a
-  drive between two marks, into `odom.local.yaml` (`odometry.yaw_rate_scale`,
+  scale from 3 full circles at full lock, starting and stopping with both
+  front wheels on a strip of tape (turn count rounded from the measurement; a
+  scale outside 0.8 to 1.25 is refused as an `imu.gyro_scale` error), and the
+  encoder speed scale from a straight drive between two tapes, front wheels on
+  each, into `odom.local.yaml` (`odometry.yaw_rate_scale`,
   `odometry.speed_scale`).
-  `--check`: a 2-turn spin on `/odom/integrated` within 1% (warn to 3%) and,
-  with `--tape-m`, a taped run within 2% (warn to 5%).
+  `--check`: a 2-circle spin on `/odom/integrated` within 1% (warn to 3%) and,
+  with `--tape-m`, a straight run within 2% (warn to 5%).
+  `racecar calibrate check odom` asks for the straight-line distance and
+  passes it as `--tape-m`; Enter skips the straight run.
   `calibrate_common.write_local_yaml(merge=True)` keeps a file's other
   parameters.
-- `scripts/analyze_odom.py`: judges the phase 2 odometry runs from bags
+- `scripts/analyze_odom.py`: judges odometry test runs from bags
   recorded with `racecar log` (`/odom/integrated`, `/odom`, `/motor`):
   `circle` (heading closure within 5 deg of 360), `straight --tape-m`
   (distance within 5%, either direction, with heading drift in deg/m),
   `turn --radius-m` (encoder over-read against laps x 2 pi R, curvature,
   steering command), and `cpu --baseline` (live `pit_node` CPU, under 10%
   added). Output in the `racecar calibrate check` PASS/WARN/FAIL format.
-- Integrated odometry in `pit_node` (phase 2 of the v0.9.0 autonomy plan).
+- Integrated odometry in `pit_node`.
   `racecar_neo_ros2_driver/odometry.py` integrates each telemetry frame's
   encoder speed and gyro yaw rate as a unicycle at `base_link`, re-estimates
   the gyro bias while the wheels are stopped (heading held meanwhile), and
@@ -36,8 +39,8 @@ All notable changes to this project will be documented in this file. The format 
   The reader thread publishes on a running 20 ms deadline: a 50 Hz rclpy
   timer took `pit_node` from 52.5% to 67.3% of a core, the reader thread to
   60.3%. `/odom` is unchanged.
-- Telemetry stamped with the Teensy's sample time (phase 2 of the v0.9.0
-  autonomy plan). `racecar_neo_ros2_driver/teensy_clock.py` maps each frame's
+- Telemetry stamped with the Teensy's sample time.
+  `racecar_neo_ros2_driver/teensy_clock.py` maps each frame's
   `micros()` onto ROS time: it unwraps the signed 32-bit counter (35.8 min
   wrap), takes the offset as the minimum of receive minus Teensy time over a
   10 s window (the least-delayed frame), never steps backwards, and restarts
@@ -47,7 +50,7 @@ All notable changes to this project will be documented in this file. The format 
   Pi receive time, which jittered by up to 17 ms because the serial link
   delivers frames in bursts. `use_teensy_stamps: false` in `pit.yaml` goes
   back to receive time.
-- `racecar calibrate` (S2 of the v0.9.0 autonomy plan, first part):
+- `racecar calibrate`:
   `scripts/calibration/calibrate.py` runs the calibration tools in order (IMU,
   magnetometer, RealSense IMU, lidar yaw), each run or skipped at a prompt,
   then prints old and new values, copies the changed `.local.yaml` files to
@@ -57,12 +60,12 @@ All notable changes to this project will be documented in this file. The format 
   the last step of car prep. `calibrate_imu.py` and
   `calibrate_realsense_imu.py` check gravity within 1% and gyro under
   0.01 rad/s at rest. `calibrate_mag.py --check` fits `/mag` from one flat
-  turn to a circle about the turning axis: off-centre under 10% of the
+  turn to a circle about the turning axis: off-center under 10% of the
   radius (hard iron), round to 5% (soft iron), with `/mag/raw` fitted
   alongside for contrast; field strength outside 20 to 70 uT warns. Each
   check writes its criteria (measured, limit, PASS/WARN/FAIL/INFO, advice) to
   a JSON report (`--report`), and `racecar calibrate check` ends with a
-  summary of every criterion, coloured green, yellow, and red on a terminal
+  summary of every criterion, colored green, yellow, and red on a terminal
   as in `racecar status` (`NO_COLOR` opts out), and lists steps skipped or
   not reached. The lidar wall angle passes within 0.5 deg, warns to 2 deg
   (hand-squaring precision), and fails beyond. Prompts
@@ -76,7 +79,7 @@ All notable changes to this project will be documented in this file. The format 
   (`accelerometer.scale`) and `imu_fusion_node` (`realsense_accel_scale`)
   apply (raw - bias) * scale, unit by default. On the reference car the
   RealSense read gravity as 9.03 m/s^2 (8% low).
-- Watchdog restart policy (S1 of the v0.9.0 autonomy plan). A 60 s startup
+- Watchdog restart policy. A 60 s startup
   grace, until a node's topic has been seen once, stops the restart storm in
   which the watchdog's first poll, run before DDS discovery listed teleop's
   topics, killed and relaunched every node (8 of 88 log sessions on the
@@ -91,17 +94,17 @@ All notable changes to this project will be documented in this file. The format 
   `sysinfo.read_watchdog_state()`: `racecar status` adds a `watchdog nodes`
   row and the dashboard's node cards show give-ups, missing devices, and
   restarts.
-- Static frame tree, phase 1 of the v0.9.0 autonomy plan.
+- Static frame tree.
   `urdf/racecar_neo.urdf.xacro` defines `base_link` (floor under the rear axle
   midpoint), `laser` (yaw 180 deg), `imu_link` (labels the optical-axis IMU
   data), `camera_bottom_screw_frame`, and `camera_link`, which joins the
   RealSense driver's own subtree. Offsets come from `config/frames.yaml` in
-  millimetres and degrees, with per-car keys in `frames.local.yaml`, loaded by
+  millimeters and degrees, with per-car keys in `frames.local.yaml`, loaded by
   `racecar_neo_ros2_driver/frames.py`. `launch/frames.launch.py` runs
   `robot_state_publisher` with respawn (5 retries); `teleop.launch.py`
-  includes it behind `frames_enable`. Values are measured on the reference
-  car (measurement sheet, C.L column) except the ride height, a model value;
-  the IMU and camera heights replace model values about 7 mm too high.
+  includes it behind `frames_enable`. Values are measured on a reference
+  car except the lidar x position and the ride height, which are CAD values;
+  the IMU and camera heights replace CAD values about 7 mm too high.
 - `calibrate_lidar.py`: lidar yaw from a line fit to a flat wall ahead,
   written to `frames.local.yaml`; `--check` for a pass or fail report.
   `calibrate_common.update_local_values()` sets keys in a plain local YAML
@@ -110,6 +113,20 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Changed
 
+- Calibration instructions rewritten: one instruction per line, full
+  sentences, durations and distances in seconds and meters, setup lines split
+  one per line under `Setup:`. Run under `racecar calibrate`, the tools no
+  longer print their own backup and teleop restart commands, which the session
+  does itself. The `calibrate` entry in `racecar help` is reworded.
+  The tools print bare messages without the ROS log prefix and report
+  progress every 5 seconds. The odometry straight run must be at least
+  2 meters and asks for its distance after the drive. The odometry check
+  compares the scales `pit_node` runs with against `odom.local.yaml` and
+  fails when teleop was not restarted. The magnetometer plots open only when
+  a display is available. The teleop restart prompt says it uses `sudo`.
+- American English spelling throughout code, comments and docs (center, color,
+  meter, tire, gray, behavior). The magnetometer check criterion is now
+  `center offset`.
 - Calibration tools moved from `scripts/` to `scripts/calibration/`; the
   `ros2 run` names are unchanged. Per-axis accelerometer bias is now
   (up + down) / 2 from that axis's two orientations, in place of the mean of
@@ -120,21 +137,13 @@ All notable changes to this project will be documented in this file. The format 
 - `calibrate_mag.py` failed its fit ("Fit failed with N samples") whenever
   the car's hard iron exceeded the field, leaving zero field outside the
   ellipsoid: the quadric's constant term was fixed at 1, which made the fitted
-  matrix negative definite. The fit now centres the samples on their mean
+  matrix negative definite. The fit now centers the samples on their mean
   first and adds it back to the offset. The reference car crossed that line
-  on 2026-10-04 (raw circle 110.6% off centre).
+  on 2026-10-04 (raw circle 110.6% off center).
 - `racecar test` ran no tests since 0.8.2: the cleanup in `7ebc79c` removed
   `tests_require=['pytest']` from `setup.py`, so colcon fell back to unittest,
   found nothing, and reported success. `setup.py` now declares
   `extras_require={'test': ['pytest']}`; the suite runs 946 tests.
-- `docs/specifics/autonomy-service-plan.md`: the v0.9.0 plan for 2D lidar
-  SLAM (slam_toolbox mapping, AMCL localization), the on-demand
-  `racecar-autonomy.service`, `autonomy_node`, the `racecar map` CLI, a web
-  map viewer on port 8084, and an optional `foxglove_bridge`. Planning only;
-  no code.
-- `docs/advanced-settings.md`, "Foxglove bridge": the developer bridge that
-  arrives with the v0.9.0 autonomy unit; switch, Lichtblick connection, and
-  what a client may publish.
 
 ### Changed
 
@@ -144,7 +153,7 @@ All notable changes to this project will be documented in this file. The format 
   on 2026-10-03 (EXT5V 4.914 V mean, 0 undervoltage events with the harness
   flexed), plus a post-repair check. The unseated BEC bulk capacitor stays
   listed as a known cause on other cars. Brownout references in the
-  troubleshooting guide and the v0.9.0 autonomy plan point to the fix.
+  troubleshooting guide point to the fix.
 
 ## [0.8.3] - 2026-09-22
 
@@ -160,7 +169,7 @@ usable.
   returns and median range, RC channels, top detection, image size and
   center depth, drive command. The RealSense streams are read once after the
   sample window, so the decode costs no rate.
-- OK, WARN and FAIL marks in green, yellow and red, and a coloured `RESULT`
+- OK, WARN and FAIL marks in green, yellow and red, and a colored `RESULT`
   in the summary, on an interactive terminal. `NO_COLOR` turns it off.
 - `--json` output carries `result`, `strict` and each check's `data`.
 - `sysinfo.read_cpu_times`, `sysinfo.parse_cpu_times`,
@@ -243,7 +252,7 @@ bugs it surfaced, and on-car verification of items earlier releases left open.
   eth0-SSH guard applies. Run it from the console or over wlan0.
 - `racecar status` no longer requires `/dev/spidev*`; the dot-matrix check
   needs only `dotmatrix_node`. The dashboard's dot-matrix card watches
-  `/dotmatrix/frame`, and unsupervised nodes show grey.
+  `/dotmatrix/frame`, and unsupervised nodes show gray.
 - `edgetpu_node` reports `hardware_id` `coral_edgetpu_m2`; its code default
   `score_threshold` is 0.4, matching the YAML.
 - `package.xml` declares the runtime dependencies the nodes import.
@@ -273,7 +282,7 @@ bugs it surfaced, and on-car verification of items earlier releases left open.
 - Docs contradicting the code: the watchdog restart rule, the NVMe layout,
   `racecar launch imu`, the RealSense topics and filters, and changelog links.
 - Tests that could not fail (dashboard rate, diagnose exit code, USB3 speed)
-  now assert real behaviour.
+  now assert real behavior.
 
 ### Removed
 
@@ -293,15 +302,15 @@ Dashboard-side changes are recorded in each fork's `docs/changelog.md`
 
 ### Added
 
-- **`webteleop` Detections toggle** over the colour frame, reading
+- **`webteleop` Detections toggle** over the color frame, reading
   `/edgetpu/inference` (`detections_topic`); boxes older than 1.5 s are
   cleared, and a car without a detector or `vision_msgs` gets the toggle
   disabled.
-- **`webteleop` depth stream** under the colour frame, colorized on the inferno
+- **`webteleop` depth stream** under the color frame, colorized on the inferno
   ramp with pure black reserved for "no return". New `depth_topic` and
   `depth_max_m` in `teleop.yaml`; an empty `depth_topic` drops the pane.
 - **`edgetpu_node` caps inference at `inference_rate_hz`, shipped at 15.** The
-  colour stream runs at 60 fps and nothing downstream reads detections faster
+  color stream runs at 60 fps and nothing downstream reads detections faster
   than a dashboard draws them. Frames above the rate are dropped before the
   decode; `_last_image_time` is still stamped for every frame, so the
   stale-input watchdog reports on the camera rather than on the rate gate.
@@ -402,13 +411,13 @@ Dashboard-side changes are recorded in each fork's `docs/changelog.md`
   variable.** `local repo="$1" dir="$DASH_DIR/$repo"` expands every word before
   any assignment takes effect; split in two.
 - **`racecar status` failed the six PIT topics on a healthy car.** The
-  diagnostic's own RealSense colour and depth subscriptions cost 40 percent of
+  diagnostic's own RealSense color and depth subscriptions cost 40 percent of
   the PIT telemetry rate (133.6 Hz without, 79.9 Hz with, A/B on hardware). The
   RealSense rates now come from `/diagnostics`, as `dashboard.py` has read them
   since v0.7.3, and the PIT topics measure 136.2 Hz against a nominal of 136.
 - **`racecar status` failed the lidar for the same reason.** `/scan` was
-  deserialised on arrival; every subscription is now raw, and the one buffer a
-  value check needs is deserialised after the window closes. `/scan` measures
+  deserialized on arrival; every subscription is now raw, and the one buffer a
+  value check needs is deserialized after the window closes. `/scan` measures
   7.2 Hz, matching an independent probe.
 - **The sample window was too short to measure the PIT stream.** Frames arrive
   in clumps: at 2.0 s the rate ranged 88.2 to 231.5 Hz (standard deviation
@@ -450,8 +459,8 @@ would settle a shared convention unilaterally; v0.8.1 fixed it in the forks.
 - **`/odom` from `pit_node`** (`nav_msgs/Odometry`, `publish_odom` in `pit.yaml`), which six of the seven dashboards read for measured speed. Forward twist only: `twist.twist.linear.x` from the encoder, with pose marked unestimated via `pose.covariance[0] = -1`. Heading is not integrated and `angular.z` is not derived, because there is no wheelbase or steering-angle calibration on this platform and `/motor` carries steering normalized to `[-1, 1]` rather than radians; a number derived from two invented constants would read as authoritative and be wrong.
 - **`/rc/link`** (`std_msgs/Bool`) from `pit_node`, backed by `pit_protocol.Telemetry.rc_link_up`. Presence of a transmitter cannot be read off `/rc/channels`: `rc_normalized` clamps into `[-1, 1]`, which puts a dead channel (near 0 us) on exactly `-1.0`, the same value a switch held low produces. Link state is read from the raw pulse widths instead, before the clamp.
 - **FlySky autonomy gate in `mux_node`**, off by default (`rc_authority_enable`). With no transmitter the bumpers govern exactly as before. Enabled and with a live transmitter, the mode channel takes the gate: middle idle, up manual (the USB gamepad drives), down autonomous, and the bumpers are ignored. Authority requires all four of a fresh link, in-band channels, a sustained hold (`rc_link_hold_sec`), and the switch seen at middle once since the grant; one bad frame revokes it. Granting is slow and revoking immediate on purpose. A frozen buffer holding a plausible mid-band constant passes the band check and is rejected by the change detector.
-- **`racecar log`**, ROS 2 bag recording and analysis. `start [name]` records to `<timestamp>_<name>` under `/data` when an NVMe is mounted there and `~/logs/bags` otherwise; `stop` sends SIGINT, which is what lets rosbag2 finalize the bag rather than leaving it unindexed; `status` reports size, rate, elapsed and time until the disk fills; `list`, `analyze` (duration, size, per-topic counts and mean rates) and `config` complete the set. Recording every topic pulls in the RealSense colour and depth streams at roughly 73 MB/s against a sustained SD write near 30 MB/s, so `start` refuses without `--force` and says what will happen. An unmounted NVMe is named rather than silently skipped.
-- **`scripts/setup_nvme.sh`** partitions, formats and mounts the NVMe at `/data`, the bag root `racecar log` prefers over `~/logs/bags`. Single GPT partition, ext4 labelled `racecar-data` with the root reserve set to zero (the 5% default costs about 25 GB on a data-only disk), and an fstab entry by UUID with `noatime,nofail` plus a short device timeout, so a missing or failed drive does not strand the car at boot. Refuses a disk that carries a filesystem signature, holds a mounted partition, or backs `/`, and exits early when `/data` is already mounted. Kept out of `setup_all.sh`, since it erases a disk and wants a human confirming the target.
+- **`racecar log`**, ROS 2 bag recording and analysis. `start [name]` records to `<timestamp>_<name>` under `/data` when an NVMe is mounted there and `~/logs/bags` otherwise; `stop` sends SIGINT, which is what lets rosbag2 finalize the bag rather than leaving it unindexed; `status` reports size, rate, elapsed and time until the disk fills; `list`, `analyze` (duration, size, per-topic counts and mean rates) and `config` complete the set. Recording every topic pulls in the RealSense color and depth streams at roughly 73 MB/s against a sustained SD write near 30 MB/s, so `start` refuses without `--force` and says what will happen. An unmounted NVMe is named rather than silently skipped.
+- **`scripts/setup_nvme.sh`** partitions, formats and mounts the NVMe at `/data`, the bag root `racecar log` prefers over `~/logs/bags`. Single GPT partition, ext4 labeled `racecar-data` with the root reserve set to zero (the 5% default costs about 25 GB on a data-only disk), and an fstab entry by UUID with `noatime,nofail` plus a short device timeout, so a missing or failed drive does not strand the car at boot. Refuses a disk that carries a filesystem signature, holds a mounted partition, or backs `/`, and exits early when `/data` is already mounted. Kept out of `setup_all.sh`, since it erases a disk and wants a human confirming the target.
 - **Per-car parameter overrides.** `single_node_launch` now loads `config/<name>.local.yaml` after the shipped file when it exists, so settings that differ per car live outside the committed YAML. `.gitignore` has reserved `config/*.local.yaml` since v0.5.0; nothing read it until now.
 
 ### Changed

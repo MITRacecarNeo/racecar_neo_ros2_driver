@@ -1,7 +1,7 @@
 """
 Frame offsets: load config/frames.yaml with its per-car override, convert units.
 
-frames.yaml keys carry their unit (`_mm` or `_deg`). The URDF takes metres and
+frames.yaml keys carry their unit (`_mm` or `_deg`). The URDF takes meters and
 radians, under the key name with the unit suffix removed.
 """
 
@@ -50,7 +50,7 @@ def load_frames(config_dir: str | Path) -> dict[str, float]:
 
 
 def xacro_mappings(values: dict[str, float]) -> dict[str, str]:
-    """Return xacro arguments in metres and radians, keyed without the unit suffix."""
+    """Return xacro arguments in meters and radians, keyed without the unit suffix."""
     mappings = {}
     for key, value in values.items():
         suffix = next(s for s in _UNITS if key.endswith(s))
