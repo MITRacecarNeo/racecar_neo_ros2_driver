@@ -1188,6 +1188,9 @@ Commands:
                           lidar       lidar yaw, car squared to a wall
                         No steps: all of them. `racecar calibrate status`
                         lists what is calibrated on this car.
+                        `racecar calibrate check [steps]` verifies each
+                        calibration against the live sensors; car prep is
+                        calibrate, restart teleop, check.
     log <action>        Record and analyze ROS 2 bags. Actions:
                           start [name]        record; bag is <timestamp>_<name>
                                                 --topics A B    default: all
@@ -1234,7 +1237,7 @@ _racecar_complete() {
 
     case "$sub" in
         calibrate)
-            COMPREPLY=( $(compgen -W "status imu mag realsense lidar --help" -- "$cur") )
+            COMPREPLY=( $(compgen -W "status check imu mag realsense lidar --help" -- "$cur") )
             ;;
         launch)
             local launch_dir="$HOME/ros2_ws/src/racecar_neo_ros2_driver/launch"

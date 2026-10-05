@@ -260,6 +260,20 @@ frame. Correlation also says nothing about scale: `imu.gyro_scale` and
 would be a factor of 57. Check both against the RealSense during a known
 rotation before trusting `/imu/fused` angular velocity or `/mag` heading.
 
+Magnetometer strength, measured 2026-10-04 with `racecar calibrate check mag`
+on the reference car: 101.3 uT calibrated (150.1 uT raw), about twice Earth's
+field (about 51 uT in Massachusetts). The firmware sets the LSM9DS1 to
++/-8 gauss (`cfg::LSM9DS1_IMU::mag_gain`), whose sensitivity is 0.29 mgauss per
+count against 0.14 at the chip's default +/-4 gauss: a ratio of 2.07, and
+101.3 / 2.07 = 49 uT. The likeliest cause is the chip staying at +/-4 gauss
+while the conversion assumes +/-8, which would make the field read about
+2.07x high. A uniform scale leaves the field's direction, and so a compass
+heading, unchanged, which is why the check warns rather than fails on field
+strength. To confirm: compare with a phone's magnetometer at the same spot,
+away from steel, or read back the chip's CTRL_REG2_M in firmware. If
+confirmed, the fix belongs in the firmware; until then `imu.mag_scale`
+(1e-6) could be set to about 0.483e-6 per car.
+
 ## EdgeTPU inference rate and threshold
 
 `config/edgetpu.yaml`: `inference_rate_hz`, `score_threshold`;

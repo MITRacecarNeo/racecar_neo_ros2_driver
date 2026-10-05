@@ -34,8 +34,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from calibrate_common import (  # noqa: E402, I100
     backup_reminder,
     CalibratorNode,
+    Criterion,
+    finish_check,
     install_config_dir,
     output_dirs,
+    read_line,
     source_config_dir,
     spin_until_done,
     update_local_values,
@@ -138,6 +141,28 @@ def corrected_yaw_deg(current_deg: float, fit: WallFit) -> float:
     return current_deg - fit.angle_deg
 
 
+def check_criteria(fit: WallFit, yaw_deg: float) -> list[Criterion]:
+    """Return the --check result for a wall fit made with the configured yaw."""
+    return [
+        Criterion(
+            'wall angle',
+            f'{fit.angle_deg:+.2f} deg (fits {corrected_yaw_deg(yaw_deg, fit):.2f})',
+            f'within {PASS_ANGLE_DEG} deg',
+            'PASS' if abs(fit.angle_deg) <= PASS_ANGLE_DEG else 'FAIL',
+            'car not square to the wall (1 mm at the wheel centres is 0.32 deg), '
+            'or the mount moved; lidar yaw by driving arrives with S2 --drive',
+        ),
+        Criterion(
+            'wall straightness',
+            f'{fit.rms_mm:.1f} mm RMS, {fit.points} points',
+            f'under {PASS_RMS_MM:.0f} mm',
+            'PASS' if fit.rms_mm <= PASS_RMS_MM else 'FAIL',
+            'wall cluttered or not flat; use a clear flat wall',
+        ),
+        Criterion('wall distance', f'{fit.distance_mm:.1f} mm from base_link', '', 'INFO'),
+    ]
+
+
 def config_dir() -> Path:
     """Return the config dir the running stack loaded: installed share, else source."""
     d = install_config_dir() or source_config_dir()
@@ -149,10 +174,13 @@ def config_dir() -> Path:
 class LidarYawCalibrator(CalibratorNode):
     """Collect scans of a wall ahead, fit it, and correct laser_yaw_deg."""
 
-    def __init__(self, check: bool, wall_distance_mm: float | None) -> None:
+    def __init__(
+        self, check: bool, wall_distance_mm: float | None, report: str | None = None
+    ) -> None:
         super().__init__('lidar_yaw_calibrator', LaserScan, '/scan')
         self.check = check
         self.wall_distance_mm = wall_distance_mm
+        self.report = report
         self.meta: tuple[float, float, float, float] | None = None
 
     def extract(self, msg: Any) -> list[float]:
@@ -173,7 +201,7 @@ class LidarYawCalibrator(CalibratorNode):
         log.info('Lidar yaw calibration')
         log.info('Face the car at a flat wall 0.5 to 2 m away, nothing between.')
         log.info('Square it: both front corners the same distance from the wall, within 1 mm.')
-        input('Press Enter to start...')
+        read_line('Press Enter to start...')
         scans = self.collect(SCAN_SECONDS, 'Scan')
         ranges = median_ranges(scans)
         if ranges is None or self.meta is None:
@@ -201,12 +229,7 @@ class LidarYawCalibrator(CalibratorNode):
             log.warning(f'RMS above {PASS_RMS_MM:.0f} mm: the wall is cluttered or not flat.')
 
         if self.check:
-            ok = abs(fit.angle_deg) <= PASS_ANGLE_DEG and fit.rms_mm <= PASS_RMS_MM
-            log.info(
-                f'Check: {"PASS" if ok else "FAIL"} (angle within {PASS_ANGLE_DEG} deg, '
-                f'RMS within {PASS_RMS_MM:.0f} mm)'
-            )
-            return 0 if ok else 1
+            return finish_check(log, check_criteria(fit, yaw_deg), self.report)
         if abs(fit.angle_deg) > MAX_CORRECTION_DEG:
             log.error(
                 f'Correction over {MAX_CORRECTION_DEG:.0f} deg: the car is not squared to '
@@ -228,9 +251,10 @@ def main() -> int:
     parser.add_argument(
         '--wall-distance-mm', type=float, help='taped distance from base_link to the wall'
     )
+    parser.add_argument('--report', help='with --check: write the result as JSON to this file')
     args = parser.parse_args(remove_ros_args(sys.argv)[1:])
     rclpy.init()
-    return spin_until_done(LidarYawCalibrator(args.check, args.wall_distance_mm))
+    return spin_until_done(LidarYawCalibrator(args.check, args.wall_distance_mm, args.report))
 
 
 if __name__ == '__main__':

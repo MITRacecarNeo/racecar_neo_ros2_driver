@@ -106,3 +106,20 @@ class TestUpdateLocalValues:
     def test_creates_the_file(self, common, tmp_path):
         (path,) = common.update_local_values('frames', {'laser_yaw_deg': 180.2}, [tmp_path], 't')
         assert yaml.safe_load(path.read_text()) == {'laser_yaw_deg': 180.2}
+
+
+class TestCheckCriteria:
+    def test_square_wall_passes(self, cal):
+        fit = _fit(cal, _wall_scan(180.0, 1.0))
+        statuses = {c.name: c.status for c in cal.check_criteria(fit, 180.0)}
+        assert statuses == {
+            'wall angle': 'PASS',
+            'wall straightness': 'PASS',
+            'wall distance': 'INFO',
+        }
+
+    def test_angle_off_fails_with_the_fitted_yaw(self, cal):
+        fit = _fit(cal, _wall_scan(180.7, 1.0))
+        angle = cal.check_criteria(fit, 180.0)[0]
+        assert angle.status == 'FAIL'
+        assert '180.70' in angle.measured

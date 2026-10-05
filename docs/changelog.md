@@ -12,6 +12,20 @@ All notable changes to this project will be documented in this file. The format 
   then prints old and new values, copies the changed `.local.yaml` files to
   `~/.config/racecar/calibration/`, and offers a teleop restart.
   `racecar calibrate status` lists each calibration's date and backup state.
+- `racecar calibrate check`: each tool's `--check` against the live sensors,
+  the last step of car prep. `calibrate_imu.py` and
+  `calibrate_realsense_imu.py` check gravity within 1% and gyro under
+  0.01 rad/s at rest. `calibrate_mag.py --check` fits `/mag` from one flat
+  turn to a circle about the turning axis: off-centre under 10% of the
+  radius (hard iron), round to 5% (soft iron), with `/mag/raw` fitted
+  alongside for contrast; field strength outside 20 to 70 uT warns. Each
+  check writes its criteria (measured, limit, PASS/WARN/FAIL/INFO, advice) to
+  a JSON report (`--report`), and `racecar calibrate check` ends with a
+  summary of every criterion and lists steps skipped or not reached. Prompts
+  read one line at a time, so a scripted run (one line per prompt) completes.
+- `docs/troubleshooting.md`: the magnetometer reads about 2.07x Earth's field
+  on the reference car, matching a +/-8 versus +/-4 gauss sensitivity
+  mismatch; heading is unaffected.
 - Accelerometer scale for both IMUs. `calibrate_imu.py` and
   `calibrate_realsense_imu.py` fit per-axis bias and scale from the six
   orientations and refuse a position held wrong; `pit_node`
@@ -59,6 +73,12 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Fixed
 
+- `calibrate_mag.py` failed its fit ("Fit failed with N samples") whenever
+  the car's hard iron exceeded the field, leaving zero field outside the
+  ellipsoid: the quadric's constant term was fixed at 1, which made the fitted
+  matrix negative definite. The fit now centres the samples on their mean
+  first and adds it back to the offset. The reference car crossed that line
+  on 2026-10-04 (raw circle 110.6% off centre).
 - `racecar test` ran no tests since 0.8.2: the cleanup in `7ebc79c` removed
   `tests_require=['pytest']` from `setup.py`, so colcon fell back to unittest,
   found nothing, and reported success. `setup.py` now declares

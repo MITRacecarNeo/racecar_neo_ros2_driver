@@ -11,7 +11,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import os
 from pathlib import Path
+import sys
 import threading
 import time
 from typing import Any
@@ -117,8 +119,97 @@ def backup_reminder(paths: list[Path]) -> str:
     lines = [f'Wrote {p}' for p in paths]
     if paths:
         lines.append(f'Back it up: mkdir -p {BACKUP_DIR} && cp {paths[0]} {BACKUP_DIR}/')
-        lines.append('Apply it: racecar build, then restart teleop.')
+        lines.append('Apply it: racecar service restart teleop (no rebuild needed).')
     return '\n'.join(lines)
+
+
+def node_params(cal_name: str, node: str, config_dir: Path | None = None) -> dict[str, Any]:
+    """
+    Return `node`'s parameters from `<cal_name>.yaml` with `<cal_name>.local.yaml` on top.
+
+    Reads the config the running stack loaded: the installed share directory,
+    else the source tree.
+    """
+    config_dir = config_dir or install_config_dir() or source_config_dir()
+    params: dict[str, Any] = {}
+    if config_dir is None:
+        return params
+    for name in (f'{cal_name}.yaml', f'{cal_name}.local.yaml'):
+        path = config_dir / name
+        if path.exists():
+            data = yaml.safe_load(path.read_text()) or {}
+            params.update((data.get(node) or {}).get('ros__parameters') or {})
+    return params
+
+
+# ---------------------------------------------------------------------------
+# Check results (--check), shared by every tool and read by calibrate.py
+# ---------------------------------------------------------------------------
+
+STATUS_ORDER = ('INFO', 'PASS', 'WARN', 'FAIL')
+
+
+@dataclass(frozen=True)
+class Criterion:
+    """One line of a --check result. status: PASS, WARN, FAIL, or INFO (no verdict)."""
+
+    name: str
+    measured: str
+    limit: str
+    status: str
+    advice: str = ''
+
+
+def overall(criteria: list[Criterion]) -> str:
+    """Return the worst status among the criteria (INFO lines do not count)."""
+    judged = [c.status for c in criteria if c.status != 'INFO']
+    return max(judged, key=STATUS_ORDER.index) if judged else 'PASS'
+
+
+def criteria_lines(criteria: list[Criterion], indent: str = '  ') -> list[str]:
+    """Render criteria as aligned table lines, advice on its own line below a WARN or FAIL."""
+    lines = []
+    for c in criteria:
+        lines.append(f'{indent}{c.status:5s} {c.name:18s} {c.measured:28s} {c.limit}')
+        if c.advice and c.status in ('WARN', 'FAIL'):
+            lines.append(f'{indent}      -> {c.advice}')
+    return lines
+
+
+def finish_check(log: Any, criteria: list[Criterion], report: str | None) -> int:
+    """Log the criteria table, write the JSON report, and return the exit code (1 on FAIL)."""
+    import json
+
+    for line in criteria_lines(criteria):
+        log.info(line)
+    verdict = overall(criteria)
+    log.info(f'Check: {verdict}')
+    if report:
+        Path(report).write_text(
+            json.dumps({'overall': verdict, 'criteria': [c.__dict__ for c in criteria]})
+        )
+    return 1 if verdict == 'FAIL' else 0
+
+
+def read_line(prompt: str = '') -> str:
+    """
+    input() for these tools: print the prompt, read one line a byte at a time.
+
+    input() reads a piped stdin in blocks and would swallow the lines meant for
+    the next prompt or the next tool, so a scripted run (one line per prompt)
+    stops early. Raises EOFError at end of input, as input() does.
+    """
+    print(prompt, end='', flush=True)
+    line = bytearray()
+    while True:
+        ch = os.read(0, 1)
+        if not ch:
+            if line:
+                return line.decode(errors='replace')
+            raise EOFError
+        if ch == b'\n':
+            return line.decode(errors='replace')
+        line += ch
 
 
 def mean_vector(samples: list[list[float]]) -> list[float]:
@@ -250,6 +341,11 @@ class ImuTarget:
     gyro_key: str
     tool: str
     scale_key: str
+    # --check reads check_topic. When check_applies_cal is true the stored
+    # calibration is applied to it here, for a sensor whose node does not
+    # publish a calibrated topic of its own (the RealSense).
+    check_topic: str = ''
+    check_applies_cal: bool = False
 
 
 def imu_bias_params(
@@ -308,14 +404,14 @@ class ImuBiasCalibrator(CalibratorNode):
         log.info(f'{self.target.label} IMU calibration')
 
         log.info('1. Gyroscope: place the car on a stable surface and do not move it.')
-        input('Press Enter to start...')
+        read_line('Press Enter to start...')
         gyro = [s[3:] for s in self.collect(GYRO_SECONDS, 'Gyroscope')]
 
         log.info('2. Accelerometer: six orientations.')
         positions = []
         for i, (axis, description) in enumerate(POSITIONS, start=1):
             log.info(f'Position {i}/{len(POSITIONS)}: {axis}, {description}')
-            input('Press Enter when in position...')
+            read_line('Press Enter when in position...')
             positions.append([s[:3] for s in self.collect(POSITION_SECONDS, axis)])
 
         try:
@@ -343,3 +439,128 @@ class ImuBiasCalibrator(CalibratorNode):
 def run_imu_calibration(target: ImuTarget) -> int:
     rclpy.init()
     return spin_until_done(ImuBiasCalibrator(target))
+
+
+# ---------------------------------------------------------------------------
+# IMU check at rest (--check)
+# ---------------------------------------------------------------------------
+
+REST_SECONDS = 3.0
+# Acceptance from the autonomy plan, S2: gravity within 1% at rest; a gyro
+# residual under 0.01 rad/s (0.57 deg/s).
+GRAVITY_TOLERANCE = 0.01
+GYRO_REST_LIMIT = 0.01
+
+
+@dataclass(frozen=True)
+class RestCheck:
+    """Mean accel and gyro of a stationary IMU, after calibration."""
+
+    accel: list[float]
+    gyro: list[float]
+
+    @property
+    def gravity(self) -> float:
+        return float(np.linalg.norm(self.accel))
+
+    @property
+    def gyro_rate(self) -> float:
+        return float(np.linalg.norm(self.gyro))
+
+    def criteria(self) -> list[Criterion]:
+        error = self.gravity / GRAVITY - 1
+        return [
+            Criterion(
+                'gravity',
+                f'{self.gravity:.3f} m/s^2 ({error:+.2%})',
+                f'within {GRAVITY_TOLERANCE:.0%} of {GRAVITY:.3f}',
+                'PASS' if abs(error) <= GRAVITY_TOLERANCE else 'FAIL',
+                'accelerometer bias or scale has moved; recalibrate this IMU',
+            ),
+            Criterion(
+                'gyro at rest',
+                f'{self.gyro_rate:.4f} rad/s',
+                f'under {GYRO_REST_LIMIT} rad/s',
+                'PASS' if self.gyro_rate <= GYRO_REST_LIMIT else 'FAIL',
+                'gyro bias has moved, or the car was not still; recalibrate this IMU',
+            ),
+        ]
+
+    @property
+    def ok(self) -> bool:
+        return overall(self.criteria()) != 'FAIL'
+
+
+def apply_imu_cal(
+    samples: list[list[float]], target: ImuTarget, params: dict[str, Any]
+) -> list[list[float]]:
+    """Apply stored bias and scale to raw [ax, ay, az, gx, gy, gz] samples, as the node does."""
+    bias = np.asarray(params.get(target.accel_key, [0.0, 0.0, 0.0]), float)
+    scale = np.asarray(params.get(target.scale_key, [1.0, 1.0, 1.0]), float)
+    gyro_bias = np.asarray(params.get(target.gyro_key, [0.0, 0.0, 0.0]), float)
+    data = np.asarray(samples, float)
+    accel = (data[:, :3] - bias) * scale
+    gyro = data[:, 3:] - gyro_bias
+    return np.column_stack((accel, gyro)).tolist()
+
+
+def rest_check(samples: list[list[float]]) -> RestCheck | None:
+    if not samples:
+        return None
+    data = np.asarray(samples, float)
+    return RestCheck(
+        accel=mean_vector(data[:, :3].tolist()), gyro=mean_vector(data[:, 3:].tolist())
+    )
+
+
+class ImuRestChecker(CalibratorNode):
+    """Check a stored IMU calibration against the live sensor, car at rest."""
+
+    def __init__(self, target: ImuTarget, report: str | None = None) -> None:
+        super().__init__(f'{target.cal_name}_checker', Imu, target.check_topic or target.topic)
+        self.target = target
+        self.report = report
+
+    def extract(self, msg: Any) -> list[float]:
+        a, w = msg.linear_acceleration, msg.angular_velocity
+        return [a.x, a.y, a.z, w.x, w.y, w.z]
+
+    def run(self) -> int:
+        log = self.get_logger()
+        if not self.wait_for_first_message():
+            return 1
+        log.info(f'{self.target.label} IMU check: keep the car still on a level surface.')
+        read_line('Press Enter to start...')
+        samples = self.collect(REST_SECONDS, 'At rest')
+        if self.target.check_applies_cal:
+            params = node_params(self.target.cal_name, self.target.node)
+            samples = apply_imu_cal(samples, self.target, params)
+        result = rest_check(samples)
+        if result is None:
+            log.error('No samples collected.')
+            return finish_check(
+                log,
+                [Criterion('samples', '0', 'at least 1', 'FAIL', 'is teleop running?')],
+                self.report,
+            )
+        return finish_check(log, result.criteria(), self.report)
+
+
+def run_imu_check(target: ImuTarget, report: str | None = None) -> int:
+    rclpy.init()
+    return spin_until_done(ImuRestChecker(target, report))
+
+
+def imu_main(target: ImuTarget, argv: list[str] | None = None) -> int:
+    """Entry point shared by calibrate_imu.py and calibrate_realsense_imu.py."""
+    import argparse
+
+    from rclpy.utilities import remove_ros_args
+
+    parser = argparse.ArgumentParser(description=f'{target.label} IMU calibration.')
+    parser.add_argument(
+        '--check', action='store_true', help='check the stored calibration at rest; exit 1 on FAIL'
+    )
+    parser.add_argument('--report', help='with --check: write the result as JSON to this file')
+    args = parser.parse_args(argv if argv is not None else remove_ros_args(sys.argv)[1:])
+    return run_imu_check(target, args.report) if args.check else run_imu_calibration(target)

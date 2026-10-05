@@ -1,6 +1,7 @@
 """Unit tests for the IMU bias calibrators and their shared local-YAML output."""
 
 from fnmatch import fnmatch
+import json
 from pathlib import Path
 
 from conftest import load_script as _load
@@ -139,3 +140,82 @@ class TestBiasParams:
     def test_missing_gyro_is_no_result(self, common, target):
         positions = _positions([(0.0, 0.0, 9.81)] * 6)
         assert common.imu_bias_params(target, [], positions) is None
+
+
+class TestRestCheck:
+    def test_level_and_still_passes(self, common):
+        g = common.GRAVITY
+        result = common.rest_check([[0.0, -g, 0.05, 0.001, 0.0, 0.0]] * 10)
+        assert result.ok
+
+    def test_gravity_off_by_two_percent_fails(self, common):
+        result = common.rest_check([[0.0, -common.GRAVITY * 1.02, 0.0, 0.0, 0.0, 0.0]])
+        assert not result.ok
+
+    def test_gyro_drift_fails(self, common):
+        result = common.rest_check([[0.0, -common.GRAVITY, 0.0, 0.0, 0.02, 0.0]])
+        assert not result.ok
+
+    def test_no_samples(self, common):
+        assert common.rest_check([]) is None
+
+    def test_apply_cal_matches_the_node_formula(self, common, target):
+        params = {
+            target.accel_key: [0.2, 0.6, 0.1],
+            target.scale_key: [1.0, 1.02, 1.0],
+            target.gyro_key: [0.001, 0.002, 0.003],
+        }
+        (row,) = common.apply_imu_cal([[0.2, -9.0, 0.1, 0.001, 0.002, 0.003]], target, params)
+        assert row == pytest.approx([0.0, (-9.0 - 0.6) * 1.02, 0.0, 0.0, 0.0, 0.0])
+
+    def test_realsense_check_applies_the_stored_cal(self):
+        tgt = _load('calibrate_realsense_imu').TARGET
+        assert tgt.check_applies_cal is True
+
+    def test_lsm9ds1_check_reads_the_calibrated_topic(self):
+        tgt = _load('calibrate_imu').TARGET
+        assert (tgt.check_topic, tgt.check_applies_cal) == ('/imu/lsm9ds1', False)
+
+
+class TestNodeParams:
+    def test_local_overrides_base(self, common, tmp_path):
+        (tmp_path / 'x.yaml').write_text(
+            yaml.safe_dump({'n': {'ros__parameters': {'a': [0, 0, 0], 'b': [1, 1, 1]}}})
+        )
+        (tmp_path / 'x.local.yaml').write_text(
+            yaml.safe_dump({'n': {'ros__parameters': {'a': [1, 2, 3]}}})
+        )
+        assert common.node_params('x', 'n', tmp_path) == {'a': [1, 2, 3], 'b': [1, 1, 1]}
+
+    def test_missing_files(self, common, tmp_path):
+        assert common.node_params('absent', 'n', tmp_path) == {}
+
+
+class TestCheckReport:
+    def test_overall_ignores_info_and_takes_the_worst(self, common):
+        C = common.Criterion
+        assert common.overall([C('a', '', '', 'PASS'), C('b', '', '', 'INFO')]) == 'PASS'
+        assert common.overall([C('a', '', '', 'WARN'), C('b', '', '', 'PASS')]) == 'WARN'
+        assert common.overall([C('a', '', '', 'WARN'), C('b', '', '', 'FAIL')]) == 'FAIL'
+
+    def test_advice_only_under_warn_and_fail(self, common):
+        C = common.Criterion
+        lines = common.criteria_lines(
+            [C('ok', '1', '2', 'PASS', 'hidden'), C('bad', '3', '4', 'FAIL', 'do this')]
+        )
+        assert len(lines) == 3 and lines[-1].strip() == '-> do this'
+
+    def test_finish_check_writes_the_report_and_exit_code(self, common, tmp_path):
+        class _Log:
+            def info(self, _msg):
+                pass
+
+        report = tmp_path / 'r.json'
+        crit = [common.Criterion('g', '9.8', '1%', 'WARN', 'x')]
+        assert common.finish_check(_Log(), crit, str(report)) == 0
+        data = json.loads(report.read_text())
+        assert data['overall'] == 'WARN' and data['criteria'][0]['name'] == 'g'
+
+    def test_rest_criteria_names(self, common):
+        result = common.rest_check([[0.0, -common.GRAVITY, 0.0, 0.0, 0.0, 0.0]])
+        assert [c.name for c in result.criteria()] == ['gravity', 'gyro at rest']

@@ -492,7 +492,10 @@ up, and offers a teleop restart. The IMU tools fit accelerometer bias and
 scale per axis from the six orientations, applied by `pit_node` and
 `imu_fusion_node` as (raw - bias) * scale (`accelerometer.scale`,
 `realsense_accel_scale`, unit by default). After a run, restart teleop; the
-tools also write the install share `config/`, so no rebuild is needed. The
+tools also write the install share `config/`, so no rebuild is needed. Each
+tool's `--check` (run together by `racecar calibrate check`) verifies the
+stored calibration against the live sensor: the IMUs at rest, the
+magnetometer through one flat turn, the lidar against a wall. The
 `.local.yaml` files are not in git; keep a backup in
 `~/.config/racecar/calibration/`.
 

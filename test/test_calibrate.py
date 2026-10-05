@@ -1,6 +1,9 @@
 """Unit tests for scripts/calibration/calibrate.py (`racecar calibrate`)."""
 
+import json
 from pathlib import Path
+import subprocess
+import sys
 
 from conftest import load_script
 import pytest
@@ -86,7 +89,7 @@ class TestRun:
             return type('R', (), {'returncode': 0, 'stdout': 'active\n'})()
 
         monkeypatch.setattr(cal.subprocess, 'run', fake_run)
-        monkeypatch.setattr('builtins.input', lambda _p='': answers.pop(0))
+        monkeypatch.setattr(cal, 'ask', lambda _p='': answers.pop(0))
         monkeypatch.setenv('RACECAR_SUDO', '')
         return answers, ran
 
@@ -133,3 +136,119 @@ class TestMain:
         out = capsys.readouterr().out
         for key in cal.STEP_KEYS:
             assert key in out
+
+
+class TestChecks:
+    def test_every_check_step_has_a_check_flag_in_its_tool(self, cal):
+        for step in cal.STEPS:
+            if step.check:
+                result = subprocess.run(
+                    [sys.executable, str(cal.HERE / step.tool), '--help'],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                assert '--check' in result.stdout, step.tool
+
+    def test_run_checks_prints_every_criterion(self, cal, monkeypatch, capsys):
+        reports = {
+            'calibrate_imu.py': (
+                'PASS',
+                [('gravity', '9.815 m/s^2 (+0.09%)', 'within 1%', 'PASS')],
+            ),
+            'calibrate_mag.py': (
+                'FAIL',
+                [
+                    ('centre offset', '10.2% of radius', 'under 10%', 'FAIL', 'recalibrate'),
+                    ('field strength', '101.3 uT', '20 to 70 uT', 'WARN', 'gain?'),
+                ],
+            ),
+        }
+        ran = []
+
+        def fake_run(cmd, check=False, **_kw):
+            ran.append(cmd)
+            verdict, rows = reports[Path(cmd[1]).name]
+            crit = [
+                dict(zip(('name', 'measured', 'limit', 'status', 'advice'), r, strict=False))
+                for r in rows
+            ]
+            Path(cmd[cmd.index('--report') + 1]).write_text(
+                json.dumps({'overall': verdict, 'criteria': crit})
+            )
+            return type('R', (), {'returncode': 1 if verdict == 'FAIL' else 0})()
+
+        monkeypatch.setattr(cal.subprocess, 'run', fake_run)
+        answers = ['', '', 's']
+        monkeypatch.setattr(cal, 'ask', lambda _p='': answers.pop(0))
+        steps = [s for s in cal.STEPS if s.key in ('imu', 'mag', 'lidar')]
+        assert cal.run_checks(steps) == 1
+        out = capsys.readouterr().out
+        start = out.index('=== Check summary ===')
+        summary = out[start:]
+        assert 'imu        PASS' in summary and 'mag        FAIL' in summary
+        assert 'lidar      skipped' in summary
+        assert 'FAIL  centre offset' in summary and '-> recalibrate' in summary
+        assert 'WARN  field strength' in summary
+        assert 'RESULT  1 pass  0 warn  1 fail  1 skipped' in summary
+        assert all('--check' in cmd for cmd in ran)
+
+    def test_tool_without_a_report_counts_as_a_fail(self, cal, monkeypatch, capsys):
+        monkeypatch.setattr(
+            cal.subprocess, 'run', lambda *a, **k: type('R', (), {'returncode': 1})()
+        )
+        monkeypatch.setattr(cal, 'ask', lambda _p='': '')
+        steps = [s for s in cal.STEPS if s.key == 'imu']
+        assert cal.run_checks(steps) == 1
+        assert 'imu        FAIL' in capsys.readouterr().out
+
+    def test_check_routes_only_checkable_steps(self, cal, monkeypatch):
+        seen = []
+        monkeypatch.setattr(cal, 'teleop_active', lambda: True)
+        monkeypatch.setattr(
+            cal, 'run_checks', lambda steps: seen.extend(s.key for s in steps) or 0
+        )
+        assert cal.main(['check']) == 0
+        assert seen == ['imu', 'mag', 'realsense', 'lidar']
+
+    def test_check_of_a_pending_step_is_a_usage_error(self, cal):
+        assert cal.main(['check', 'odom']) == 2
+
+
+class TestAsk:
+    def _stdin(self, cal, monkeypatch, data: bytes):
+        buf = bytearray(data)
+
+        def read(fd, n):
+            assert fd == 0
+            out = bytes(buf[:n])
+            del buf[:n]
+            return out
+
+        monkeypatch.setattr(cal.os, 'read', read)
+        return buf
+
+    def test_reads_exactly_one_line(self, cal, monkeypatch):
+        rest = self._stdin(cal, monkeypatch, b'S\nfor the tool\n')
+        assert cal.ask('? ') == 's'
+        assert bytes(rest) == b'for the tool\n'
+
+    def test_end_of_input_stops(self, cal, monkeypatch):
+        self._stdin(cal, monkeypatch, b'')
+        assert cal.ask('? ') == 'q'
+
+
+class TestNotRun:
+    def test_stopping_lists_the_rest(self, cal, monkeypatch, capsys):
+        monkeypatch.setattr(cal, 'ask', lambda _p='': 'q')
+        steps = [s for s in cal.STEPS if s.key in ('imu', 'mag')]
+        assert cal.run_checks(steps) == 0
+        out = capsys.readouterr().out
+        assert 'imu        not run' in out and 'mag        not run' in out
+        assert '2 not run' in out
+
+    def test_read_line_raises_at_end_of_input(self, cal, monkeypatch):
+        common = load_script('calibrate_common')
+        monkeypatch.setattr(common.os, 'read', lambda fd, n: b'')
+        with pytest.raises(EOFError):
+            common.read_line()

@@ -60,6 +60,19 @@ class TestFit:
         norms = np.linalg.norm(corrected, axis=1)
         assert norms.std() / norms.mean() < 1e-6
 
+    def test_offset_larger_than_the_field(self, mag):
+        # Hard iron bigger than the field puts zero field outside the
+        # ellipsoid. The reference car reached this on 2026-10-04 (raw circle
+        # 110.6% off centre) and the fit failed.
+        offset, axes = (7.0e-5, -2.0e-5, 1.0e-5), (1.1, 1.0, 0.9)
+        samples = _ellipsoid(2000, offset, axes)
+        fit = mag.fit_ellipsoid(samples)
+        assert fit is not None
+        assert fit.hard_iron == pytest.approx(offset, abs=1e-9)
+        corrected = (fit.soft_iron @ (np.asarray(samples) - fit.hard_iron).T).T
+        norms = np.linalg.norm(corrected, axis=1)
+        assert norms.std() / norms.mean() < 1e-6
+
 
 class TestLocalYaml:
     def test_writes_local_yaml_in_every_dir(self, mag, tmp_path):
@@ -85,3 +98,58 @@ class TestLocalYaml:
         )
         soft = doc['pit_node']['ros__parameters']['magnetometer.soft_iron_matrix.data']
         assert len(soft) == 9
+
+
+def _turn(field_ut, tilt_deg=3.0, degrees=360.0, n=400, hard=(0.0, 0.0, 0.0), squash=1.0):
+    """Field vectors (T) seen while the car turns about an axis tilted from z."""
+    b = np.asarray(field_ut, float) * 1e-6
+    t = np.radians(tilt_deg)
+    axis = np.array([np.sin(t), 0.0, np.cos(t)])
+    out = []
+    for a in np.radians(np.linspace(0.0, degrees, n, endpoint=False)):
+        k = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
+        rot = np.eye(3) + np.sin(a) * k + (1 - np.cos(a)) * k @ k
+        v = rot.T @ b
+        v[0] *= squash
+        out.append((v + np.asarray(hard, float) * 1e-6).tolist())
+    return out
+
+
+def _status(result, name):
+    return next(c.status for c in result.criteria() if c.name == name)
+
+
+class TestCheckCircle:
+    def test_good_calibration_passes(self, mag):
+        result = mag.check_circle(_turn((20.0, 5.0, 40.0)))
+        assert {c.status for c in result.criteria()} == {'PASS'}
+        assert result.offset < 0.01 and result.roundness < 0.01
+        assert result.field_ut == pytest.approx(np.linalg.norm((20.0, 5.0, 40.0)), rel=1e-6)
+
+    def test_hard_iron_moves_the_centre(self, mag):
+        result = mag.check_circle(_turn((20.0, 5.0, 40.0), hard=(8.0, 0.0, 0.0)))
+        assert result.offset > mag.CHECK_MAX_OFFSET
+        assert _status(result, 'centre offset') == 'FAIL'
+
+    def test_soft_iron_squashes_the_circle(self, mag):
+        result = mag.check_circle(_turn((20.0, 5.0, 40.0), squash=0.8))
+        assert _status(result, 'roundness') == 'FAIL'
+
+    def test_partial_turn(self, mag):
+        result = mag.check_circle(_turn((20.0, 5.0, 40.0), degrees=200.0))
+        assert _status(result, 'turn coverage') == 'FAIL'
+
+    def test_field_strength_only_warns(self, mag):
+        # A uniform scale error leaves the heading unchanged.
+        result = mag.check_circle(_turn((100.0, 0.0, 60.0)))
+        assert _status(result, 'field strength') == 'WARN'
+        assert _status(result, 'centre offset') == 'PASS'
+
+    def test_raw_fit_is_reported_without_a_verdict(self, mag):
+        good = mag.check_circle(_turn((20.0, 5.0, 40.0)))
+        raw = mag.check_circle(_turn((20.0, 5.0, 40.0), hard=(30.0, 0.0, 0.0)))
+        line = good.criteria(raw)[-1]
+        assert (line.name, line.status) == ('raw, for contrast', 'INFO')
+
+    def test_too_few_samples(self, mag):
+        assert mag.check_circle(_turn((20.0, 5.0, 40.0), n=mag.MIN_SAMPLES - 1)) is None

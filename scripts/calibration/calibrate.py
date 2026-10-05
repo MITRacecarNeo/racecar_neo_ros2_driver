@@ -6,6 +6,8 @@ Runs the calibrate_*.py tools in this folder in a fixed order, each with its
 own prompts, then shows old and new values, backs the results up to
 ~/.config/racecar/calibration/, and offers to restart teleop so the nodes load
 them. `racecar calibrate status` lists each calibration's state without ROS.
+`racecar calibrate check` runs each tool's --check against the live sensors,
+the last step of car prep: calibrate, restart teleop, check.
 
 The tools write config/<name>.local.yaml in both the source and the installed
 config directory (calibrate_common.output_dirs), so no rebuild is needed.
@@ -16,12 +18,14 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from datetime import datetime
+import json
 import os
 from pathlib import Path
 import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 from typing import Any
 
 import yaml
@@ -29,7 +33,13 @@ import yaml
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from calibrate_common import BACKUP_DIR, source_config_dir  # noqa: E402, I100
+from calibrate_common import (  # noqa: E402, I100
+    BACKUP_DIR,
+    criteria_lines,
+    Criterion,
+    read_line,
+    source_config_dir,
+)
 
 TELEOP_UNIT = 'racecar-teleop'
 
@@ -45,6 +55,7 @@ class Step:
     local_name: str
     keys: tuple[str, ...]
     pending: str = ''
+    check: str = ''  # how to place the car for the tool's --check; empty: no check
 
 
 # Order: hand-held IMU steps first, then steps with the car on the floor.
@@ -56,6 +67,7 @@ STEPS = (
         'car held in 6 orientations',
         'lsm9ds1_cal',
         ('accelerometer.bias', 'accelerometer.scale', 'gyroscope.bias'),
+        check='car still and level for 3 s',
     ),
     Step(
         'mag',
@@ -64,6 +76,7 @@ STEPS = (
         'car rotated by hand about all axes',
         'lsm9ds1_mag_cal',
         ('magnetometer.hard_iron_bias',),
+        check='car turned one full circle flat on the floor, away from large metal',
     ),
     Step(
         'realsense',
@@ -72,6 +85,7 @@ STEPS = (
         'car held in 6 orientations',
         'realsense_cal',
         ('realsense_accel_bias', 'realsense_accel_scale', 'realsense_gyro_bias'),
+        check='car still and level for 3 s',
     ),
     Step(
         'lidar',
@@ -80,6 +94,7 @@ STEPS = (
         'car squared to a flat wall ahead (wheel centres equal within 1 mm)',
         'frames',
         ('laser_yaw_deg',),
+        check='car squared to a flat wall ahead; hand squaring limits it to about 1 deg',
     ),
     Step(
         'camera',
@@ -164,9 +179,10 @@ def teleop_active() -> bool:
 
 
 def ask(prompt: str) -> str:
+    """Prompt for one line (calibrate_common.read_line); end of input reads as q."""
     try:
-        return input(prompt).strip().lower()
-    except EOFError:
+        return read_line(prompt).strip().lower()
+    except (EOFError, OSError):
         return 'q'
 
 
@@ -178,6 +194,8 @@ def run_steps(steps: list[Step], config_dir: Path, backup_dir: Path = BACKUP_DIR
         print(f'Position: {step.position}')
         answer = ask('Enter to run, s to skip, q to stop: ')
         if answer == 'q':
+            left = i - 1
+            results += [(rest, 'not run', {}, {}) for rest in steps[left:]]
             break
         if answer == 's':
             results.append((step, 'skipped', {}, {}))
@@ -212,8 +230,67 @@ def run_steps(steps: list[Step], config_dir: Path, backup_dir: Path = BACKUP_DIR
             subprocess.run(restart, check=False)
         else:
             print(f'Apply later: {shlex.join(restart)}')
+        print('Then verify: racecar calibrate check')
     failed = [step.key for step, outcome, *_ in results if outcome == 'failed']
     return 1 if failed else 0
+
+
+def read_report(path: Path) -> tuple[str, list[Criterion]] | None:
+    """Return (overall, criteria) from a tool's --report file, or None if absent."""
+    try:
+        data = json.loads(path.read_text())
+        return data['overall'], [Criterion(**c) for c in data['criteria']]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def summary_lines(results: list[tuple[Step, str, list[Criterion]]]) -> list[str]:
+    """Render the end-of-run table: each step's verdict, then each criterion."""
+    lines = ['', '=== Check summary ===']
+    for step, verdict, criteria in results:
+        lines.append(f'{step.key:10s} {verdict:7s} {step.label}')
+        lines += criteria_lines(criteria, indent='    ')
+    counts = {
+        v: sum(1 for _, verdict, _ in results if verdict == v) for v in ('PASS', 'WARN', 'FAIL')
+    }
+    skipped = sum(1 for _, verdict, _ in results if verdict == 'skipped')
+    not_run = sum(1 for _, verdict, _ in results if verdict == 'not run')
+    lines.append(
+        f'RESULT  {counts["PASS"]} pass  {counts["WARN"]} warn  {counts["FAIL"]} fail  '
+        f'{skipped} skipped' + (f'  {not_run} not run' if not_run else '')
+    )
+    return lines
+
+
+def run_checks(steps: list[Step]) -> int:
+    """Run each step's --check; print a per-criterion summary; return 1 when any failed."""
+    results: list[tuple[Step, str, list[Criterion]]] = []
+    with tempfile.TemporaryDirectory() as tmp:
+        for i, step in enumerate(steps, start=1):
+            print(f'\n=== Check {i}/{len(steps)}: {step.label} ===')
+            print(f'Position: {step.check}')
+            answer = ask('Enter to run, s to skip, q to stop: ')
+            if answer == 'q':
+                left = i - 1
+                results += [(rest, 'not run', []) for rest in steps[left:]]
+                break
+            if answer == 's':
+                results.append((step, 'skipped', []))
+                continue
+            report = Path(tmp) / f'{step.key}.json'
+            cmd = [sys.executable, str(HERE / str(step.tool)), '--check', '--report', str(report)]
+            rc = subprocess.run(cmd, check=False).returncode
+            parsed = read_report(report)
+            if parsed is None:
+                verdict = 'FAIL'
+                criteria = [
+                    Criterion('check', f'exit {rc}', 'a result', 'FAIL', 'see output above')
+                ]
+            else:
+                verdict, criteria = parsed
+            results.append((step, verdict, criteria))
+    print('\n'.join(summary_lines(results)))
+    return 1 if any(verdict == 'FAIL' for _, verdict, _ in results) else 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -226,7 +303,8 @@ def main(argv: list[str] | None = None) -> int:
         'steps',
         nargs='*',
         metavar='step',
-        help=f'status, or steps to run in order ({", ".join(STEP_KEYS)}); default: all available',
+        help=f'status; check [steps]; or steps to run in order ({", ".join(STEP_KEYS)}); '
+        'default: all available',
     )
     args = parser.parse_args(argv)
 
@@ -240,6 +318,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f'{key:10s} {state:11s} {detail}')
         return 0
 
+    checking = bool(args.steps) and args.steps[0] == 'check'
+    if checking:
+        args.steps = args.steps[1:]
     unknown = [s for s in args.steps if s not in STEP_KEYS]
     if unknown:
         parser.print_usage(sys.stderr)
@@ -253,10 +334,14 @@ def main(argv: list[str] | None = None) -> int:
     if not chosen:
         return 2 if args.steps else 0
 
+    if checking:
+        chosen = [s for s in chosen if s.check]
+        if not chosen:
+            return 2
     if not teleop_active():
         print(f'{TELEOP_UNIT} is not active; the tools read its topics. Start it first.')
         return 1
-    return run_steps(chosen, config_dir)
+    return run_checks(chosen) if checking else run_steps(chosen, config_dir)
 
 
 if __name__ == '__main__':
