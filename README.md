@@ -560,8 +560,8 @@ racecar calibrate check       # verify each calibration against the live sensors
 ```
 
 Car prep is three commands: `racecar calibrate`, a teleop restart (offered at
-the end), then `racecar calibrate check`. Each check runs or skips at its
-prompt. A summary at the end lists every criterion of every check with the
+the end), then `racecar calibrate check`. At each check's prompt, Enter runs
+it, `s` skips it, `b` goes back to the previous check, and `q` stops. A summary at the end lists every criterion of every check with the
 measured value, the limit, and PASS, WARN, or FAIL (green, yellow, red on a
 terminal, as in `racecar status`; `NO_COLOR` turns it off), with what to do
 under each WARN or FAIL; steps skipped or not reached are listed too. The command exits 1
@@ -573,11 +573,17 @@ if any check failed. One line per prompt on stdin scripts the whole run.
 | `mag` | One full turn flat on the floor, 25 s, away from large metal | `/mag` traces a circle centered on the turning axis (within 10% of its radius) and round to 5%. Field strength outside 20 to 70 uT is a WARN: a uniform scale error leaves a compass heading unchanged (see docs/troubleshooting.md on `imu.mag_scale`). `/mag/raw` is fitted the same way for contrast |
 | `realsense` | Still and level, 3 s | the stored calibration applied to `/imu/realsense` gives gravity within 1%, gyro under 0.01 rad/s |
 | `lidar` | Squared to a flat wall | `calibrate_lidar.py --check`: wall within 0.5 deg of square passes; up to 2 deg warns, since hand squaring is good to about 1 deg; beyond 2 deg fails (mount moved or car badly placed) |
-| `odom` | Driven 2 circles and stopped anywhere near the start, then driven straight toward a wall and stopped anywhere short of it; parked 2 s before and after each run | `/odom/integrated` heading within 1% of the lidar's (warn to 3%); distance within 2% of the lidar's (warn to 5%); each scan match under 30 mm RMS with at least 50% of points matched; the scales `pit_node` runs with match `odom.local.yaml` |
+| `odom` | Driven 2 circles and stopped anywhere near the start, then driven straight toward a wall and stopped anywhere short of it; parked 2 s before and after each run | `/odom/integrated` heading within 1% of the lidar's (warn to 3%); distance within 2% of the lidar's (warn to 5%); each scan match under 30 mm RMS with at least 30% of points matched; the scales `pit_node` runs with match `odom.local.yaml` |
+| `steering` | Driven straight at steering 0 about 2 m, parked 2 s before and after | heading drift within 1 deg/m (warn to 5, naming servo and linkage play); the trim `throttle_node` runs with matches `throttle.local.yaml` |
 
 `racecar calibrate` runs the tools in `scripts/calibration/` in this order:
-the hand-held steps first (`imu`, `mag`, `realsense`), then `lidar`, `odom`
-and `dynamics` with the car on the floor. `dynamics` has no check. Each step can be run or skipped at its prompt. At the end it
+the hand-held steps first (`imu`, `mag`, `realsense`), then `lidar`, `odom`,
+`steering` and `dynamics` with the car on the floor. `dynamics` has no check.
+Each step can be run, skipped (`s`), or gone back from (`b`, to run the previous
+step again) at its prompt. Within a tool, every run, pose, or axis offers `b`
+the same way to redo the previous one (after releasing RB too early, or
+hitting something), and a run that was stopped or failed its measurement is
+offered again. At the end it
 prints old and new values, copies the changed files to
 `~/.config/racecar/calibration/`, and offers to restart teleop so the nodes
 load them. Run on their own, the tools print the backup and restart commands
@@ -590,6 +596,7 @@ ros2 run racecar_neo_ros2_driver calibrate_mag.py         # LSM9DS1 hard/soft ir
 ros2 run racecar_neo_ros2_driver calibrate_realsense_imu.py   # D435i accel bias + scale, gyro bias
 ros2 run racecar_neo_ros2_driver calibrate_lidar.py       # lidar yaw, car squared to a wall
 ros2 run racecar_neo_ros2_driver calibrate_odom.py        # odometry against the lidar: circles, then a straight run
+ros2 run racecar_neo_ros2_driver calibrate_steering.py    # steering trim against the lidar; the car drives itself while RB is held
 ros2 run racecar_neo_ros2_driver calibrate_dynamics.py    # simulator dynamics; the car drives itself while RB is held
 racecar service restart teleop                            # nodes read the values at start
 ```
@@ -601,6 +608,7 @@ racecar service restart teleop                            # nodes read the value
 | `calibrate_realsense_imu.py` | `/imu/realsense` | `config/realsense_cal.local.yaml` | `imu_fusion_node` |
 | `calibrate_lidar.py` | `/scan` | `config/frames.local.yaml` (`laser_yaw_deg`) | `frames.launch.py` |
 | `calibrate_odom.py` | `/imu/lsm9ds1`, `/odom/integrated`, `/scan` | `config/odom.local.yaml` (`odometry.yaw_rate_scale`, `odometry.speed_scale`) | `pit_node` |
+| `calibrate_steering.py` | `/scan`, `/odom/integrated`, `/motor` (recorded); `/joy` (RB) | `config/throttle.local.yaml` (`steering_trim`) | `throttle_node` |
 | `calibrate_dynamics.py` | `/scan`, `/imu/lsm9ds1`, `/odom/integrated`, `/motor` (recorded); `/joy` (RB) | `config/dynamics.local.yaml` | the simulator (no node reads it) |
 
 Each utility writes the file to the source `config/` directory and, when it
@@ -629,6 +637,25 @@ lidar too, and warn when the odometry disagrees with the gyro it integrates.
 The scene must stay still between the two scans, and a room works better
 than a long corridor. Each step keeps the other's value in
 `odom.local.yaml`.
+
+`calibrate_steering.py` sets the steering trim, the offset `throttle_node`
+adds to every steering command so the car drives straight at steering 0. It
+drives seven short runs by itself while RB is held, one per steering command
+(0, +/-0.25, +/-0.5, +/-1.0), each needing about 3 by 3 m of clear floor. In
+each run the wheels are set with the car still and the steering never
+changes, so the car moves on one arc; the lidar scans at rest before and
+after give its chord and heading change, and curvature = 2 sin(heading / 2) /
+chord, with no encoder distance. The command that drives straight is the
+drift at 0 divided by the slope near center (from +/-0.25; at +/-0.5 the
+curvature already flattens toward full lock). The new trim is the old one
+plus that command; a change under 0.01 (about 5 us of servo pulse, below what
+the servo resolves) is not written, and beyond +/-0.2 is refused. It also
+prints the command-to-curvature table (radius and bicycle wheel angle per
+command). `--check` drives straight at command 0: drift within 1 deg/m passes. Up to
+5 deg/m warns, and the warning names servo and linkage play, which alone
+moves the drift by up to about 3 deg/m between runs, so recalibrate only if
+it stays. Beyond 5 deg/m fails as a mechanical fault (servo horn or
+linkage). The trim `throttle_node` runs with must match the file.
 
 `calibrate_dynamics.py` measures the car for the simulator. It drives five
 fixed runs by itself while RB is held, and releasing RB while it drives stops

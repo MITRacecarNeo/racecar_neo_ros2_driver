@@ -52,7 +52,7 @@ from calibrate_common import (  # noqa: E402, I100
     backup_reminder,
     install_config_dir,
     output_dirs,
-    read_line,
+    run_sequence,
     source_config_dir,
     update_local_values,
 )
@@ -91,7 +91,6 @@ TITLES = {
 }
 STRAIGHT_PLACE = 'Place the car at the start of the straight path, pointing along it.'
 CIRCLE_PLACE = 'Place the car at one end of the clear area, pointing along it.'
-STEP_PROMPT = 'Press Enter to run this step, or s to skip it: '
 # Wheelbase and track measured on a reference car, m.
 WHEELBASE_M = 0.230
 TRACK_M = 0.178
@@ -349,8 +348,13 @@ def laser_pose() -> Pose:
     return f['laser_x_mm'] * 1e-3, f['laser_y_mm'] * 1e-3, math.radians(f['laser_yaw_deg'])
 
 
+# Scans stacked per rest: a few fill gaps between beams; more only slow the match.
+REST_SCANS = 3
+
+
 def rest_scan(bag: Bag, t0: float, t1: float) -> np.ndarray:
-    pts = [p for t, p, _ in bag.scans if t0 <= t <= t1]
+    """Return the points of the last REST_SCANS scans between t0 and t1."""
+    pts = [p for t, p, _ in bag.scans if t0 <= t <= t1][-REST_SCANS:]
     return np.vstack(pts) if pts else np.empty((0, 2))
 
 
@@ -502,10 +506,19 @@ class Driver:
                 return False
         return True
 
-    def drive(self, run: str) -> Path | None:
-        """Drive one run while RB is held; return its bag, or None when RB was released."""
+    def drive(
+        self,
+        run: str,
+        segments: list[tuple[float, float, float]] | None = None,
+        prefix: str = 'dyn',
+    ) -> Path | None:
+        """
+        Drive one run while RB is held; return its bag, or None when RB was released.
+
+        `segments` defaults to RUNS[run]; the bag is named <time>_<prefix>_<run>.
+        """
         root = Path(resolve_log_root(load_config().get('DIR')))
-        bag_dir = root / build_bag_name(f'dyn_{run}', time.time())
+        bag_dir = root / build_bag_name(f'{prefix}_{run}', time.time())
         recorder = subprocess.Popen(
             build_record_argv(bag_dir, TOPICS),
             stdout=subprocess.DEVNULL,
@@ -522,7 +535,7 @@ class Driver:
                 self._hold(0.1, 0.0, 0.0, need_rb=False)
             ok = self._hold(COUNTDOWN_SEC, 0.0, 0.0, need_rb=True)
             drove = False
-            for speed, steer, seconds in RUNS[run] if ok else []:
+            for speed, steer, seconds in (segments or RUNS[run]) if ok else []:
                 # RB gates driving only; the rests before and after are still.
                 if speed == 0.0 and drove:
                     self.log.info('You can release RB now.')
@@ -565,19 +578,24 @@ def run_session() -> int:
     driver = Driver()
     log = driver.log
     values: dict[str, float] = {}
+    runs = list(RUNS)
+
+    def show(i: int) -> None:
+        log.info(f'Run {i + 1} of {len(runs)}: {TITLES[runs[i]]}')
+        log.info(CIRCLE_PLACE if runs[i].startswith('circle') else STRAIGHT_PLACE)
+
+    def run_one(i: int) -> dict[str, float] | None:
+        bag = driver.drive(runs[i])
+        if bag is None:
+            return None
+        log.info('Analyzing the run...')
+        got, lines = analyze(bag)
+        for line in lines:
+            log.info(line)
+        return got
+
     try:
-        for i, run in enumerate(RUNS, start=1):
-            log.info(f'Run {i} of {len(RUNS)}: {TITLES[run]}')
-            log.info(CIRCLE_PLACE if run.startswith('circle') else STRAIGHT_PLACE)
-            if read_line(STEP_PROMPT).strip().lower() == 's':
-                continue
-            bag = driver.drive(run)
-            if bag is None:
-                continue
-            log.info('Analyzing the run...')
-            got, lines = analyze(bag)
-            for line in lines:
-                log.info(line)
+        for _, got in sorted(run_sequence(len(runs), show, run_one).items()):
             values.update(got)
         if not values:
             log.info('Nothing measured.')

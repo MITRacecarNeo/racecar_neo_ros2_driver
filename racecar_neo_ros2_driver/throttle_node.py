@@ -2,6 +2,8 @@
 Throttle: clamps /mux_out to [-1, 1] and scales by per-direction caps onto /motor.
 
 Software caps on top of the firmware PWM limits. +speed = forward, +steering = left.
+steering_trim (per car, from calibrate_steering.py) is added after the cap so
+every source drives straight at steering 0.
 """
 
 from ackermann_msgs.msg import AckermannDriveStamped
@@ -18,8 +20,8 @@ def scale_speed(speed: float, max_fwd: float, max_back: float) -> float:
     return speed * (max_fwd if speed >= 0 else max_back)
 
 
-def scale_steering(angle: float, max_steer: float) -> float:
-    return clamp(angle) * max_steer
+def scale_steering(angle: float, max_steer: float, trim: float = 0.0) -> float:
+    return clamp(clamp(angle) * max_steer + trim)
 
 
 class ThrottleNode(Node):
@@ -30,10 +32,12 @@ class ThrottleNode(Node):
         self.declare_parameter('max_speed_forward', 0.17)
         self.declare_parameter('max_speed_backward', 0.24)
         self.declare_parameter('max_steering', 0.625)
+        self.declare_parameter('steering_trim', 0.0)
 
         self._max_fwd = self.get_parameter('max_speed_forward').value
         self._max_back = self.get_parameter('max_speed_backward').value
         self._max_steer = self.get_parameter('max_steering').value
+        self._trim = float(self.get_parameter('steering_trim').value)
 
         qos = QoSProfile(
             depth=1,
@@ -46,14 +50,17 @@ class ThrottleNode(Node):
 
         self.get_logger().info(
             f'Throttle ready: max_fwd={self._max_fwd}, max_back={self._max_back}, '
-            f'max_steer={self._max_steer} (fractions of the firmware PWM range)'
+            f'max_steer={self._max_steer}, steering_trim={self._trim:+g} '
+            '(fractions of the firmware PWM range)'
         )
 
     def _drive_cb(self, msg: AckermannDriveStamped) -> None:
         out = AckermannDriveStamped()
         out.header = msg.header
         out.drive.speed = scale_speed(msg.drive.speed, self._max_fwd, self._max_back)
-        out.drive.steering_angle = scale_steering(msg.drive.steering_angle, self._max_steer)
+        out.drive.steering_angle = scale_steering(
+            msg.drive.steering_angle, self._max_steer, self._trim
+        )
         self._pub.publish(out)
 
 

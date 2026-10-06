@@ -53,6 +53,7 @@ from calibrate_common import (  # noqa: E402, I100
     node_params,
     output_dirs,
     read_line,
+    run_sequence,
     source_config_dir,
     spin_until_done,
     write_local_yaml,
@@ -84,13 +85,14 @@ UNWRAP_LIMIT_DEG = 90.0
 MIN_DRIVE_M = 2.0
 # Scan match quality: a moved scene or a featureless corridor fails these.
 MATCH_MAX_RMS_M = 0.03
-MATCH_MIN_INLIERS = 0.5
+# A 2.3 m drive or an 80 deg turn changes what the lidar sees: 40 to 45% of the
+# points matching is normal there.
+MATCH_MIN_INLIERS = 0.3
 SPIN_PASS, SPIN_WARN = 0.01, 0.03
 DRIVE_PASS, DRIVE_WARN = 0.02, 0.05
 SCALE_KEYS = ('odometry.yaw_rate_scale', 'odometry.speed_scale')
 PARAM_TIMEOUT = 3.0
 
-STEP_PROMPT = 'Press Enter to run this step, or s to skip it: '
 HANDS_OFF = f'Press Enter, then keep your hands off the car for {REST_SECONDS:.0f} seconds...'
 STOPPED = 'Press Enter when the car has stopped, then keep your hands off it...'
 SPIN_PLACE = 'Place the car on the floor in the middle of the clear space.'
@@ -400,50 +402,13 @@ class OdomCalibrator(CalibratorNode):
             return 1
         if self.check:
             return self._run_check()
-        params: dict[str, float] = {}
-
-        log.info('Step 1 of 2: gyro scale')
-        if read_line(STEP_PROMPT).strip().lower() != 's':
-            spun = self.spin(SPIN_TURNS)
-            if spun is None or not self._match_ok(spun[0]):
-                return 1
-            run, true = spun
-            scale = true / run.gyro_rad
-            log.info(
-                f'Lidar {math.degrees(true):+.1f} deg, gyro {math.degrees(run.gyro_rad):+.1f} '
-                f'deg, odometry {math.degrees(run.odom[2]):+.1f} deg'
-            )
-            if not scale_ok(scale):
-                log.error(
-                    f'Gyro scale {scale:.3f} is outside 0.8 to 1.25, so imu.gyro_scale in '
-                    'config/pit.yaml is likely wrong (deg/s for rad/s). Nothing written.'
-                )
-                return 1
-            self._warn_odom_mismatch(run.odom[2], run.gyro_rad, 'heading')
-            params['odometry.yaw_rate_scale'] = round(self.yaw_scale * scale, 5)
-
-        log.info('Step 2 of 2: speed scale')
-        if read_line(STEP_PROMPT).strip().lower() != 's':
-            run = self.drive()
-            if run is None or not self._match_ok(run):
-                return 1
-            lidar_m = math.hypot(run.lidar[0], run.lidar[1])
-            odom_m = math.hypot(run.odom[0], run.odom[1])
-            log.info(f'Lidar {lidar_m:.3f} m, odometry {odom_m:.3f} m')
-            if lidar_m < MIN_DRIVE_M:
-                log.error(
-                    f'The car drove {lidar_m:.2f} meters. Drive at least {MIN_DRIVE_M:g} meters. '
-                    'Nothing written.'
-                )
-                return 1
-            ratio = lidar_m / odom_m if odom_m > 0 else math.inf
-            if not scale_ok(ratio):
-                log.error(
-                    f'Odometry is off by more than 20% ({odom_m:.3f} m against {lidar_m:.3f} m). '
-                    'Nothing written.'
-                )
-                return 1
-            params['odometry.speed_scale'] = round(self.speed_scale * ratio, 5)
+        titles = ('Step 1 of 2: gyro scale', 'Step 2 of 2: speed scale')
+        steps = run_sequence(
+            2,
+            lambda i: log.info(titles[i]),
+            lambda i: self._gyro_step() if i == 0 else self._speed_step(),
+        )
+        params = dict(steps.values())
 
         if not params:
             log.info('Nothing calibrated.')
@@ -458,6 +423,49 @@ class OdomCalibrator(CalibratorNode):
         log.info(backup_reminder(written))
         return 0
 
+    def _gyro_step(self) -> tuple[str, float] | None:
+        """Run the spin; return the new yaw scale, or None to offer the step again."""
+        log = self.get_logger()
+        spun = self.spin(SPIN_TURNS)
+        if spun is None or not self._match_ok(spun[0]):
+            return None
+        run, true = spun
+        scale = true / run.gyro_rad
+        log.info(
+            f'Lidar {math.degrees(true):+.1f} deg, gyro {math.degrees(run.gyro_rad):+.1f} '
+            f'deg, odometry {math.degrees(run.odom[2]):+.1f} deg'
+        )
+        if not scale_ok(scale):
+            log.error(
+                f'Gyro scale {scale:.3f} is outside 0.8 to 1.25, so imu.gyro_scale in '
+                'config/pit.yaml is likely wrong (deg/s for rad/s).'
+            )
+            return None
+        self._warn_odom_mismatch(run.odom[2], run.gyro_rad, 'heading')
+        return 'odometry.yaw_rate_scale', round(self.yaw_scale * scale, 5)
+
+    def _speed_step(self) -> tuple[str, float] | None:
+        """Run the straight drive; return the new speed scale, or None to offer it again."""
+        log = self.get_logger()
+        run = self.drive()
+        if run is None or not self._match_ok(run):
+            return None
+        lidar_m = math.hypot(run.lidar[0], run.lidar[1])
+        odom_m = math.hypot(run.odom[0], run.odom[1])
+        log.info(f'Lidar {lidar_m:.3f} m, odometry {odom_m:.3f} m')
+        if lidar_m < MIN_DRIVE_M:
+            log.error(
+                f'The car drove {lidar_m:.2f} meters. Drive at least {MIN_DRIVE_M:g} meters.'
+            )
+            return None
+        ratio = lidar_m / odom_m if odom_m > 0 else math.inf
+        if not scale_ok(ratio):
+            log.error(
+                f'Odometry is off by more than 20% ({odom_m:.3f} m against {lidar_m:.3f} m).'
+            )
+            return None
+        return 'odometry.speed_scale', round(self.speed_scale * ratio, 5)
+
     def _warn_odom_mismatch(self, odom_rad: float, gyro_rad: float, what: str) -> None:
         """Warn when /odom/integrated disagrees with the gyro it integrates."""
         if gyro_rad and abs(odom_rad / gyro_rad - 1.0) > SPIN_PASS:
@@ -468,35 +476,38 @@ class OdomCalibrator(CalibratorNode):
 
     def _run_check(self) -> int:
         log = self.get_logger()
-        criteria = []
-        log.info(f'Step 1 of 2: spin, {CHECK_TURNS} circles')
-        if read_line(STEP_PROMPT).strip().lower() != 's':
-            spun = self.spin(CHECK_TURNS)
-            if spun is None:
-                criteria.append(Criterion('spin heading', 'no result', '', 'FAIL', 'see above'))
-            else:
-                run, true = spun
-                criteria.append(match_criterion('spin scan match', run.match))
-                criteria.append(spin_criterion(math.degrees(run.odom[2]), math.degrees(true)))
-                criteria.append(
-                    Criterion('gyro', f'{math.degrees(run.gyro_rad):+.1f} deg', '', 'INFO')
-                )
-        log.info('Step 2 of 2: straight drive')
-        if read_line(STEP_PROMPT).strip().lower() != 's':
-            run = self.drive()
-            if run is None:
-                criteria.append(Criterion('drive distance', 'no result', '', 'FAIL', 'see above'))
-            else:
-                criteria.append(match_criterion('drive scan match', run.match))
-                criteria.append(
-                    drive_criterion(
-                        math.hypot(run.odom[0], run.odom[1]),
-                        math.hypot(run.lidar[0], run.lidar[1]),
-                    )
-                )
+        titles = (f'Step 1 of 2: spin, {CHECK_TURNS} circles', 'Step 2 of 2: straight drive')
+        steps = run_sequence(
+            2,
+            lambda i: log.info(titles[i]),
+            lambda i: self._check_spin() if i == 0 else self._check_drive(),
+        )
+        criteria = [c for i in sorted(steps) for c in steps[i]]
         file_scales = (self.yaw_scale, self.speed_scale)
         criteria.append(scales_criterion(file_scales, self.live_scales()))
         return finish_check(log, criteria, self.report)
+
+    def _check_spin(self) -> list[Criterion] | None:
+        spun = self.spin(CHECK_TURNS)
+        if spun is None:
+            return None
+        run, true = spun
+        return [
+            match_criterion('spin scan match', run.match),
+            spin_criterion(math.degrees(run.odom[2]), math.degrees(true)),
+            Criterion('gyro', f'{math.degrees(run.gyro_rad):+.1f} deg', '', 'INFO'),
+        ]
+
+    def _check_drive(self) -> list[Criterion] | None:
+        run = self.drive()
+        if run is None:
+            return None
+        return [
+            match_criterion('drive scan match', run.match),
+            drive_criterion(
+                math.hypot(run.odom[0], run.odom[1]), math.hypot(run.lidar[0], run.lidar[1])
+            ),
+        ]
 
     def live_scales(self) -> tuple[float, float] | None:
         """Return pit_node's (yaw, speed) scales, or None when it does not answer."""

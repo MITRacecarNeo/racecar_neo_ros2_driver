@@ -263,7 +263,7 @@ class TestChecks:
             cal, 'run_checks', lambda steps: seen.extend(s.key for s in steps) or 0
         )
         assert cal.main(['check']) == 0
-        assert seen == ['imu', 'mag', 'realsense', 'lidar', 'odom']
+        assert seen == ['imu', 'mag', 'realsense', 'lidar', 'odom', 'steering']
 
     def test_check_of_an_unknown_step_is_a_usage_error(self, cal):
         assert cal.main(['check', 'gps']) == 2
@@ -362,3 +362,82 @@ class TestTypeAhead:
         monkeypatch.setattr(common.termios, 'tcflush', lambda fd, q: pytest.fail('flushed'))
         monkeypatch.setattr(common.os, 'read', lambda fd, n: b'\n')
         assert common.read_line() == ''
+
+
+class TestRunSequence:
+    def _run(self, monkeypatch, answers, results, allow_skip=True):
+        common = load_script('calibrate_common')
+        queue = list(answers)
+        monkeypatch.setattr(common, 'read_line', lambda _p='': queue.pop(0))
+        ran = []
+        outcomes = list(results)
+
+        def run(i):
+            ran.append(i)
+            return outcomes.pop(0)
+
+        got = common.run_sequence(3, lambda i: None, run, allow_skip=allow_skip)
+        return got, ran
+
+    def test_back_redoes_the_previous_step(self, monkeypatch):
+        got, ran = self._run(monkeypatch, ['', '', 'b', '', '', ''], ['a', 'b1', 'b2', 'c'])
+        assert ran == [0, 1, 1, 2]
+        assert got == {0: 'a', 1: 'b2', 2: 'c'}
+
+    def test_back_twice_discards_both(self, monkeypatch):
+        got, ran = self._run(
+            monkeypatch, ['', '', 'b', 'b', '', '', ''], ['a1', 'b1', 'a2', 'b2', 'c']
+        )
+        assert ran == [0, 1, 0, 1, 2]
+        assert got == {0: 'a2', 1: 'b2', 2: 'c'}
+
+    def test_failed_step_is_offered_again(self, monkeypatch):
+        got, ran = self._run(monkeypatch, ['', '', '', ''], ['a', None, 'b', 'c'])
+        assert ran == [0, 1, 1, 2]
+        assert got == {0: 'a', 1: 'b', 2: 'c'}
+
+    def test_skip_and_back_at_the_first_step(self, monkeypatch):
+        got, ran = self._run(monkeypatch, ['b', 's', '', ''], ['b', 'c'])
+        assert ran == [1, 2]
+        assert got == {1: 'b', 2: 'c'}
+
+    def test_skip_refused_when_every_step_is_needed(self, monkeypatch):
+        got, ran = self._run(monkeypatch, ['s', '', '', ''], ['a', 'b', 'c'], allow_skip=False)
+        assert ran == [0, 1, 2]
+
+    def test_back_is_offered_from_the_second_step(self):
+        common = load_script('calibrate_common')
+        assert 'b to redo' not in common.step_prompt(0)
+        assert 'b to redo the previous step' in common.step_prompt(1)
+
+
+class TestSessionBack:
+    def test_back_reruns_the_previous_step_with_its_first_values(
+        self, cal, config, tmp_path, monkeypatch
+    ):
+        answers = ['', 'b', '', '', 'n']  # imu, back, imu again, mag, no restart
+        monkeypatch.setattr(cal, 'ask', lambda _p='': answers.pop(0))
+        ran = []
+
+        def fake_run(cmd, check=False, **_kw):
+            ran.append(Path(cmd[-1]).name)
+            values = {'gyroscope.bias': [len(ran), 0, 0]}
+            _ros_yaml(config / 'lsm9ds1_cal.local.yaml', 'pit_node', values)
+            return type('R', (), {'returncode': 0})()
+
+        monkeypatch.setattr(cal.subprocess, 'run', fake_run)
+        monkeypatch.setenv('RACECAR_SUDO', '')
+        steps = [s for s in cal.STEPS if s.key in ('imu', 'mag')]
+        assert cal.run_steps(steps, config, tmp_path / 'b') == 0
+        assert ran == ['calibrate_imu.py', 'calibrate_imu.py', 'calibrate_mag.py']
+
+    def test_prompt_offers_back_after_the_first_step(self, cal, monkeypatch):
+        prompts = []
+
+        def ask(p=''):
+            prompts.append(p)
+            return 's'
+
+        monkeypatch.setattr(cal, 'ask', ask)
+        cal.run_checks([s for s in cal.STEPS if s.key in ('imu', 'mag')])
+        assert prompts == [cal.RUN_PROMPT, cal.RUN_PROMPT_BACK]

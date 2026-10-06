@@ -20,6 +20,19 @@ All notable changes to this project will be documented in this file. The format 
   compared with `odom.local.yaml` (FAIL when teleop was not restarted).
   `calibrate_common.write_local_yaml(merge=True)` keeps a file's other
   parameters.
+- `calibrate_steering.py`, the `steering` step of `racecar calibrate`: the
+  car drives one constant-steering arc per command (0, +/-0.25, +/-0.5,
+  +/-1.0) by itself while RB is held; curvature comes from the lidar rest
+  scans before and after (2 sin(heading / 2) / chord), and the drift at 0
+  over the slope near center (+/-0.25) gives the command that drives
+  straight. Writes `steering_trim` to `throttle.local.yaml` unless the change
+  is below the servo's resolution (0.01), and prints the command-to-curvature
+  table. `--check`: straight drift within 1 deg/m; up to 5 deg/m warns and
+  names servo and linkage play; beyond fails as a mechanical fault; and the
+  trim in use.
+- `throttle_node` parameter `steering_trim` (default 0), added to every
+  steering command after `max_steering` and clamped, so every source drives
+  straight at steering 0.
 - `calibrate_dynamics.py`, the `dynamics` step of `racecar calibrate` (no
   check): measures the car for the simulator. The car drives five fixed runs
   by itself while RB is held (straight at speed 0.25, 0.5, 1.0; right-turn
@@ -31,6 +44,11 @@ All notable changes to this project will be documented in this file. The format 
   center-to-lock steering time per side from the yaw rate, summed for lock
   to lock. RB is required only while the car is commanded to move. Writes
   `config/dynamics.local.yaml`; `--analyze` re-analyzes recorded runs.
+- Calibration prompts offer `b` to redo the previous step: between steps in
+  `racecar calibrate` and `racecar calibrate check`, and within each tool for
+  its runs (odometry, steering, dynamics), IMU poses, and magnetometer axes.
+  A run stopped by releasing RB, or whose measurement fails, is offered again
+  instead of being dropped. Shared loop: `calibrate_common.run_sequence()`.
 - `racecar calibrate status` shows one block per step: name, state, date,
   backup state, and the stored values. On a terminal the state is green when
   calibrated and backed up, yellow when the backup is missing or differs or

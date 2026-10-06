@@ -44,3 +44,15 @@ class TestScaleSteering:
 
     def test_clamp_below_neg_one(self):
         assert scale_steering(-5.0, 0.625) == pytest.approx(-0.625)
+
+
+class TestSteeringTrim:
+    def test_trim_shifts_center(self):
+        assert scale_steering(0.0, 1.0, trim=-0.05) == pytest.approx(-0.05)
+
+    def test_trim_is_added_after_the_cap(self):
+        assert scale_steering(1.0, 0.5, trim=0.05) == pytest.approx(0.55)
+
+    def test_trimmed_output_stays_in_range(self):
+        assert scale_steering(1.0, 1.0, trim=0.05) == 1.0
+        assert scale_steering(-1.0, 1.0, trim=-0.05) == -1.0

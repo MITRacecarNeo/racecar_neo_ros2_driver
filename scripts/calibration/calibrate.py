@@ -46,8 +46,13 @@ from calibrate_common import (  # noqa: E402, I100
 
 TELEOP_UNIT = 'racecar-teleop'
 RUN_PROMPT = 'Press Enter to run, s to skip, and q to stop: '
+RUN_PROMPT_BACK = 'Press Enter to run, s to skip, b to go back a step, and q to stop: '
+STEERING_SETUP = (
+    'Use a clear area of about 3 by 3 meters surrounded by walls or furniture.\n'
+    'Connect the controller. Hold RB to autonomously drive the car.'
+)
 DYNAMICS_SETUP = (
-    'Use a clear straight path of about 4 meters, with walls or furniture within 4 meters of it.\n'
+    'Use a clear straight path of about 4 meters with walls or furniture nearby.\n'
     'Use a clear area of about 2.3 by 1.6 meters for driving circles.\n'
     'Connect the controller. Hold RB to autonomously drive the car.'
 )
@@ -73,7 +78,7 @@ DYNAMICS_KEYS = tuple(
     + ['servo_lock_to_lock_s']
 )
 ODOM_SETUP = (
-    'Use a room with walls or furniture within 4 meters of the car.\n'
+    'Use a room with walls or furniture nearby.\n'
     'Clear about 2 meters around the car for driving circles.\n'
     'Clear a straight path of 3 to 5 meters that ends at a wall or furniture.'
 )
@@ -143,6 +148,15 @@ STEPS = (
         'odom',
         ('odometry.yaw_rate_scale', 'odometry.speed_scale'),
         check=ODOM_SETUP,
+    ),
+    Step(
+        'steering',
+        'Steering trim',
+        'calibrate_steering.py',
+        STEERING_SETUP,
+        'throttle',
+        ('steering_trim',),
+        check=STEERING_SETUP,
     ),
     # Measured for the simulator; nothing reads it back, so there is no check.
     Step(
@@ -258,29 +272,51 @@ def ask(prompt: str) -> str:
         return 'q'
 
 
+def walk_steps(steps: list[Step], header: Any, run: Any) -> list[Any]:
+    """
+    Prompt for each step in order: Enter runs it, s skips, b goes back a step, q stops.
+
+    `header(i)` prints the step's banner and `run(i)` returns its result entry.
+    A skipped step gives (step, 'skipped') and the steps left by q give
+    (step, 'not run'). Returns one entry per step reached, in order.
+    """
+    entries: dict[int, Any] = {}
+    i = 0
+    while i < len(steps):
+        header(i)
+        answer = ask(RUN_PROMPT_BACK if i > 0 else RUN_PROMPT)
+        if answer == 'b':
+            i = max(i - 1, 0)
+            continue
+        if answer == 'q':
+            for k in range(i, len(steps)):
+                entries[k] = (steps[k], 'not run')
+            break
+        entries[i] = (steps[i], 'skipped') if answer == 's' else run(i)
+        i += 1
+    return [entries[k] for k in sorted(entries)]
+
+
 def run_steps(steps: list[Step], config_dir: Path, backup_dir: Path = BACKUP_DIR) -> int:
     """Run the steps in order; return 0 when every attempted step succeeded."""
-    results: list[tuple[Step, str, dict[str, Any], dict[str, Any]]] = []
-    for i, step in enumerate(steps, start=1):
-        print(f'\n=== {i}/{len(steps)} {step.label} ===')
-        print(setup_text(step.position))
-        answer = ask(RUN_PROMPT)
-        if answer == 'q':
-            left = i - 1
-            results += [(rest, 'not run', {}, {}) for rest in steps[left:]]
-            break
-        if answer == 's':
-            results.append((step, 'skipped', {}, {}))
-            continue
-        before = step_values(step, config_dir)
+    # A step run again keeps its values from before its first run, for the summary.
+    first_before: dict[int, dict[str, Any]] = {}
+
+    def header(i: int) -> None:
+        print(f'\n=== {i + 1}/{len(steps)} {steps[i].label} ===')
+        print(setup_text(steps[i].position))
+
+    def run(i: int) -> tuple[Step, str, dict[str, Any], dict[str, Any]]:
+        step = steps[i]
+        before = first_before.setdefault(i, step_values(step, config_dir))
         rc = subprocess.run(
             [sys.executable, str(HERE / step.tool)],
             check=False,
             env={**os.environ, SESSION_ENV: '1'},
         ).returncode
-        results.append(
-            (step, 'done' if rc == 0 else 'failed', before, step_values(step, config_dir))
-        )
+        return step, 'done' if rc == 0 else 'failed', before, step_values(step, config_dir)
+
+    results = [e if len(e) == 4 else (*e, {}, {}) for e in walk_steps(steps, header, run)]
 
     print('\n=== Summary ===')
     for step, outcome, before, after in results:
@@ -349,31 +385,28 @@ def summary_lines(
 
 def run_checks(steps: list[Step]) -> int:
     """Run each step's --check; print a per-criterion summary; return 1 when any failed."""
-    results: list[tuple[Step, str, list[Criterion]]] = []
     with tempfile.TemporaryDirectory() as tmp:
-        for i, step in enumerate(steps, start=1):
-            print(f'\n=== Check {i}/{len(steps)}: {step.label} ===')
-            print(setup_text(step.check))
-            answer = ask(RUN_PROMPT)
-            if answer == 'q':
-                left = i - 1
-                results += [(rest, 'not run', []) for rest in steps[left:]]
-                break
-            if answer == 's':
-                results.append((step, 'skipped', []))
-                continue
+
+        def header(i: int) -> None:
+            print(f'\n=== Check {i + 1}/{len(steps)}: {steps[i].label} ===')
+            print(setup_text(steps[i].check))
+
+        def run(i: int) -> tuple[Step, str, list[Criterion]]:
+            step = steps[i]
             report = Path(tmp) / f'{step.key}.json'
+            report.unlink(missing_ok=True)
             cmd = [sys.executable, str(HERE / step.tool), '--check', '--report', str(report)]
             rc = subprocess.run(cmd, check=False).returncode
             parsed = read_report(report)
             if parsed is None:
-                verdict = 'FAIL'
                 criteria = [
                     Criterion('check', f'exit {rc}', 'a result', 'FAIL', 'see output above')
                 ]
-            else:
-                verdict, criteria = parsed
-            results.append((step, verdict, criteria))
+                return step, 'FAIL', criteria
+            verdict, criteria = parsed
+            return step, verdict, criteria
+
+        results = [e if len(e) == 3 else (*e, []) for e in walk_steps(steps, header, run)]
     print('\n'.join(summary_lines(results, use_color())))
     return 1 if any(verdict == 'FAIL' for _, verdict, _ in results) else 0
 
@@ -381,7 +414,8 @@ def run_checks(steps: list[Step]) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog='racecar calibrate',
-        description='Calibrate the car: IMUs, magnetometer, lidar yaw, odometry, dynamics. '
+        description='Calibrate the car: IMUs, magnetometer, lidar yaw, odometry, steering, '
+        'dynamics. '
         '`status` lists what is calibrated.',
     )
     parser.add_argument(

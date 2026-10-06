@@ -35,6 +35,7 @@ from calibrate_common import (  # noqa: E402, I100
     finish_check,
     output_dirs,
     read_line,
+    run_sequence,
     spin_until_done,
     write_local_yaml,
 )
@@ -264,13 +265,27 @@ class MagnetometerCalibrator(CalibratorNode):
             log.error('Is pit_node running? Check: ros2 topic echo /mag/raw')
             return 1
         log.info('LSM9DS1 magnetometer calibration')
-        for i, (axis, how) in enumerate(STEPS, start=1):
+
+        def show(i: int) -> None:
+            axis, how = STEPS[i]
             log.info(
-                f'Step {i} of {len(STEPS)} ({axis}): {how} Keep moving for '
+                f'Step {i + 1} of {len(STEPS)} ({axis}): {how} Keep moving for '
                 f'{STEP_SECONDS:.0f} seconds.'
             )
-            read_line('Press Enter, then start...')
-            self.samples += self.collect(STEP_SECONDS, f'{axis} axis')
+
+        def prompt(i: int) -> str:
+            if i == 0:
+                return 'Press Enter, then start...'
+            return 'Press Enter, then start. Type b to redo the previous step: '
+
+        steps = run_sequence(
+            len(STEPS),
+            show,
+            lambda i: self.collect(STEP_SECONDS, f'{STEPS[i][0]} axis') or None,
+            prompt,
+            allow_skip=False,
+        )
+        self.samples = [sample for i in range(len(STEPS)) for sample in steps[i]]
 
         dirs = output_dirs()
         if not dirs:

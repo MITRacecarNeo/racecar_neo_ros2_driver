@@ -1185,6 +1185,10 @@ Commands:
                           odom        gyro yaw scale (circles) and encoder
                                       speed scale (straight drive), both
                                       against the lidar
+                          steering    steering trim (straight at steering 0)
+                                      and curvature per command, against the
+                                      lidar; the car drives itself while RB
+                                      is held
                           dynamics    steering angles, servo time, speeds
                                       and stop distances for the simulator;
                                       the car drives itself while RB is held;
@@ -1243,7 +1247,7 @@ _racecar_complete() {
 
     case "$sub" in
         calibrate)
-            COMPREPLY=( $(compgen -W "status check imu mag realsense lidar odom dynamics --help" -- "$cur") )
+            COMPREPLY=( $(compgen -W "status check imu mag realsense lidar odom steering dynamics --help" -- "$cur") )
             ;;
         launch)
             local launch_dir="$HOME/ros2_ws/src/racecar_neo_ros2_driver/launch"

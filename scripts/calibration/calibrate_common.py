@@ -9,6 +9,7 @@ after the tracked zero-default YAMLs, so the local values win.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 import os
@@ -265,6 +266,51 @@ def read_line(prompt: str = '') -> str:
         line += ch
 
 
+STEP_PROMPT = 'Press Enter to run this step, or s to skip it: '
+STEP_PROMPT_BACK = 'Press Enter to run this step, s to skip it, or b to redo the previous step: '
+
+
+def step_prompt(index: int) -> str:
+    """Return the run prompt for step `index`; b is offered from the second step on."""
+    return STEP_PROMPT_BACK if index > 0 else STEP_PROMPT
+
+
+def run_sequence(
+    count: int,
+    show: Callable[[int], None],
+    run: Callable[[int], Any],
+    prompt: Callable[[int], str] = step_prompt,
+    allow_skip: bool = True,
+) -> dict[int, Any]:
+    """
+    Run steps 0..count-1 in order; return {index: result} for the steps that ran.
+
+    At each step's prompt Enter runs it, s skips it (when allowed), and b goes
+    back to the previous step and discards its result. A step whose run
+    returns None (stopped, or a failed measurement) is offered again.
+    """
+    results: dict[int, Any] = {}
+    i = 0
+    while i < count:
+        show(i)
+        answer = read_line(prompt(i)).strip().lower()
+        if answer == 'b':
+            if i > 0:
+                i -= 1
+                results.pop(i, None)
+            continue
+        if answer == 's' and allow_skip:
+            results.pop(i, None)
+            i += 1
+            continue
+        result = run(i)
+        if result is None:
+            continue
+        results[i] = result
+        i += 1
+    return results
+
+
 def mean_vector(samples: list[list[float]]) -> list[float]:
     """Return the per-axis mean of a list of 3-vectors."""
     return [float(v) for v in np.asarray(samples, dtype=float).mean(axis=0)]
@@ -458,21 +504,41 @@ class ImuBiasCalibrator(CalibratorNode):
             return 1
         log.info(f'{self.target.label} IMU calibration')
 
-        log.info('Step 1 of 2: gyroscope. Set the car on a stable surface.')
-        read_line(
-            f'Press Enter, then keep your hands off the car for {GYRO_SECONDS:.0f} seconds...'
-        )
-        gyro = [s[3:] for s in self.collect(GYRO_SECONDS, 'Gyroscope')]
-
-        log.info(
-            f'Step 2 of 2: accelerometer. Hold the car still in 6 poses, '
-            f'{POSITION_SECONDS:.0f} seconds each.'
-        )
-        positions = []
-        for i, (axis, description) in enumerate(POSITIONS, start=1):
+        # Step 0 is the gyroscope at rest; steps 1 to 6 are the poses.
+        def show(i: int) -> None:
+            if i == 0:
+                log.info('Step 1 of 2: gyroscope. Set the car on a stable surface.')
+                return
+            if i == 1:
+                log.info(
+                    f'Step 2 of 2: accelerometer. Hold the car still in 6 poses, '
+                    f'{POSITION_SECONDS:.0f} seconds each.'
+                )
+            axis, description = POSITIONS[i - 1]
             log.info(f'Pose {i} of {len(POSITIONS)} ({axis}): {description}')
-            read_line('Press Enter when the car is in place, then hold it still...')
-            positions.append([s[:3] for s in self.collect(POSITION_SECONDS, axis)])
+
+        def prompt(i: int) -> str:
+            if i == 0:
+                return (
+                    f'Press Enter, then keep your hands off the car for {GYRO_SECONDS:.0f} '
+                    'seconds...'
+                )
+            return (
+                'Press Enter when the car is in place, then hold it still. '
+                'Type b to redo the previous step: '
+            )
+
+        def run_step(i: int) -> list[list[float]] | None:
+            if i == 0:
+                samples = [s[3:] for s in self.collect(GYRO_SECONDS, 'Gyroscope')]
+            else:
+                axis = POSITIONS[i - 1][0]
+                samples = [s[:3] for s in self.collect(POSITION_SECONDS, axis)]
+            return samples or None
+
+        steps = run_sequence(len(POSITIONS) + 1, show, run_step, prompt, allow_skip=False)
+        gyro = steps[0]
+        positions = [steps[k] for k in range(1, len(POSITIONS) + 1)]
 
         try:
             params = imu_bias_params(self.target, gyro, positions)
