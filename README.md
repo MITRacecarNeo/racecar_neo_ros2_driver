@@ -656,8 +656,9 @@ than a long corridor. Each step keeps the other's value in
 
 `calibrate_steering.py` sets the steering trim, the offset `throttle_node`
 adds to every steering command so the car drives straight at steering 0. It
-drives seven short runs by itself while RB is held, one per steering command
-(0, +/-0.25, +/-0.5, +/-1.0), each needing about 3 by 3 m of clear floor. In
+drives seven runs by itself while RB is held, one per steering command
+(0, +/-0.25, +/-0.5, +/-1.0; at +/-0.5 and +/-1.0 about 1.5 laps), in about
+3 by 3 m of clear floor. In
 each run the wheels are set with the car still and the steering never
 changes, so the car moves on one arc; the lidar scans at rest before and
 after give its chord and heading change, and curvature = 2 sin(heading / 2) /
@@ -667,7 +668,14 @@ curvature already flattens toward full lock). The new trim is the old one
 plus that command; a change under 0.01 (about 5 us of servo pulse, below what
 the servo resolves) is not written, and beyond +/-0.2 is refused. It also
 prints the command-to-curvature table (radius and bicycle wheel angle per
-command). `--check` drives straight at command 0: drift within 1 deg/m passes. Up to
+command). The same runs give the encoder's over-read in turns: with no center
+differential the encoder reads the mean of the rear and front axle speeds,
+k (1/cos delta - 1) too high, delta the bicycle steering angle. The step fits
+k (0.5 for a locked center shaft) against its own straight runs and writes
+`odometry.turn_gain` to `odom.local.yaml`; `pit_node` then divides the
+encoder speed by 1 + k (1/cos delta - 1), with delta from the gyro
+(atan(wheelbase x yaw rate / speed), `odometry.wheelbase_m`), above 0.1 m/s.
+`--check` drives straight at command 0: drift within 1 deg/m passes. Up to
 5 deg/m warns, and the warning names servo and linkage play, which alone
 moves the drift by up to about 3 deg/m between runs, so recalibrate only if
 it stays. Beyond 5 deg/m fails as a mechanical fault (servo horn or

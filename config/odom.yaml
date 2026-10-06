@@ -13,9 +13,17 @@ pit_node:
     odometry.yaw_rate_axis: 1
     odometry.yaw_rate_sign: -1.0
 
-    # Per-car scales: speed from the 3 m tape run, yaw rate from the spin.
+    # Per-car scales against the lidar (calibrate_odom.py): speed from a
+    # straight drive, yaw rate from circles.
     odometry.speed_scale: 1.0
     odometry.yaw_rate_scale: 1.0
+
+    # Turning: the encoder over-reads by turn_gain x (1/cos(delta) - 1), delta
+    # from the gyro (odometry.py). Per car: turn_gain from calibrate_steering.py
+    # (0.5 for a locked center shaft; 0 disables), wheelbase measured.
+    odometry.turn_gain: 0.0
+    odometry.wheelbase_m: 0.230
+    odometry.max_steer_deg: 30.0       # caps delta; above the car's full lock
 
     odometry.publish_rate_hz: 50.0     # TF and /odom/integrated
     odometry.stale_input_sec: 0.25     # telemetry gap that holds the pose

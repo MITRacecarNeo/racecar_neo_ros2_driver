@@ -220,3 +220,50 @@ class TestConfig:
 
     def test_pit_launch_loads_odom_yaml(self):
         assert "'odom.yaml'" in (ROOT / 'launch' / 'pit.launch.py').read_text()
+
+
+class TestTurnCorrection:
+    @staticmethod
+    def _encoder(v_true, omega, k, wheelbase=0.23):
+        delta = math.atan(wheelbase * abs(omega / v_true))
+        return v_true * (1 + k * (1 / math.cos(delta) - 1))
+
+    def test_off_by_default(self):
+        from racecar_neo_ros2_driver.odometry import turn_corrected_speed
+
+        assert turn_corrected_speed(0.7, 1.6, 0.0, 0.23, math.radians(30)) == 0.7
+
+    @pytest.mark.parametrize('v_true,omega', [(0.72, 1.70), (0.72, -1.55), (-0.8, 0.4)])
+    def test_recovers_the_true_speed(self, v_true, omega):
+        from racecar_neo_ros2_driver.odometry import turn_corrected_speed
+
+        v_enc = self._encoder(v_true, omega, 0.5)
+        got = turn_corrected_speed(v_enc, omega, 0.5, 0.23, math.radians(30))
+        assert got == pytest.approx(v_true, rel=2e-3)
+
+    def test_full_lock_over_read_is_about_six_percent(self):
+        # Reference car, left full lock: curvature 2.37/m at 0.72 m/s.
+        v_enc = self._encoder(0.72, 0.72 * 2.37, 0.5)
+        assert v_enc / 0.72 - 1 == pytest.approx(0.07, abs=0.005)
+
+    def test_straight_and_slow_are_untouched(self):
+        from racecar_neo_ros2_driver.odometry import turn_corrected_speed
+
+        assert turn_corrected_speed(0.8, 0.0, 0.5, 0.23, math.radians(30)) == 0.8
+        assert turn_corrected_speed(0.05, 1.0, 0.5, 0.23, math.radians(30)) == 0.05
+
+    def test_steering_angle_is_capped(self):
+        from racecar_neo_ros2_driver.odometry import turn_corrected_speed
+
+        # A spin in place by hand would read as 90 deg of steer; capped at 30.
+        got = turn_corrected_speed(0.2, 5.0, 0.5, 0.23, math.radians(30))
+        assert got == pytest.approx(0.2 / (1 + 0.5 * (1 / math.cos(math.radians(30)) - 1)))
+
+    def test_integrator_applies_it(self):
+        from racecar_neo_ros2_driver.odometry import OdomIntegrator
+
+        odo = OdomIntegrator(turn_gain=0.5)
+        v_enc = self._encoder(0.72, 1.7, 0.5)
+        for i in range(101):
+            odo.step(i * 0.01, v_enc, 1.7)
+        assert odo.state.v == pytest.approx(0.72, rel=2e-3)

@@ -76,6 +76,11 @@ CENTER_COMMAND = 0.25
 # Smallest trim change the servo resolves (about 5 us of pulse); a measured
 # trim of +0.019 changed the drift by under 0.1 deg/m on the reference car.
 MIN_TRIM_STEP = 0.01
+CIRCLE_SEC = 6.0
+# Fit of the encoder over-read in turns, k x (1/cos(delta) - 1): only runs with
+# enough steering to carry it, and a sane range for k.
+TURN_FIT_MIN_X = 0.05
+TURN_GAIN_LIMITS = (0.0, 1.0)
 MAX_TRIM = 0.2
 # Straight drift at a fixed trim varied from -2.7 to +0.4 deg/m between runs on
 # the reference car (servo and linkage play). Drift past DRIFT_PASS still
@@ -89,9 +94,15 @@ PLACE = 'Place the car at the middle of one edge of the clear area, pointing acr
 
 def segments(command: float) -> list[tuple[float, float, float]]:
     """Wheels set while still, one drive, stop; the steering never changes."""
-    # Long enough to measure, short enough that the turn stays under about
-    # 100 deg so the two rest scans still overlap.
-    drive_sec = 3.0 if command == 0.0 else 2.0 if abs(command) <= 0.25 else 1.0
+    # Straight and +/-0.25: long enough to measure, short enough to keep the
+    # rest scans overlapping. +/-0.5 and +/-1.0: about 1.5 laps, so the arc is
+    # long (encoder over-read in turns) and the chord is near a full diameter.
+    if command == 0.0:
+        drive_sec = 3.0
+    elif abs(command) <= CENTER_COMMAND:
+        drive_sec = 2.0
+    else:
+        drive_sec = CIRCLE_SEC
     return [(0.0, command, 2.0), (DRIVE_SPEED, command, drive_sec), (0.0, command, 3.0)]
 
 
@@ -124,6 +135,8 @@ class Arc:
     match: MatchResult
     odom_heading_deg: float = math.nan  # /odom/integrated over the same run
     odom_chord_m: float = math.nan
+    encoder_m: float = math.nan  # /odom/integrated path length over the run
+    lidar_arc_m: float = math.nan  # arc length from the lidar chord and heading
 
 
 @dataclass(frozen=True)
@@ -185,6 +198,8 @@ def measure_arc(bag: Bag, laser: Any, command: float) -> Arc | None:
     if true is None:
         return None
     chord = math.hypot(motion[0], motion[1])
+    half = true / 2.0
+    arc_m = chord * (half / math.sin(half)) if abs(half) > 1e-6 else chord
     return Arc(
         command,
         arc_curvature(true, chord),
@@ -193,7 +208,47 @@ def measure_arc(bag: Bag, laser: Any, command: float) -> Arc | None:
         match,
         math.degrees(heading),
         math.hypot(rel[0], rel[1]),
+        float(bag.path_m[-1] - bag.path_m[i0]),
+        abs(arc_m),
     )
+
+
+@dataclass(frozen=True)
+class TurnFit:
+    gain: float  # k for odometry.turn_gain
+    straight_ratio: float  # encoder / lidar on the straight runs (the session's baseline)
+    runs: int
+
+
+def fit_turn_gain(arcs: list[Arc], current_gain: float, wheelbase: float) -> TurnFit | None:
+    """
+    Fit k in encoder / lidar = baseline (1 + k (1/cos(delta) - 1)) over the curved runs.
+
+    The baseline is the straight runs of the same session, so a speed_scale
+    error cancels. /odom/integrated already divides by the current gain's
+    factor, which is put back first. None without a straight run and two
+    curved runs that carry the fit.
+    """
+    straight = [
+        a.encoder_m / a.lidar_arc_m for a in arcs if a.command == 0.0 and a.lidar_arc_m > 0
+    ]
+    if not straight:
+        return None
+    base = float(np.mean(straight))
+    xs, ys = [], []
+    for a in arcs:
+        if a.command == 0.0 or not a.lidar_arc_m > 0:
+            continue
+        x = 1.0 / math.cos(math.atan(wheelbase * abs(a.curvature))) - 1.0
+        if x < TURN_FIT_MIN_X:
+            continue
+        ratio = (a.encoder_m / a.lidar_arc_m) / base * (1.0 + current_gain * x)
+        xs.append(x)
+        ys.append(ratio - 1.0)
+    if len(xs) < 2:
+        return None
+    x, y = np.array(xs), np.array(ys)
+    return TurnFit(float(x @ y / (x @ x)), base, len(xs))
 
 
 # The odometry heading is calibrated to well under 1%; a scan match further
@@ -347,27 +402,53 @@ class SteeringCalibrator:
             f'Drift at steering 0: {fit.drift_deg_per_m:+.2f} deg/m. Gain near center: left '
             f'{fit.gain_left:.2f}/m, right {fit.gain_right:.2f}/m per unit command.'
         )
+        dirs = output_dirs()
+        if not dirs:
+            log.error('No config directory found; nothing written.')
+            return 1
+        status = 0
         if abs(fit.trim_delta) < MIN_TRIM_STEP:
             log.info(
                 f'The trim would change by {fit.trim_delta:+.4f}, below what the servo '
                 f'resolves ({MIN_TRIM_STEP}). The trim stays at {self.trim:+.4f}.'
             )
-            return 0
-        new = self.trim + fit.trim_delta
-        if abs(new) > MAX_TRIM:
+        elif abs(self.trim + fit.trim_delta) > MAX_TRIM:
             log.error(
-                f'Trim {new:+.4f} is beyond +/-{MAX_TRIM}: check the servo horn and the '
-                'steering linkage. Nothing written.'
+                f'Trim {self.trim + fit.trim_delta:+.4f} is beyond +/-{MAX_TRIM}: check the '
+                'servo horn and the steering linkage. The trim is not written.'
             )
-            return 1
-        dirs = output_dirs()
-        if not dirs:
-            log.error('No config directory found; nothing written.')
+            status = 1
+        else:
+            new = self.trim + fit.trim_delta
+            written = write_local_yaml(
+                CAL_NAME, NODE, {'steering_trim': round(new, 4)}, dirs, TOOL, merge=True
+            )
+            log.info(f'steering_trim: {self.trim:+.4f} -> {new:+.4f}')
+            log.info(backup_reminder(written))
+        return max(status, self._write_turn_gain(arcs, dirs))
+
+    def _write_turn_gain(self, arcs: list[Arc], dirs: list[Any]) -> int:
+        """Fit odometry.turn_gain from the curved runs and write it for pit_node."""
+        log = self.log
+        odom = node_params('odom', 'pit_node')
+        current = float(odom.get('odometry.turn_gain', 0.0))
+        wheelbase = float(odom.get('odometry.wheelbase_m', WHEELBASE_M))
+        fit = fit_turn_gain(arcs, current, wheelbase)
+        if fit is None:
+            log.info('The turn gain needs the straight run and two of the circle runs.')
+            return 0
+        log.info(
+            f'Encoder over-read in turns: gain {fit.gain:.3f} from {fit.runs} runs (a locked '
+            f'center shaft gives 0.5; straight runs read {fit.straight_ratio - 1:+.2%}).'
+        )
+        low, high = TURN_GAIN_LIMITS
+        if not low <= fit.gain <= high:
+            log.error(f'A turn gain outside {low} to {high} is not credible. Not written.')
             return 1
         written = write_local_yaml(
-            CAL_NAME, NODE, {'steering_trim': round(new, 4)}, dirs, TOOL, merge=True
+            'odom', 'pit_node', {'odometry.turn_gain': round(fit.gain, 3)}, dirs, TOOL, merge=True
         )
-        log.info(f'steering_trim: {self.trim:+.4f} -> {new:+.4f}')
+        log.info(f'odometry.turn_gain: {current:.3f} -> {fit.gain:.3f}')
         log.info(backup_reminder(written))
         return 0
 

@@ -57,11 +57,15 @@ class TestRuns:
         assert {steer for _, steer, _ in st.segments(command)} == {command}
         assert st.segments(command)[0][0] == 0.0 and st.segments(command)[-1][0] == 0.0
 
-    def test_curved_runs_turn_under_about_100_degrees(self, st):
+    def test_run_lengths(self, st):
         # Measured curvature on the reference car at 0.72 m/s.
-        for command, kappa in ((0.25, 0.9), (0.5, 2.05), (1.0, 2.4)):
-            drive = st.segments(command)[1][2]
-            assert math.degrees(kappa * 0.72 * drive) < 110
+        turn = {
+            c: math.degrees(k * 0.72 * st.segments(c)[1][2])
+            for c, k in ((0.25, 0.9), (0.5, 2.05), (1.0, 2.4))
+        }
+        assert turn[0.25] < 110
+        # About 1.5 laps: a long arc, and a chord near a full diameter.
+        assert 400 < turn[0.5] < 650 and 400 < turn[1.0] < 650
 
     def test_names(self, st):
         assert [st.run_name(c) for c in (0.0, 0.25, -0.5, 1.0)] == ['c0', 'l025', 'r05', 'l10']
@@ -146,3 +150,37 @@ class TestArcProblem:
         # The 16:25 run: heading agreed, chord a third of the drive.
         arc = self._arc(st, 0.32, 0.0257, -128.2, -124.7, chord=0.477, odom_chord=1.40)
         assert 'chord' in st.arc_problem(arc)
+
+
+class TestTurnGain:
+    def _arc(self, st, command, kappa, enc, lidar):
+        sm = load_script('scan_match')
+        m = sm.MatchResult((0, 0, 0), 0.01, 0.9, 5)
+        return st.Arc(command, kappa, 0.0, 1.0, m, 0.0, 1.0, enc, lidar)
+
+    def _x(self, kappa, wheelbase=0.23):
+        return 1 / math.cos(math.atan(wheelbase * abs(kappa))) - 1
+
+    def test_recovers_half_with_a_short_straight_baseline(self, st):
+        base = 0.983  # straight runs read 1.7% short this session
+        arcs = [self._arc(st, 0.0, 0.0, base * 2.3, 2.3)]
+        for c, k in ((0.5, 1.85), (-0.5, -2.06), (1.0, 2.37), (-1.0, -2.14)):
+            arcs.append(self._arc(st, c, k, base * 4.0 * (1 + 0.5 * self._x(k)), 4.0))
+        fit = st.fit_turn_gain(arcs, current_gain=0.0, wheelbase=0.23)
+        assert fit.gain == pytest.approx(0.5, abs=1e-6)
+        assert fit.straight_ratio == pytest.approx(base) and fit.runs == 4
+
+    def test_a_correction_already_applied_is_put_back(self, st):
+        # /odom/integrated already divides by the 0.4 factor; the fit still finds 0.5.
+        arcs = [self._arc(st, 0.0, 0.0, 2.3, 2.3)]
+        for c, k in ((0.5, 1.85), (1.0, 2.37)):
+            x = self._x(k)
+            arcs.append(self._arc(st, c, k, 4.0 * (1 + 0.5 * x) / (1 + 0.4 * x), 4.0))
+        assert st.fit_turn_gain(arcs, 0.4, 0.23).gain == pytest.approx(0.5, abs=1e-6)
+
+    def test_needs_the_straight_run_and_two_curved(self, st):
+        arcs = [self._arc(st, 0.5, 1.85, 4.2, 4.0), self._arc(st, 1.0, 2.37, 4.3, 4.0)]
+        assert st.fit_turn_gain(arcs, 0.0, 0.23) is None
+        arcs.append(self._arc(st, 0.25, 0.9, 1.6, 1.6))  # carries too little steering
+        arcs = arcs[:1] + [self._arc(st, 0.0, 0.0, 2.3, 2.3)]
+        assert st.fit_turn_gain(arcs, 0.0, 0.23) is None

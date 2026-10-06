@@ -21,6 +21,14 @@ All notable changes to this project will be documented in this file. The format 
   compared with `odom.local.yaml` (FAIL when teleop was not restarted).
   `calibrate_common.write_local_yaml(merge=True)` keeps a file's other
   parameters.
+- Turning correction in the integrated odometry: with no center differential
+  the encoder reads the mean of the rear and front axle speeds, so `pit_node`
+  divides it by 1 + k (1/cos delta - 1), delta from the gyro (atan(wheelbase
+  x yaw rate / speed)), above 0.1 m/s and capped at `odometry.max_steer_deg`.
+  New per-car parameters `odometry.turn_gain` (default 0, off) and
+  `odometry.wheelbase_m` (0.230). The steering step fits k from its circle
+  runs (now about 1.5 laps at +/-0.5 and +/-1.0) against its straight runs
+  and writes it to `odom.local.yaml`; 0.499 on the reference car's runs.
 - `calibrate_lidar.py` measures the lidar yaw from the direction of travel:
   from three placements the car drives itself forward and back while RB is
   held, and each forward leg's scan match gives the yaw that lines the

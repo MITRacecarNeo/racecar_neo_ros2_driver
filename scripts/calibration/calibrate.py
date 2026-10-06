@@ -148,7 +148,7 @@ STEPS = (
         'calibrate_odom.py',
         ODOM_SETUP,
         'odom',
-        ('odometry.yaw_rate_scale', 'odometry.speed_scale'),
+        ('odometry.yaw_rate_scale', 'odometry.speed_scale', 'odometry.turn_gain'),
         check=ODOM_SETUP,
     ),
     Step(

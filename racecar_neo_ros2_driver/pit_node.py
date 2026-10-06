@@ -196,6 +196,9 @@ class PitNode(Node):
         self.declare_parameter('odometry.zero_hold_sec', 1.0)
         self.declare_parameter('odometry.zero_max_rate_dps', 2.0)
         self.declare_parameter('odometry.bias_tau_sec', 30.0)
+        self.declare_parameter('odometry.turn_gain', 0.0)
+        self.declare_parameter('odometry.wheelbase_m', 0.230)
+        self.declare_parameter('odometry.max_steer_deg', 30.0)
         # Stamp telemetry with the Teensy's sample time (teensy_clock.py) in
         # place of the Pi's bursty receive time; false falls back to receive time.
         self.declare_parameter('use_teensy_stamps', True)
@@ -427,6 +430,9 @@ class PitNode(Node):
             zero_max_rate=math.radians(float(p('odometry.zero_max_rate_dps').value)),
             bias_tau_sec=float(p('odometry.bias_tau_sec').value),
             stale_sec=float(p('odometry.stale_input_sec').value),
+            turn_gain=float(p('odometry.turn_gain').value),
+            wheelbase=float(p('odometry.wheelbase_m').value),
+            max_steer=math.radians(float(p('odometry.max_steer_deg').value)),
         )
         # Published from the serial reader thread, not a timer: each timer wake-up
         # rebuilds the executor's wait set over every entity of this node, which

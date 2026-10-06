@@ -51,6 +51,7 @@ sys.path.insert(0, str(HERE.parent))
 from calibrate_common import (  # noqa: E402, I100
     backup_reminder,
     install_config_dir,
+    node_params,
     output_dirs,
     run_sequence,
     source_config_dir,
@@ -92,7 +93,8 @@ TITLES = {
 STRAIGHT_PLACE = 'Place the car at the start of the straight path, pointing along it.'
 CIRCLE_PLACE = 'Place the car at one end of the clear area, pointing along it.'
 # Wheelbase and track measured on a reference car, m.
-WHEELBASE_M = 0.230
+# Per car: odometry.wheelbase_m in odom.yaml / odom.local.yaml (measured).
+WHEELBASE_M = float(node_params('odom', 'pit_node').get('odometry.wheelbase_m', 0.230))
 TRACK_M = 0.178
 # Circle fits skip this long after each steering change.
 SETTLE_SEC = 2.0

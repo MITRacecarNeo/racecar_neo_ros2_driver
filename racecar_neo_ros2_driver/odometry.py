@@ -20,6 +20,12 @@ the yaw rate under zero_max_rate, the true yaw rate is 0 (a front-steered car
 cannot turn in place), so the reading feeds a low-pass bias estimate
 (bias_tau_sec) and heading is held. The rate limit skips a car being carried.
 
+Turning: with no center differential the encoder shaft turns at the mean of
+the rear and front axle speeds, and the front axle travels 1/cos(delta) as
+far, so the encoder over-reads by turn_gain x (1/cos(delta) - 1). delta comes
+from the gyro: atan(wheelbase x yaw rate / speed). turn_gain is per car
+(0.5 for a locked center shaft with equal grip front and rear; 0 disables).
+
 No ROS dependency.
 """
 
@@ -57,11 +63,17 @@ class OdomIntegrator:
         zero_max_rate: float = math.radians(2.0),
         bias_tau_sec: float = 30.0,
         stale_sec: float = 0.25,
+        turn_gain: float = 0.0,
+        wheelbase: float = 0.230,
+        max_steer: float = math.radians(30.0),
     ) -> None:
         self.zero_hold_sec = zero_hold_sec
         self.zero_max_rate = zero_max_rate
         self.bias_tau_sec = bias_tau_sec
         self.stale_sec = stale_sec
+        self.turn_gain = turn_gain
+        self.wheelbase = wheelbase
+        self.max_steer = max_steer
         self.state = OdomState()
         self.bias = 0.0
         self._stopped_since: float | None = None
@@ -97,12 +109,35 @@ class OdomIntegrator:
         else:
             self._stopped_since = None
 
+        v = turn_corrected_speed(v, omega, self.turn_gain, self.wheelbase, self.max_steer)
         mid = s.theta + 0.5 * omega * dt
         s.x += v * math.cos(mid) * dt
         s.y += v * math.sin(mid) * dt
         s.theta = math.atan2(math.sin(s.theta + omega * dt), math.cos(s.theta + omega * dt))
         s.v, s.omega = v, omega
         return True
+
+
+# Below this speed yaw rate / speed is too noisy to give a steering angle.
+TURN_MIN_SPEED = 0.1
+
+
+def turn_corrected_speed(
+    v: float, omega: float, turn_gain: float, wheelbase: float, max_steer: float
+) -> float:
+    """
+    Return the base_link speed for an encoder speed `v` read through a locked center shaft.
+
+    v_encoder = v_true (1 + turn_gain (1/cos(delta) - 1)), delta = atan(wheelbase
+    omega / v_true), capped at `max_steer` (rad). Two fixed-point steps.
+    """
+    if turn_gain == 0.0 or abs(v) < TURN_MIN_SPEED:
+        return v
+    true = v
+    for _ in range(2):
+        delta = min(math.atan(wheelbase * abs(omega / true)), max_steer)
+        true = v / (1.0 + turn_gain * (1.0 / math.cos(delta) - 1.0))
+    return true
 
 
 def yaw_quaternion(theta: float) -> tuple[float, float, float, float]:
