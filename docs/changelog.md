@@ -15,8 +15,9 @@ All notable changes to this project will be documented in this file. The format 
   wall. Writes `odom.local.yaml` (`odometry.yaw_rate_scale`,
   `odometry.speed_scale`) and warns when `/odom/integrated` disagrees with the
   gyro it integrates. `--check`: `/odom/integrated` against the lidar over 2
-  circles (within 1%, warn to 3%) and a straight drive (within 2%, warn to
-  5%), with a scan-match quality gate, and the scales `pit_node` is running
+  circles (within 1%, warn to 3%) and a straight drive forward and one in
+  reverse (each within 2%, warn to 5%; the heading change is reported, since
+  reverse drifts more), with a scan-match quality gate, and the scales `pit_node` is running
   compared with `odom.local.yaml` (FAIL when teleop was not restarted).
   `calibrate_common.write_local_yaml(merge=True)` keeps a file's other
   parameters.

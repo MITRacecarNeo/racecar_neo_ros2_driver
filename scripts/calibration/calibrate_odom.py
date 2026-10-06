@@ -110,6 +110,11 @@ DRIVE_LINES = [
     'Drive straight toward the wall at a steady speed.',
     'Stop at least 0.5 meters before the wall. The exact position does not matter.',
 ]
+REVERSE_PLACE = 'Leave the car where it stopped.'
+REVERSE_LINES = [
+    'Drive straight backward, away from the wall, at a steady speed.',
+    'Stop when the car is about back at its start. Some drift to the side is normal.',
+]
 
 
 def log_lines(log: Any, lines: list[str]) -> None:
@@ -156,10 +161,10 @@ def spin_criterion(odom_deg: float, lidar_deg: float) -> Criterion:
     )
 
 
-def drive_criterion(odom_m: float, lidar_m: float) -> Criterion:
+def drive_criterion(odom_m: float, lidar_m: float, name: str = 'drive distance') -> Criterion:
     error = odom_m / lidar_m - 1.0
     return Criterion(
-        'drive distance',
+        name,
         f'{odom_m:.3f} m ({error:+.2%})',
         f'lidar {lidar_m:.3f} m within {DRIVE_PASS:.0%} (warn to {DRIVE_WARN:.0%})',
         graded(error, DRIVE_PASS, DRIVE_WARN),
@@ -389,6 +394,9 @@ class OdomCalibrator(CalibratorNode):
     def drive(self) -> Run | None:
         return self.measure(DRIVE_PLACE, DRIVE_LINES)
 
+    def reverse(self) -> Run | None:
+        return self.measure(REVERSE_PLACE, REVERSE_LINES)
+
     def _match_ok(self, run: Run) -> bool:
         c = match_criterion('scan match', run.match)
         if c.status != 'PASS':
@@ -476,12 +484,17 @@ class OdomCalibrator(CalibratorNode):
 
     def _run_check(self) -> int:
         log = self.get_logger()
-        titles = (f'Step 1 of 2: spin, {CHECK_TURNS} circles', 'Step 2 of 2: straight drive')
-        steps = run_sequence(
-            2,
-            lambda i: log.info(titles[i]),
-            lambda i: self._check_spin() if i == 0 else self._check_drive(),
+        titles = (
+            f'Step 1 of 3: spin, {CHECK_TURNS} circles',
+            'Step 2 of 3: straight drive forward',
+            'Step 3 of 3: straight drive in reverse',
         )
+        checks = (
+            self._check_spin,
+            lambda: self._check_drive('forward'),
+            lambda: self._check_drive('reverse'),
+        )
+        steps = run_sequence(len(checks), lambda i: log.info(titles[i]), lambda i: checks[i]())
         criteria = [c for i in sorted(steps) for c in steps[i]]
         file_scales = (self.yaw_scale, self.speed_scale)
         criteria.append(scales_criterion(file_scales, self.live_scales()))
@@ -498,14 +511,28 @@ class OdomCalibrator(CalibratorNode):
             Criterion('gyro', f'{math.degrees(run.gyro_rad):+.1f} deg', '', 'INFO'),
         ]
 
-    def _check_drive(self) -> list[Criterion] | None:
-        run = self.drive()
+    def _check_drive(self, direction: str) -> list[Criterion] | None:
+        """
+        Judge one straight drive, forward or in reverse.
+
+        Both distances are chords between the same two rest positions, so
+        sideways drift (larger in reverse) does not bias them.
+        """
+        run = self.drive() if direction == 'forward' else self.reverse()
         if run is None:
             return None
         return [
-            match_criterion('drive scan match', run.match),
+            match_criterion(f'{direction} scan match', run.match),
             drive_criterion(
-                math.hypot(run.odom[0], run.odom[1]), math.hypot(run.lidar[0], run.lidar[1])
+                math.hypot(run.odom[0], run.odom[1]),
+                math.hypot(run.lidar[0], run.lidar[1]),
+                name=f'{direction} distance',
+            ),
+            Criterion(
+                f'{direction} heading',
+                f'turned {math.degrees(run.odom[2]):+.1f} deg',
+                '',
+                'INFO',
             ),
         ]
 
