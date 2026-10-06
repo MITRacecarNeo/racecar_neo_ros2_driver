@@ -127,3 +127,127 @@ class TestCheckCriteria:
     def test_beyond_hand_squaring_fails(self, cal):
         fit = _fit(cal, _wall_scan(183.0, 1.0))
         assert cal.check_criteria(fit, 180.0)[0].status == 'FAIL'
+
+
+class TestYawFromTravel:
+    LASER_XY = (0.2383, 0.0)
+
+    def _laser_motion(self, base, yaw_deg):
+        sm = _load('scan_match')
+        return sm.laser_motion(base, (*self.LASER_XY, math.radians(yaw_deg)))
+
+    @pytest.mark.parametrize(
+        'base',
+        [
+            (1.3, -0.02, -math.radians(1.8)),  # forward, drifting right
+            (-1.3, -0.03, math.radians(2.5)),  # reverse
+            (2.3, 0.0, 0.0),  # dead straight
+        ],
+    )
+    def test_recovers_the_mount_yaw(self, base, cal):
+        # base_link's chord at half the turn: a no-sideslip arc.
+        th = base[2]
+        d = math.hypot(base[0], base[1]) * (1 if base[0] > 0 else -1)
+        base = (d * math.cos(th / 2), d * math.sin(th / 2), th)
+        m = self._laser_motion(base, 179.77)
+        direction = math.atan2(base[1], base[0])
+        got = cal.yaw_from_leg(m, th, self.LASER_XY, math.radians(179.163), direction)
+        assert math.degrees(got) == pytest.approx(179.77, abs=1e-6)
+
+    def test_growing_curvature_needs_the_odometry_direction(self, cal):
+        # Curvature that grows along the leg: the chord sits well off half the
+        # turn, so the half-turn rule would be biased; the true direction is not.
+        sm = _load('scan_match')
+        pose = (0.0, 0.0, 0.0)
+        for k in range(50):
+            pose = sm.compose(pose, (0.03, 0.0, math.radians(-0.012 * k)))
+        m = self._laser_motion(pose, 179.77)
+        got = cal.yaw_from_leg(
+            m, pose[2], self.LASER_XY, math.radians(179.163), math.atan2(pose[1], pose[0])
+        )
+        assert math.degrees(got) == pytest.approx(179.77, abs=1e-6)
+        assert abs(math.atan2(pose[1], pose[0]) - pose[2] / 2) > math.radians(1.5)
+
+    def test_summary(self, cal):
+        mean, se = cal.yaw_summary([179.5, 180.0, 179.7, 179.9])
+        assert mean == pytest.approx(179.775)
+        assert se == pytest.approx(np.std([179.5, 180.0, 179.7, 179.9], ddof=1) / 2)
+        assert cal.yaw_summary([180.0])[1] == math.inf
+
+    @pytest.mark.parametrize(
+        'measured,status', [(179.5, 'PASS'), (179.9, 'WARN'), (180.5, 'FAIL')]
+    )
+    def test_offset_criterion(self, cal, measured, status):
+        assert cal.offset_criterion(measured, 179.163).status == status
+
+    def test_offset_wraps_at_180(self, cal):
+        assert cal.offset_criterion(-179.9, 179.9).status == 'PASS'
+
+
+class TestMeasureLegs:
+    def test_forward_and_reverse_from_a_simulated_run(self, cal):
+        from test_scan_match import _points, _scan
+
+        sm = _load('scan_match')
+        md = _load('calibrate_dynamics')
+        true_yaw = math.radians(179.77)
+        laser_true = (0.2383, 0.0, true_yaw)
+        laser_cfg = (0.2383, 0.0, math.radians(179.163))
+        world0 = (-1.2, -0.6, 0.15)
+        th1 = math.radians(-2.0)
+        leg1 = (1.3 * math.cos(th1 / 2), 1.3 * math.sin(th1 / 2), th1)
+        world1 = sm.compose(world0, leg1)
+        th2 = math.radians(1.5)
+        leg2 = (-1.25 * math.cos(th2 / 2), -1.25 * math.sin(th2 / 2), th2)
+        world2 = sm.compose(world1, leg2)
+
+        def scans(world, t0, seed):
+            pts = _points(sm, _scan(sm.compose(world, laser_true), noise=0.004, seed=seed))
+            return [(t0, pts, np.zeros(len(pts)))]
+
+        t = np.arange(0.0, 14.0, 0.02)
+        odom = []
+        for tt in t:
+            if tt < 3.0:
+                p = (0.0, 0.0, 0.0)
+            elif tt < 7.0:
+                p = leg1
+            else:
+                p = sm.compose(leg1, leg2)
+            odom.append(p)
+        odom = np.array(odom)
+        bag = md.Bag(
+            odom_t=t,
+            odom=odom,
+            speed=np.zeros_like(t),
+            path_m=np.zeros_like(t),
+            gyro_t=t,
+            yaw_rate=np.zeros_like(t),
+            motor_t=np.array([0.0, 3.0, 5.0, 7.0, 9.0]),
+            motor=np.array([[0, 0], [0.25, 0], [0, 0], [-0.25, 0], [0, 0]], float),
+            scans=scans(world0, 2.5, 1) + scans(world1, 6.5, 2) + scans(world2, 13.5, 3),
+        )
+        legs = cal.measure_legs(bag, laser_cfg)
+        assert [leg.direction for leg in legs] == ['forward', 'reverse']
+        for leg in legs:
+            assert leg.problem == ''
+            assert leg.yaw_deg == pytest.approx(179.77, abs=0.1)
+        assert [leg.counted for leg in legs] == [True, False]
+
+    def test_no_reverse_motion_is_reported(self, cal):
+        md = _load('calibrate_dynamics')
+        t = np.arange(0.0, 14.0, 0.02)
+        odom = np.zeros((len(t), 3))
+        bag = md.Bag(
+            odom_t=t,
+            odom=odom,
+            speed=np.zeros_like(t),
+            path_m=np.zeros_like(t),
+            gyro_t=t,
+            yaw_rate=np.zeros_like(t),
+            motor_t=np.array([0.0, 3.0, 5.0, 7.0, 9.0]),
+            motor=np.array([[0, 0], [0.25, 0], [0, 0], [-0.25, 0], [0, 0]], float),
+            scans=[],
+        )
+        legs = cal.measure_legs(bag, (0.2383, 0.0, math.pi))
+        assert legs[1].problem == 'The car did not reverse.'

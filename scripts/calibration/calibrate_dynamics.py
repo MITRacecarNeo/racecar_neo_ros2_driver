@@ -534,16 +534,19 @@ class Driver:
             while not self.rb:
                 self._hold(0.1, 0.0, 0.0, need_rb=False)
             ok = self._hold(COUNTDOWN_SEC, 0.0, 0.0, need_rb=True)
-            drove = False
-            for speed, steer, seconds in (segments or RUNS[run]) if ok else []:
-                # RB gates driving only; the rests before and after are still.
-                if speed == 0.0 and drove:
+            plan = segments or RUNS[run]
+            moving = [k for k, seg in enumerate(plan) if seg[0] != 0.0]
+            last_move = moving[-1] if moving else -1
+            for k, (speed, steer, seconds) in enumerate(plan if ok else []):
+                # RB is needed from the first move to the last, including the
+                # pauses between moves; the rests at the start and end are still.
+                if k == last_move + 1:
                     self.log.info('You can release RB now.')
                     self.log.info(f'Keep your hands off the car for {seconds:.0f} seconds.')
-                if not self._hold(seconds, speed, steer, need_rb=speed != 0.0):
+                need_rb = bool(moving) and moving[0] <= k <= last_move
+                if not self._hold(seconds, speed, steer, need_rb=need_rb):
                     ok = False
                     break
-                drove = drove or speed != 0.0
         finally:
             recorder.send_signal(signal.SIGINT)
             recorder.wait(timeout=15)

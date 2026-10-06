@@ -20,6 +20,16 @@ All notable changes to this project will be documented in this file. The format 
   compared with `odom.local.yaml` (FAIL when teleop was not restarted).
   `calibrate_common.write_local_yaml(merge=True)` keeps a file's other
   parameters.
+- `calibrate_lidar.py` measures the lidar yaw from the direction of travel:
+  from three placements the car drives itself forward and back while RB is
+  held, and each forward leg's scan match gives the yaw that lines the
+  laser's motion up with the direction `/odom/integrated` says the car went.
+  Reverse legs return the car and are reported, not counted. The mean is
+  written to `frames.local.yaml` when its standard error is 0.15 deg or
+  less, otherwise another placement is asked for. `--check` drives one
+  placement (within 0.5 deg, warn to 1); `--analyze` recomputes from
+  recorded placements. The hand-squared wall method moves to `--wall`. The
+  shared driver holds RB from the first move to the last, through pauses.
 - `calibrate_steering.py`, the `steering` step of `racecar calibrate`: the
   car drives one constant-steering arc per command (0, +/-0.25, +/-0.5,
   +/-1.0) by itself while RB is held; curvature comes from the lidar rest

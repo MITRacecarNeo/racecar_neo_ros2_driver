@@ -1,16 +1,27 @@
 #!/usr/bin/env python3
 """
-Lidar yaw calibration against a flat wall.
+Lidar yaw calibration from the direction of travel, by scan matching.
 
-With the car squared to a flat wall ahead, the wall should appear in base_link
-as a straight line perpendicular to x. Reads /scan, places the points in
-base_link with the current config/frames.yaml offsets, fits a line to the wall
-ahead, and writes the yaw that makes it perpendicular to
-config/frames.local.yaml (laser_yaw_deg).
+The `lidar` step of `racecar calibrate`. From each of three placements the
+car drives itself while the operator holds RB: forward 2 s, a pause, then
+back 2 s, with lidar scans at rest before, between, and after. base_link
+moves without sideslip, so its chord points the way /odom/integrated says it
+went (the gyro heading along the path). The scan match gives the laser's
+motion in the laser's own frame, and the one laser yaw that lines the two up
+is the measurement. Each forward leg is one estimate; the reverse leg
+returns the car and is reported, not counted, since reversing with front
+steering wanders. The mean is written to config/frames.local.yaml
+(laser_yaw_deg) when its standard error is at most MAX_YAW_SE_DEG; otherwise
+another placement is asked for.
 
---check reports without writing.
---wall-distance-mm takes a tape distance from base_link to the wall and
-reports the lidar x error it implies (nothing is written for x).
+--check drives one placement and compares its forward leg with the
+configured yaw. --analyze BAG ... recomputes from recorded placements and
+writes the result the same way, without driving.
+
+--wall uses the older method: the car squared by hand to a flat wall ahead,
+and a line fit that should be perpendicular to x in base_link (--wall
+--check reports without writing; --wall-distance-mm takes a tape distance
+from base_link to the wall and reports the lidar x error it implies).
 """
 
 from __future__ import annotations
@@ -230,14 +241,330 @@ class LidarYawCalibrator(CalibratorNode):
         return 0
 
 
+# ---------------------------------------------------------------------------
+# Yaw from the direction of travel (the default method)
+# ---------------------------------------------------------------------------
+
+DRIVE_SPEED = 0.25
+# Forward, pause, reverse: RB stays held through the pause.
+SEGMENTS = [
+    (0.0, 0.0, 2.0),
+    (DRIVE_SPEED, 0.0, 2.0),
+    (0.0, 0.0, 2.0),
+    (-DRIVE_SPEED, 0.0, 2.0),
+    (0.0, 0.0, 3.0),
+]
+PLACEMENTS = 3
+MAX_PLACEMENTS = 6
+# One forward leg scatters about 0.14 deg; three placements give about 0.08.
+MAX_YAW_SE_DEG = 0.15
+CHECK_PASS_DEG, CHECK_WARN_DEG = 0.5, 1.0
+# A leg shorter than this did not drive (no reverse from rest, or RB released).
+MIN_LEG_M = 0.5
+SEARCH_DEG = 15.0
+PLACE = 'Place the car on the floor pointing along the clear area.'
+PLACE_AGAIN = 'Use a different spot or direction from the previous placements.'
+MOTION = 'The car drives forward about 1.3 meters, stops, then drives back.'
+
+
+def yaw_from_leg(
+    laser_motion_pose: Any, heading: float, laser_xy: tuple, yaw0: float, direction: float
+) -> float:
+    """
+    Return the laser yaw (rad) that puts base_link's chord along `direction`.
+
+    `laser_motion_pose` is the scan match (laser frame); `heading` its turn,
+    resolved to the true multiple of 2 pi. `direction` is the chord direction
+    in the start base_link frame from /odom/integrated, which follows the
+    heading along the whole path (half the turn only holds for a constant
+    arc). Compared modulo pi, so it holds for a reverse leg too.
+    """
+    from scan_match import base_motion
+    from scipy.optimize import brentq
+
+    m = (laser_motion_pose[0], laser_motion_pose[1], heading)
+
+    def sideslip(yaw: float) -> float:
+        b = base_motion(m, (laser_xy[0], laser_xy[1], yaw))
+        return math.remainder(math.atan2(b[1], b[0]) - direction, math.pi)
+
+    span = math.radians(SEARCH_DEG)
+    return float(brentq(sideslip, yaw0 - span, yaw0 + span))
+
+
+@dataclass(frozen=True)
+class Leg:
+    direction: str  # forward or reverse
+    yaw_deg: float
+    chord_m: float
+    heading_deg: float
+    rms_m: float
+    inliers: float
+    problem: str = ''
+
+    @property
+    def counted(self) -> bool:
+        """Forward legs only: reversing with front steering wanders (4x the scatter)."""
+        return self.direction == 'forward' and not self.problem
+
+
+def measure_legs(bag: Any, laser: Any) -> list[Leg]:
+    """Return the forward and reverse legs of one placement, from its three rest scans."""
+    from calibrate_dynamics import command_edges, rest_scan
+    from calibrate_odom import best_match, MATCH_MAX_RMS_M, MATCH_MIN_INLIERS, resolve_turns
+    from scan_match import base_motion, compose, invert, laser_motion
+
+    edges = command_edges(bag)
+    starts = [e for e in edges if e[1] != 0.0]
+    legs = []
+    for n, launch in enumerate(starts[:2]):
+        direction = 'forward' if launch[1] > 0 else 'reverse'
+        after = starts[n + 1][0] if n + 1 < len(starts) else bag.odom_t[-1] + 0.1
+        a = rest_scan(bag, launch[0] - 1.5, launch[0] - 0.1)
+        b = rest_scan(bag, after - 1.6, after - 0.1)
+        i0 = int(np.searchsorted(bag.odom_t, launch[0] - 0.1))
+        i1 = min(int(np.searchsorted(bag.odom_t, after - 0.1)), len(bag.odom_t) - 1)
+        rel = compose(invert(tuple(bag.odom[i0])), tuple(bag.odom[i1]))
+        heading = float(bag.odom[i1, 2] - bag.odom[i0, 2])
+        odom_m = math.hypot(rel[0], rel[1])
+        if odom_m < MIN_LEG_M or len(a) < 50 or len(b) < 50:
+            what = 'did not reverse' if direction == 'reverse' else 'did not drive forward'
+            legs.append(Leg(direction, math.nan, odom_m, 0.0, math.nan, 0.0, f'The car {what}.'))
+            continue
+        guesses = [
+            laser_motion((rel[0], rel[1], heading), laser),
+            laser_motion((0.0, 0.0, heading), laser),
+        ]
+        match = best_match(a, b, guesses)
+        true = resolve_turns(match.pose[2], heading)
+        chord = math.hypot(*base_motion(match.pose, laser)[:2])
+        problem = ''
+        if match.rms_m > MATCH_MAX_RMS_M or match.inliers < MATCH_MIN_INLIERS:
+            problem = f'Scan match too poor ({match.rms_m * 1e3:.1f} mm, {match.inliers:.0%}).'
+        elif true is None or abs(math.degrees(true - heading)) > 10.0:
+            problem = 'The lidar and the odometry disagree on the heading.'
+        elif abs(chord / odom_m - 1.0) > 0.15:
+            problem = f'The lidar measured {chord:.2f} m and the odometry {odom_m:.2f} m.'
+        yaw = math.nan
+        if not problem:
+            try:
+                direction_rad = math.atan2(rel[1], rel[0])
+                yaw = math.degrees(
+                    yaw_from_leg(match.pose, true, laser[:2], laser[2], direction_rad)
+                )
+            except ValueError:
+                problem = f'No lidar yaw within {SEARCH_DEG:g} deg of the configured one fits.'
+        legs.append(
+            Leg(
+                direction,
+                yaw,
+                chord,
+                math.degrees(true if true is not None else heading),
+                match.rms_m,
+                match.inliers,
+                problem,
+            )
+        )
+    return legs
+
+
+def yaw_summary(estimates: list[float]) -> tuple[float, float]:
+    """Return (mean, standard error) in degrees; the error is inf with fewer than 2."""
+    if not estimates:
+        return math.nan, math.inf
+    mean = float(np.mean(estimates))
+    if len(estimates) < 2:
+        return mean, math.inf
+    return mean, float(np.std(estimates, ddof=1) / math.sqrt(len(estimates)))
+
+
+def offset_criterion(measured_deg: float, configured_deg: float) -> Criterion:
+    error = math.remainder(measured_deg - configured_deg, 360.0)
+    status = (
+        'PASS'
+        if abs(error) <= CHECK_PASS_DEG
+        else 'WARN' if abs(error) <= CHECK_WARN_DEG else 'FAIL'
+    )
+    return Criterion(
+        'lidar yaw',
+        f'{measured_deg:.2f} deg ({error:+.2f} from {configured_deg:.2f})',
+        f'within {CHECK_PASS_DEG} deg (warn to {CHECK_WARN_DEG})',
+        status,
+        'recalibrate the lidar yaw: racecar calibrate lidar',
+    )
+
+
+class DriveYawCalibrator:
+    def __init__(self, check: bool, report: str | None) -> None:
+        from calibrate_dynamics import Driver, laser_pose
+
+        self.check = check
+        self.report = report
+        self.driver = Driver()
+        self.log = self.driver.log
+        self.laser = laser_pose()
+
+    def placement(self) -> list[Leg] | None:
+        """Drive one placement; return its good legs, or None to offer it again."""
+        from calibrate_dynamics import read_bag
+
+        bag = self.driver.drive('yaw', SEGMENTS, prefix='lidar')
+        if bag is None:
+            return None
+        self.log.info('Analyzing the run...')
+        legs = measure_legs(read_bag(bag), self.laser)
+        good = []
+        for leg in legs:
+            if leg.problem:
+                self.log.error(f'{leg.direction.capitalize()}: {leg.problem}')
+                continue
+            note = '' if leg.counted else ' Not counted: the reverse leg returns the car.'
+            self.log.info(
+                f'{leg.direction.capitalize()}: {leg.chord_m:.2f} m, turned '
+                f'{leg.heading_deg:+.1f} deg: lidar yaw {leg.yaw_deg:.2f} deg '
+                f'(scan match {leg.rms_m * 1e3:.1f} mm, {leg.inliers:.0%}).{note}'
+            )
+            if leg.counted:
+                good.append(leg)
+        if any('reverse' in leg.problem for leg in legs):
+            self.log.error(
+                'The car did not reverse from rest. The ESC may need a brake before '
+                'reverse; check its reverse mode.'
+            )
+        if not good:
+            self.log.error('The forward leg gave no estimate. Run it again.')
+            return None
+        return good
+
+    def run(self) -> int:
+        try:
+            return self._check() if self.check else self._calibrate()
+        finally:
+            self.driver.close()
+
+    def _show(self, i: int, count: int) -> None:
+        self.log.info(f'Placement {i + 1} of {count}')
+        self.log.info(PLACE)
+        if i:
+            self.log.info(PLACE_AGAIN)
+        self.log.info(MOTION)
+
+    def _calibrate(self) -> int:
+        from calibrate_common import run_sequence
+
+        log = self.log
+        found = run_sequence(
+            PLACEMENTS, lambda i: self._show(i, PLACEMENTS), lambda i: self.placement()
+        )
+        estimates = [leg.yaw_deg for i in sorted(found) for leg in found[i]]
+        mean, se = yaw_summary(estimates)
+        count = PLACEMENTS
+        while se > MAX_YAW_SE_DEG and count < MAX_PLACEMENTS and estimates:
+            log.info(
+                f'The estimates scatter too much (standard error {se:.2f} deg, '
+                f'needs {MAX_YAW_SE_DEG}). One more placement is needed.'
+            )
+            self._show(count, count + 1)
+            if read_line('Press Enter to run it, or s to stop: ').strip().lower() == 's':
+                break
+            legs = self.placement()
+            if legs:
+                estimates += [leg.yaw_deg for leg in legs]
+                mean, se = yaw_summary(estimates)
+                count += 1
+        return write_yaw(estimates, math.degrees(self.laser[2]), log)
+
+    def _check(self) -> int:
+        from calibrate_common import run_sequence
+        from calibrate_odom import match_criterion
+        from scan_match import MatchResult
+
+        log = self.log
+        found = run_sequence(1, lambda i: self._show(i, 1), lambda i: self.placement())
+        legs = found.get(0, [])
+        criteria = []
+        if not legs:
+            criteria.append(Criterion('lidar yaw', 'no result', '', 'FAIL', 'see above'))
+        else:
+            for leg in legs:
+                criteria.append(
+                    match_criterion(
+                        f'{leg.direction} scan match',
+                        MatchResult((0.0, 0.0, 0.0), leg.rms_m, leg.inliers, 0),
+                    )
+                )
+            mean, _ = yaw_summary([leg.yaw_deg for leg in legs])
+            criteria.append(offset_criterion(mean, math.degrees(self.laser[2])))
+        return finish_check(log, criteria, self.report)
+
+
+def analyze_bags(names: list[str]) -> int:
+    """Recompute the yaw from recorded placements and write it when precise enough."""
+    import logging
+
+    from calibrate_dynamics import laser_pose, read_bag
+    from racecar_log import load_config, resolve_log_root
+
+    logging.basicConfig(format='%(message)s', level=logging.INFO)
+    log = logging.getLogger(TOOL)
+    laser = laser_pose()
+    estimates = []
+    for name in names:
+        bag = Path(name).expanduser()
+        if not bag.exists():
+            bag = Path(resolve_log_root(load_config().get('DIR'))) / name
+        for leg in measure_legs(read_bag(bag), laser):
+            state = leg.problem or ('counted' if leg.counted else 'not counted')
+            log.info(f'{bag.name} {leg.direction}: {leg.yaw_deg:.3f} deg ({state})')
+            if leg.counted:
+                estimates.append(leg.yaw_deg)
+    return write_yaw(estimates, math.degrees(laser[2]), log)
+
+
+def write_yaw(estimates: list[float], configured: float, log: Any) -> int:
+    """Report the mean and write it as laser_yaw_deg when its standard error allows."""
+    if not estimates:
+        log.info('Nothing measured.')
+        return 0
+    mean, se = yaw_summary(estimates)
+    log.info(
+        f'Lidar yaw {mean:.3f} deg from {len(estimates)} estimates (standard error '
+        f'{se:.2f} deg, spread {min(estimates):.2f} to {max(estimates):.2f}); '
+        f'configured {configured:.3f} deg.'
+    )
+    if se > MAX_YAW_SE_DEG:
+        log.error(f'The standard error is above {MAX_YAW_SE_DEG} deg. Nothing written.')
+        return 1
+    dirs = output_dirs()
+    if not dirs:
+        log.error('No config directory found; nothing written.')
+        return 1
+    written = update_local_values('frames', {'laser_yaw_deg': round(mean, 3)}, dirs, TOOL)
+    log.info(f'laser_yaw_deg: {configured:.3f} -> {mean:.3f}')
+    log.info(backup_reminder(written))
+    return 0
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description='Lidar yaw calibration against a flat wall.')
-    parser.add_argument('--check', action='store_true', help='report only; exit 1 on FAIL')
+    parser = argparse.ArgumentParser(
+        description='Lidar yaw calibration from the direction of travel (or --wall).'
+    )
     parser.add_argument(
-        '--wall-distance-mm', type=float, help='taped distance from base_link to the wall'
+        '--analyze', nargs='+', metavar='BAG', help='recompute from recorded placements'
+    )
+    parser.add_argument('--check', action='store_true', help='report only; exit 1 on FAIL')
+    parser.add_argument('--wall', action='store_true', help='use the hand-squared wall method')
+    parser.add_argument(
+        '--wall-distance-mm',
+        type=float,
+        help='with --wall: taped distance from base_link to the wall',
     )
     parser.add_argument('--report', help='with --check: write the result as JSON to this file')
     args = parser.parse_args(remove_ros_args(sys.argv)[1:])
+    if args.analyze:
+        return analyze_bags(args.analyze)
+    if not args.wall:
+        return DriveYawCalibrator(args.check, args.report).run()
     rclpy.init()
     return spin_until_done(LidarYawCalibrator(args.check, args.wall_distance_mm, args.report))
 

@@ -162,3 +162,16 @@ class TestCircleRuns:
         for side in ('right', 'left'):
             assert f'servo_center_to_lock_s_{side}' in step.keys
         assert 'servo_lock_to_lock_s' in step.keys
+
+
+class TestPauseBetweenMoves:
+    def test_rb_is_held_through_the_pause_and_released_after_the_last_move(
+        self, md, monkeypatch, tmp_path
+    ):
+        gate = TestDriveGate()
+        d, held = gate._driver(md, monkeypatch, tmp_path, release_after_driving=False)
+        plan = [(0, 0, 2), (0.25, 0, 2), (0, 0, 2), (-0.25, 0, 2), (0, 0, 3)]
+        assert d.drive('yaw', plan, prefix='lidar') is not None
+        needs = [need for _, need in held][-5:]
+        assert needs == [False, True, True, True, False]
+        assert d.log.lines.count('You can release RB now.') == 1

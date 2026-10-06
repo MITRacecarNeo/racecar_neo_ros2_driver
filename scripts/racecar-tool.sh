@@ -1181,7 +1181,8 @@ Commands:
                           imu         LSM9DS1 accel bias and scale, gyro bias
                           mag         LSM9DS1 magnetometer
                           realsense   RealSense accel bias and scale, gyro bias
-                          lidar       lidar yaw
+                          lidar       lidar yaw from the direction of travel;
+                                      the car drives itself while RB is held
                           odom        gyro yaw scale (circles) and encoder
                                       speed scale (straight drive), both
                                       against the lidar

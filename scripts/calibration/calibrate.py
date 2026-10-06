@@ -47,6 +47,10 @@ from calibrate_common import (  # noqa: E402, I100
 TELEOP_UNIT = 'racecar-teleop'
 RUN_PROMPT = 'Press Enter to run, s to skip, and q to stop: '
 RUN_PROMPT_BACK = 'Press Enter to run, s to skip, b to go back a step, and q to stop: '
+LIDAR_SETUP = (
+    'Use a clear straight path of about 2 meters with walls or furniture nearby.\n'
+    'Connect the controller. Hold RB to autonomously drive the car.'
+)
 STEERING_SETUP = (
     'Use a clear area of about 3 by 3 meters surrounded by walls or furniture.\n'
     'Connect the controller. Hold RB to autonomously drive the car.'
@@ -133,12 +137,10 @@ STEPS = (
         'lidar',
         'Lidar yaw',
         'calibrate_lidar.py',
-        'Place the car down on the floor facing a flat, clear wall.\n'
-        'Ensure that the front bumper is 0.5 to 2 meters away from the wall.',
+        LIDAR_SETUP,
         'frames',
         ('laser_yaw_deg',),
-        check='Place the car down facing a flat, clear wall, about 0.5 to 2 meters away '
-        'from it.',
+        check=LIDAR_SETUP,
     ),
     Step(
         'odom',

@@ -572,7 +572,7 @@ if any check failed. One line per prompt on stdin scripts the whole run.
 | `imu` | Still and level, 3 s | `/imu/lsm9ds1` gravity within 1% of 9.807 m/s^2; gyro under 0.01 rad/s |
 | `mag` | One full turn flat on the floor, 25 s, away from large metal | `/mag` traces a circle centered on the turning axis (within 10% of its radius) and round to 5%. Field strength outside 20 to 70 uT is a WARN: a uniform scale error leaves a compass heading unchanged (see docs/troubleshooting.md on `imu.mag_scale`). `/mag/raw` is fitted the same way for contrast |
 | `realsense` | Still and level, 3 s | the stored calibration applied to `/imu/realsense` gives gravity within 1%, gyro under 0.01 rad/s |
-| `lidar` | Squared to a flat wall | `calibrate_lidar.py --check`: wall within 0.5 deg of square passes; up to 2 deg warns, since hand squaring is good to about 1 deg; beyond 2 deg fails (mount moved or car badly placed) |
+| `lidar` | Driven forward and back about 1.3 m, parked 2 s before, between, and after | the lidar yaw from the direction of travel within 0.5 deg of `laser_yaw_deg` (warn to 1); each scan match under 30 mm RMS with at least 30% of points matched |
 | `odom` | Driven 2 circles and stopped anywhere near the start, then driven straight toward a wall and stopped anywhere short of it; parked 2 s before and after each run | `/odom/integrated` heading within 1% of the lidar's (warn to 3%); distance within 2% of the lidar's (warn to 5%); each scan match under 30 mm RMS with at least 30% of points matched; the scales `pit_node` runs with match `odom.local.yaml` |
 | `steering` | Driven straight at steering 0 about 2 m, parked 2 s before and after | heading drift within 1 deg/m (warn to 5, naming servo and linkage play); the trim `throttle_node` runs with matches `throttle.local.yaml` |
 
@@ -594,7 +594,7 @@ also run on their own:
 ros2 run racecar_neo_ros2_driver calibrate_imu.py         # LSM9DS1 accel bias + scale, gyro bias
 ros2 run racecar_neo_ros2_driver calibrate_mag.py         # LSM9DS1 hard/soft iron
 ros2 run racecar_neo_ros2_driver calibrate_realsense_imu.py   # D435i accel bias + scale, gyro bias
-ros2 run racecar_neo_ros2_driver calibrate_lidar.py       # lidar yaw, car squared to a wall
+ros2 run racecar_neo_ros2_driver calibrate_lidar.py       # lidar yaw from the direction of travel; the car drives itself while RB is held
 ros2 run racecar_neo_ros2_driver calibrate_odom.py        # odometry against the lidar: circles, then a straight run
 ros2 run racecar_neo_ros2_driver calibrate_steering.py    # steering trim against the lidar; the car drives itself while RB is held
 ros2 run racecar_neo_ros2_driver calibrate_dynamics.py    # simulator dynamics; the car drives itself while RB is held
@@ -606,7 +606,7 @@ racecar service restart teleop                            # nodes read the value
 | `calibrate_imu.py` | `/imu/lsm9ds1/raw` | `config/lsm9ds1_cal.local.yaml` | `pit_node` |
 | `calibrate_mag.py` | `/mag/raw` | `config/lsm9ds1_mag_cal.local.yaml` | `pit_node` |
 | `calibrate_realsense_imu.py` | `/imu/realsense` | `config/realsense_cal.local.yaml` | `imu_fusion_node` |
-| `calibrate_lidar.py` | `/scan` | `config/frames.local.yaml` (`laser_yaw_deg`) | `frames.launch.py` |
+| `calibrate_lidar.py` | `/scan`, `/odom/integrated`, `/motor` (recorded); `/joy` (RB) | `config/frames.local.yaml` (`laser_yaw_deg`) | `frames.launch.py` |
 | `calibrate_odom.py` | `/imu/lsm9ds1`, `/odom/integrated`, `/scan` | `config/odom.local.yaml` (`odometry.yaw_rate_scale`, `odometry.speed_scale`) | `pit_node` |
 | `calibrate_steering.py` | `/scan`, `/odom/integrated`, `/motor` (recorded); `/joy` (RB) | `config/throttle.local.yaml` (`steering_trim`) | `throttle_node` |
 | `calibrate_dynamics.py` | `/scan`, `/imu/lsm9ds1`, `/odom/integrated`, `/motor` (recorded); `/joy` (RB) | `config/dynamics.local.yaml` | the simulator (no node reads it) |
@@ -616,12 +616,28 @@ exists, the install share `config/` directory, so no rebuild is needed. It
 writes nothing and exits non-zero when the fit fails or it has too little
 data.
 
-`calibrate_lidar.py` needs the car facing a flat wall 0.5 to 2 m away, squared
-so both front wheel centers are the same distance from it. It fits a line to the
-wall in `base_link` and writes the lidar yaw that makes the wall perpendicular
-to the car. `--check` reports the fit without writing and exits 1 when the wall
-is more than 0.5 deg off square; `--wall-distance-mm` takes a taped distance
-from `base_link` to the wall and reports the lidar x error it implies.
+`calibrate_lidar.py` measures the lidar yaw from the direction the car
+travels. From each of three placements the car drives itself while RB is
+held: forward 2 s, a pause, then back 2 s, with scans at rest before,
+between, and after. `base_link` moves without sideslip, so its chord points
+the way `/odom/integrated` says it went (the gyro heading along the path,
+which also covers a path whose curvature changes); the scan match gives the
+laser's motion in its own frame, and the one laser yaw that lines the two up
+is the estimate. Forward legs scatter about 0.14 deg; reverse legs scatter
+four times as much (reversing with front steering wanders), so they return
+the car and are reported but not counted. The mean of the forward legs is
+written as `laser_yaw_deg` when its standard error is 0.15 deg or less;
+otherwise the tool asks for another placement, up to six. A leg that does
+not move (no reverse from rest, or RB released) is reported. `--analyze
+BAG ...` recomputes from recorded placements and writes the same way.
+`--check` drives one placement and passes
+within 0.5 deg of the configured yaw (warns to 1). `--wall` keeps the older
+method: the car squared by hand to a flat wall 0.5 to 2 m ahead (both front
+wheel centers the same distance from it), a line fit that should be
+perpendicular to x in `base_link`; hand squaring is good to about 1 deg.
+`--wall --check` reports that fit without writing, and `--wall-distance-mm`
+takes a taped distance from `base_link` to the wall and reports the lidar x
+error it implies.
 
 `calibrate_odom.py` has two steps, each skippable, and uses the lidar as the
 reference. Each run starts and ends with the car parked for 2 s while the
