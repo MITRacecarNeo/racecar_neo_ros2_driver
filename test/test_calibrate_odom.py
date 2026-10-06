@@ -173,3 +173,27 @@ class TestBestMatch:
         result = odom.best_match(ref, cur, [(0.0, 0.0, math.radians(38.0))])
         assert math.degrees(result.pose[2]) == pytest.approx(3.0, abs=0.1)
         assert result.pose[:2] == (pytest.approx(0.3, abs=0.005), pytest.approx(-0.2, abs=0.005))
+
+
+class TestConsistentMatch:
+    def _result(self, x, y, inliers):
+        sm = load_script('scan_match')
+        return sm.MatchResult((x, y, 0.0), 0.01, inliers, 5)
+
+    def test_far_from_the_odometry_is_inconsistent(self):
+        odom = load_script('calibrate_odom')
+        # The cold reverse run: odometry 2.89 m, the wrong match 0.29 m.
+        assert not odom.consistent(self._result(-0.28, 0.06, 0.6), (-2.85, -0.4, 0.5))
+        assert odom.consistent(self._result(-2.80, -0.42, 0.4), (-2.85, -0.4, 0.5))
+
+    def test_short_moves_get_a_minimum_tolerance(self):
+        odom = load_script('calibrate_odom')
+        assert odom.consistent(self._result(0.3, 0.1, 0.9), (0.0, 0.0, 6.28))
+
+    def test_best_match_prefers_the_consistent_alignment(self, monkeypatch):
+        odom = load_script('calibrate_odom')
+        wrong, right = self._result(0.0, 0.0, 0.62), self._result(-2.8, -0.4, 0.55)
+        calls = iter([right] + [wrong] * 200)
+        monkeypatch.setattr(odom, 'match_scans', lambda a, b, g: next(calls))
+        got = odom.best_match(None, None, [(-2.85, -0.4, 0.5), (0.0, 0.0, 0.5)])
+        assert got is right

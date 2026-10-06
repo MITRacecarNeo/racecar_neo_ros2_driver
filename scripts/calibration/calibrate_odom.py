@@ -229,16 +229,36 @@ class Run:
 GUESS_OFFSETS_DEG = tuple(range(-45, 50, 5))
 
 
+# A match whose distance differs from the odometry's by more than this is a
+# wrong alignment (a repeated or symmetric scene), not an odometry error: the
+# check limits (2%, 5%) sit far inside it.
+CONSISTENT_FRACTION, CONSISTENT_MIN_M = 0.3, 0.4
+
+
+def consistent(result: MatchResult, expected: Pose) -> bool:
+    """Return whether a match's translation agrees with the expected (odometry) one."""
+    gap = math.hypot(result.pose[0] - expected[0], result.pose[1] - expected[1])
+    return gap <= max(CONSISTENT_MIN_M, CONSISTENT_FRACTION * math.hypot(*expected[:2]))
+
+
 def best_match(reference: np.ndarray, scan: np.ndarray, guesses: list[Pose]) -> MatchResult:
-    """Return the best-quality match over the guesses, each fanned out in heading."""
+    """
+    Return the best-quality match over the guesses, each fanned out in heading.
+
+    guesses[0] is the odometry's motion; matches far from its translation are
+    passed over while any consistent one exists.
+    """
+    expected = guesses[0]
     results = []
     for x, y, th in guesses:
         for offset in GUESS_OFFSETS_DEG:
             result = match_scans(reference, scan, (x, y, th + math.radians(offset)))
             results.append(result)
-            if result.inliers >= 0.95 and result.rms_m <= MATCH_MAX_RMS_M / 3:
+            good = result.inliers >= 0.95 and result.rms_m <= MATCH_MAX_RMS_M / 3
+            if good and consistent(result, expected):
                 return result
-    return max(results, key=lambda r: (r.inliers, -r.rms_m))
+    pool = [r for r in results if consistent(r, expected)] or results
+    return max(pool, key=lambda r: (r.inliers, -r.rms_m))
 
 
 class OdomCalibrator(CalibratorNode):
@@ -521,6 +541,19 @@ class OdomCalibrator(CalibratorNode):
         run = self.drive() if direction == 'forward' else self.reverse()
         if run is None:
             return None
+        lidar_m = math.hypot(run.lidar[0], run.lidar[1])
+        odom_m = math.hypot(run.odom[0], run.odom[1])
+        if abs(lidar_m - odom_m) > max(CONSISTENT_MIN_M, CONSISTENT_FRACTION * odom_m):
+            return [
+                Criterion(
+                    f'{direction} distance',
+                    f'lidar {lidar_m:.3f} m, odometry {odom_m:.3f} m',
+                    f'within {CONSISTENT_FRACTION:.0%} of each other',
+                    'FAIL',
+                    'the scan match found no alignment near the odometry: run the check again '
+                    'with walls or furniture in view from both ends',
+                )
+            ]
         return [
             match_criterion(f'{direction} scan match', run.match),
             drive_criterion(
