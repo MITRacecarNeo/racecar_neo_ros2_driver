@@ -496,21 +496,26 @@ little data.
   /scan ───────────▶ calibrate_lidar.py ─────────▶ frames.local.yaml ────────────▶ frames.launch.py
   /imu/lsm9ds1, ───▶ calibrate_odom.py ──────────▶ odom.local.yaml ──────────────▶ pit_node (odometry)
   /odom/integrated
+  /scan, ──────────▶ calibrate_steering.py ─────▶ throttle.local.yaml ──────────▶ throttle_node
+  /odom/integrated
+  /scan, ──────────▶ calibrate_dynamics.py ─────▶ dynamics.local.yaml ──────────▶ the simulator
+  /odom/integrated
 ```
 
 `calibrate_lidar.py` writes a plain `frames.local.yaml` (no node key) and keeps
 any other keys already in it.
 
 The tools live in `scripts/calibration/`; `calibrate.py` (behind `racecar
-calibrate`) runs them in order, reports old and new values, backs the results
-up, and offers a teleop restart. The IMU tools fit accelerometer bias and
+calibrate`) runs them in order (`dynamics` only when named), reports old and
+new values, backs the results up, and offers a teleop restart. The IMU tools fit accelerometer bias and
 scale per axis from the six orientations, applied by `pit_node` and
 `imu_fusion_node` as (raw - bias) * scale (`accelerometer.scale`,
 `realsense_accel_scale`, unit by default). After a run, restart teleop; the
 tools also write the install share `config/`, so no rebuild is needed. Each
 tool's `--check` (run together by `racecar calibrate check`) verifies the
 stored calibration against the live sensor: the IMUs at rest, the
-magnetometer through one flat turn, the lidar against a wall. The
+magnetometer through one flat turn, and the lidar yaw, odometry, and steering
+against scan matching while the car drives. The
 `.local.yaml` files are not in git; keep a backup in
 `~/.config/racecar/calibration/`.
 

@@ -14,7 +14,8 @@ The trim is the drift at command 0 divided by the slope near center (from
 differs by side). throttle_node adds steering_trim to every command, so the
 runs measure with the trim in use and the new trim is the old one plus that
 command. A change smaller than the servo resolves is not written. Written to
-config/throttle.local.yaml.
+config/throttle.local.yaml. The curved runs also report the encoder's
+over-read in turns as a gain for odometry.turn_gain, which is not written.
 
 --check drives straight at command 0: heading drift within 1 deg/m passes; up
 to 5 deg/m warns, naming servo and linkage play (up to 3 deg/m between runs);
@@ -76,11 +77,9 @@ CENTER_COMMAND = 0.25
 # Smallest trim change the servo resolves (about 5 us of pulse); a measured
 # trim of +0.019 changed the drift by under 0.1 deg/m on the reference car.
 MIN_TRIM_STEP = 0.01
-CIRCLE_SEC = 6.0
 # Fit of the encoder over-read in turns, k x (1/cos(delta) - 1): only runs with
-# enough steering to carry it, and a sane range for k.
+# enough steering to carry it.
 TURN_FIT_MIN_X = 0.05
-TURN_GAIN_LIMITS = (0.0, 1.0)
 MAX_TRIM = 0.2
 # Straight drift at a fixed trim varied from -2.7 to +0.4 deg/m between runs on
 # the reference car (servo and linkage play). Drift past DRIFT_PASS still
@@ -94,15 +93,9 @@ PLACE = 'Place the car at the middle of one edge of the clear area, pointing acr
 
 def segments(command: float) -> list[tuple[float, float, float]]:
     """Wheels set while still, one drive, stop; the steering never changes."""
-    # Straight and +/-0.25: long enough to measure, short enough to keep the
-    # rest scans overlapping. +/-0.5 and +/-1.0: about 1.5 laps, so the arc is
-    # long (encoder over-read in turns) and the chord is near a full diameter.
-    if command == 0.0:
-        drive_sec = 3.0
-    elif abs(command) <= CENTER_COMMAND:
-        drive_sec = 2.0
-    else:
-        drive_sec = CIRCLE_SEC
+    # Long enough to measure, short enough that the turn stays under about
+    # 100 deg so the two rest scans still overlap.
+    drive_sec = 3.0 if command == 0.0 else 2.0 if abs(command) <= 0.25 else 1.0
     return [(0.0, command, 2.0), (DRIVE_SPEED, command, drive_sec), (0.0, command, 3.0)]
 
 
@@ -402,55 +395,44 @@ class SteeringCalibrator:
             f'Drift at steering 0: {fit.drift_deg_per_m:+.2f} deg/m. Gain near center: left '
             f'{fit.gain_left:.2f}/m, right {fit.gain_right:.2f}/m per unit command.'
         )
-        dirs = output_dirs()
-        if not dirs:
-            log.error('No config directory found; nothing written.')
-            return 1
-        status = 0
+        self._report_turn_gain(arcs)
         if abs(fit.trim_delta) < MIN_TRIM_STEP:
             log.info(
                 f'The trim would change by {fit.trim_delta:+.4f}, below what the servo '
                 f'resolves ({MIN_TRIM_STEP}). The trim stays at {self.trim:+.4f}.'
             )
-        elif abs(self.trim + fit.trim_delta) > MAX_TRIM:
+            return 0
+        new = self.trim + fit.trim_delta
+        if abs(new) > MAX_TRIM:
             log.error(
-                f'Trim {self.trim + fit.trim_delta:+.4f} is beyond +/-{MAX_TRIM}: check the '
-                'servo horn and the steering linkage. The trim is not written.'
+                f'Trim {new:+.4f} is beyond +/-{MAX_TRIM}: check the servo horn and the '
+                'steering linkage. Nothing written.'
             )
-            status = 1
-        else:
-            new = self.trim + fit.trim_delta
-            written = write_local_yaml(
-                CAL_NAME, NODE, {'steering_trim': round(new, 4)}, dirs, TOOL, merge=True
-            )
-            log.info(f'steering_trim: {self.trim:+.4f} -> {new:+.4f}')
-            log.info(backup_reminder(written))
-        return max(status, self._write_turn_gain(arcs, dirs))
+            return 1
+        dirs = output_dirs()
+        if not dirs:
+            log.error('No config directory found; nothing written.')
+            return 1
+        written = write_local_yaml(
+            CAL_NAME, NODE, {'steering_trim': round(new, 4)}, dirs, TOOL, merge=True
+        )
+        log.info(f'steering_trim: {self.trim:+.4f} -> {new:+.4f}')
+        log.info(backup_reminder(written))
+        return 0
 
-    def _write_turn_gain(self, arcs: list[Arc], dirs: list[Any]) -> int:
-        """Fit odometry.turn_gain from the curved runs and write it for pit_node."""
-        log = self.log
+    def _report_turn_gain(self, arcs: list[Arc]) -> None:
+        """Log the encoder over-read in turns as a gain for odometry.turn_gain; not written."""
         odom = node_params('odom', 'pit_node')
         current = float(odom.get('odometry.turn_gain', 0.0))
         wheelbase = float(odom.get('odometry.wheelbase_m', WHEELBASE_M))
         fit = fit_turn_gain(arcs, current, wheelbase)
         if fit is None:
-            log.info('The turn gain needs the straight run and two of the circle runs.')
-            return 0
-        log.info(
-            f'Encoder over-read in turns: gain {fit.gain:.3f} from {fit.runs} runs (a locked '
-            f'center shaft gives 0.5; straight runs read {fit.straight_ratio - 1:+.2%}).'
+            return
+        self.log.info(
+            f'Encoder over-read in turns: gain {fit.gain:.3f} from {fit.runs} runs; '
+            f'straight runs read {fit.straight_ratio - 1:+.2%}. '
+            f'odometry.turn_gain stays at {current:.3f}.'
         )
-        low, high = TURN_GAIN_LIMITS
-        if not low <= fit.gain <= high:
-            log.error(f'A turn gain outside {low} to {high} is not credible. Not written.')
-            return 1
-        written = write_local_yaml(
-            'odom', 'pit_node', {'odometry.turn_gain': round(fit.gain, 3)}, dirs, TOOL, merge=True
-        )
-        log.info(f'odometry.turn_gain: {current:.3f} -> {fit.gain:.3f}')
-        log.info(backup_reminder(written))
-        return 0
 
     def _check(self) -> int:
         log = self.log

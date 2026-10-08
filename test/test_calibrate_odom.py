@@ -95,10 +95,6 @@ class TestCriteria:
     def test_drive(self, odom, measured, status):
         assert odom.drive_criterion(measured, 3.0).status == status
 
-    def test_reverse_distance_is_named(self, odom):
-        c = odom.drive_criterion(2.08, 2.10, name='reverse distance')
-        assert c.name == 'reverse distance' and c.status == 'PASS'
-
     def test_poor_scan_match_fails(self, odom):
         sm = load_script('scan_match')
         good = sm.MatchResult((0.0, 0.0, 0.0), 0.01, 0.9, 10)
@@ -140,8 +136,7 @@ class TestInstructions:
 
     def test_one_sentence_per_line(self):
         odom = load_script('calibrate_odom')
-        lines = odom.spin_lines(3) + odom.DRIVE_LINES + odom.REVERSE_LINES
-        for line in lines + [odom.SPIN_PLACE, odom.DRIVE_PLACE, odom.REVERSE_PLACE]:
+        for line in odom.spin_lines(3) + odom.DRIVE_LINES + [odom.SPIN_PLACE, odom.DRIVE_PLACE]:
             assert line.count('. ') <= 1
             assert '; ' not in line
 

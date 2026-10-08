@@ -19,8 +19,9 @@ pit_node:
     odometry.yaw_rate_scale: 1.0
 
     # Turning: the encoder over-reads by turn_gain x (1/cos(delta) - 1), delta
-    # from the gyro (odometry.py). Per car: turn_gain from calibrate_steering.py
-    # (0.5 for a locked center shaft; 0 disables), wheelbase measured.
+    # from the gyro (odometry.py). Per car, set by hand: calibrate_steering.py
+    # prints a fit (0.5 for a locked center shaft; 0 disables). Wheelbase
+    # measured.
     odometry.turn_gain: 0.0
     odometry.wheelbase_m: 0.230
     odometry.max_steer_deg: 30.0       # caps delta; above the car's full lock

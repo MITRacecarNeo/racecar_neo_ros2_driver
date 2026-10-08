@@ -554,7 +554,7 @@ launch files load after the committed file.
 
 ```sh
 racecar calibrate status      # what is calibrated, when, backup state, stored values
-racecar calibrate             # every step in order, one guided session
+racecar calibrate             # every step but dynamics, in order, one guided session
 racecar calibrate imu lidar   # chosen steps only
 racecar calibrate check       # verify each calibration against the live sensors
 ```
@@ -573,12 +573,14 @@ if any check failed. One line per prompt on stdin scripts the whole run.
 | `mag` | One full turn flat on the floor, 25 s, away from large metal | `/mag` traces a circle centered on the turning axis (within 10% of its radius) and round to 5%. Field strength outside 20 to 70 uT is a WARN: a uniform scale error leaves a compass heading unchanged (see docs/troubleshooting.md on `imu.mag_scale`). `/mag/raw` is fitted the same way for contrast |
 | `realsense` | Still and level, 3 s | the stored calibration applied to `/imu/realsense` gives gravity within 1%, gyro under 0.01 rad/s |
 | `lidar` | Driven forward and back about 1.3 m, parked 2 s before, between, and after | the lidar yaw from the direction of travel within 0.5 deg of `laser_yaw_deg` (warn to 1); each scan match under 30 mm RMS with at least 30% of points matched |
-| `odom` | Driven 2 circles and stopped anywhere near the start, then driven straight toward a wall and stopped anywhere short of it, then driven back in reverse; parked 2 s before and after each run | `/odom/integrated` heading within 1% of the lidar's (warn to 3%); distance within 2% of the lidar's (warn to 5%), forward and reverse (reverse drifts more to the side, which does not bias the distance; its heading change is reported); each scan match under 30 mm RMS with at least 30% of points matched; the scales `pit_node` runs with match `odom.local.yaml` |
+| `odom` | Driven 2 circles and stopped anywhere near the start, then driven straight toward a wall and stopped anywhere short of it; parked 2 s before and after each run | `/odom/integrated` heading within 1% of the lidar's (warn to 3%); distance within 2% of the lidar's (warn to 5%); each scan match under 30 mm RMS with at least 30% of points matched; the scales `pit_node` runs with match `odom.local.yaml` |
 | `steering` | Driven straight at steering 0 about 2 m, parked 2 s before and after | heading drift within 1 deg/m (warn to 5, naming servo and linkage play); the trim `throttle_node` runs with matches `throttle.local.yaml` |
 
 `racecar calibrate` runs the tools in `scripts/calibration/` in this order:
-the hand-held steps first (`imu`, `mag`, `realsense`), then `lidar`, `odom`,
-`steering` and `dynamics` with the car on the floor. `dynamics` has no check.
+the hand-held steps first (`imu`, `mag`, `realsense`), then `lidar`, `odom`
+and `steering` with the car on the floor. `dynamics` measures the car for the
+simulator and runs only when named (`racecar calibrate dynamics`); it has no
+check.
 Each step can be run, skipped (`s`), or gone back from (`b`, to run the previous
 step again) at its prompt. Within a tool, every run, pose, or axis offers `b`
 the same way to redo the previous one (after releasing RB too early, or
@@ -656,9 +658,8 @@ than a long corridor. Each step keeps the other's value in
 
 `calibrate_steering.py` sets the steering trim, the offset `throttle_node`
 adds to every steering command so the car drives straight at steering 0. It
-drives seven runs by itself while RB is held, one per steering command
-(0, +/-0.25, +/-0.5, +/-1.0; at +/-0.5 and +/-1.0 about 1.5 laps), in about
-3 by 3 m of clear floor. In
+drives seven short runs by itself while RB is held, one per steering command
+(0, +/-0.25, +/-0.5, +/-1.0), each needing about 3 by 3 m of clear floor. In
 each run the wheels are set with the car still and the steering never
 changes, so the car moves on one arc; the lidar scans at rest before and
 after give its chord and heading change, and curvature = 2 sin(heading / 2) /
@@ -671,10 +672,12 @@ prints the command-to-curvature table (radius and bicycle wheel angle per
 command). The same runs give the encoder's over-read in turns: with no center
 differential the encoder reads the mean of the rear and front axle speeds,
 k (1/cos delta - 1) too high, delta the bicycle steering angle. The step fits
-k (0.5 for a locked center shaft) against its own straight runs and writes
-`odometry.turn_gain` to `odom.local.yaml`; `pit_node` then divides the
-encoder speed by 1 + k (1/cos delta - 1), with delta from the gyro
-(atan(wheelbase x yaw rate / speed), `odometry.wheelbase_m`), above 0.1 m/s.
+k (0.5 for a locked center shaft) against its own straight runs and prints
+it; it does not write it. With `odometry.turn_gain` set to k in
+`odom.local.yaml`, `pit_node` divides the encoder speed by
+1 + k (1/cos delta - 1), with delta from the gyro (atan(wheelbase x yaw
+rate / speed), `odometry.wheelbase_m`), above 0.1 m/s. The default 0 turns
+the correction off.
 `--check` drives straight at command 0: drift within 1 deg/m passes. Up to
 5 deg/m warns, and the warning names servo and linkage play, which alone
 moves the drift by up to about 3 deg/m between runs, so recalibrate only if
@@ -809,7 +812,10 @@ Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
   watchdog restart policy (startup grace, backoff, give-up,
   state file shown by `racecar status` and the dashboard); static frame tree (`base_link`, `laser`, `imu_link`,
   `camera_link`) from `urdf/racecar_neo.urdf.xacro` and `config/frames.yaml`,
-  started by teleop; `calibrate_lidar.py` for lidar yaw against a wall;
+  started by teleop; lidar yaw from the direction of travel
+  (`calibrate_lidar.py`); steering trim against the lidar; simulator dynamics
+  (`racecar calibrate dynamics`, run only when named); an encoder correction
+  for turns (`odometry.turn_gain`, off by default);
   `racecar test` runs the pytest suite again (it ran none since 0.8.2);
   troubleshooting guide documents the 5 V brownout root cause
   (an intermittent buck to Pi 5 V wire, replaced 2026-10-03) and a

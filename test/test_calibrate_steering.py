@@ -57,15 +57,11 @@ class TestRuns:
         assert {steer for _, steer, _ in st.segments(command)} == {command}
         assert st.segments(command)[0][0] == 0.0 and st.segments(command)[-1][0] == 0.0
 
-    def test_run_lengths(self, st):
+    def test_curved_runs_turn_under_about_100_degrees(self, st):
         # Measured curvature on the reference car at 0.72 m/s.
-        turn = {
-            c: math.degrees(k * 0.72 * st.segments(c)[1][2])
-            for c, k in ((0.25, 0.9), (0.5, 2.05), (1.0, 2.4))
-        }
-        assert turn[0.25] < 110
-        # About 1.5 laps: a long arc, and a chord near a full diameter.
-        assert 400 < turn[0.5] < 650 and 400 < turn[1.0] < 650
+        for command, kappa in ((0.25, 0.9), (0.5, 2.05), (1.0, 2.4)):
+            drive = st.segments(command)[1][2]
+            assert math.degrees(kappa * 0.72 * drive) < 110
 
     def test_names(self, st):
         assert [st.run_name(c) for c in (0.0, 0.25, -0.5, 1.0)] == ['c0', 'l025', 'r05', 'l10']

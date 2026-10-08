@@ -15,9 +15,8 @@ All notable changes to this project will be documented in this file. The format 
   wall. Writes `odom.local.yaml` (`odometry.yaw_rate_scale`,
   `odometry.speed_scale`) and warns when `/odom/integrated` disagrees with the
   gyro it integrates. `--check`: `/odom/integrated` against the lidar over 2
-  circles (within 1%, warn to 3%) and a straight drive forward and one in
-  reverse (each within 2%, warn to 5%; the heading change is reported, since
-  reverse drifts more), with a scan-match quality gate, and the scales `pit_node` is running
+  circles (within 1%, warn to 3%) and a straight drive (within 2%, warn to
+  5%), with a scan-match quality gate, and the scales `pit_node` is running
   compared with `odom.local.yaml` (FAIL when teleop was not restarted).
   `calibrate_common.write_local_yaml(merge=True)` keeps a file's other
   parameters.
@@ -26,9 +25,9 @@ All notable changes to this project will be documented in this file. The format 
   divides it by 1 + k (1/cos delta - 1), delta from the gyro (atan(wheelbase
   x yaw rate / speed)), above 0.1 m/s and capped at `odometry.max_steer_deg`.
   New per-car parameters `odometry.turn_gain` (default 0, off) and
-  `odometry.wheelbase_m` (0.230). The steering step fits k from its circle
-  runs (now about 1.5 laps at +/-0.5 and +/-1.0) against its straight runs
-  and writes it to `odom.local.yaml`; 0.499 on the reference car's runs.
+  `odometry.wheelbase_m` (0.230). The steering step fits k from its curved
+  runs against its straight runs and prints it; k is set by hand in
+  `odom.local.yaml`.
 - `calibrate_lidar.py` measures the lidar yaw from the direction of travel:
   from three placements the car drives itself forward and back while RB is
   held, and each forward leg's scan match gives the yaw that lines the
@@ -53,7 +52,7 @@ All notable changes to this project will be documented in this file. The format 
   steering command after `max_steering` and clamped, so every source drives
   straight at steering 0.
 - `calibrate_dynamics.py`, the `dynamics` step of `racecar calibrate` (no
-  check): measures the car for the simulator. The car drives five fixed runs
+  check; runs only when named): measures the car for the simulator. The car drives five fixed runs
   by itself while RB is held (straight at speed 0.25, 0.5, 1.0; right-turn
   and left-turn circles at full lock at 0.25, run separately for small
   spaces), each recorded as a bag and analyzed: steady speed, time to 90%,

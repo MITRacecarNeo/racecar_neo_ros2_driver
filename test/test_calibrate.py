@@ -181,6 +181,11 @@ class TestMain:
     def test_unknown_step_is_a_usage_error(self, cal):
         assert cal.main(['gps']) == 2
 
+    def test_dynamics_runs_only_when_named(self, cal):
+        default = [s.key for s in cal.select_steps([])]
+        assert 'dynamics' not in default and default == cal.STEP_KEYS[:-1]
+        assert [s.key for s in cal.select_steps(['dynamics', 'imu'])] == ['imu', 'dynamics']
+
     def test_refuses_without_teleop(self, cal, monkeypatch):
         monkeypatch.setattr(cal, 'teleop_active', lambda: False)
         assert cal.main(['imu']) == 1

@@ -99,6 +99,7 @@ class Step:
     local_name: str
     keys: tuple[str, ...]
     check: str = ''  # how to place the car for the tool's --check; empty: no check
+    optional: bool = False  # runs only when named
 
 
 # Order: hand-held IMU steps first, then steps with the car on the floor.
@@ -168,9 +169,18 @@ STEPS = (
         DYNAMICS_SETUP,
         'dynamics',
         DYNAMICS_KEYS,
+        optional=True,
     ),
 )
 STEP_KEYS = [s.key for s in STEPS]
+OPTIONAL_KEYS = [s.key for s in STEPS if s.optional]
+
+
+def select_steps(names: list[str]) -> list[Step]:
+    """Return the named steps in table order; with no names, every step but the optional ones."""
+    if names:
+        return [s for s in STEPS if s.key in names]
+    return [s for s in STEPS if not s.optional]
 
 
 def setup_text(text: str) -> str:
@@ -425,7 +435,7 @@ def main(argv: list[str] | None = None) -> int:
         nargs='*',
         metavar='step',
         help=f'status; check [steps]; or steps to run in order ({", ".join(STEP_KEYS)}); '
-        'default: all available',
+        f'default: all but {", ".join(OPTIONAL_KEYS)}',
     )
     args = parser.parse_args(argv)
 
@@ -446,7 +456,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_usage(sys.stderr)
         print(f'unknown step: {", ".join(unknown)}', file=sys.stderr)
         return 2
-    chosen = [s for s in STEPS if not args.steps or s.key in args.steps]
+    chosen = select_steps(args.steps)
     if checking:
         chosen = [s for s in chosen if s.check]
         if not chosen:

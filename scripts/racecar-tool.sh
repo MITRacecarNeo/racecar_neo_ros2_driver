@@ -1194,7 +1194,7 @@ Commands:
                                       and stop distances for the simulator;
                                       the car drives itself while RB is held;
                                       no check
-                        No arguments: all of them.
+                        No arguments: all but dynamics.
                         `racecar calibrate status` lists what is calibrated
                         on this car, when, and the stored values.
                         `racecar calibrate check [steps]` verifies each
