@@ -5,6 +5,7 @@ One-terminal SLAM validation session on the car.
     slam_session.py map NAME [--camera off]
     slam_session.py localize MAP [--localizer amcl|slam_toolbox] [--pose x,y,yaw]
     slam_session.py analyze [SESSION_DIR]        # rewrite report.md; default the newest
+    slam_session.py replay SESSION_DIR TAG [--set key=value ...]
 
 A session stops the teleop service, then starts teleop (EdgeTPU off), the
 autonomy launch, foxglove_bridge (Lichtblick: ws://<car>:8765), a bag of the
@@ -14,6 +15,11 @@ q quit. On quit everything stops in order, a mapping run is saved under the
 map root, and report.md and map.png are written to
 ~/data/slam_eval/sessions/<time>-<mode>-<name>/. Driving stays on the gamepad
 or transmitter; the session publishes no drive commands.
+
+`replay` runs a mapping session's bag through a fresh slam_toolbox with
+config/slam_mapping.yaml plus the --set overrides, on its own ROS domain so a
+running car is not disturbed, and writes a map and report.md to
+<session>/replay/<TAG>/. The bag's map -> odom transforms are dropped.
 """
 
 from __future__ import annotations
@@ -36,6 +42,7 @@ import threading
 import time
 from typing import Any
 
+import numpy as np
 import yaml
 
 HERE = Path(__file__).resolve().parent
@@ -61,7 +68,10 @@ DISK_CHECK_SEC = 30.0
 # Seconds to wait after SIGINT, then SIGTERM, before SIGKILL. slam_toolbox
 # ignores both and is killed about 15 s after SIGINT.
 STOP_WAIT = (12.0, 5.0)
-LOOP_PATTERN = re.compile(r'loop', re.IGNORECASE)
+LOOP_PATTERN = re.compile(r'loop clos', re.IGNORECASE)
+REPLAY_DOMAIN = 77
+REPLAY_TOPICS = ('/scan', '/tf', '/tf_static', '/odom/integrated')
+REPLAY_SETTLE_SEC = 6.0
 
 
 # --- pure helpers --------------------------------------------------------------
@@ -143,6 +153,9 @@ class Drift:
     largest_jump_m: float
     largest_jump_deg: float
     largest_jump_t: float  # seconds from the first map -> odom sample
+    max_offset_m: float  # largest map -> odom translation during the run
+    max_yaw_deg: float  # largest map -> odom rotation during the run
+    yaw_sd_deg: float  # spread of the map -> odom rotation over the run
 
 
 def drift_summary(
@@ -165,7 +178,31 @@ def drift_summary(
         r = abs(math.degrees(math.atan2(math.sin(b[3] - a[3]), math.cos(b[3] - a[3]))))
         if d > jump_m or (d == jump_m and r > jump_deg):
             jump_m, jump_deg, jump_t = d, r, b[0] - map_odom[0][0]
-    return Drift(path, tuple(map_odom[-1][1:]), jump_m, jump_deg, jump_t)  # type: ignore[arg-type]
+    yaws = [math.degrees(math.atan2(math.sin(m[3]), math.cos(m[3]))) for m in map_odom]
+    return Drift(
+        path,
+        tuple(map_odom[-1][1:]),  # type: ignore[arg-type]
+        jump_m,
+        jump_deg,
+        jump_t,
+        max(math.hypot(m[1], m[2]) for m in map_odom),
+        max(abs(y) for y in yaws),
+        float(np.std(yaws)),
+    )
+
+
+def drift_lines(drift: Drift) -> list[str]:
+    x, y, yaw = drift.final
+    end = math.hypot(x, y)
+    share = f' ({end / drift.path_m:.2%} of the path)' if drift.path_m else ''
+    return [
+        f'Odometry path {drift.path_m:.1f} m. map -> odom at the end: {end:.3f} m, '
+        f'{math.degrees(yaw):+.1f} deg{share}.',
+        f'During the run: largest offset {drift.max_offset_m:.3f} m, largest rotation '
+        f'{drift.max_yaw_deg:.1f} deg, rotation spread (SD) {drift.yaw_sd_deg:.2f} deg. '
+        f'Largest single correction {drift.largest_jump_m * 1e3:.0f} mm, '
+        f'{drift.largest_jump_deg:.1f} deg at {drift.largest_jump_t:.0f} s.',
+    ]
 
 
 def loop_lines(text: str) -> list[str]:
@@ -823,15 +860,7 @@ def analyze(session: Path) -> Path:
         except Exception as e:  # noqa: BLE001  a damaged bag still gets a report
             lines.append(f'Bag not readable: {e}')
     if drift:
-        x, y, yaw = drift.final
-        lines.append(
-            f'Odometry path {drift.path_m:.1f} m. '
-            f'map -> odom at the end: {math.hypot(x, y):.3f} m, '
-            f'{math.degrees(yaw):+.1f} deg'
-            + (f' ({math.hypot(x, y) / drift.path_m:.2%} of the path)' if drift.path_m else '')
-            + f'. Largest single correction {drift.largest_jump_m * 1e3:.0f} mm, '
-            f'{drift.largest_jump_deg:.1f} deg at {drift.largest_jump_t:.0f} s.'
-        )
+        lines += drift_lines(drift)
     elif bag.exists():
         lines.append('No map -> odom transforms in the bag.')
 
@@ -863,6 +892,173 @@ def analyze(session: Path) -> Path:
     return out
 
 
+def map_lines(stem: Path) -> list[str]:
+    """Size and cell counts of a saved map; fewer occupied cells per free m^2 is thinner walls."""
+    from PIL import Image
+
+    m = yaml.safe_load(Path(str(stem) + '.yaml').read_text())
+    image = Image.open(stem.parent / m['image'])
+    occupied, free, unknown = slam_eval.cell_counts(image.getdata())
+    res = float(m['resolution'])
+    area = free * res * res
+    return [
+        f'{image.width * res:.2f} x {image.height * res:.2f} m, occupied {occupied}, '
+        f'free {free} ({area:.1f} m^2), unknown {unknown}; '
+        f'occupied per free m^2 {occupied / max(area, 1e-9):.1f}.'
+    ]
+
+
+def parse_overrides(items: Sequence[str]) -> dict[str, Any]:
+    """Parse key=value pairs; values are YAML (numbers, booleans, lists)."""
+    out = {}
+    for item in items:
+        key, sep, value = item.partition('=')
+        if not sep or not key.strip():
+            raise ValueError(f'expected key=value: {item!r}')
+        out[key.strip()] = yaml.safe_load(value)
+    return out
+
+
+def replay_argv(
+    config: Path, overrides: Path, bag: Path
+) -> tuple[list[str], list[str], list[str]]:
+    """Return the slam_toolbox, lifecycle manager, and bag play command lines."""
+    files = ['--params-file', str(config), '--params-file', str(overrides)]
+    slam = [
+        'ros2', 'run', 'slam_toolbox', 'async_slam_toolbox_node',
+        '--ros-args', '-r', '__node:=slam_toolbox', *files,
+    ]  # fmt: skip
+    manager = [
+        'ros2', 'run', 'nav2_lifecycle_manager', 'lifecycle_manager',
+        '--ros-args', '-r', '__node:=lifecycle_manager_slam', *files,
+    ]  # fmt: skip
+    play = ['ros2', 'bag', 'play', str(bag), '--clock', '100', '--topics', *REPLAY_TOPICS,
+            '--remap', '/tf:=/tf_bag']  # fmt: skip
+    return slam, manager, play
+
+
+def replay(session: Path, tag: str, overrides: dict[str, Any]) -> int:
+    """Run a mapping session's bag through slam_toolbox with overrides; write a report."""
+    bag = session / 'bag'
+    if not bag.exists():
+        print(f'No bag in {session}.')
+        return 1
+    if not re.fullmatch(r'[A-Za-z0-9_-]+', tag):
+        print(f'Tags use letters, digits, - and _: {tag!r}')
+        return 2
+    out = session / 'replay' / tag
+    if out.exists():
+        print(f'{out} exists. Choose another tag.')
+        return 1
+    out.mkdir(parents=True)
+    params = out / 'overrides.yaml'
+    params.write_text(
+        yaml.safe_dump(
+            {
+                'slam_toolbox': {'ros__parameters': {**overrides, 'use_sim_time': True}},
+                'lifecycle_manager_slam': {'ros__parameters': {'use_sim_time': True}},
+            },
+            sort_keys=False,
+        )
+    )
+    # Every process of the replay, this one included, on its own domain.
+    os.environ['ROS_DOMAIN_ID'] = str(REPLAY_DOMAIN)
+    logs = out / 'logs'
+    env = {'ROS_DOMAIN_ID': str(REPLAY_DOMAIN), 'ROS_LOG_DIR': str(logs)}
+    slam_cmd, manager_cmd, play_cmd = replay_argv(
+        REPO / 'config' / 'slam_mapping.yaml', params, bag
+    )
+    children = [
+        Child('slam_toolbox', slam_cmd, logs / 'slam_toolbox.log', env),
+        Child('lifecycle_manager', manager_cmd, logs / 'lifecycle_manager.log', env),
+    ]
+    play = Child('bag', play_cmd, logs / 'bag.log', env)
+    map_odom, odom, code = run_replay(children, play, out)
+
+    lines = [f'# Replay {tag} of {session.name}', '', 'Overrides:', '', '```']
+    lines += [f'{k}: {v}' for k, v in overrides.items()] or ['(none)']
+    lines += ['```', '', '## Odometry against SLAM', '']
+    drift = drift_summary(sorted(map_odom), sorted(odom))
+    lines += drift_lines(drift) if drift else ['No map -> odom transforms.']
+    lines += ['', '## Map', '']
+    if (out / 'map.yaml').exists():
+        lines += map_lines(out / 'map')
+        render_map(out / 'map', out / 'map.png')
+    (out / 'report.md').write_text('\n'.join(lines) + '\n')
+    print('\n'.join(lines))
+    return code
+
+
+def run_replay(
+    children: list[Child], play: Child, out: Path
+) -> tuple[list[tuple[float, float, float, float]], list[tuple[float, float, float]], int]:
+    """Start slam_toolbox, play the bag, save the map; return map -> odom, odometry, status."""
+    import rclpy
+    from rclpy.executors import SingleThreadedExecutor
+    from rclpy.parameter import Parameter
+    from rclpy.qos import qos_profile_sensor_data, QoSProfile, ReliabilityPolicy
+    from nav_msgs.msg import Odometry
+    from tf2_msgs.msg import TFMessage
+
+    map_odom: list[tuple[float, float, float, float]] = []
+    odom: list[tuple[float, float, float]] = []
+    rclpy.init()
+    node = rclpy.create_node(
+        'slam_replay', parameter_overrides=[Parameter('use_sim_time', value=True)]
+    )
+    tf_pub = node.create_publisher(TFMessage, '/tf', 100)
+
+    def on_bag_tf(msg: Any) -> None:
+        keep = [
+            t for t in msg.transforms if (t.header.frame_id, t.child_frame_id) != ('map', 'odom')
+        ]
+        if keep:
+            tf_pub.publish(TFMessage(transforms=keep))
+
+    def on_tf(msg: Any) -> None:
+        for t in msg.transforms:
+            if (t.header.frame_id, t.child_frame_id) == ('map', 'odom'):
+                st = t.header.stamp.sec + t.header.stamp.nanosec * 1e-9
+                tr = t.transform.translation
+                map_odom.append((st, tr.x, tr.y, slam_eval.yaw_of(t.transform.rotation)))
+
+    def on_odom(msg: Any) -> None:
+        st = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        p = msg.pose.pose.position
+        odom.append((st, p.x, p.y))
+
+    reliable = QoSProfile(depth=100, reliability=ReliabilityPolicy.RELIABLE)
+    node.create_subscription(TFMessage, '/tf_bag', on_bag_tf, reliable)
+    node.create_subscription(TFMessage, '/tf', on_tf, reliable)
+    node.create_subscription(Odometry, '/odom/integrated', on_odom, qos_profile_sensor_data)
+    executor = SingleThreadedExecutor()
+    executor.add_node(node)
+    threading.Thread(target=executor.spin, daemon=True).start()
+    code = 0
+    try:
+        for c in children:
+            c.start()
+        time.sleep(REPLAY_SETTLE_SEC)
+        if not all(c.running() for c in children):
+            print('slam_toolbox did not start; see logs/.')
+            return map_odom, odom, 1
+        print(f'Replaying into slam_toolbox ({out.name})...')
+        play.start()
+        assert play.proc is not None
+        play.proc.wait()
+        time.sleep(3.0)
+        if not slam_eval.run_map_saver(out / 'map', out / 'logs' / 'map_saver.log'):
+            print('map_saver_cli failed; see logs/map_saver.log.')
+            code = 1
+    finally:
+        for c in children:
+            c.stop()
+        executor.shutdown(timeout_sec=2.0)
+        node.destroy_node()
+        rclpy.try_shutdown()
+    return map_odom, odom, code
+
+
 def newest_session() -> Path | None:
     dirs = sorted(p for p in SESSIONS.glob('*') if (p / 'session.yaml').exists())
     return dirs[-1] if dirs else None
@@ -881,7 +1077,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument('--camera', choices=('on', 'off'), default='on')
     p = sub.add_parser('analyze', help='rewrite report.md for a session')
     p.add_argument('session', nargs='?', type=Path)
+    p = sub.add_parser('replay', help='replay a mapping bag with slam_toolbox overrides')
+    p.add_argument('session', type=Path)
+    p.add_argument('tag')
+    p.add_argument('--set', action='append', default=[], metavar='KEY=VALUE')
     args = parser.parse_args(argv)
+
+    if args.cmd == 'replay':
+        return replay(args.session, args.tag, parse_overrides(args.set))
 
     if args.cmd == 'analyze':
         session = args.session or newest_session()

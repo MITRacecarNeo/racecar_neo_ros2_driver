@@ -12,7 +12,9 @@ All notable changes to this project will be documented in this file. The format 
   `localizer:=slam_toolbox`; `pose:=x,y,yaw` sets the start pose (default the
   map origin). Each under a Nav2 lifecycle manager. Configs
   `slam_mapping.yaml`, `slam_localization.yaml`, `amcl.yaml` (base_link,
-  laser range 0.3 to 12 m past the antenna self-returns), each with a
+  laser range 0.3 to 12 m past the antenna self-returns; scan matching
+  weighted toward the odometry: `angle_variance_penalty` 0.03,
+  `distance_variance_penalty` 0.1, floors 0.5 and 0.3), each with a
   `.local.yaml` override. Maps live in `~/data/maps/<name>/`
   (`racecar_neo_ros2_driver/maps.py`, `RACECAR_MAP_ROOT`).
 - `scripts/validation/slam_session.py`: a SLAM test session in one terminal.
@@ -25,7 +27,9 @@ All notable changes to this project will be documented in this file. The format 
   order, saves a mapping run, and writes `report.md` (load, map size and
   cells, odometry correction from the bag, loop lines, timed saves, marks,
   storage) and `map.png`. It warns below 10 GB free or above 80% used and
-  refuses to start below 3 GB.
+  refuses to start below 3 GB. `replay SESSION TAG --set key=value` runs a
+  mapping bag through slam_toolbox with parameter overrides on its own ROS
+  domain and writes a map and report per variant.
 - `scripts/validation/slam_eval.py`: `save NAME` (pose graph and
   `.pgm`/`.yaml`), `load` (CPU per node, all-core busy, SoC temperature,
   throttling, ARM clock, to a CSV), `mark LABEL` (map pose with the car

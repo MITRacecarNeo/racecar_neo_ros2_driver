@@ -141,6 +141,12 @@ class TestConfigs:
         manager = data['lifecycle_manager_slam']['ros__parameters']
         assert manager == {'autostart': True, 'node_names': ['slam_toolbox']}
 
+    @pytest.mark.parametrize('name', ['slam_mapping.yaml', 'slam_localization.yaml'])
+    def test_scan_matching_weights_the_odometry(self, name):
+        p = yaml.safe_load((CONFIG / name).read_text())['slam_toolbox']['ros__parameters']
+        assert p['angle_variance_penalty'] <= 0.05 and p['minimum_angle_penalty'] <= 0.5
+        assert p['distance_variance_penalty'] <= 0.1
+
     def test_amcl(self):
         data = yaml.safe_load((CONFIG / 'amcl.yaml').read_text())
         p = data['amcl']['ros__parameters']

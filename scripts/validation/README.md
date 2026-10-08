@@ -16,6 +16,7 @@ cd ~/ros2_ws/src/racecar_neo_ros2_driver/scripts/validation
 ./slam_session.py map NAME                    # mapping; --camera off to drop the RealSense
 ./slam_session.py localize MAP                # AMCL; --localizer slam_toolbox, --pose x,y,yaw
 ./slam_session.py analyze [SESSION_DIR]       # rewrite report.md; default the newest session
+./slam_session.py replay SESSION_DIR TAG --set angle_variance_penalty=0.03   # offline tuning
 ```
 
 One terminal runs the whole session. The script stops the teleop service
@@ -38,6 +39,16 @@ Each session folder in `~/data/slam_eval/sessions/` holds `session.yaml`
 `report.md`, and `map.png`. A mapping run's map goes to `~/data/maps/NAME/`.
 Taped distances between marks go in `~/data/slam_eval/taped.txt`, one pair per
 line: `A B 2.35`.
+
+`replay` runs a mapping session's bag through a fresh slam_toolbox with
+`config/slam_mapping.yaml` plus the `--set` overrides (repeatable, YAML
+values) and writes `replay/TAG/` in the session folder: `overrides.yaml`,
+`map.pgm`, `map.yaml`, `map.png`, `report.md`, and `logs/`. It runs on ROS
+domain 77 and drops the bag's `map -> odom`, so it neither sees nor disturbs
+a running car and the recorded solution does not leak in. It takes about as
+long as the session. Compare variants by the rotation spread of `map -> odom`
+(how often the scan matcher overrides the odometry) and by occupied cells per
+free square meter (thinner walls give fewer).
 
 ## Single measurements
 

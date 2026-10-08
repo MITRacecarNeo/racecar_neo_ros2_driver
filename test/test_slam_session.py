@@ -116,3 +116,30 @@ class TestAnalysis:
         assert 'free 8 (0.0 m^2)' in report and (session / 'map.png').exists()
         assert '1 log lines mention a loop.' in report
         assert '1,0.80' in report
+
+
+class TestReplay:
+    def test_overrides_are_yaml_values(self, ss):
+        got = ss.parse_overrides(['angle_variance_penalty=0.03', 'do_loop_closing=false'])
+        assert got == {'angle_variance_penalty': 0.03, 'do_loop_closing': False}
+
+    @pytest.mark.parametrize('item', ['novalue', '=1'])
+    def test_bad_override(self, ss, item):
+        with pytest.raises(ValueError):
+            ss.parse_overrides([item])
+
+    def test_commands(self, ss, tmp_path):
+        slam, manager, play = ss.replay_argv(
+            tmp_path / 'c.yaml', tmp_path / 'o.yaml', tmp_path / 'bag'
+        )
+        assert slam[-1] == str(tmp_path / 'o.yaml') and '__node:=slam_toolbox' in slam
+        assert '__node:=lifecycle_manager_slam' in manager
+        assert play[3] == str(tmp_path / 'bag') and play[-2:] == ['--remap', '/tf:=/tf_bag']
+        assert '/map' not in play  # slam_toolbox rebuilds the map
+
+    def test_drift_spread(self, ss):
+        d = ss.drift_summary(
+            [(0.0, 0, 0, 0), (1.0, 0.3, 0.4, math.radians(8)), (2.0, 0, 0, 0)], [(0, 0, 0)]
+        )
+        assert d.max_offset_m == pytest.approx(0.5) and d.max_yaw_deg == pytest.approx(8)
+        assert d.yaw_sd_deg > 3
