@@ -8,10 +8,9 @@ pit_node:
     odometry.enable: true
     odometry.topic: "/odom/integrated"
 
-    # pit_node's gyro is in the RealSense IMU's optical axes (x right, y
-    # down, z forward), so yaw rate about base_link z (up) is -y: axis 1.
-    odometry.yaw_rate_axis: 1
-    odometry.yaw_rate_sign: -1.0
+    # pit_node's gyro is in REP-103 body axes, so yaw rate is z: axis 2.
+    odometry.yaw_rate_axis: 2
+    odometry.yaw_rate_sign: 1.0
 
     # Per-car scales against the lidar (calibrate_odom.py): speed from a
     # straight drive, yaw rate from circles.

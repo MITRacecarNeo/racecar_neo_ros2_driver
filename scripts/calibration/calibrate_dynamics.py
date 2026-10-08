@@ -264,7 +264,7 @@ class Bag:
     scans: list[tuple[float, np.ndarray, np.ndarray]]  # stamp, ranges, angles
 
 
-def read_bag(path: Path, axis: int = 1, sign: float = -1.0) -> Bag:
+def read_bag(path: Path, axis: int = 2, sign: float = 1.0) -> Bag:
     import rosbag2_py
     from rclpy.serialization import deserialize_message
     from rosidl_runtime_py.utilities import get_message

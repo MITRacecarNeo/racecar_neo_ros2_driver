@@ -7,8 +7,9 @@ acceleration and angular velocity; with one, it passes that source through as
 the source of truth; with neither, it stays silent. Orientation is not fused
 (both sensors are 6-DoF with no absolute heading).
 
-Sources must share one frame; config/pit.yaml maps the LSM9DS1 axes into the
-RealSense IMU frame.
+Sources must share one frame, REP-103 body axes (x forward, y left, z up):
+config/pit.yaml remaps the LSM9DS1 in pit_node, and this node remaps the
+RealSense IMU (realsense_axis_order, realsense_axis_sign) after its calibration.
 """
 
 from collections.abc import Callable, Mapping, Sequence
@@ -36,6 +37,15 @@ def fresh_sources(
     return [t for t in sources if t in stamps and (now - stamps[t]) <= timeout]
 
 
+def remap(vec: Vec3, order: Sequence[int], sign: Sequence[float]) -> Vec3:
+    """Reorder and sign-flip a 3-vector: out[i] = sign[i] * vec[order[i]]."""
+    return (
+        sign[0] * vec[order[0]],
+        sign[1] * vec[order[1]],
+        sign[2] * vec[order[2]],
+    )
+
+
 def fuse(samples: Sequence[tuple[Vec3, Vec3]]) -> tuple[Vec3, Vec3]:
     """Average (accel, gyro) pairs component-wise; one sample passes through unchanged."""
     accel = np.mean([a for a, _ in samples], axis=0)
@@ -60,6 +70,10 @@ class ImuFusionNode(Node):
         self.declare_parameter('realsense_accel_bias', [0.0, 0.0, 0.0])
         self.declare_parameter('realsense_gyro_bias', [0.0, 0.0, 0.0])
         self.declare_parameter('realsense_accel_scale', [1.0, 1.0, 1.0])
+        self.declare_parameter('realsense_axis_order', [0, 1, 2])
+        self.declare_parameter('realsense_axis_sign', [1.0, 1.0, 1.0])
+        self._rs_order = [int(i) for i in self.get_parameter('realsense_axis_order').value]
+        self._rs_sign = [float(s) for s in self.get_parameter('realsense_axis_sign').value]
         self._rs_accel_bias = np.array(self.get_parameter('realsense_accel_bias').value, float)
         self._rs_accel_scale = np.array(self.get_parameter('realsense_accel_scale').value, float)
         self._rs_gyro_bias = np.array(self.get_parameter('realsense_gyro_bias').value, float)
@@ -98,6 +112,8 @@ class ImuFusionNode(Node):
                 msg.angular_velocity.x -= float(self._rs_gyro_bias[0])
                 msg.angular_velocity.y -= float(self._rs_gyro_bias[1])
                 msg.angular_velocity.z -= float(self._rs_gyro_bias[2])
+                for v in (msg.linear_acceleration, msg.angular_velocity):
+                    v.x, v.y, v.z = remap((v.x, v.y, v.z), self._rs_order, self._rs_sign)
             self._latest[topic] = (msg, time.monotonic())
 
         return cb

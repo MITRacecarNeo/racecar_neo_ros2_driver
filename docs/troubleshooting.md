@@ -240,22 +240,38 @@ module that needs the syntax; racecar-neo-library v1.2.0 mirrors that.
 `imu.mag_axis_order`, `imu.mag_axis_sign`; applied by
 `racecar_neo_ros2_driver/pit_node.py` `remap_axes`.
 
-`imu_fusion_node` averages the LSM9DS1 with the RealSense IMU, so both must
-report in the camera's body frame. The mapping was derived on the car on
-2026-07-07 from static gravity in about ten orientations and confirmed against
-the camera gyro (per-axis correlation +1.00):
+Every published IMU topic uses REP-103 body axes (x forward, y left, z up).
+`imu_fusion_node` averages the LSM9DS1 with the RealSense IMU, which it remaps
+from the camera's optical axes (`config/imu_fusion.yaml`,
+`realsense_axis_order` and `realsense_axis_sign`: X = +RS_Z, Y = -RS_X,
+Z = -RS_Y). The LSM9DS1 accel and gyro mapping was derived on the car on
+2026-07-07 against the camera (static gravity in about ten orientations,
+camera gyro correlation +1.00 per axis) as RS_X = -LSM_Y, RS_Y = +LSM_Z,
+RS_Z = +LSM_X. Composed with the camera-to-body remap:
 
 ```
-RS_X = -LSM_Y    RS_Y = +LSM_Z    RS_Z = +LSM_X
+X = +LSM_X    Y = +LSM_Y    Z = -LSM_Z          accel and gyro
+X = -M_X      Y = +M_Y      Z = -M_Z            magnetometer
 ```
 
-It is a reflection (determinant -1): the frame the firmware publishes for accel
-and gyro is left-handed relative to the camera, so a rotation-only solver
-cannot express it. Accel and gyro share the convention, so one order and sign
-serve both.
+The accel and gyro mapping is a reflection (determinant -1): the frame the
+firmware publishes for accel and gyro is left-handed, so a rotation-only
+solver cannot express it. Accel and gyro share the convention, so one order
+and sign serve both. The magnetometer has its own axes on the chip; its
+mapping is a rotation, set on the reference car on 2026-10-08: at rest the
+field points down (Z negative, as Earth's field does in the northern
+hemisphere), a left turn rotates it clockwise in the car's frame, and with
+the nose pointing north `/mag` x reads positive and y near zero (two
+placements, north within 10 deg of the nose). Steel and phones nearby bend
+the field: a reading whose dip is far from the local value (about 66 deg in
+Massachusetts) is disturbed.
 
-The magnetometer keeps the identity mapping, so `/mag` is not yet in the camera
-frame. Correlation also says nothing about scale: `imu.gyro_scale` and
+The calibration in `lsm9ds1_cal.local.yaml` and `lsm9ds1_mag_cal.local.yaml`
+applies after the remap, so its values are in body axes. A car calibrated
+before this mapping (values in the camera's optical axes for accel and gyro,
+chip axes for the magnetometer) needs `racecar calibrate imu mag` again.
+`realsense_cal.local.yaml` applies to `/imu/realsense` before the remap and
+stays valid. Correlation also says nothing about scale: `imu.gyro_scale` and
 `imu.mag_scale` are unverified, and a deg/s versus rad/s mismatch on the gyro
 would be a factor of 57. Check both against the RealSense during a known
 rotation before trusting `/imu/fused` angular velocity or `/mag` heading.

@@ -418,16 +418,25 @@ GRAVITY = 9.80665  # m/s^2, standard gravity
 SCALE_LIMITS = (0.8, 1.25)
 GYRO_SECONDS = 10.0
 POSITION_SECONDS = 5.0
-POSITIONS = [
-    # Both IMUs report in the RealSense IMU's axes (x right, y down, z forward),
-    # so each axis up or down is one pose of the car.
+# One pose per axis pointing up, then down. /imu/lsm9ds1/raw is in REP-103 body
+# axes (x forward, y left, z up).
+BODY_POSITIONS = (
+    ('X+', 'Stand the car on its rear end, nose pointing up.'),
+    ('X-', 'Stand the car on its nose, rear pointing up.'),
+    ('Y+', 'Lay the car on its right side, left side facing up.'),
+    ('Y-', 'Lay the car on its left side, right side facing up.'),
+    ('Z+', 'Set the car upright on its wheels.'),
+    ('Z-', 'Turn the car upside down.'),
+)
+# /imu/realsense stays in the camera's optical axes (x right, y down, z forward).
+OPTICAL_POSITIONS = (
     ('X+', 'Lay the car on its left side, right side facing up.'),
     ('X-', 'Lay the car on its right side, left side facing up.'),
     ('Y+', 'Turn the car upside down.'),
     ('Y-', 'Set the car upright on its wheels.'),
     ('Z+', 'Stand the car on its rear end, nose pointing up.'),
     ('Z-', 'Stand the car on its nose, rear pointing up.'),
-]
+)
 
 
 @dataclass(frozen=True)
@@ -447,6 +456,7 @@ class ImuTarget:
     # publish a calibrated topic of its own (the RealSense).
     check_topic: str = ''
     check_applies_cal: bool = False
+    positions: tuple[tuple[str, str], ...] = BODY_POSITIONS  # axes of `topic`
 
 
 def imu_bias_params(
@@ -456,12 +466,12 @@ def imu_bias_params(
     Return the node parameters for a fit, or None when data is missing.
 
     Gyro bias is the mean at rest. For each accelerometer axis, `up` and
-    `down` are its mean with that axis pointing up and down (POSITIONS order):
+    `down` are its mean with that axis pointing up and down (target.positions order):
     bias = (up + down) / 2 and scale = 2 g / (up - down), applied by the node
     as (raw - bias) * scale. Raises ValueError when an axis did not read about
     +g up and -g down, meaning the car was not in the position asked for.
     """
-    if not gyro or len(positions) != len(POSITIONS) or not all(positions):
+    if not gyro or len(positions) != len(target.positions) or not all(positions):
         return None
     means = [mean_vector(p) for p in positions]
     bias, scale = [], []
@@ -514,8 +524,8 @@ class ImuBiasCalibrator(CalibratorNode):
                     f'Step 2 of 2: accelerometer. Hold the car still in 6 poses, '
                     f'{POSITION_SECONDS:.0f} seconds each.'
                 )
-            axis, description = POSITIONS[i - 1]
-            log.info(f'Pose {i} of {len(POSITIONS)} ({axis}): {description}')
+            axis, description = self.target.positions[i - 1]
+            log.info(f'Pose {i} of {len(self.target.positions)} ({axis}): {description}')
 
         def prompt(i: int) -> str:
             if i == 0:
@@ -532,13 +542,14 @@ class ImuBiasCalibrator(CalibratorNode):
             if i == 0:
                 samples = [s[3:] for s in self.collect(GYRO_SECONDS, 'Gyroscope')]
             else:
-                axis = POSITIONS[i - 1][0]
+                axis = self.target.positions[i - 1][0]
                 samples = [s[:3] for s in self.collect(POSITION_SECONDS, axis)]
             return samples or None
 
-        steps = run_sequence(len(POSITIONS) + 1, show, run_step, prompt, allow_skip=False)
+        count = len(self.target.positions)
+        steps = run_sequence(count + 1, show, run_step, prompt, allow_skip=False)
         gyro = steps[0]
-        positions = [steps[k] for k in range(1, len(POSITIONS) + 1)]
+        positions = [steps[k] for k in range(1, count + 1)]
 
         try:
             params = imu_bias_params(self.target, gyro, positions)

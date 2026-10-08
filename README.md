@@ -52,10 +52,10 @@ EasySMX ─→ joy_node ─→ gamepad_node ──┐
 
 Sensor and ML nodes publish independently:
 - `/camera/color`, `/camera/depth` (sensor_msgs/Image): RealSense D435i color and depth streams
-- `/imu/realsense` (sensor_msgs/Imu): RealSense D435i IMU, remapped from `/camera/imu`
-- `/imu/lsm9ds1`, `/mag` (sensor_msgs/Imu, MagneticField): LSM9DS1 on the NEO-PIT board, republished from `pit_node` telemetry
+- `/imu/realsense` (sensor_msgs/Imu): RealSense D435i IMU, remapped from `/camera/imu`; the camera's optical axes (x right, y down, z forward)
+- `/imu/lsm9ds1`, `/mag` (sensor_msgs/Imu, MagneticField): LSM9DS1 on the NEO-PIT board, republished from `pit_node` telemetry in REP-103 body axes (x forward, y left, z up)
 - `/imu/lsm9ds1/raw`, `/mag/raw` (sensor_msgs/Imu, MagneticField): the same telemetry axis-remapped and sensitivity-scaled but with no bias applied; the calibration utilities fit against these
-- `/imu/fused` (sensor_msgs/Imu): `imu_fusion_node` blends `/imu/realsense` and `/imu/lsm9ds1` (single-source passthrough when one is live)
+- `/imu/fused` (sensor_msgs/Imu): `imu_fusion_node` blends `/imu/realsense` and `/imu/lsm9ds1` in REP-103 body axes (single-source passthrough when one is live)
 - `/scan` (sensor_msgs/LaserScan)
 - `/edgetpu/inference` (vision_msgs/Detection2DArray): `edgetpu_node` consumes `/camera/color`
 

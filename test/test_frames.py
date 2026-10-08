@@ -144,12 +144,9 @@ class TestFrameTree:
         assert poses['laser'][:3, 0] == pytest.approx([-1.0, 0.0, 0.0], abs=1e-9)
         assert poses['laser'][:3, 2] == pytest.approx([0.0, 0.0, 1.0], abs=1e-9)
 
-    def test_imu_link_is_optical(self, poses):
-        # pit.yaml remaps the LSM9DS1 to optical axes: x right, y down, z forward.
-        axes = poses['imu_link'][:3, :3]
-        assert axes[:, 0] == pytest.approx([0.0, -1.0, 0.0], abs=1e-9)
-        assert axes[:, 1] == pytest.approx([0.0, 0.0, -1.0], abs=1e-9)
-        assert axes[:, 2] == pytest.approx([1.0, 0.0, 0.0], abs=1e-9)
+    def test_imu_link_has_base_link_axes(self, poses):
+        # pit.yaml and imu_fusion.yaml remap both IMUs into REP-103 body axes.
+        assert poses['imu_link'][:3, :3] == pytest.approx(np.eye(3), abs=1e-9)
 
     def test_camera_link_from_case_geometry(self, poses, values):
         # realsense2_description: screw 14.9 mm behind the front face; camera_link

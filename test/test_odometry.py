@@ -148,8 +148,8 @@ class _OdomPit:
         self.sent = []
         self._tf = SimpleNamespace(sendTransform=self.sent.append)
         self._pub_odom_integrated = SimpleNamespace(publish=self.sent.append)
-        self._yaw_axis = 1
-        self._yaw_gain = -1.0
+        self._yaw_axis = 2
+        self._yaw_gain = 1.0
         self._speed_scale = 1.0
         self._odom_gaps_logged = 0
         self._odom_bias_logged = 0.0
@@ -160,11 +160,11 @@ class _OdomPit:
 
 
 class TestPitNodeOdometry:
-    def test_yaw_is_minus_optical_y(self):
+    def test_yaw_is_body_z(self):
         pit = _OdomPit()
         pit._integrate_odometry(1_000_000_000, 0.5, [0.0, 0.0, 0.0])
         pit._integrate_odometry(1_006_000_000, 0.5, [0.3, -0.2, 0.9])
-        assert pit._odometry.state.omega == pytest.approx(0.2)  # left turn
+        assert pit._odometry.state.omega == pytest.approx(0.9)  # left turn
 
     def test_speed_scale_applies(self):
         pit = _OdomPit()
@@ -214,9 +214,9 @@ class TestConfig:
         missing = [k for k in _odom_params() if f"declare_parameter('{k}'" not in src]
         assert missing == []
 
-    def test_yaw_axis_is_up_for_optical_imu_axes(self):
+    def test_yaw_axis_is_body_z(self):
         p = _odom_params()
-        assert (p['odometry.yaw_rate_axis'], p['odometry.yaw_rate_sign']) == (1, -1.0)
+        assert (p['odometry.yaw_rate_axis'], p['odometry.yaw_rate_sign']) == (2, 1.0)
 
     def test_pit_launch_loads_odom_yaml(self):
         assert "'odom.yaml'" in (ROOT / 'launch' / 'pit.launch.py').read_text()

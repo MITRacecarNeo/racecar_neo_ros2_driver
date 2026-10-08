@@ -264,8 +264,8 @@ class OdomCalibrator(CalibratorNode):
         self.check = check
         self.report = report
         params = node_params(CAL_NAME, NODE)
-        self.axis = int(params.get('odometry.yaw_rate_axis', 1))
-        self.sign = float(params.get('odometry.yaw_rate_sign', -1.0))
+        self.axis = int(params.get('odometry.yaw_rate_axis', 2))
+        self.sign = float(params.get('odometry.yaw_rate_sign', 1.0))
         self.yaw_scale = float(params.get('odometry.yaw_rate_scale', 1.0))
         self.speed_scale = float(params.get('odometry.speed_scale', 1.0))
         frames = load_frames(install_config_dir() or source_config_dir())

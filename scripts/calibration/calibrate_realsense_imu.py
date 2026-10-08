@@ -11,7 +11,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from calibrate_common import imu_main, ImuTarget  # noqa: E402, I100
+from calibrate_common import imu_main, ImuTarget, OPTICAL_POSITIONS  # noqa: E402, I100
 
 TARGET = ImuTarget(
     label='RealSense',
@@ -24,6 +24,7 @@ TARGET = ImuTarget(
     scale_key='realsense_accel_scale',
     check_topic='/imu/realsense',
     check_applies_cal=True,
+    positions=OPTICAL_POSITIONS,
 )
 
 

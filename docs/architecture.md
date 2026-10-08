@@ -340,19 +340,20 @@ exits ends the launch. Saved maps live under `~/data/maps/<name>/`
 
 ```
 base_link ──► laser                      lidar; yaw 180 deg, the mount faces aft
-          ├─► imu_link                   rotation only labels the optical-axis IMU data
+          ├─► imu_link                   IMU position; same axes as base_link
           └─► camera_bottom_screw_frame  camera mount; pitch and roll act here
                 └─► camera_link ──► RealSense subtree (published by the camera driver)
 ```
 
 REP-103 throughout: body frames x forward, y left, z up; `base_link` is the
-floor point under the rear axle midpoint. The IMU topics carry the RealSense
-IMU's optical axes (x right, y down, z forward; `config/pit.yaml` remaps the
-LSM9DS1 into them), and `imu_link`'s rotation labels them; no IMU data is
-rotated. `odom -> base_link` comes from the odometry in `pit_node`
+floor point under the rear axle midpoint. The IMU topics (`/imu/lsm9ds1`,
+`/imu/fused`, `/mag`, and their `/raw` forms) carry body axes too, in
+`imu_link`, which has no rotation: `config/pit.yaml` remaps the LSM9DS1 and
+`config/imu_fusion.yaml` remaps the RealSense IMU. Only `/imu/realsense`, the
+camera driver's own topic, stays in the camera's optical axes (x right, y
+down, z forward). `odom -> base_link` comes from the odometry in `pit_node`
 (`racecar_neo_ros2_driver/odometry.py`, settings in `config/odom.yaml`): each
-telemetry frame's encoder speed and gyro yaw rate (the optical y axis
-negated) are integrated as a unicycle at `base_link`, with a gyro bias
+telemetry frame's encoder speed and gyro yaw rate (body z) are integrated as a unicycle at `base_link`, with a gyro bias
 re-estimated while the car is stopped, and published at 50 Hz. It runs
 inside `pit_node` because a separate node would deserialize messages
 `pit_node` already holds decoded.

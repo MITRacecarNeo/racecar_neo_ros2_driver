@@ -45,13 +45,16 @@ pit_node:
     imu_topic: "/imu/lsm9ds1"
     mag_topic: "/mag"
 
-    # LSM9DS1 -> RealSense D435i IMU frame, so imu_fusion_node can average the
-    # two: RS_X=-LSM_Y, RS_Y=+LSM_Z, RS_Z=+LSM_X. A reflection (det -1), shared
-    # by accel and gyro. See docs/troubleshooting.md, "LSM9DS1 axis mapping".
-    imu.accel_gyro_axis_order: [1, 2, 0]
-    imu.accel_gyro_axis_sign: [-1.0, 1.0, 1.0]
+    # LSM9DS1 -> REP-103 body axes (x forward, y left, z up), the frame of every
+    # published IMU topic: X=+LSM_X, Y=+LSM_Y, Z=-LSM_Z for accel and gyro (a
+    # reflection, det -1: the chip's accel/gyro axes are left-handed), and
+    # X=-M_X, Y=+M_Y, Z=-M_Z for the magnetometer, whose axes differ from the
+    # accel/gyro axes on the same chip. Calibration applies after this remap.
+    # See docs/troubleshooting.md, "LSM9DS1 axis mapping".
+    imu.accel_gyro_axis_order: [0, 1, 2]
+    imu.accel_gyro_axis_sign: [1.0, 1.0, -1.0]
     imu.mag_axis_order: [0, 1, 2]
-    imu.mag_axis_sign: [1.0, 1.0, 1.0]
+    imu.mag_axis_sign: [-1.0, 1.0, -1.0]
 
     # Unit scales for the firmware's Adafruit_LSM9DS1 getEvent() output.
     # accel is m/s^2 (scale 1.0). gyro: set 0.01745329 if the library reports

@@ -19,15 +19,14 @@ laser_roll_deg: 0.0
 laser_pitch_deg: 0.0
 laser_yaw_deg: 180.0     # motor end toward the rear, scan zero faces aft
 
-# IMU: LSM9DS1 breakout center. The rotation is the convention, not a
-# measurement: config/pit.yaml remaps the LSM9DS1 into the RealSense IMU's
-# optical axes (x right, y down, z forward), and this rotation labels them.
+# IMU: LSM9DS1 breakout center. No rotation: config/pit.yaml and
+# config/imu_fusion.yaml remap both IMUs into base_link's axes (REP-103).
 imu_x_mm: 190.0
 imu_y_mm: 0.0
 imu_z_mm: 105.0
-imu_roll_deg: -90.0
+imu_roll_deg: 0.0
 imu_pitch_deg: 0.0
-imu_yaw_deg: -90.0
+imu_yaw_deg: 0.0
 
 # RealSense D435i case. camera_link is derived from these in the URDF, using
 # the case geometry from realsense2_description.

@@ -187,8 +187,8 @@ class PitNode(Node):
         # config/odom.yaml; per-car scales in odom.local.yaml.
         self.declare_parameter('odometry.enable', True)
         self.declare_parameter('odometry.topic', '/odom/integrated')
-        self.declare_parameter('odometry.yaw_rate_axis', 1)
-        self.declare_parameter('odometry.yaw_rate_sign', -1.0)
+        self.declare_parameter('odometry.yaw_rate_axis', 2)
+        self.declare_parameter('odometry.yaw_rate_sign', 1.0)
         self.declare_parameter('odometry.speed_scale', 1.0)
         self.declare_parameter('odometry.yaw_rate_scale', 1.0)
         self.declare_parameter('odometry.publish_rate_hz', 50.0)

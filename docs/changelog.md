@@ -203,6 +203,21 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Changed
 
+- IMU topics use REP-103 body axes (x forward, y left, z up): `/imu/lsm9ds1`,
+  `/imu/lsm9ds1/raw`, `/imu/fused`, `/mag`, and `/mag/raw`, all in
+  `imu_link`, which now has no rotation from `base_link`. `pit.yaml` remaps
+  the LSM9DS1 accel and gyro (X = +LSM_X, Y = +LSM_Y, Z = -LSM_Z) and, for the
+  first time, the magnetometer (X = -M_X, Y = +M_Y, Z = -M_Z);
+  `imu_fusion_node` remaps the RealSense IMU after its calibration
+  (`realsense_axis_order`, `realsense_axis_sign`). `/imu/realsense` keeps the
+  camera's optical axes. The odometry reads yaw rate from body z
+  (`odometry.yaw_rate_axis` 2, sign +1). The LSM9DS1 calibration poses follow
+  body axes. Breaking: code that read the IMU topics in the camera's optical
+  axes (x right, y down, z forward) must change, and a car's
+  `lsm9ds1_cal.local.yaml` and `lsm9ds1_mag_cal.local.yaml` from before this
+  change need `racecar calibrate imu mag` again; `realsense_cal.local.yaml`
+  stays valid. Bags recorded before it analyze with the old axis
+  (`calibrate_dynamics.read_bag(axis=1, sign=-1.0)`).
 - Calibration instructions rewritten: one instruction per line, full
   sentences, durations and distances in seconds and meters, setup lines split
   one per line under `Setup:`. Run under `racecar calibrate`, the tools no
