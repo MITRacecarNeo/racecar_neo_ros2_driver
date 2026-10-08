@@ -316,6 +316,26 @@ when it exists. Two load extra files: `pit.launch.py` adds
 `frames.launch.py` does not use `single_node_launch()`; see
 [Frame tree](#frame-tree).
 
+`autonomy.launch.py` runs beside teleop, not inside it, and reads `/scan` and
+the `odom -> base_link -> laser` transforms teleop publishes. Its `mode`,
+`localizer`, `map`, and `pose` arguments select the nodes (`node_specs()`):
+
+```
+autonomy.launch.py
+├── mode:=mapping                  slam_toolbox (async) + lifecycle_manager_slam
+└── mode:=localization map:=NAME
+    ├── localizer:=amcl (default)  map_server + amcl + lifecycle_manager_localization
+    └── localizer:=slam_toolbox    slam_toolbox (localization) + lifecycle_manager_slam
+```
+
+Each publishes `map -> odom`. slam_toolbox, AMCL, and map_server are lifecycle
+nodes; a Nav2 lifecycle manager configures and activates them. A node that
+exits ends the launch. Saved maps live under `~/data/maps/<name>/`
+(`racecar_neo_ros2_driver/maps.py`; `RACECAR_MAP_ROOT` overrides the root):
+`<name>.posegraph` and `<name>.data` from slam_toolbox, `<name>.pgm` and
+`<name>.yaml` from `map_saver_cli`. `scripts/slam_eval.py` saves a mapping run
+and records CPU, temperature, and poses at floor marks.
+
 ## Frame tree
 
 ```
@@ -474,6 +494,8 @@ node's `<name>_config` launch argument.
 | `lsm9ds1_cal.yaml`, `lsm9ds1_mag_cal.yaml` | `pit_node` | IMU bias and iron correction, zero defaults |
 | `realsense_cal.yaml` | `imu_fusion_node` | RealSense IMU bias, zero defaults |
 | `odom.yaml` | `pit_node` (loaded by `pit.launch.py`) | odometry: yaw axis and sign, speed and yaw-rate scales, publish rate, stopped-car bias settings |
+| `slam_mapping.yaml`, `slam_localization.yaml` | `slam_toolbox`, `lifecycle_manager_slam` | frames, laser range 0.3 to 12 m, node spacing, loop closure |
+| `amcl.yaml` | `amcl`, `map_server`, `lifecycle_manager_localization` | motion and laser models, particles, beam skipping, update distances |
 | `frames.yaml` | `frames.launch.py` (not a node parameter file) | frame offsets in mm and deg, fleet base values; see [Frame tree](#frame-tree) |
 
 `config/*.local.yaml` is gitignored. Each launch file loads `<name>.local.yaml`

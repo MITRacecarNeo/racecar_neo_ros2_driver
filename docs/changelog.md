@@ -6,6 +6,23 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Added
 
+- `launch/autonomy.launch.py`, run beside teleop (`racecar launch
+  autonomy`): `mode:=mapping` runs slam_toolbox (async); `mode:=localization
+  map:=NAME` runs AMCL with map_server, or the slam_toolbox localizer with
+  `localizer:=slam_toolbox`; `pose:=x,y,yaw` sets the start pose (default the
+  map origin). Each under a Nav2 lifecycle manager. Configs
+  `slam_mapping.yaml`, `slam_localization.yaml`, `amcl.yaml` (base_link,
+  laser range 0.3 to 12 m past the antenna self-returns), each with a
+  `.local.yaml` override. Maps live in `~/data/maps/<name>/`
+  (`racecar_neo_ros2_driver/maps.py`, `RACECAR_MAP_ROOT`).
+- `scripts/slam_eval.py`: `save NAME` (pose graph and `.pgm`/`.yaml`),
+  `load` (CPU per node, all-core busy, SoC temperature, throttling, ARM clock,
+  to a CSV), `mark LABEL` (map pose with the car stopped on a floor mark),
+  `report` (repeat-visit spread and distances against taped pairs),
+  `quality` (occupied, free, and unknown cells of a saved map). Records go
+  to `~/data/slam_eval/`.
+- `package.xml` runs on `slam_toolbox`, `nav2_amcl`, `nav2_map_server`, and
+  `nav2_lifecycle_manager`.
 - `setup_ros2.sh` installs `ros-jazzy-slam-toolbox`,
   `ros-jazzy-nav2-map-server`, `ros-jazzy-nav2-amcl`, and
   `ros-jazzy-nav2-lifecycle-manager`.
