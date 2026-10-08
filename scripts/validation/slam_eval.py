@@ -2,6 +2,9 @@
 """
 Measurements for SLAM runs on the car, alongside `racecar launch autonomy`.
 
+slam_session.py in this folder runs a whole test session with these; the
+subcommands below stay for single measurements.
+
     slam_eval.py save NAME                 # write the mapping run to <map root>/NAME/
     slam_eval.py load [--seconds N]        # CPU per node, temperature, throttling; Ctrl-C ends
     slam_eval.py mark LABEL [--tag T]      # pose in the map frame with the car stopped on a mark
@@ -26,9 +29,10 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+from typing import Any
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE.parent))
 
 import sysinfo  # noqa: E402
 
@@ -85,16 +89,26 @@ def save(name: str) -> int:
     finally:
         node.destroy_node()
         rclpy.shutdown()
-    saver = [
-        'ros2', 'run', 'nav2_map_server', 'map_saver_cli', '-f', str(stem),
-        '--ros-args', '-p', 'map_subscribe_transient_local:=true',
-    ]  # fmt: skip
-    if subprocess.run(saver, check=False).returncode != 0:
+    if not run_map_saver(stem):
         print('map_saver_cli failed; the pose graph is saved.', file=sys.stderr)
         return 1
     for path in sorted(stem.parent.glob(stem.name + '.*')):
         print(path)
     return 0
+
+
+def run_map_saver(stem: Path, log: Path | None = None) -> bool:
+    """Write <stem>.pgm and <stem>.yaml from /map; True on success."""
+    argv = [
+        'ros2', 'run', 'nav2_map_server', 'map_saver_cli', '-f', str(stem),
+        '--ros-args', '-p', 'map_subscribe_transient_local:=true',
+    ]  # fmt: skip
+    if log is None:
+        return subprocess.run(argv, check=False).returncode == 0
+    with log.open('a') as f:
+        return (
+            subprocess.run(argv, check=False, stdout=f, stderr=subprocess.STDOUT).returncode == 0
+        )
 
 
 # --- load ---------------------------------------------------------------------
@@ -182,56 +196,68 @@ def summarize(samples: list[Sample]) -> list[str]:
     return lines
 
 
+class LoadRecorder:
+    """CPU per node, all-core busy, temperature, throttling, and ARM clock, one sample per call."""
+
+    def __init__(self) -> None:
+        self.samples: list[Sample] = []
+        self._ticks = {
+            label: read_ticks(pids) for label, pids in find_processes(read_cmdlines()).items()
+        }
+        self._cpu = sysinfo.read_cpu_times()
+        self._start = self._last = time.monotonic()
+
+    def sample(self) -> Sample:
+        """Measure since the previous call; nodes started since are added."""
+        now = time.monotonic()
+        dt = max(now - self._last, 1e-3)
+        per = {}
+        for label, pids in find_processes(read_cmdlines()).items():
+            ticks = read_ticks(pids)
+            if label in self._ticks:
+                per[label] = tick_delta(self._ticks[label], ticks) / CLK_TCK / dt * 100.0
+            self._ticks[label] = ticks
+        cpu = sysinfo.read_cpu_times()
+        busy = 0.0
+        if cpu and self._cpu and cpu[1] > self._cpu[1]:
+            busy = (cpu[0] - self._cpu[0]) / (cpu[1] - self._cpu[1]) * 100.0
+        self._cpu, self._last = cpu, now
+        s = Sample(
+            now - self._start,
+            busy,
+            sysinfo.read_soc_temp(),
+            sysinfo.read_throttled()[0],
+            sysinfo.read_arm_clock()[0],
+            per,
+        )
+        self.samples.append(s)
+        return s
+
+    def write_csv(self, path: Path) -> None:
+        labels = sorted({k for s in self.samples for k in s.per_process})
+        with path.open('w', newline='') as f:
+            w = csv.writer(f)
+            w.writerow(['t_s', 'cpu_busy_pct', 'temp_c', 'throttled', 'arm_mhz', *labels])
+            for s in self.samples:
+                w.writerow(
+                    [f'{s.t:.1f}', f'{s.cpu_busy:.1f}', s.temp_c, s.throttled, s.arm_mhz]
+                    + [f'{s.per_process.get(k, 0.0):.1f}' for k in labels]
+                )
+
+
 def record_load(seconds: float | None, out_dir: Path) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f'{datetime.now():%Y%m%d-%H%M%S}-load.csv'
-    procs = find_processes(read_cmdlines())
-    print(
-        'Recording ' + ', '.join(sorted(procs)) + f' to {path}; nodes started later are '
-        'added. Ctrl-C ends.'
-    )
-    samples: list[Sample] = []
-    last_ticks = {label: read_ticks(pids) for label, pids in procs.items()}
-    last_cpu = sysinfo.read_cpu_times()
-    start = last_t = time.monotonic()
+    recorder = LoadRecorder()
+    print(f'Recording to {path}; nodes started later are added. Ctrl-C ends.')
     try:
-        while seconds is None or time.monotonic() - start < seconds:
+        while seconds is None or not recorder.samples or recorder.samples[-1].t < seconds:
             time.sleep(1.0)
-            now = time.monotonic()
-            dt = now - last_t
-            per = {}
-            for label, pids in find_processes(read_cmdlines()).items():
-                ticks = read_ticks(pids)
-                if label in last_ticks:
-                    per[label] = tick_delta(last_ticks[label], ticks) / CLK_TCK / dt * 100.0
-                last_ticks[label] = ticks
-            cpu = sysinfo.read_cpu_times()
-            busy = 0.0
-            if cpu and last_cpu and cpu[1] > last_cpu[1]:
-                busy = (cpu[0] - last_cpu[0]) / (cpu[1] - last_cpu[1]) * 100.0
-            last_cpu, last_t = cpu, now
-            samples.append(
-                Sample(
-                    now - start,
-                    busy,
-                    sysinfo.read_soc_temp(),
-                    sysinfo.read_throttled()[0],
-                    sysinfo.read_arm_clock()[0],
-                    per,
-                )
-            )
+            recorder.sample()
     except KeyboardInterrupt:
         pass
-    labels = sorted({k for s in samples for k in s.per_process})
-    with path.open('w', newline='') as f:
-        w = csv.writer(f)
-        w.writerow(['t_s', 'cpu_busy_pct', 'temp_c', 'throttled', 'arm_mhz', *labels])
-        for s in samples:
-            w.writerow(
-                [f'{s.t:.1f}', f'{s.cpu_busy:.1f}', s.temp_c, s.throttled, s.arm_mhz]
-                + [f'{s.per_process.get(k, 0.0):.1f}' for k in labels]
-            )
-    print('\n'.join(summarize(samples)))
+    recorder.write_csv(path)
+    print('\n'.join(summarize(recorder.samples)))
     return 0
 
 
@@ -256,37 +282,40 @@ def mean_pose(poses: list[tuple[float, float, float]]) -> tuple[float, float, fl
     return x, y, yaw
 
 
-def mark(label: str, tag: str, out_dir: Path) -> int:
-    import rclpy
-    from rclpy.time import Time
-    from tf2_ros import Buffer, TransformException, TransformListener
+def yaw_of(q: Any) -> float:
+    return math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
 
-    rclpy.init()
-    node = rclpy.create_node('slam_eval_mark')
-    buffer = Buffer()
-    TransformListener(buffer, node)
+
+def sample_map_pose(buffer: Any, spin: Any = None) -> list[tuple[float, float, float]]:
+    """
+    Sample map -> base_link for MARK_SECONDS; empty without the transform.
+
+    `spin` runs one round of the node's callbacks; None when an executor
+    thread already spins it.
+    """
+    from rclpy.time import Time
+    from tf2_ros import TransformException
+
     poses: list[tuple[float, float, float]] = []
     end = time.monotonic() + MARK_SECONDS + 2.0
-    try:
-        while time.monotonic() < end and len(poses) < 40:
-            rclpy.spin_once(node, timeout_sec=0.05)
-            try:
-                t = buffer.lookup_transform('map', 'base_link', Time())
-            except TransformException:
-                continue
-            q = t.transform.rotation
-            yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
-            poses.append((t.transform.translation.x, t.transform.translation.y, yaw))
-            time.sleep(MARK_SECONDS / 40)
-    finally:
-        node.destroy_node()
-        rclpy.shutdown()
-    if not poses:
-        print('No map -> base_link transform: is the localizer running?', file=sys.stderr)
-        return 1
+    while time.monotonic() < end and len(poses) < 40:
+        if spin is not None:
+            spin()
+        try:
+            t = buffer.lookup_transform('map', 'base_link', Time())
+        except TransformException:
+            time.sleep(0.05)
+            continue
+        tr = t.transform.translation
+        poses.append((tr.x, tr.y, yaw_of(t.transform.rotation)))
+        time.sleep(MARK_SECONDS / 40)
+    return poses
+
+
+def append_mark(path: Path, label: str, tag: str, poses: list[tuple[float, float, float]]) -> str:
+    """Append the mean of `poses` to a marks CSV; return a one-line summary."""
     x, y, yaw = mean_pose(poses)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / MARKS_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
     new = not path.exists()
     with path.open('a', newline='') as f:
         w = csv.writer(f)
@@ -296,7 +325,26 @@ def mark(label: str, tag: str, out_dir: Path) -> int:
             [f'{datetime.now():%Y-%m-%d %H:%M:%S}', label, tag, f'{x:.4f}', f'{y:.4f}',
              f'{math.degrees(yaw):.2f}', len(poses)]
         )  # fmt: skip
-    print(f'{label} ({tag}): x {x:.3f} m, y {y:.3f} m, yaw {math.degrees(yaw):.1f} deg')
+    return f'{label} ({tag}): x {x:.3f} m, y {y:.3f} m, yaw {math.degrees(yaw):.1f} deg'
+
+
+def mark(label: str, tag: str, out_dir: Path) -> int:
+    import rclpy
+    from tf2_ros import Buffer, TransformListener
+
+    rclpy.init()
+    node = rclpy.create_node('slam_eval_mark')
+    buffer = Buffer()
+    TransformListener(buffer, node)
+    try:
+        poses = sample_map_pose(buffer, lambda: rclpy.spin_once(node, timeout_sec=0.05))
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+    if not poses:
+        print('No map -> base_link transform: is the localizer running?', file=sys.stderr)
+        return 1
+    print(append_mark(out_dir / MARKS_FILE, label, tag, poses))
     return 0
 
 

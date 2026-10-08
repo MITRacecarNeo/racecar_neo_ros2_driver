@@ -15,12 +15,23 @@ All notable changes to this project will be documented in this file. The format 
   laser range 0.3 to 12 m past the antenna self-returns), each with a
   `.local.yaml` override. Maps live in `~/data/maps/<name>/`
   (`racecar_neo_ros2_driver/maps.py`, `RACECAR_MAP_ROOT`).
-- `scripts/slam_eval.py`: `save NAME` (pose graph and `.pgm`/`.yaml`),
-  `load` (CPU per node, all-core busy, SoC temperature, throttling, ARM clock,
-  to a CSV), `mark LABEL` (map pose with the car stopped on a floor mark),
-  `report` (repeat-visit spread and distances against taped pairs),
-  `quality` (occupied, free, and unknown cells of a saved map). Records go
-  to `~/data/slam_eval/`.
+- `scripts/validation/slam_session.py`: a SLAM test session in one terminal.
+  It stops the teleop service and starts teleop (EdgeTPU off, camera on or
+  off), the autonomy launch, `foxglove_bridge` limited to the SLAM topics
+  (`foxglove_validation.yaml`), a bag of the SLAM topics, and a load
+  recorder, each logging to `~/data/slam_eval/sessions/<time>-<mode>-<name>/`.
+  Keys while driving: mark a pose, save the map, time a save (the longest gap
+  in `/pose` while slam_toolbox serializes), quit. On quit it stops them in
+  order, saves a mapping run, and writes `report.md` (load, map size and
+  cells, odometry correction from the bag, loop lines, timed saves, marks,
+  storage) and `map.png`. It warns below 10 GB free or above 80% used and
+  refuses to start below 3 GB.
+- `scripts/validation/slam_eval.py`: `save NAME` (pose graph and
+  `.pgm`/`.yaml`), `load` (CPU per node, all-core busy, SoC temperature,
+  throttling, ARM clock, to a CSV), `mark LABEL` (map pose with the car
+  stopped on a floor mark), `report` (repeat-visit spread and distances
+  against taped pairs), `quality` (occupied, free, and unknown cells of a
+  saved map). Records go to `~/data/slam_eval/`.
 - `package.xml` runs on `slam_toolbox`, `nav2_amcl`, `nav2_map_server`, and
   `nav2_lifecycle_manager`.
 - `setup_ros2.sh` installs `ros-jazzy-slam-toolbox`,

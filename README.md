@@ -542,10 +542,7 @@ racecar launch autonomy                 # SLAM beside teleop: mapping by default
 racecar launch autonomy mode:=localization map:=NAME   # on ~/data/maps/NAME; localizer:=slam_toolbox, pose:=x,y,yaw
 ```
 
-`autonomy.launch.py` needs teleop running. `scripts/slam_eval.py save NAME`
-writes a mapping run to `~/data/maps/NAME/`; `load`, `mark`, `report`, and
-`quality` record CPU and temperature, poses at floor marks, and map cell counts
-under `~/data/slam_eval/`.
+`autonomy.launch.py` needs teleop running.
 
 RealSense topics, profiles, and known issues: see [docs/specifics/realsense_topics.md](docs/specifics/realsense_topics.md).
 
@@ -811,7 +808,7 @@ Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
 
 - **Unreleased**: 2D SLAM beside teleop (`racecar launch autonomy`:
   slam_toolbox mapping, AMCL or slam_toolbox localization; maps in
-  `~/data/maps`; `scripts/slam_eval.py`); integrated odometry in `pit_node` (`odom -> base_link`,
+  `~/data/maps`); integrated odometry in `pit_node` (`odom -> base_link`,
   `/odom/integrated`); telemetry stamped with the Teensy sample time;
   `racecar calibrate` (guided calibration, status, backup,
   `check` against the live sensors including a magnetometer turn test and

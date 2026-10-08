@@ -7,7 +7,7 @@ from types import ModuleType
 
 SCRIPTS = Path(__file__).resolve().parent.parent / 'scripts'
 # Script folders searched by load_script, in order.
-SCRIPT_DIRS = (SCRIPTS, SCRIPTS / 'calibration')
+SCRIPT_DIRS = (SCRIPTS, SCRIPTS / 'calibration', SCRIPTS / 'validation')
 
 
 def load_script(name: str) -> ModuleType:

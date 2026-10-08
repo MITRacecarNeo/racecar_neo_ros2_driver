@@ -333,8 +333,8 @@ nodes; a Nav2 lifecycle manager configures and activates them. A node that
 exits ends the launch. Saved maps live under `~/data/maps/<name>/`
 (`racecar_neo_ros2_driver/maps.py`; `RACECAR_MAP_ROOT` overrides the root):
 `<name>.posegraph` and `<name>.data` from slam_toolbox, `<name>.pgm` and
-`<name>.yaml` from `map_saver_cli`. `scripts/slam_eval.py` saves a mapping run
-and records CPU, temperature, and poses at floor marks.
+`<name>.yaml` from `map_saver_cli`. The validation scripts in
+`scripts/validation/` run test sessions on top of this launch.
 
 ## Frame tree
 
@@ -559,6 +559,8 @@ racecar_neo_ros2_driver/
 │   │                          Coral overlay and gasket patch
 │   ├── calibration/           calibrate.py (`racecar calibrate`), the
 │   │                          calibrate_*.py tools, calibrate_common
+│   ├── validation/            slam_session.py (one-terminal SLAM test session),
+│   │                          slam_eval.py (single measurements); run from source
 │   └── dashboards/            lab-dashboard checkouts (gitignored)
 ├── test/                      pytest suite (ament convention; not tests/)
 ├── models/                    EdgeTPU models: COCO EfficientDet-Lite0 (default)
