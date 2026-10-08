@@ -6,6 +6,9 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Added
 
+- `setup_ros2.sh` installs `ros-jazzy-slam-toolbox`,
+  `ros-jazzy-nav2-map-server`, `ros-jazzy-nav2-amcl`, and
+  `ros-jazzy-nav2-lifecycle-manager`.
 - `calibrate_odom.py`, the `odom` step of `racecar calibrate`, referenced to
   the lidar: each run is bracketed by two scans at rest, and scan matching
   gives the car's true motion, so the car may stop anywhere. Gyro yaw scale

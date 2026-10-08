@@ -17,6 +17,8 @@ sudo apt-get update
 
 # Runtime: ros-base + the message/driver packages used by the racecar driver.
 # Dev:     ros-dev-tools (ament_cmake et al.), colcon, rosdep.
+# SLAM:    slam_toolbox for mapping; nav2 AMCL, map_server and lifecycle_manager
+#          for localization on a saved map.
 # Diag:    rviz2, rqt, foxglove_bridge for visualization on a remote laptop.
 sudo apt-get install -y \
     ros-jazzy-ros-base \
@@ -29,6 +31,10 @@ sudo apt-get install -y \
     ros-jazzy-tf2-tools \
     ros-jazzy-topic-tools \
     ros-jazzy-diagnostic-updater \
+    ros-jazzy-slam-toolbox \
+    ros-jazzy-nav2-map-server \
+    ros-jazzy-nav2-amcl \
+    ros-jazzy-nav2-lifecycle-manager \
     ros-jazzy-rqt-graph \
     ros-jazzy-rviz2 \
     ros-jazzy-rqt \
