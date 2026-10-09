@@ -15,10 +15,12 @@ amcl:
     robot_model_type: nav2_amcl::DifferentialMotionModel
     # Odometry noise: rotation from rotation, rotation from translation,
     # translation from translation, translation from rotation, strafe (omni only).
-    alpha1: 0.2
-    alpha2: 0.2
-    alpha3: 0.2
-    alpha4: 0.2
+    # The gyro heading and lidar-calibrated encoder are far better than the
+    # Nav2 defaults (0.2) assume; at 0.2 the particle cloud never tightens.
+    alpha1: 0.02
+    alpha2: 0.02
+    alpha3: 0.02
+    alpha4: 0.02
     alpha5: 0.2
 
     laser_model_type: likelihood_field
@@ -26,11 +28,11 @@ amcl:
     laser_min_range: 0.3              # self-returns inside 0.3 m
     laser_max_range: 12.0
     laser_likelihood_max_dist: 2.0
-    sigma_hit: 0.2
-    z_hit: 0.5
+    sigma_hit: 0.1                    # wall distance spread, m; Nav2 default 0.2
+    z_hit: 0.9                        # with z_rand: weight of the wall fit over random returns
     z_short: 0.05
     z_max: 0.05
-    z_rand: 0.5
+    z_rand: 0.1
     lambda_short: 0.1
     # Beam skipping drops beams most particles disagree on: people or objects
     # passing through.

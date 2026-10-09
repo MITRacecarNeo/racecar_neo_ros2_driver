@@ -152,5 +152,7 @@ class TestConfigs:
         p = data['amcl']['ros__parameters']
         assert p['base_frame_id'] == 'base_link' and p['laser_min_range'] == 0.3
         assert p['robot_model_type'] == 'nav2_amcl::DifferentialMotionModel'
+        assert all(p[f'alpha{i}'] <= 0.05 for i in range(1, 5))
+        assert p['sigma_hit'] <= 0.1 and p['z_hit'] >= 0.9 and p['z_rand'] <= 0.1
         manager = data['lifecycle_manager_localization']['ros__parameters']
         assert manager['node_names'] == ['map_server', 'amcl']

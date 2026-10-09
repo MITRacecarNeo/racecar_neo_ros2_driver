@@ -14,7 +14,9 @@ All notable changes to this project will be documented in this file. The format 
   `slam_mapping.yaml`, `slam_localization.yaml`, `amcl.yaml` (base_link,
   laser range 0.3 to 12 m past the antenna self-returns; scan matching
   weighted toward the odometry: `angle_variance_penalty` 0.03,
-  `distance_variance_penalty` 0.1, floors 0.5 and 0.3), each with a
+  `distance_variance_penalty` 0.1, floors 0.5 and 0.3; AMCL odometry noise
+  `alpha1` to `alpha4` 0.02 and laser `sigma_hit` 0.1, `z_hit` 0.9, `z_rand`
+  0.1 in place of the Nav2 defaults), each with a
   `.local.yaml` override. Maps live in `~/data/maps/<name>/`
   (`racecar_neo_ros2_driver/maps.py`, `RACECAR_MAP_ROOT`).
 - `scripts/validation/slam_session.py`: a SLAM test session in one terminal.
@@ -31,7 +33,11 @@ All notable changes to this project will be documented in this file. The format 
   scale, the firmware's floor. It warns below 10 GB free or above 80% used and
   refuses to start below 3 GB. `replay SESSION TAG --set key=value` runs a
   mapping bag through slam_toolbox with parameter overrides on its own ROS
-  domain and writes a map and report per variant.
+  domain and writes a map and report per variant; localization runs replay
+  through AMCL or the slam_toolbox localizer (`--localizer`) on the run's map,
+  so both score on the same drive. `scan_fit.py` scores how far scan points
+  land from the map's walls at the localizer's pose (median, share within
+  100 mm, worst stretch); session and replay reports include it.
 - `scripts/validation/slam_eval.py`: `save NAME` (pose graph and
   `.pgm`/`.yaml`), `load` (CPU per node, all-core busy, SoC temperature,
   throttling, ARM clock, to a CSV), `mark LABEL` (map pose with the car

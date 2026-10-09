@@ -560,7 +560,8 @@ racecar_neo_ros2_driver/
 │   │                          Coral overlay and gasket patch
 │   ├── calibration/           calibrate.py (`racecar calibrate`), the
 │   │                          calibrate_*.py tools, calibrate_common
-│   ├── validation/            slam_session.py (one-terminal SLAM test session),
+│   ├── validation/            slam_session.py (one-terminal SLAM test session,
+│   │                          offline replay), scan_fit.py (scan-to-map fit),
 │   │                          slam_eval.py (single measurements); run from source
 │   └── dashboards/            lab-dashboard checkouts (gitignored)
 ├── test/                      pytest suite (ament convention; not tests/)

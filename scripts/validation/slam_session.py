@@ -5,7 +5,7 @@ One-terminal SLAM validation session on the car.
     slam_session.py map NAME [--camera off]
     slam_session.py localize MAP [--localizer amcl|slam_toolbox] [--pose x,y,yaw]
     slam_session.py analyze [SESSION_DIR]        # rewrite report.md; default the newest
-    slam_session.py replay SESSION_DIR TAG [--set key=value ...]
+    slam_session.py replay SESSION_DIR TAG [--localizer amcl|slam_toolbox] [--set key=value ...]
 
 A session stops the teleop service, then starts teleop (EdgeTPU off), the
 autonomy launch, foxglove_bridge (Lichtblick: ws://<car>:8765), a bag of the
@@ -16,10 +16,12 @@ map root, and report.md and map.png are written to
 ~/data/slam_eval/sessions/<time>-<mode>-<name>/. Driving stays on the gamepad
 or transmitter; the session publishes no drive commands.
 
-`replay` runs a mapping session's bag through a fresh slam_toolbox with
-config/slam_mapping.yaml plus the --set overrides, on its own ROS domain so a
-running car is not disturbed, and writes a map and report.md to
-<session>/replay/<TAG>/. The bag's map -> odom transforms are dropped.
+`replay` runs a session's bag through a fresh mapper (mapping runs) or
+localizer (localization runs; --localizer picks AMCL or slam_toolbox on the
+same bag) with the config file plus the --set overrides, on its own ROS
+domain so a running car is not disturbed, and writes report.md (and a map for
+mapping) to <session>/replay/<TAG>/. The bag's map -> odom transforms are
+dropped. Reports score the scan-to-map fit (scan_fit.py).
 """
 
 from __future__ import annotations
@@ -50,7 +52,8 @@ REPO = HERE.parent.parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent))
 
-import slam_eval  # noqa: E402, I100
+import scan_fit  # noqa: E402, I100
+import slam_eval  # noqa: E402
 
 SESSIONS = slam_eval.EVAL_DIR / 'sessions'
 TELEOP_UNIT = 'racecar-teleop'
@@ -879,6 +882,9 @@ def analyze(session: Path) -> Path:
     elif bag.exists():
         lines.append('No map -> odom transforms in the bag.')
 
+    if drift and Path(str(stem) + '.yaml').exists():
+        lines += ['', '## Scan-to-map fit', '', fit_line(stem, bag)]
+
     lines += ['', '## Loop closures', '']
     # The launch's own output holds every node's screen output, including
     # lines the karto core prints outside the ROS logger.
@@ -934,26 +940,97 @@ def parse_overrides(items: Sequence[str]) -> dict[str, Any]:
     return out
 
 
-def replay_argv(
-    config: Path, overrides: Path, bag: Path
-) -> tuple[list[str], list[str], list[str]]:
-    """Return the slam_toolbox, lifecycle manager, and bag play command lines."""
-    files = ['--params-file', str(config), '--params-file', str(overrides)]
-    slam = [
-        'ros2', 'run', 'slam_toolbox', 'async_slam_toolbox_node',
-        '--ros-args', '-r', '__node:=slam_toolbox', *files,
-    ]  # fmt: skip
-    manager = [
-        'ros2', 'run', 'nav2_lifecycle_manager', 'lifecycle_manager',
-        '--ros-args', '-r', '__node:=lifecycle_manager_slam', *files,
-    ]  # fmt: skip
-    play = ['ros2', 'bag', 'play', str(bag), '--clock', '100', '--topics', *REPLAY_TOPICS,
+REPLAY_KINDS = ('mapping', 'amcl', 'slam_toolbox')
+
+
+def play_argv(bag: Path) -> list[str]:
+    return ['ros2', 'bag', 'play', str(bag), '--clock', '100', '--topics', *REPLAY_TOPICS,
             '--remap', '/tf:=/tf_bag']  # fmt: skip
-    return slam, manager, play
 
 
-def replay(session: Path, tag: str, overrides: dict[str, Any]) -> int:
-    """Run a mapping session's bag through slam_toolbox with overrides; write a report."""
+def _ros_node(package: str, executable: str, name: str, files: Sequence[Path]) -> list[str]:
+    argv = ['ros2', 'run', package, executable, '--ros-args', '-r', f'__node:={name}']
+    for f in files:
+        argv += ['--params-file', str(f)]
+    return argv
+
+
+def replay_specs(kind: str, overrides: Path) -> list[tuple[str, list[str]]]:
+    """Return (name, command line) for each node of a replay kind."""
+    config = REPO / 'config'
+    if kind == 'amcl':
+        files = [config / 'amcl.yaml', overrides]
+        return [
+            ('map_server', _ros_node('nav2_map_server', 'map_server', 'map_server', files)),
+            ('amcl', _ros_node('nav2_amcl', 'amcl', 'amcl', files)),
+            (
+                'lifecycle_manager',
+                _ros_node(
+                    'nav2_lifecycle_manager',
+                    'lifecycle_manager',
+                    'lifecycle_manager_localization',
+                    files,
+                ),
+            ),
+        ]
+    yaml_name = 'slam_mapping.yaml' if kind == 'mapping' else 'slam_localization.yaml'
+    exe = 'async_slam_toolbox_node' if kind == 'mapping' else 'localization_slam_toolbox_node'
+    files = [config / yaml_name, overrides]
+    return [
+        ('slam_toolbox', _ros_node('slam_toolbox', exe, 'slam_toolbox', files)),
+        (
+            'lifecycle_manager',
+            _ros_node(
+                'nav2_lifecycle_manager', 'lifecycle_manager', 'lifecycle_manager_slam', files
+            ),
+        ),
+    ]
+
+
+def replay_overrides(
+    kind: str, overrides: dict[str, Any], stem: Path | None, pose: tuple[float, float, float]
+) -> dict[str, Any]:
+    """Parameter file for a replay: sim time everywhere, the map and start pose, the overrides."""
+    sim = {'use_sim_time': True}
+    if kind == 'amcl':
+        x, y, yaw = pose
+        return {
+            'amcl': {
+                'ros__parameters': {
+                    'set_initial_pose': True,
+                    'initial_pose': {'x': x, 'y': y, 'z': 0.0, 'yaw': yaw},
+                    **overrides,
+                    **sim,
+                }
+            },
+            'map_server': {'ros__parameters': {'yaml_filename': f'{stem}.yaml', **sim}},
+            'lifecycle_manager_localization': {'ros__parameters': sim},
+        }
+    slam = {**overrides, **sim}
+    if kind == 'slam_toolbox':
+        slam = {'map_file_name': str(stem), 'map_start_pose': list(pose), **slam}
+    return {
+        'slam_toolbox': {'ros__parameters': slam},
+        'lifecycle_manager_slam': {'ros__parameters': sim},
+    }
+
+
+def fit_line(stem: Path, bag: Path, map_odom: Any = None) -> str:
+    """Scan-to-map fit of a bag's scans; map -> odom from the bag unless given."""
+    data = scan_fit.read_bag(bag)
+    track = data['map_odom'] if map_odom is None else scan_fit.as_track(map_odom)
+    if data['base_laser'] is None:
+        return 'No base_link -> laser transform in the bag.'
+    fit = scan_fit.fit_scans(
+        scan_fit.load_grid(stem), data['scans'], track, data['odom_base'], data['base_laser']
+    )
+    return fit.line() if fit else 'No scans to score.'
+
+
+def replay(session: Path, tag: str, overrides: dict[str, Any], localizer: str | None) -> int:
+    """Run a session's bag through a fresh localizer or mapper with overrides; write a report."""
+    from racecar_neo_ros2_driver.maps import map_stem, parse_pose
+
     bag = session / 'bag'
     if not bag.exists():
         print(f'No bag in {session}.')
@@ -961,43 +1038,52 @@ def replay(session: Path, tag: str, overrides: dict[str, Any]) -> int:
     if not re.fullmatch(r'[A-Za-z0-9_-]+', tag):
         print(f'Tags use letters, digits, - and _: {tag!r}')
         return 2
+    meta = yaml.safe_load((session / 'session.yaml').read_text()) or {}
+    if meta.get('mode') == 'mapping':
+        kind, stem = 'mapping', None
+    else:
+        kind = localizer or meta.get('localizer') or 'amcl'
+        stem = map_stem(str(meta.get('map')))
+    if kind not in REPLAY_KINDS:
+        print(f'Localizer must be amcl or slam_toolbox: {kind!r}')
+        return 2
     out = session / 'replay' / tag
     if out.exists():
         print(f'{out} exists. Choose another tag.')
         return 1
     out.mkdir(parents=True)
+    pose = parse_pose(meta.get('pose') or '') or (0.0, 0.0, 0.0)
     params = out / 'overrides.yaml'
     params.write_text(
-        yaml.safe_dump(
-            {
-                'slam_toolbox': {'ros__parameters': {**overrides, 'use_sim_time': True}},
-                'lifecycle_manager_slam': {'ros__parameters': {'use_sim_time': True}},
-            },
-            sort_keys=False,
-        )
+        yaml.safe_dump(replay_overrides(kind, overrides, stem, pose), sort_keys=False)
     )
     # Every process of the replay, this one included, on its own domain.
     os.environ['ROS_DOMAIN_ID'] = str(REPLAY_DOMAIN)
     logs = out / 'logs'
     env = {'ROS_DOMAIN_ID': str(REPLAY_DOMAIN), 'ROS_LOG_DIR': str(logs)}
-    slam_cmd, manager_cmd, play_cmd = replay_argv(
-        REPO / 'config' / 'slam_mapping.yaml', params, bag
-    )
-    children = [
-        Child('slam_toolbox', slam_cmd, logs / 'slam_toolbox.log', env),
-        Child('lifecycle_manager', manager_cmd, logs / 'lifecycle_manager.log', env),
-    ]
-    play = Child('bag', play_cmd, logs / 'bag.log', env)
-    map_odom, odom, code = run_replay(children, play, out)
+    children = [Child(n, argv, logs / f'{n}.log', env) for n, argv in replay_specs(kind, params)]
+    play = Child('bag', play_argv(bag), logs / 'bag.log', env)
+    rec, code = run_replay(children, play, out, save_map=kind == 'mapping')
 
-    lines = [f'# Replay {tag} of {session.name}', '', 'Overrides:', '', '```']
+    lines = [f'# Replay {tag} of {session.name}', '', f'Kind: {kind}. Overrides:', '', '```']
     lines += [f'{k}: {v}' for k, v in overrides.items()] or ['(none)']
     lines += ['```', '', '## Odometry against SLAM', '']
-    drift = drift_summary(sorted(map_odom), sorted(odom))
+    drift = drift_summary(sorted(rec['map_odom']), sorted(rec['odom']))
     lines += drift_lines(drift) if drift else ['No map -> odom transforms.']
-    lines += ['', '## Map', '']
-    if (out / 'map.yaml').exists():
-        lines += map_lines(out / 'map')
+    if rec['amcl_sd']:
+        sd = np.array(rec['amcl_sd'])
+        lines.append(
+            f'AMCL pose SD: median {np.median(sd[:, 0]):.2f} m, {np.median(sd[:, 1]):.1f} deg; '
+            f'p90 {np.percentile(sd[:, 0], 90):.2f} m, {np.percentile(sd[:, 1], 90):.1f} deg.'
+        )
+    fit_stem = out / 'map' if kind == 'mapping' else stem
+    lines += ['', '## Scan-to-map fit', '']
+    if fit_stem is not None and Path(f'{fit_stem}.yaml').exists() and rec['map_odom']:
+        lines.append(fit_line(fit_stem, bag, rec['map_odom']))
+    else:
+        lines.append('No map or no map -> odom to score against.')
+    if kind == 'mapping' and (out / 'map.yaml').exists():
+        lines += ['', '## Map', ''] + map_lines(out / 'map')
         render_map(out / 'map', out / 'map.png')
     (out / 'report.md').write_text('\n'.join(lines) + '\n')
     print('\n'.join(lines))
@@ -1005,23 +1091,31 @@ def replay(session: Path, tag: str, overrides: dict[str, Any]) -> int:
 
 
 def run_replay(
-    children: list[Child], play: Child, out: Path
-) -> tuple[list[tuple[float, float, float, float]], list[tuple[float, float, float]], int]:
-    """Start slam_toolbox, play the bag, save the map; return map -> odom, odometry, status."""
+    children: list[Child], play: Child, out: Path, save_map: bool
+) -> tuple[dict[str, list[Any]], int]:
+    """
+    Start the nodes, play the bag, and collect map -> odom, odometry, and AMCL spread.
+
+    Times are the replay clock, which is the bag's receive time, the clock the
+    scan fit reads the bag with.
+    """
     import rclpy
     from rclpy.executors import SingleThreadedExecutor
     from rclpy.parameter import Parameter
     from rclpy.qos import qos_profile_sensor_data, QoSProfile, ReliabilityPolicy
+    from geometry_msgs.msg import PoseWithCovarianceStamped
     from nav_msgs.msg import Odometry
     from tf2_msgs.msg import TFMessage
 
-    map_odom: list[tuple[float, float, float, float]] = []
-    odom: list[tuple[float, float, float]] = []
+    rec: dict[str, list[Any]] = {'map_odom': [], 'odom': [], 'amcl_sd': []}
     rclpy.init()
     node = rclpy.create_node(
         'slam_replay', parameter_overrides=[Parameter('use_sim_time', value=True)]
     )
     tf_pub = node.create_publisher(TFMessage, '/tf', 100)
+
+    def now() -> float:
+        return node.get_clock().now().nanoseconds * 1e-9
 
     def on_bag_tf(msg: Any) -> None:
         keep = [
@@ -1033,19 +1127,22 @@ def run_replay(
     def on_tf(msg: Any) -> None:
         for t in msg.transforms:
             if (t.header.frame_id, t.child_frame_id) == ('map', 'odom'):
-                st = t.header.stamp.sec + t.header.stamp.nanosec * 1e-9
                 tr = t.transform.translation
-                map_odom.append((st, tr.x, tr.y, slam_eval.yaw_of(t.transform.rotation)))
+                rec['map_odom'].append((now(), tr.x, tr.y, slam_eval.yaw_of(t.transform.rotation)))
 
     def on_odom(msg: Any) -> None:
-        st = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
         p = msg.pose.pose.position
-        odom.append((st, p.x, p.y))
+        rec['odom'].append((now(), p.x, p.y))
+
+    def on_amcl(msg: Any) -> None:
+        c = msg.pose.covariance
+        rec['amcl_sd'].append((math.sqrt(c[0] + c[7]), math.degrees(math.sqrt(c[35]))))
 
     reliable = QoSProfile(depth=100, reliability=ReliabilityPolicy.RELIABLE)
     node.create_subscription(TFMessage, '/tf_bag', on_bag_tf, reliable)
     node.create_subscription(TFMessage, '/tf', on_tf, reliable)
     node.create_subscription(Odometry, '/odom/integrated', on_odom, qos_profile_sensor_data)
+    node.create_subscription(PoseWithCovarianceStamped, '/amcl_pose', on_amcl, 10)
     executor = SingleThreadedExecutor()
     executor.add_node(node)
     threading.Thread(target=executor.spin, daemon=True).start()
@@ -1055,14 +1152,14 @@ def run_replay(
             c.start()
         time.sleep(REPLAY_SETTLE_SEC)
         if not all(c.running() for c in children):
-            print('slam_toolbox did not start; see logs/.')
-            return map_odom, odom, 1
-        print(f'Replaying into slam_toolbox ({out.name})...')
+            print('A replay node did not start; see logs/.')
+            return rec, 1
+        print(f'Replaying ({out.name})...')
         play.start()
         assert play.proc is not None
         play.proc.wait()
         time.sleep(3.0)
-        if not slam_eval.run_map_saver(out / 'map', out / 'logs' / 'map_saver.log'):
+        if save_map and not slam_eval.run_map_saver(out / 'map', out / 'logs' / 'map_saver.log'):
             print('map_saver_cli failed; see logs/map_saver.log.')
             code = 1
     finally:
@@ -1071,7 +1168,7 @@ def run_replay(
         executor.shutdown(timeout_sec=2.0)
         node.destroy_node()
         rclpy.try_shutdown()
-    return map_odom, odom, code
+    return rec, code
 
 
 def newest_session() -> Path | None:
@@ -1096,10 +1193,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument('session', type=Path)
     p.add_argument('tag')
     p.add_argument('--set', action='append', default=[], metavar='KEY=VALUE')
+    p.add_argument(
+        '--localizer',
+        choices=('amcl', 'slam_toolbox'),
+        help='localization bags: default the localizer of the run',
+    )
     args = parser.parse_args(argv)
 
     if args.cmd == 'replay':
-        return replay(args.session, args.tag, parse_overrides(args.set))
+        return replay(args.session, args.tag, parse_overrides(args.set), args.localizer)
 
     if args.cmd == 'analyze':
         session = args.session or newest_session()

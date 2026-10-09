@@ -135,14 +135,33 @@ class TestReplay:
         with pytest.raises(ValueError):
             ss.parse_overrides([item])
 
-    def test_commands(self, ss, tmp_path):
-        slam, manager, play = ss.replay_argv(
-            tmp_path / 'c.yaml', tmp_path / 'o.yaml', tmp_path / 'bag'
-        )
-        assert slam[-1] == str(tmp_path / 'o.yaml') and '__node:=slam_toolbox' in slam
-        assert '__node:=lifecycle_manager_slam' in manager
+    def test_play_drops_nothing_but_remaps_tf(self, ss, tmp_path):
+        play = ss.play_argv(tmp_path / 'bag')
         assert play[3] == str(tmp_path / 'bag') and play[-2:] == ['--remap', '/tf:=/tf_bag']
-        assert '/map' not in play  # slam_toolbox rebuilds the map
+        assert '/map' not in play  # the replayed nodes publish their own
+
+    def test_mapping_nodes(self, ss, tmp_path):
+        names = [n for n, _ in ss.replay_specs('mapping', tmp_path / 'o.yaml')]
+        assert names == ['slam_toolbox', 'lifecycle_manager']
+        argv = dict(ss.replay_specs('mapping', tmp_path / 'o.yaml'))['slam_toolbox']
+        assert 'async_slam_toolbox_node' in argv and argv[-1] == str(tmp_path / 'o.yaml')
+
+    def test_amcl_nodes(self, ss, tmp_path):
+        specs = dict(ss.replay_specs('amcl', tmp_path / 'o.yaml'))
+        assert list(specs) == ['map_server', 'amcl', 'lifecycle_manager']
+        assert '__node:=lifecycle_manager_localization' in specs['lifecycle_manager']
+
+    def test_amcl_overrides_start_at_the_pose(self, ss, tmp_path):
+        o = ss.replay_overrides('amcl', {'alpha1': 0.05}, tmp_path / 'room', (1.0, 2.0, 0.5))
+        p = o['amcl']['ros__parameters']
+        assert p['initial_pose'] == {'x': 1.0, 'y': 2.0, 'z': 0.0, 'yaw': 0.5}
+        assert p['alpha1'] == 0.05 and p['use_sim_time'] is True
+        assert o['map_server']['ros__parameters']['yaml_filename'] == f'{tmp_path / "room"}.yaml'
+
+    def test_slam_localization_overrides(self, ss, tmp_path):
+        o = ss.replay_overrides('slam_toolbox', {}, tmp_path / 'room', (0.0, 0.0, 0.0))
+        p = o['slam_toolbox']['ros__parameters']
+        assert p['map_file_name'] == str(tmp_path / 'room') and p['map_start_pose'] == [0, 0, 0]
 
     def test_drift_spread(self, ss):
         d = ss.drift_summary(
