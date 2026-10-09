@@ -14,9 +14,10 @@ maps.py) or a path stem; mapping saves under it. `pose` (x,y,yaw in the map
 frame) is the start pose; without one, both localizers start at the map
 origin, which is the odometry origin of the mapping run (where pit_node
 started); `global` (AMCL only) searches the whole map. `resume` continues a
-mapping run from an autosaved pose graph at `pose`; `foxglove:=true` adds
-foxglove_bridge. Each node's config loads its `.local.yaml` override last. A
-node that exits ends the launch.
+mapping run from an autosaved pose graph at `pose`; `extend` starts a mapping
+run from a saved pose graph, scan-matched from the rough `pose`, and saves
+under `map`. `foxglove:=true` adds foxglove_bridge. Each node's config loads
+its `.local.yaml` override last. A node that exits ends the launch.
 """
 
 from __future__ import annotations
@@ -59,13 +60,15 @@ def autonomy_spec(
     config_dir: str,
     pose_source: str = '',
     resumed: bool = False,
+    source_stem: str = '',
+    extended_from: str = '',
 ) -> dict[str, Any]:
     if pose_source:
         source = pose_source
     elif resumed:
         source = 'autosave'
     elif mode == 'mapping':
-        source = ''
+        source = 'pose' if source_stem else ''
     else:
         source = 'global' if pose_text == 'global' else 'pose' if pose_text else 'origin'
     return {
@@ -82,6 +85,8 @@ def autonomy_spec(
                 'pose': pose_text,
                 'pose_source': source,
                 'resumed_from_autosave': resumed,
+                'source': source_stem,
+                'extended_from': extended_from,
             },
         ],
     }
@@ -106,10 +111,11 @@ def node_specs(
     resume: str = '',
     foxglove: bool = False,
     pose_source: str = '',
+    extend: str = '',
 ) -> list[dict[str, Any]]:
     """Return (package, executable, name, parameters) per node; ValueError on a bad argument."""
     specs = [
-        *slam_specs(mode, localizer, map_name, pose_text, config_dir, resume),
+        *slam_specs(mode, localizer, map_name, pose_text, config_dir, resume, extend),
         autonomy_spec(
             mode,
             localizer,
@@ -119,6 +125,9 @@ def node_specs(
             config_dir,
             pose_source,
             bool(resume),
+            resume or extend,
+            # The stem's last part is the source map's name, saved or autosaved.
+            os.path.basename(extend),
         ),
     ]
     return [*specs, foxglove_spec(config_dir)] if foxglove else specs
@@ -131,6 +140,7 @@ def slam_specs(
     pose_text: str,
     config_dir: str,
     resume: str = '',
+    extend: str = '',
 ) -> list[dict[str, Any]]:
     if mode not in MODES:
         raise ValueError(f'mode must be one of {", ".join(MODES)}: {mode!r}')
@@ -140,15 +150,20 @@ def slam_specs(
     if search and (mode != 'localization' or localizer != 'amcl'):
         raise ValueError('pose:=global needs mode:=localization with localizer:=amcl')
     pose = None if search else parse_pose(pose_text)
-    if resume and mode != 'mapping':
-        raise ValueError('resume:= is for mode:=mapping')
+    if (resume or extend) and mode != 'mapping':
+        raise ValueError('resume:= and extend:= are for mode:=mapping')
+    if resume and extend:
+        raise ValueError('resume:= and extend:= exclude each other')
     if mode == 'mapping':
         files = _files(config_dir, 'slam_mapping.yaml')
-        # Resuming: slam_toolbox loads the autosaved pose graph and continues
-        # mapping from the start pose, which the scan match then refines.
+        # A pose graph given at startup is loaded at map_start_pose, and the
+        # first scan is matched against the saved scans near it; mapping then
+        # continues. (LOCALIZE_AT_POSE, the other match type, stops adding to
+        # the map.)
+        loaded = resume or extend
         resumed = (
-            [{'map_file_name': resume, 'map_start_pose': list(pose or (0.0, 0.0, 0.0))}]
-            if resume
+            [{'map_file_name': loaded, 'map_start_pose': list(pose or (0.0, 0.0, 0.0))}]
+            if loaded
             else []
         )
         return [
@@ -218,9 +233,19 @@ def _launch_setup(context: LaunchContext) -> list[Node]:
         LaunchConfiguration('resume').perform(context),
         LaunchConfiguration('foxglove').perform(context).lower() in ('1', 'true'),
         LaunchConfiguration('pose_source').perform(context),
+        LaunchConfiguration('extend').perform(context),
     )
     # 'both': node output also goes to the launch's log directory.
-    return [Node(**spec, output='both', on_exit=Shutdown()) for spec in specs]
+    return [
+        Node(**spec, output='both', on_exit=Shutdown(), **_stop_timeouts(spec)) for spec in specs
+    ]
+
+
+def _stop_timeouts(spec: dict[str, Any]) -> dict[str, str]:
+    """Return short stop timeouts for foxglove_bridge; it can ignore SIGINT with a client on."""
+    if spec['name'] != 'foxglove_bridge':
+        return {}
+    return {'sigterm_timeout': '2', 'sigkill_timeout': '2'}
 
 
 def generate_launch_description() -> LaunchDescription:
@@ -249,6 +274,11 @@ def generate_launch_description() -> LaunchDescription:
                 'resume',
                 default_value='',
                 description='mapping: autosaved pose graph stem to continue from, at pose',
+            ),
+            DeclareLaunchArgument(
+                'extend',
+                default_value='',
+                description='mapping: saved pose graph stem to extend, near pose',
             ),
             DeclareLaunchArgument(
                 'foxglove',

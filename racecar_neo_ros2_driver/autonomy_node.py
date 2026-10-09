@@ -11,17 +11,26 @@ topics whichever runs:
     /autonomy/autosave   Trigger: mapping only; the same set into <map>/autosave/
 
 In mapping it autosaves every autosave_period_sec and keeps the car's map pose
-in <map>/mapping_pose.yaml each second for a crash resume. In localization it writes
+in <map>/mapping_pose.yaml each second for a crash resume. A save into a
+folder that holds another run's map moves those files to <map>/previous/
+first. meta.yaml carries the run's start pose and last change; a run that
+began from another map (`source`: a resume or an extension) carries them over
+from that map's meta.yaml. In localization it writes
 <map>/last_pose.yaml every last_pose_period_sec while localized, and on exit.
 With pose 'global' (AMCL only) it asks AMCL to search the whole map once AMCL
-is up. On exit it publishes mode 'off', which lifts the mapping speed cap in
-throttle_node. File layout and the localized test: autonomy.py.
+is up. AMCL takes its start pose with no spread and would never correct it, so
+once AMCL is up this node sends the start pose again on /initialpose with
+start_spread_xy_m and start_spread_yaw_deg; the no-motion updates then match it
+to the scan before `localized` turns true. On exit it publishes mode 'off',
+which lifts the mapping speed cap in throttle_node. File layout and the
+localized test: autonomy.py.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
 import math
+import os
 from pathlib import Path
 import shutil
 import signal
@@ -48,11 +57,13 @@ from tf2_ros import Buffer, TransformException, TransformListener
 
 from . import autonomy as au
 from .frames import load_frames
-from .maps import map_stem
+from .maps import map_stem, parse_pose
 
 PACKAGE = 'racecar_neo_ros2_driver'
 SERVICE_TIMEOUT_SEC = 60.0
 MAP_SAVER_TIMEOUT_SEC = 60.0
+# map_saver_cli's wait for /map; its 2 s default can run out under nice while driving.
+MAP_WAIT_SEC = 10.0
 
 
 def driver_version() -> str:
@@ -78,12 +89,16 @@ class AutonomyNode(Node):
         p('pose', '')
         p('pose_source', '')
         p('resumed_from_autosave', False)
+        p('source', '')
+        p('extended_from', '')
         p('pose_rate_hz', 20.0)
         p('autosave_period_sec', 60.0)
         p('last_pose_period_sec', 5.0)
         p('scan_timeout_sec', 0.5)
         p('localized_max_xy_sd_m', 0.25)
         p('localized_max_yaw_sd_deg', 20.0)
+        p('start_spread_xy_m', 0.25)
+        p('start_spread_yaw_deg', 10.0)
 
         def get(name: str) -> Any:
             return self.get_parameter(name).value
@@ -101,8 +116,22 @@ class AutonomyNode(Node):
             float(get('localized_max_yaw_sd_deg')),
         )
         self._stem = map_stem(self._map) if self._map else None
+        source = str(get('source'))
+        carried = au.read_record(Path(source).parent / au.META_FILE) if source else {}
+        self._from_source = bool(source)
+        self._start_pose = au.pose_of(carried.get('start_pose'))
+        self._last_change = str(carried.get('last_change') or '')
+        self._extended_from = str(get('extended_from')) or str(carried.get('extended_from') or '')
         self._global_pending = self._mode == 'localization' and self._pose_arg == 'global'
         self._global_requested = False
+        # AMCL from a given or saved pose: re-seeded with a spread once it is up.
+        self._seed: tuple[float, float, float] | None = None
+        if self._uses_amcl() and not self._global_pending:
+            self._seed = parse_pose(self._pose_arg) or (0.0, 0.0, 0.0)
+        self._seed_sent: float | None = None
+        self._seed_cov = au.seed_covariance(
+            float(get('start_spread_xy_m')), float(get('start_spread_yaw_deg'))
+        )
 
         self._start = time.monotonic()
         self._last_scan: float | None = None
@@ -110,6 +139,7 @@ class AutonomyNode(Node):
         self._poses_seen = 0
         self._last_save = ''
         self._last_autosave = ''
+        self._autosaved_at: float | None = None
         self._localized = False
         self._pose: tuple[float, float, float] | None = None
         self._latest_cov: list[float] | None = None
@@ -144,6 +174,7 @@ class AutonomyNode(Node):
         )
         self._pub_pose = self.create_publisher(PoseWithCovarianceStamped, '/autonomy/pose', 10)
         self._pub_status = self.create_publisher(DiagnosticStatus, '/autonomy/status', latched)
+        self._pub_initial = self.create_publisher(PoseWithCovarianceStamped, '/initialpose', 10)
         self.create_service(
             Trigger, '/autonomy/save_map', self._on_save_map, callback_group=clients
         )
@@ -189,8 +220,39 @@ class AutonomyNode(Node):
     def _on_scan(self, _: bytes) -> None:
         self._last_scan = time.monotonic()
 
+    def _seeding(self) -> bool:
+        """Report whether AMCL's re-seeded start pose is still on its way."""
+        if self._seed is not None:
+            return True
+        if self._seed_sent is None:
+            return False
+        if time.monotonic() - self._seed_sent > au.SEED_WAIT_SEC:
+            self._seed_sent = None
+        elif self._sd is not None and au.shows_seed(self._sd, self._seed_cov):
+            self._seed_sent = None
+        return self._seed_sent is not None
+
+    def _send_seed(self) -> None:
+        if self._seed is None or self._poses_seen == 0:
+            return  # AMCL drops /initialpose until it is active and has published a pose
+        msg = PoseWithCovarianceStamped()
+        msg.header.frame_id = 'map'
+        msg.header.stamp = self.get_clock().now().to_msg()
+        x, y, yaw = self._seed
+        msg.pose.pose.position.x, msg.pose.pose.position.y = x, y
+        msg.pose.pose.orientation.z, msg.pose.pose.orientation.w = math.sin(yaw / 2), math.cos(
+            yaw / 2
+        )
+        msg.pose.covariance = self._seed_cov
+        self._pub_initial.publish(msg)
+        self._seed, self._seed_sent = None, time.monotonic()
+        self.get_logger().info('Start pose sent to AMCL with a spread; matching it to the scan.')
+
     def _on_pose(self, msg: PoseWithCovarianceStamped) -> None:
         self._poses_seen += 1
+        if self._mode == 'mapping':
+            # slam_toolbox publishes a pose for each scan it adds to the map.
+            self._last_change = au.change_time(datetime.now())
         self._sd = au.covariance_sd(list(msg.pose.covariance))
         if self._global_pending and self._global_requested and self._sd is not None:
             if (
@@ -219,6 +281,8 @@ class AutonomyNode(Node):
         if self._latest_cov is not None:
             out.pose.covariance = self._latest_cov
         self._pose = (tr.x, tr.y, yaw_of(q))
+        if self._mode == 'mapping' and self._start_pose is None and not self._from_source:
+            self._start_pose = self._pose
         self._pub_pose.publish(out)
 
     def _has_map_odom(self) -> bool:
@@ -238,8 +302,9 @@ class AutonomyNode(Node):
             scan_age,
             self._sd,
             self._poses_seen,
-            self._global_pending,
+            self._global_pending or self._seeding(),
             self._limits,
+            self._localized,
         )
 
     def _watch(self) -> None:
@@ -257,6 +322,7 @@ class AutonomyNode(Node):
             self._reinit.call_async(Empty.Request())
             self._global_requested = True
             self.get_logger().info('Searching the whole map (reinitialize_global_localization).')
+        self._send_seed()
         # AMCL updates, and publishes the spread localized needs, only after the
         # car moves; from a given start pose this lets a parked car localize.
         # Not during a global search, where it could settle on a wrong match.
@@ -281,8 +347,9 @@ class AutonomyNode(Node):
             scan_age,
             self._sd,
             self._poses_seen,
-            self._global_pending,
+            self._global_pending or self._seeding(),
             self._limits,
+            self._localized,
         )
         if localized != self._localized:
             self.get_logger().info(f'localized: {str(localized).lower()}')
@@ -340,6 +407,7 @@ class AutonomyNode(Node):
             'nice', '-n', '10',
             'ros2', 'run', 'nav2_map_server', 'map_saver_cli', '-f', str(stem),
             '--ros-args', '-p', 'map_subscribe_transient_local:=true',
+            '-p', f'save_map_timeout:={MAP_WAIT_SEC}',
         ]  # fmt: skip
         try:
             done = subprocess.run(
@@ -347,7 +415,10 @@ class AutonomyNode(Node):
             )
         except subprocess.TimeoutExpired:
             return 'map_saver_cli timed out'
-        return '' if done.returncode == 0 else 'map_saver_cli failed'
+        if done.returncode == 0:
+            return ''
+        lines = (done.stderr or done.stdout or b'').decode(errors='replace').strip().splitlines()
+        return 'map_saver_cli failed' + (f': {lines[-1]}' if lines else '')
 
     def _meta(self) -> dict[str, Any]:
         try:
@@ -355,21 +426,44 @@ class AutonomyNode(Node):
         except Exception:  # noqa: BLE001  meta.yaml still gets written
             frames = {}
         return au.meta_record(
-            self._map, datetime.now(), driver_version(), frames, self._pose_arg, self._session
+            self._map,
+            datetime.now(),
+            driver_version(),
+            frames,
+            self._session,
+            self._start_pose,
+            self._last_change,
+            self._extended_from,
         )
 
     def save_map(self) -> tuple[bool, str]:
         if self._mode != 'mapping' or self._stem is None:
             return False, 'not mapping'
+        folder, name = self._stem.parent, self._stem.name
+        tmp = folder / 'save.tmp'
         with self._save_lock:
             t0 = time.monotonic()
-            error = self._save_set(self._stem)
+            # The new files are complete before the old ones move, so a failed
+            # save leaves the earlier map in place.
+            if tmp.exists():
+                shutil.rmtree(tmp)
+            tmp.mkdir(parents=True)
+            error = self._save_set(tmp / name)
             if error:
                 return False, error
-            au.write_yaml_atomic(self._stem.parent / au.META_FILE, self._meta())
-            self._last_save = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            note = ''
+            earlier = au.read_record(folder / au.META_FILE)
+            if earlier.get('session') != self._session:
+                moved = au.archive_map_files(folder, name, datetime.now())
+                if moved is not None:
+                    note = f'; the earlier map moved to {moved}'
+            for f in tmp.iterdir():
+                os.replace(f, folder / f.name)
+            tmp.rmdir()
+            au.write_yaml_atomic(folder / au.META_FILE, self._meta())
+            self._last_save = datetime.now().strftime(au.TIME_FORMAT)
         self._publish_status()
-        return True, f'saved to {self._stem.parent} in {time.monotonic() - t0:.1f} s'
+        return True, f'saved to {folder} in {time.monotonic() - t0:.1f} s{note}'
 
     def autosave(self) -> tuple[bool, str]:
         if self._mode != 'mapping' or self._stem is None:
@@ -383,6 +477,7 @@ class AutonomyNode(Node):
             tmp.mkdir(parents=True)
             error = self._save_set(tmp / self._map)
             if error:
+                shutil.rmtree(tmp, ignore_errors=True)
                 return False, error
             record = au.pose_record(
                 self._pose or (0.0, 0.0, 0.0), datetime.now(), session=self._session
@@ -391,12 +486,17 @@ class AutonomyNode(Node):
             au.write_yaml_atomic(tmp / au.META_FILE, self._meta())
             au.replace_dir(tmp, folder / au.AUTOSAVE_DIR)
             self._last_autosave = record['time']
+            self._autosaved_at = time.monotonic()
         self.get_logger().info(f'Autosaved in {time.monotonic() - t0:.1f} s.')
         self._publish_status()
         return True, f'autosaved to {folder / au.AUTOSAVE_DIR}'
 
     def _timed_autosave(self) -> None:
         if self._poses_seen == 0:
+            return
+        # Just autosaved on request (the stop sequence): this one would repeat it
+        # and run into the stop.
+        if self._autosaved_at is not None and time.monotonic() - self._autosaved_at < 10.0:
             return
         ok, message = self.autosave()
         if not ok:
@@ -420,8 +520,11 @@ class AutonomyNode(Node):
     def shutdown(self) -> None:
         """Keep the last pose (localization) and publish mode 'off' (lifts the speed cap)."""
         self._stopping = True
-        if self._mode == 'localization':
-            self._write_last_pose()
+        if self._mode == 'localization' and self._stem is not None:
+            if self._localized:
+                self._write_last_pose()
+            else:
+                au.mark_pose_lost(self._stem.parent / au.LAST_POSE_FILE, datetime.now())
         self._publish_status(mode='off')
         # Reliable delivery needs the publisher alive until subscribers acknowledge.
         acked = self._pub_status.wait_for_all_acked(Duration(seconds=2.0))

@@ -19,6 +19,7 @@ This package is the v2 successor to [`racecar-neo-ros2-backend`](https://github.
 - [Lab dashboards](#lab-dashboards)
 - [Autonomy gate](#autonomy-gate)
 - [Bag recording](#bag-recording)
+- [Maps](#maps)
 - [Jupyter notebooks](#jupyter-notebooks)
 - [Manual build](#manual-build)
 - [Launch](#launch)
@@ -219,6 +220,8 @@ racecar wifi list                   # visible networks on wlan0
 racecar desktop status              # GNOME on/off for the next boot
 racecar log start lap3              # record a bag; racecar log stop to finalize
 racecar log analyze                 # summarize the newest bag
+racecar map start room_1            # build a map; racecar map save, then racecar map stop
+racecar map load room_1             # localize on a saved map
 racecar library --list              # student library folders under ~/jupyter_ws
 racecar help                        # full usage
 ```
@@ -518,6 +521,66 @@ unless you pass `--force`, because rosbag2 drops messages rather than blocking:
 the bag looks healthy until it is read. Name the topics you need, or
 `--exclude '/camera/.*'`.
 
+## Maps
+
+`racecar map` builds a 2D map of a room or hallway from the lidar and saves it
+under `~/data/maps/NAME/`. A saved map can be loaded later, and the car then
+reports its position on it. Teleop must be running (`racecar service start
+teleop`). You drive the car with the gamepad or the RC transmitter as usual.
+While mapping, the gamepad speed is held at the firmware minimum of 0.5 m/s.
+The RC transmitter is not limited, so switch it to slow mode before mapping.
+
+```sh
+racecar map start room_1                    # begin mapping
+racecar map status                          # mode, map, localized, pose
+racecar map save                            # returns when the files are written
+racecar map stop
+racecar map list                            # maps; unsaved ones marked
+racecar map info room_1                     # size, dates, poses
+racecar map load room_1                     # localize; starts from the last pose on it
+racecar map load room_1 --pose -1.5,2,1.57  # or from a pose: x, y in meters, heading in radians
+racecar map load room_1 --global            # or search the whole map while driving
+racecar map start room_2 --from room_1      # extend room_1 into a new map
+racecar map recover room_1                  # keep the autosave of a run stopped without save
+racecar map foxglove on                     # foxglove_bridge on port 8765 from the next start
+```
+
+To build a map:
+
+1. Place the car where the map should begin.
+2. Run `racecar map start NAME`. A name uses letters, digits, `-` and `_`.
+3. Drive slowly through the space with gentle turns.
+4. Drive back to where you started.
+5. Run `racecar map save`.
+6. Run `racecar map stop`.
+
+The map is also autosaved every 60 s and on stop. A run stopped without
+`save` is marked `unsaved` in `racecar map list`. `racecar map recover NAME`
+keeps it.
+
+To localize on a saved map:
+
+1. Run `racecar map load NAME`.
+2. Check that `racecar map status` reports `localized  true`.
+3. If it reports `false`, drive a short distance and check again.
+
+Without `--pose` or `--global`, `load` starts from the car's last pose on that
+map. A map that was never loaded starts from where mapping began. If the car
+has moved since, give its pose with `--pose`, or use `--global` and drive
+until `localized` turns true.
+
+To extend a map, load it, drive to the edge of the mapped area, and run
+`racecar map start NEW --from NAME`. `racecar map start NAME --from NAME`
+extends it in place. A start on an existing name needs `--force`, which moves
+the old folder to `~/data/maps/replaced/`. A save that replaces a map's files
+moves the old ones to `NAME/previous/`. The tools never delete anything
+under `~/data/maps`.
+
+Each map folder holds `NAME.pgm` (the image) and `NAME.yaml` for viewing and
+AMCL, `NAME.posegraph` and `NAME.data` for slam_toolbox, and `meta.yaml`
+(date, driver version, frame offsets, start pose). `scripts/setup_jupyter.sh`
+links `~/jupyter_ws/maps` to `~/data/maps`, so JupyterLab shows the maps.
+
 ## Jupyter notebooks
 
 `http://<robot>:8888/lab`: JupyterLab with `import rclpy` working out of the box. Notebooks land in `~/jupyter_ws/`. No token / password by default (the systemd unit assumes the robot's network is trusted).
@@ -809,9 +872,10 @@ export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
 
 Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
 
-- **Unreleased**: 2D SLAM beside teleop (`racecar launch autonomy`:
-  slam_toolbox mapping, AMCL or slam_toolbox localization; maps in
-  `~/data/maps`); integrated odometry in `pit_node` (`odom -> base_link`,
+- **Unreleased**: 2D SLAM beside teleop (`racecar map` to build, save,
+  load, extend, and recover maps through `racecar-autonomy.service`;
+  `racecar launch autonomy`: slam_toolbox mapping, AMCL or slam_toolbox
+  localization; maps in `~/data/maps`); integrated odometry in `pit_node` (`odom -> base_link`,
   `/odom/integrated`); telemetry stamped with the Teensy sample time;
   `racecar calibrate` (guided calibration, status, backup,
   `check` against the live sensors including a magnetometer turn test and

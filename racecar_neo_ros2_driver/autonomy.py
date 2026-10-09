@@ -6,13 +6,21 @@ Map directory layout (racecar_neo_ros2_driver/maps.py gives the root):
     <name>/<name>.posegraph, <name>.data   slam_toolbox serialization
     <name>/<name>.pgm, <name>.yaml         map_server format
     <name>/meta.yaml                       written with each save
-    <name>/last_pose.yaml                  written while localized
+    <name>/last_pose.yaml                  written while localized; flagged when a
+                                           run stops unlocalized (mark_pose_lost)
     <name>/autosave/                       the same file set, replaced whole
     <name>/mapping_pose.yaml               the car's map pose each second while mapping
+    <name>/previous/<time>/                saved files replaced by a later run or recover
+    replaced/<name>-<time>/                map folders moved aside by `racecar map start --force`
 
 A mapping run that stops without its stop sequence (slam_toolbox crashed)
 resumes from the autosave of the same session, at the newer of the autosave's
 pose and mapping_pose.yaml (resume_point).
+
+meta.yaml records `start_pose`, the car's pose when the map was begun (the
+fallback start pose for a later load), and `last_change`, the time of the last
+scan added to the map. An autosave whose `last_change` is newer than the saved
+set's holds work that was never saved (map_state).
 """
 
 from __future__ import annotations
@@ -33,6 +41,10 @@ META_FILE = 'meta.yaml'
 LAST_POSE_FILE = 'last_pose.yaml'
 AUTOSAVE_FILE = 'autosave.yaml'
 MAPPING_POSE_FILE = 'mapping_pose.yaml'
+PREVIOUS_DIR = 'previous'
+REPLACED_DIR = 'replaced'
+MAP_SUFFIXES = ('.posegraph', '.data', '.pgm', '.yaml')
+TIME_FORMAT = '%Y-%m-%d %H:%M:%S'
 
 LEVEL_OK, LEVEL_WARN, LEVEL_ERROR = 0, 1, 2
 
@@ -42,6 +54,8 @@ class Limits:
     scan_timeout_sec: float = 0.5
     max_xy_sd_m: float = 0.25
     max_yaw_sd_deg: float = 20.0
+    # Becoming localized takes this share of the limits; losing it, the limits.
+    enter_fraction: float = 0.6
 
 
 def covariance_sd(cov: list[float] | tuple[float, ...]) -> tuple[float, float]:
@@ -58,6 +72,7 @@ def is_localized(
     poses_seen: int,
     global_pending: bool,
     limits: Limits,
+    was_localized: bool = False,
 ) -> bool:
     """
     Decide `localized` for /autonomy/status.
@@ -66,7 +81,10 @@ def is_localized(
     scan means the lidar stopped. That is all mapping needs: slam_toolbox
     publishes map -> odom from its first scan, and its pose only when the car
     moves. Localization also needs the localizer's pose spread under the
-    limits, and stays false while a global search has not converged.
+    limits, and stays false while a global search has not converged. The
+    limits have hysteresis: the spread must fall to enter_fraction of them to
+    become localized, so the car does not set off with a spread at the limit,
+    which the first motion can push over.
     """
     if not has_map_odom or scan_age is None or scan_age > limits.scan_timeout_sec:
         return False
@@ -74,7 +92,24 @@ def is_localized(
         return True
     if global_pending or sd is None:
         return False
-    return sd[0] <= limits.max_xy_sd_m and sd[1] <= limits.max_yaw_sd_deg
+    scale = 1.0 if was_localized else limits.enter_fraction
+    return sd[0] <= limits.max_xy_sd_m * scale and sd[1] <= limits.max_yaw_sd_deg * scale
+
+
+SEED_WAIT_SEC = 3.0
+
+
+def seed_covariance(sd_xy_m: float, sd_yaw_deg: float) -> list[float]:
+    """Return a 6x6 row-major pose covariance with the given x, y, and yaw spread."""
+    cov = [0.0] * 36
+    cov[0] = cov[7] = sd_xy_m**2
+    cov[35] = math.radians(sd_yaw_deg) ** 2
+    return cov
+
+
+def shows_seed(sd: tuple[float, float], cov: list[float]) -> bool:
+    """Report whether a localizer pose spread reflects the seed (half its spread or more)."""
+    return sd[0] >= 0.5 * covariance_sd(cov)[0]
 
 
 def status_level(localized: bool, has_map_odom: bool, seconds_running: float) -> int:
@@ -108,27 +143,48 @@ def replace_dir(tmp: Path, final: Path) -> None:
         shutil.rmtree(old)
 
 
-def pose_record(pose: tuple[float, float, float], now: datetime, **extra: Any) -> dict[str, Any]:
+LOCALIZED_AT_STOP = 'localized_at_stop'
+
+
+def mark_pose_lost(path: Path, now: datetime) -> None:
+    """Flag last_pose.yaml when a run stops unlocalized: the car may have moved since."""
+    record = read_record(path)
+    if pose_of(record) is None:
+        return
+    record[LOCALIZED_AT_STOP] = False
+    record['stopped'] = now.strftime(TIME_FORMAT)
+    write_yaml_atomic(path, record)
+
+
+def pose_values(pose: tuple[float, float, float]) -> dict[str, float]:
     x, y, yaw = pose
-    return {
-        'x': round(x, 4),
-        'y': round(y, 4),
-        'yaw': round(yaw, 5),
-        'time': now.strftime('%Y-%m-%d %H:%M:%S'),
-        **extra,
-    }
+    return {'x': round(x, 4), 'y': round(y, 4), 'yaw': round(yaw, 5)}
+
+
+def pose_record(pose: tuple[float, float, float], now: datetime, **extra: Any) -> dict[str, Any]:
+    return {**pose_values(pose), 'time': now.strftime(TIME_FORMAT), **extra}
+
+
+def change_time(now: datetime) -> str:
+    """Return a `last_change` stamp; milliseconds, so string order is time order."""
+    return now.isoformat(sep=' ', timespec='milliseconds')
+
+
+def pose_of(data: Any) -> tuple[float, float, float] | None:
+    """Return x, y, yaw from a mapping that holds them; None otherwise."""
+    try:
+        return float(data['x']), float(data['y']), float(data['yaw'])
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def read_pose(path: Path) -> tuple[float, float, float] | None:
     """Read x, y, yaw from last_pose.yaml or autosave.yaml; None when missing or malformed."""
-    try:
-        data = yaml.safe_load(path.read_text()) or {}
-        return float(data['x']), float(data['y']), float(data['yaw'])
-    except (OSError, KeyError, TypeError, ValueError, yaml.YAMLError):
-        return None
+    return pose_of(read_record(path))
 
 
-def _read_record(path: Path) -> dict[str, Any]:
+def read_record(path: Path) -> dict[str, Any]:
+    """Read a YAML mapping; {} when missing or malformed."""
     try:
         data = yaml.safe_load(path.read_text())
     except (OSError, yaml.YAMLError):
@@ -150,12 +206,12 @@ def resume_point(
     if not session:
         return None
     autosave = folder / AUTOSAVE_DIR
-    record = _read_record(autosave / AUTOSAVE_FILE)
+    record = read_record(autosave / AUTOSAVE_FILE)
     stem = autosave / name
     if record.get('session') != session or not Path(f'{stem}.posegraph').exists():
         return None
     pose = read_pose(autosave / AUTOSAVE_FILE)
-    latest = _read_record(folder / MAPPING_POSE_FILE)
+    latest = read_record(folder / MAPPING_POSE_FILE)
     if latest.get('session') == session and str(latest.get('time', '')) >= str(
         record.get('time', '')
     ):
@@ -168,18 +224,125 @@ def meta_record(
     now: datetime,
     driver_version: str,
     frames: dict[str, float],
-    start_pose: str,
     session: str,
+    start_pose: tuple[float, float, float] | None = None,
+    last_change: str = '',
+    extended_from: str = '',
 ) -> dict[str, Any]:
     return {
         'name': name,
-        'saved': now.strftime('%Y-%m-%d %H:%M:%S'),
+        'saved': now.strftime(TIME_FORMAT),
         'driver_version': driver_version,
         'hostname': socket.gethostname(),
         'session': session,
-        'start_pose': start_pose,
+        'start_pose': pose_values(start_pose) if start_pose else None,
+        'last_change': last_change,
+        'extended_from': extended_from,
         'frames': frames,
     }
+
+
+def has_map_files(folder: Path, name: str) -> bool:
+    return all((folder / f'{name}{suffix}').is_file() for suffix in MAP_SUFFIXES)
+
+
+@dataclass(frozen=True)
+class MapState:
+    """What a map folder holds; read from the files alone."""
+
+    name: str
+    folder: Path
+    saved: bool
+    autosaved: bool
+    meta: dict[str, Any]
+    autosave_meta: dict[str, Any]
+    autosave_record: dict[str, Any]
+
+    @property
+    def exists(self) -> bool:
+        return self.saved or self.autosaved
+
+    @property
+    def unsaved(self) -> bool:
+        """Report whether the autosave holds changes the saved set lacks."""
+        if not self.autosaved:
+            return False
+        if not self.saved:
+            return True
+        auto, saved = self.autosave_meta.get('last_change'), self.meta.get('last_change')
+        if auto is not None and saved is not None:
+            return str(auto) > str(saved)
+        # Saved before last_change was recorded: compare the write times.
+        return str(self.autosave_record.get('time', '')) > str(self.meta.get('saved', ''))
+
+    @property
+    def autosave_time(self) -> str:
+        return str(self.autosave_record.get('time', ''))
+
+    @property
+    def start_pose(self) -> tuple[float, float, float] | None:
+        return pose_of(self.meta.get('start_pose'))
+
+
+def map_state(root: Path, name: str) -> MapState:
+    folder = root / name
+    autosave = folder / AUTOSAVE_DIR
+    return MapState(
+        name=name,
+        folder=folder,
+        saved=has_map_files(folder, name),
+        autosaved=has_map_files(autosave, name),
+        meta=read_record(folder / META_FILE),
+        autosave_meta=read_record(autosave / META_FILE),
+        autosave_record=read_record(autosave / AUTOSAVE_FILE),
+    )
+
+
+def _free_path(path: Path) -> Path:
+    """Return `path`, or `path-2`, `path-3`, ... when it is taken."""
+    candidate, n = path, 1
+    while candidate.exists():
+        n += 1
+        candidate = path.with_name(f'{path.name}-{n}')
+    return candidate
+
+
+def archive_map_files(folder: Path, name: str, now: datetime) -> Path | None:
+    """
+    Move the saved map files and meta.yaml into `previous/<time>/`; nothing is deleted.
+
+    Returns the folder they went to, or None when there was nothing to move.
+    last_pose.yaml stays: the map frame does not change when a map is extended.
+    """
+    files = [folder / f'{name}{suffix}' for suffix in MAP_SUFFIXES] + [folder / META_FILE]
+    present = [f for f in files if f.is_file()]
+    if not present:
+        return None
+    dest = _free_path(folder / PREVIOUS_DIR / now.strftime('%Y%m%d-%H%M%S'))
+    dest.mkdir(parents=True)
+    for f in present:
+        os.rename(f, dest / f.name)
+    return dest
+
+
+def replace_folder(root: Path, name: str, now: datetime) -> Path:
+    """Move `<root>/<name>/` to `<root>/replaced/<name>-<time>/`; return the new path."""
+    dest = _free_path(root / REPLACED_DIR / f'{name}-{now.strftime("%Y%m%d-%H%M%S")}')
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    os.rename(root / name, dest)
+    return dest
+
+
+def copy_autosave(folder: Path, name: str) -> None:
+    """Copy the autosaved map files and meta.yaml into the map folder, each through a rename."""
+    autosave = folder / AUTOSAVE_DIR
+    for f in [f'{name}{suffix}' for suffix in MAP_SUFFIXES] + [META_FILE]:
+        src = autosave / f
+        if not src.is_file():
+            continue
+        tmp = folder / (f + '.tmp')
+        shutil.copy2(src, tmp)
+        os.replace(tmp, folder / f)
 
 
 def status_values(**fields: Any) -> list[tuple[str, str]]:

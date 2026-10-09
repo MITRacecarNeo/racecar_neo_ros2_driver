@@ -99,9 +99,51 @@ class TestModeFile:
         fresh = args.launch_args({'AUTONOMY_MAP': 'room', 'AUTONOMY_SESSION': 's2'})
         assert not any(a.startswith('resume:=') for a in fresh)
 
+    def test_extend_a_saved_map(self, args, tmp_path, monkeypatch):
+        monkeypatch.setenv('RACECAR_MAP_ROOT', str(tmp_path))
+        _files(tmp_path / 'room', 'room')
+        env = {
+            'AUTONOMY_MAP': 'hall',
+            'AUTONOMY_SESSION': 's1',
+            'AUTONOMY_FROM': 'room',
+            'AUTONOMY_POSE': '-1.5,2,0.3',
+            'AUTONOMY_POSE_SOURCE': 'last_pose',
+        }
+        assert args.launch_args(env) == [
+            'mode:=mapping',
+            'map:=hall',
+            'session:=s1',
+            f'extend:={tmp_path / "room" / "room"}',
+            'pose:=-1.5,2,0.3',
+            'pose_source:=last_pose',
+        ]
+
+    def test_extend_an_unsaved_map_from_its_autosave(self, args, tmp_path, monkeypatch):
+        monkeypatch.setenv('RACECAR_MAP_ROOT', str(tmp_path))
+        _files(tmp_path / 'room' / au.AUTOSAVE_DIR, 'room')
+        got = args.launch_args({'AUTONOMY_MAP': 'hall', 'AUTONOMY_FROM': 'room'})
+        assert f'extend:={tmp_path / "room" / au.AUTOSAVE_DIR / "room"}' in got
+        assert 'pose:=0,0,0' in got
+
+    def test_a_crashed_extension_resumes_its_own_autosave(self, args, tmp_path, monkeypatch):
+        monkeypatch.setenv('RACECAR_MAP_ROOT', str(tmp_path))
+        _files(tmp_path / 'room', 'room')
+        auto = tmp_path / 'hall' / au.AUTOSAVE_DIR
+        _files(auto, 'hall')
+        au.write_yaml_atomic(
+            auto / au.AUTOSAVE_FILE,
+            au.pose_record((1.0, 0.0, 0.0), datetime(2026, 10, 9), session='s1'),
+        )
+        env = {'AUTONOMY_MAP': 'hall', 'AUTONOMY_SESSION': 's1', 'AUTONOMY_FROM': 'room'}
+        got = args.launch_args(env)
+        assert f'resume:={auto / "hall"}' in got
+        assert not any(a.startswith('extend:=') for a in got)
+
     @pytest.mark.parametrize(
         'env',
         [
+            {'AUTONOMY_MAP': 'hall', 'AUTONOMY_FROM': 'missing'},
+            {'AUTONOMY_MAP': 'hall', 'AUTONOMY_FROM': '../x'},
             {},
             {'AUTONOMY_MAP': '../x'},
             {'AUTONOMY_MAP': 'room', 'AUTONOMY_MODE': 'drive'},
@@ -111,6 +153,12 @@ class TestModeFile:
     def test_bad_values(self, args, env):
         with pytest.raises(ValueError):
             args.launch_args(env)
+
+
+def _files(folder, name):
+    folder.mkdir(parents=True, exist_ok=True)
+    for suffix in au.MAP_SUFFIXES:
+        (folder / f'{name}{suffix}').write_text('m')
 
 
 def test_polkit_rule_scope():

@@ -362,6 +362,34 @@ it writes `<map>/last_pose.yaml` every `last_pose_period_sec` (5 s) and on
 exit. On exit (SIGINT or SIGTERM) it publishes `mode: off`, waiting for
 subscribers to acknowledge it, which lifts the mapping speed cap.
 
+`racecar map` (`scripts/racecar_map.py`) is the operator front end. Its
+lifecycle logic is in `scripts/map_control.py`, which imports without the
+argument parser. A start or load checks the request and that teleop is
+active, stops `racecar-autonomy.service`, resolves the start pose from the
+files the stop left, writes `autonomy.conf` through a rename, starts the unit,
+and waits for `/autonomy/status` to report the new `session`:
+
+```
+racecar map start|load
+  └─ map_control: check ─▶ systemctl stop ─▶ start pose ─▶ autonomy.conf ─▶ systemctl start
+                                                                              │
+     wait for /autonomy/status with the new session (mapping: localized) ◀────┘
+```
+
+Start pose for `load`: `--pose`, `--global`, `<map>/last_pose.yaml`, the
+`start_pose` in `meta.yaml` (the car's pose when the map was begun), then the
+map origin. `--from` extends a saved map: `autonomy_args.py` passes
+`extend:=<stem>`, and slam_toolbox loads that pose graph at the start pose
+and matches the first scan against the saved scans near it; a same-session
+autosave still takes priority (crash resume). `meta.yaml` also records
+`last_change`, the time of the last scan added; an autosave whose
+`last_change` is newer than the saved set's is unsaved work, which `stop`
+reports and `recover` copies over the saved files (`autonomy.map_state`). A
+save into a folder holding another run's map moves those files to
+`<map>/previous/<time>/` first, and `start --force` moves the whole folder to
+`<map_root>/replaced/`. `list`, `info`, and `recover` read the folder without
+ROS.
+
 ## Frame tree
 
 ```
@@ -608,6 +636,8 @@ racecar_neo_ros2_driver/
 ├── scripts/                   setup phases, racecar-tool.sh, watchdog, dashboard,
 │                              diagnose, sysinfo, eth_monitor, wifi_scan,
 │                              racecar_log, analyze_odom, dmatrix_patterns,
+│                              racecar_map and map_control (`racecar map`),
+│                              autonomy unit launcher and stop step,
 │                              systemd units, udev, polkit and modprobe rules,
 │   │                          Coral overlay and gasket patch
 │   ├── calibration/           calibrate.py (`racecar calibrate`), the

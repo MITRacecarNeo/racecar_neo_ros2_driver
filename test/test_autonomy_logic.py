@@ -88,10 +88,21 @@ class TestFiles:
 
     def test_meta(self):
         meta = au.meta_record(
-            'room', datetime(2026, 10, 9, 1, 2, 3), '0.9.0', {'a_mm': 1.0}, '', 's'
+            'room',
+            datetime(2026, 10, 9, 1, 2, 3),
+            '0.9.0',
+            {'a_mm': 1.0},
+            's',
+            (1.0, -2.0, 0.5),
+            '2026-10-09 01:02:00.250',
+            'hall',
         )
         assert meta['saved'] == '2026-10-09 01:02:03' and meta['frames'] == {'a_mm': 1.0}
-        assert meta['hostname']
+        assert meta['hostname'] and meta['session'] == 's'
+        assert meta['start_pose'] == {'x': 1.0, 'y': -2.0, 'yaw': 0.5}
+        assert meta['last_change'] == '2026-10-09 01:02:00.250'
+        assert meta['extended_from'] == 'hall'
+        assert au.meta_record('room', datetime(2026, 10, 9), '', {}, 's')['start_pose'] is None
 
 
 def test_status_values():
@@ -144,3 +155,150 @@ class TestResumePoint:
 
     def test_no_autosave(self, tmp_path):
         assert au.resume_point(tmp_path, 'room', 's1') is None
+
+
+def _map_files(folder, name, text='m'):
+    folder.mkdir(parents=True, exist_ok=True)
+    for suffix in au.MAP_SUFFIXES:
+        (folder / f'{name}{suffix}').write_text(text)
+
+
+def _meta(folder, **fields):
+    au.write_yaml_atomic(folder / au.META_FILE, fields)
+
+
+class TestMapState:
+    def test_missing(self, tmp_path):
+        state = au.map_state(tmp_path, 'room')
+        assert not state.exists and not state.unsaved
+
+    def test_saved_only(self, tmp_path):
+        _map_files(tmp_path / 'room', 'room')
+        state = au.map_state(tmp_path, 'room')
+        assert state.saved and not state.autosaved and not state.unsaved
+
+    def test_autosave_only_is_unsaved(self, tmp_path):
+        _map_files(tmp_path / 'room' / au.AUTOSAVE_DIR, 'room')
+        state = au.map_state(tmp_path, 'room')
+        assert state.exists and not state.saved and state.unsaved
+
+    def test_a_partial_set_is_not_a_map(self, tmp_path):
+        (tmp_path / 'room').mkdir()
+        (tmp_path / 'room' / 'room.pgm').write_text('m')
+        assert not au.map_state(tmp_path, 'room').exists
+
+    @pytest.mark.parametrize(
+        'saved,auto,unsaved',
+        [
+            ('2026-10-09 10:00:00.000', '2026-10-09 10:00:00.000', False),
+            ('2026-10-09 10:00:00.000', '2026-10-09 10:00:05.100', True),
+            ('', '', False),
+        ],
+    )
+    def test_newer_autosave_by_last_change(self, tmp_path, saved, auto, unsaved):
+        folder = tmp_path / 'room'
+        _map_files(folder, 'room')
+        _map_files(folder / au.AUTOSAVE_DIR, 'room')
+        _meta(folder, last_change=saved, saved='2026-10-09 10:00:01')
+        # The stop autosave is always written after the save; only new scans count.
+        _meta(folder / au.AUTOSAVE_DIR, last_change=auto)
+        au.write_yaml_atomic(
+            folder / au.AUTOSAVE_DIR / au.AUTOSAVE_FILE, {'time': '2026-10-09 10:00:09'}
+        )
+        assert au.map_state(tmp_path, 'room').unsaved is unsaved
+
+    def test_newer_autosave_before_last_change_existed(self, tmp_path):
+        folder = tmp_path / 'room'
+        _map_files(folder, 'room')
+        _map_files(folder / au.AUTOSAVE_DIR, 'room')
+        _meta(folder, saved='2026-10-09 10:00:00')
+        au.write_yaml_atomic(
+            folder / au.AUTOSAVE_DIR / au.AUTOSAVE_FILE, {'time': '2026-10-09 10:00:30'}
+        )
+        state = au.map_state(tmp_path, 'room')
+        assert state.unsaved and state.autosave_time == '2026-10-09 10:00:30'
+
+    def test_start_pose(self, tmp_path):
+        _map_files(tmp_path / 'room', 'room')
+        _meta(tmp_path / 'room', start_pose={'x': 1, 'y': 2, 'yaw': 0.5})
+        assert au.map_state(tmp_path, 'room').start_pose == (1.0, 2.0, 0.5)
+
+
+class TestMapFolders:
+    NOW = datetime(2026, 10, 9, 14, 5, 6)
+
+    def test_archive_moves_the_set_and_keeps_the_last_pose(self, tmp_path):
+        _map_files(tmp_path, 'room')
+        _meta(tmp_path, session='a')
+        (tmp_path / au.LAST_POSE_FILE).write_text('x: 1')
+        dest = au.archive_map_files(tmp_path, 'room', self.NOW)
+        assert dest == tmp_path / au.PREVIOUS_DIR / '20261009-140506'
+        assert sorted(p.name for p in dest.iterdir()) == sorted(
+            [f'room{s}' for s in au.MAP_SUFFIXES] + [au.META_FILE]
+        )
+        assert not au.has_map_files(tmp_path, 'room')
+        assert (tmp_path / au.LAST_POSE_FILE).exists()
+
+    def test_archive_never_overwrites(self, tmp_path):
+        _map_files(tmp_path, 'room', 'first')
+        first = au.archive_map_files(tmp_path, 'room', self.NOW)
+        _map_files(tmp_path, 'room', 'second')
+        second = au.archive_map_files(tmp_path, 'room', self.NOW)
+        assert first != second and second.name == '20261009-140506-2'
+        assert (first / 'room.pgm').read_text() == 'first'
+
+    def test_archive_nothing(self, tmp_path):
+        assert au.archive_map_files(tmp_path, 'room', self.NOW) is None
+
+    def test_replace_folder(self, tmp_path):
+        _map_files(tmp_path / 'room', 'room')
+        dest = au.replace_folder(tmp_path, 'room', self.NOW)
+        assert dest == tmp_path / au.REPLACED_DIR / 'room-20261009-140506'
+        assert au.has_map_files(dest, 'room') and not (tmp_path / 'room').exists()
+
+    def test_copy_autosave(self, tmp_path):
+        _map_files(tmp_path / au.AUTOSAVE_DIR, 'room', 'auto')
+        _meta(tmp_path / au.AUTOSAVE_DIR, last_change='t')
+        au.copy_autosave(tmp_path, 'room')
+        assert (tmp_path / 'room.posegraph').read_text() == 'auto'
+        assert au.read_record(tmp_path / au.META_FILE)['last_change'] == 't'
+        assert au.has_map_files(tmp_path / au.AUTOSAVE_DIR, 'room')
+
+    def test_change_time_orders_as_text(self):
+        a = au.change_time(datetime(2026, 10, 9, 9, 59, 59, 999000))
+        b = au.change_time(datetime(2026, 10, 9, 10, 0, 0, 1000))
+        assert a == '2026-10-09 09:59:59.999' and a < b
+
+
+def test_seed_covariance():
+    cov = au.seed_covariance(0.25, 10.0)
+    assert len(cov) == 36 and cov[0] == cov[7] == pytest.approx(0.0625)
+    assert au.covariance_sd(cov)[1] == pytest.approx(10.0)
+    # A seeded start reads above the localized limit until the scan narrows it.
+    assert au.covariance_sd(cov)[0] > au.Limits().max_xy_sd_m
+
+
+def test_shows_seed():
+    cov = au.seed_covariance(0.25, 10.0)
+    assert au.shows_seed((0.318, 9.3), cov)
+    assert not au.shows_seed((0.0, 0.0), cov)
+
+
+def test_mark_pose_lost(tmp_path):
+    path = tmp_path / au.LAST_POSE_FILE
+    au.mark_pose_lost(path, datetime(2026, 10, 9))
+    assert not path.exists()
+    au.write_yaml_atomic(path, au.pose_record((1.0, 2.0, 0.5), datetime(2026, 10, 9, 9)))
+    au.mark_pose_lost(path, datetime(2026, 10, 9, 9, 5))
+    record = au.read_record(path)
+    assert record[au.LOCALIZED_AT_STOP] is False and record['stopped'] == '2026-10-09 09:05:00'
+    assert au.read_pose(path) == (1.0, 2.0, 0.5)
+
+
+def test_localized_hysteresis():
+    # 0.2 m: under the limit, above the entry level (0.6 x 0.25 = 0.15 m).
+    args = ('localization', True, 0.1, (0.2, 5.0), 10, False, LIMITS)
+    assert not au.is_localized(*args)
+    assert au.is_localized(*args, was_localized=True)
+    assert au.is_localized('localization', True, 0.1, (0.14, 11.0), 10, False, LIMITS)
+    assert not au.is_localized('localization', True, 0.1, (0.1, 13.0), 10, False, LIMITS)

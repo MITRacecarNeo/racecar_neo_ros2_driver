@@ -1066,6 +1066,12 @@ __RC_CLEANUP_HELP__
             python3 "${RACECAR_CALIBRATE_SCRIPT:-$pkg_dir/scripts/calibration/calibrate.py}" "$@"
             ;;
 
+        map)
+            # SLAM mapping and localization through racecar-autonomy.service;
+            # see scripts/racecar_map.py and scripts/map_control.py.
+            python3 "${RACECAR_MAP_SCRIPT:-$pkg_dir/scripts/racecar_map.py}" "$@"
+            ;;
+
         status)
             # Whole-car diagnostic. Read-only: it observes topics and reads
             # sysfs, and never commands the hardware. Exits non-zero when a
@@ -1202,6 +1208,30 @@ Commands:
                         To fully prepare a car for a project, run the
                         calibration step, then restart teleop, and finally
                         run the check command.
+    map <action>        Build, save, and load maps (SLAM on top of teleop).
+                        Teleop must be running; drive with the gamepad or RC
+                        transmitter as usual. Maps are in ~/data/maps.
+                          start NAME          start mapping; speed held at the
+                                              firmware minimum while mapping
+                                                --from SAVED    extend SAVED
+                                                --pose x,y,yaw  with --from: the
+                                                                car's pose on SAVED
+                                                --force         replace NAME (the
+                                                                old one is kept)
+                          save                save the map; waits for the files
+                          stop                stop (a mapping run is autosaved)
+                          load NAME           localize on NAME; starts from the
+                                              car's last pose on it
+                                                --pose x,y,yaw  start pose
+                                                --global        search the map
+                                                --localizer amcl|slam_toolbox
+                          recover NAME        keep an autosave as the saved map
+                          status              mode, map, localized, pose
+                          list                maps; unsaved ones marked
+                          info NAME           size, dates, poses, frames
+                          foxglove on|off     foxglove_bridge (port 8765) at the
+                                              next start or load
+                        Poses are in the map frame: meters, meters, radians.
     log <action>        Record and analyze ROS 2 bags. Actions:
                           start [name]        record; bag is <timestamp>_<name>
                                                 --topics A B    default: all
@@ -1242,7 +1272,7 @@ _racecar_complete() {
     local sub="${COMP_WORDS[1]:-}"
 
     if [[ $COMP_CWORD -eq 1 ]]; then
-        COMPREPLY=( $(compgen -W "build test source cd teleop launch lint udev watchdog service setup eth wifi desktop library log calibrate cleanup status help" -- "$cur") )
+        COMPREPLY=( $(compgen -W "build test source cd teleop launch lint udev watchdog service setup eth wifi desktop library log calibrate cleanup map status help" -- "$cur") )
         return
     fi
 
@@ -1289,6 +1319,39 @@ _racecar_complete() {
             ;;
         status)
             COMPREPLY=( $(compgen -W "--quick --json --strict --section --window --help" -- "$cur") )
+            ;;
+        map)
+            local maps_dir="${RACECAR_MAP_ROOT:-$HOME/data/maps}"
+            local maps=""
+            if [[ -d "$maps_dir" ]]; then
+                maps=$(cd "$maps_dir" && ls -d */ 2>/dev/null | sed 's#/$##' | grep -vx replaced)
+            fi
+            if [[ $COMP_CWORD -eq 2 ]]; then
+                COMPREPLY=( $(compgen -W "start save stop load recover status list info foxglove" -- "$cur") )
+            elif [[ "$prev" == "--from" ]]; then
+                COMPREPLY=( $(compgen -W "$maps" -- "$cur") )
+            elif [[ "$prev" == "--localizer" ]]; then
+                COMPREPLY=( $(compgen -W "amcl slam_toolbox" -- "$cur") )
+            else
+                case "${COMP_WORDS[2]}" in
+                    start)
+                        COMPREPLY=( $(compgen -W "--from --pose --force" -- "$cur") )
+                        ;;
+                    load)
+                        if [[ $COMP_CWORD -eq 3 ]]; then
+                            COMPREPLY=( $(compgen -W "$maps" -- "$cur") )
+                        else
+                            COMPREPLY=( $(compgen -W "--pose --global --localizer" -- "$cur") )
+                        fi
+                        ;;
+                    recover|info)
+                        COMPREPLY=( $(compgen -W "$maps" -- "$cur") )
+                        ;;
+                    foxglove)
+                        COMPREPLY=( $(compgen -W "on off" -- "$cur") )
+                        ;;
+                esac
+            fi
             ;;
         log)
             if [[ $COMP_CWORD -eq 2 ]]; then

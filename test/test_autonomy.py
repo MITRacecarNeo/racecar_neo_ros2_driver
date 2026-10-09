@@ -130,6 +130,7 @@ class TestLaunch:
             'pose',
             'session',
             'resume',
+            'extend',
             'foxglove',
             'pose_source',
         ]
@@ -243,3 +244,43 @@ class TestConfigs:
         assert p['sigma_hit'] <= 0.1 and p['z_hit'] >= 0.9 and p['z_rand'] <= 0.1
         manager = data['lifecycle_manager_localization']['ros__parameters']
         assert manager['node_names'] == ['map_server', 'amcl']
+
+
+class TestExtend:
+    def test_extend_loads_the_saved_graph_near_the_pose(self, autonomy):
+        specs = autonomy.node_specs(
+            'mapping', 'amcl', 'hall', '1,2,0.5', str(CONFIG), session='s', extend='/m/room/room'
+        )
+        assert _dicts(specs[0]) == {
+            'map_file_name': '/m/room/room',
+            'map_start_pose': [1.0, 2.0, 0.5],
+        }
+        node = _dicts(specs[-1])
+        assert node['resumed_from_autosave'] is False and node['pose_source'] == 'pose'
+        assert node['source'] == '/m/room/room' and node['extended_from'] == 'room'
+
+    def test_extend_an_autosave_names_the_map(self, autonomy):
+        spec = autonomy.node_specs(
+            'mapping', 'amcl', 'hall', '0,0,0', str(CONFIG), extend='/m/room/autosave/room'
+        )[-1]
+        assert _dicts(spec)['extended_from'] == 'room'
+
+    def test_resume_carries_from_the_autosave(self, autonomy):
+        spec = autonomy.node_specs(
+            'mapping', 'amcl', 'room', '0,0,0', str(CONFIG), resume='/m/room/autosave/room'
+        )[-1]
+        assert _dicts(spec)['source'] == '/m/room/autosave/room'
+        assert _dicts(spec)['extended_from'] == ''
+
+    @pytest.mark.parametrize(
+        'mode,resume', [('localization', ''), ('mapping', '/m/room/autosave/room')]
+    )
+    def test_bad_extend(self, autonomy, mode, resume):
+        with pytest.raises(ValueError):
+            autonomy.slam_specs(mode, 'amcl', 'room', '', str(CONFIG), resume, '/m/room/room')
+
+
+def test_foxglove_stops_quickly(autonomy):
+    specs = autonomy.node_specs('mapping', 'amcl', 'r', '', str(CONFIG), foxglove=True)
+    assert autonomy._stop_timeouts(specs[-1]) == {'sigterm_timeout': '2', 'sigkill_timeout': '2'}
+    assert autonomy._stop_timeouts(specs[0]) == {}

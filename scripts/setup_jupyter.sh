@@ -60,3 +60,14 @@ racecar driver are importable.
 EOF
     echo "Created $JUPYTER_WS"
 fi
+
+# Saved maps (`racecar map`) live in ~/data/maps; the link shows them in the
+# JupyterLab file browser, which is rooted at ~/jupyter_ws.
+MAP_ROOT="$USER_HOME/data/maps"
+if [ ! -d "$MAP_ROOT" ]; then
+    sudo -u "$USER_NAME" mkdir -p "$MAP_ROOT"
+fi
+if [ ! -e "$JUPYTER_WS/maps" ] && [ ! -L "$JUPYTER_WS/maps" ]; then
+    sudo -u "$USER_NAME" ln -s "$MAP_ROOT" "$JUPYTER_WS/maps"
+    echo "Linked $JUPYTER_WS/maps -> $MAP_ROOT"
+fi

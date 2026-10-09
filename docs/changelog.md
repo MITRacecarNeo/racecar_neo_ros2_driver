@@ -6,6 +6,39 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Added
 
+- `racecar map` (`scripts/racecar_map.py`, logic in `scripts/map_control.py`):
+  `start NAME [--from SAVED [--pose x,y,yaw]] [--force]`, `save`, `stop`,
+  `load NAME [--pose x,y,yaw | --global] [--localizer]`, `recover`, `status`,
+  `list`, `info`, `foxglove on|off`. Start and load write
+  `~/.config/racecar/autonomy.conf` through a rename, restart
+  `racecar-autonomy.service`, and wait for `/autonomy/status` to report the new
+  session; they refuse when teleop is not running. `load` starts from
+  `last_pose.yaml`, then the map's recorded start pose, then the origin.
+  `--pose` takes negative values without `=`. Exit codes 0 ready, 1 failed,
+  2 usage. Completion for actions and map names.
+- `autonomy.launch.py` `extend:=STEM`: a mapping run that loads a saved pose
+  graph at `pose` and keeps mapping into `map` (`AUTONOMY_FROM` in the mode
+  file).
+- `meta.yaml` records `start_pose` (the car's pose when the map was begun),
+  `last_change` (the last scan added), and `extended_from`; resumed and
+  extended runs carry them over.
+- `scripts/setup_jupyter.sh` creates `~/data/maps` and links
+  `~/jupyter_ws/maps` to it.
+- `autonomy_node` sends AMCL's start pose again on `/initialpose` with a
+  spread (`start_spread_xy_m` 0.25, `start_spread_yaw_deg` 10 in
+  `config/autonomy.yaml`) once AMCL is up, so the scan corrects a start
+  pose given as a parameter (which AMCL takes with no spread); `localized`
+  waits for it. Autosaves give `map_saver_cli` 10 s to receive the map,
+  report its error, and skip a timed autosave within 10 s of another.
+- `localized` hysteresis: localization becomes localized at 0.6 of the
+  spread limits and stops above them (`autonomy.Limits.enter_fraction`).
+  A localization run that stops unlocalized flags `last_pose.yaml`
+  (`localized_at_stop: false`); `racecar map start --from` then needs
+  `--pose`, and `load` warns.
+- `autonomy.launch.py` gives `foxglove_bridge` 2 s to stop after SIGINT and
+  again after SIGTERM; with a client connected it can ignore SIGINT, which
+  took 15 s of the unit's stop.
+
 - `racecar-autonomy.service`, installed by `setup_services.sh` but not
   enabled: SLAM on top of teleop (`After=`, `BindsTo=`, `PartOf=` teleop),
   its mode from `~/.config/racecar/autonomy.conf` through
@@ -238,6 +271,9 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Changed
 
+- `/autonomy/save_map` writes into `<map>/save.tmp/` first; when the folder
+  holds another run's map, those files move to `<map>/previous/<time>/`
+  before the new ones replace them.
 - IMU topics use REP-103 body axes (x forward, y left, z up): `/imu/lsm9ds1`,
   `/imu/lsm9ds1/raw`, `/imu/fused`, `/mag`, and `/mag/raw`, all in
   `imu_link`, which now has no rotation from `base_link`. `pit.yaml` remaps
