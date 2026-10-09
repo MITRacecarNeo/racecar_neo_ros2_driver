@@ -71,6 +71,18 @@ scored against its own map gives the best fit the map allows.
 `slam_eval.py` runs one measurement beside `racecar launch autonomy`: `save`,
 `load`, `mark`, `report`, `quality`. See its docstring.
 
+`live_fit.py MAP` checks a localized pose with the car parked and autonomy
+running on MAP: it scores a few live scans against the map at
+`/autonomy/pose`, then searches around that pose (0.5 m and 20 deg by
+default) for the best fit and prints the offset. An offset that does not
+shrink as the localizer runs is a start pose it never corrected.
+
+`compare_maps.py BASE EXTENDED` checks an extension (`racecar map start
+EXTENDED --from BASE`) without ROS: the distance from EXTENDED's walls to
+BASE's over the area BASE observed, and an overlay in `~/jupyter_ws/tmp/`
+(BASE blue, EXTENDED red, dark gray where both draw a wall). A wrong start
+pose shows as a second, shifted copy of the walls in red.
+
 ## Storage
 
 A session uses about 15 to 30 MB for a 5 minute run, plus about 7 MB per timed

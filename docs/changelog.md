@@ -76,6 +76,9 @@ All notable changes to this project will be documented in this file. The format 
   0.1 in place of the Nav2 defaults), each with a
   `.local.yaml` override. Maps live in `~/data/maps/<name>/`
   (`racecar_neo_ros2_driver/maps.py`, `RACECAR_MAP_ROOT`).
+- `scripts/validation/live_fit.py` (a parked car's localized pose against
+  the live scan and the best fit around it) and `compare_maps.py` (an
+  extended map's walls against the map it came from, with an overlay).
 - `scripts/validation/slam_session.py`: a SLAM test session in one terminal.
   It stops the teleop service and starts teleop (EdgeTPU off, camera on or
   off), the autonomy launch, `foxglove_bridge` limited to the SLAM topics

@@ -644,7 +644,9 @@ racecar_neo_ros2_driver/
 │   │                          calibrate_*.py tools, calibrate_common
 │   ├── validation/            slam_session.py (one-terminal SLAM test session,
 │   │                          offline replay), scan_fit.py (scan-to-map fit),
-│   │                          slam_eval.py (single measurements); run from source
+│   │                          slam_eval.py (single measurements), live_fit.py
+│   │                          (live pose check), compare_maps.py (extension
+│   │                          check); run from source
 │   └── dashboards/            lab-dashboard checkouts (gitignored)
 ├── test/                      pytest suite (ament convention; not tests/)
 ├── models/                    EdgeTPU models: COCO EfficientDet-Lite0 (default)
