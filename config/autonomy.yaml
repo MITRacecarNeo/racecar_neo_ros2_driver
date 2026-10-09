@@ -1,0 +1,15 @@
+# autonomy_node, started by autonomy.launch.py in every mode. The launch sets
+# mode, map, localizer, session, pose, and pose_source. Per-car overrides:
+# autonomy.local.yaml.
+autonomy_node:
+  ros__parameters:
+    pose_rate_hz: 20.0
+    autosave_period_sec: 60.0         # mapping
+    last_pose_period_sec: 5.0         # localization, while localized
+    # localized needs a scan within scan_timeout_sec and, in localization, the
+    # localizer's pose spread within these. Tuned AMCL reads 0.11 m and 5 to 7
+    # deg while tracking; the slam_toolbox localizer's spread stays small even
+    # when it is lost, so these catch AMCL losses only.
+    scan_timeout_sec: 0.5
+    localized_max_xy_sd_m: 0.25
+    localized_max_yaw_sd_deg: 20.0

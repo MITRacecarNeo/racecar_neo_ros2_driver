@@ -1,0 +1,461 @@
+"""
+autonomy_node: the one SLAM interface for the CLI, the library, and dashboards.
+
+Launched by launch/autonomy.launch.py beside slam_toolbox (mapping) or a
+localizer (AMCL or the slam_toolbox localizer), so consumers see the same
+topics whichever runs:
+
+    /autonomy/pose       PoseWithCovarianceStamped, map frame, pose_rate_hz
+    /autonomy/status     DiagnosticStatus, transient local, 1 Hz and on change
+    /autonomy/save_map   Trigger: mapping only; pose graph, .pgm/.yaml, meta.yaml
+    /autonomy/autosave   Trigger: mapping only; the same set into <map>/autosave/
+
+In mapping it autosaves every autosave_period_sec. In localization it writes
+<map>/last_pose.yaml every last_pose_period_sec while localized, and on exit.
+With pose 'global' (AMCL only) it asks AMCL to search the whole map once AMCL
+is up. On exit it publishes mode 'off', which lifts the mapping speed cap in
+throttle_node. File layout and the localized test: autonomy.py.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+import math
+from pathlib import Path
+import shutil
+import signal
+import subprocess
+import threading
+import time
+from typing import Any
+import xml.etree.ElementTree as ET
+
+from ament_index_python.packages import get_package_share_directory
+from diagnostic_msgs.msg import DiagnosticStatus, KeyValue
+from geometry_msgs.msg import PoseWithCovarianceStamped
+import rclpy
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
+from rclpy.duration import Duration
+from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
+from rclpy.node import Node
+from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
+from rclpy.signals import SignalHandlerOptions
+from rclpy.time import Time
+from sensor_msgs.msg import LaserScan
+from std_srvs.srv import Empty, Trigger
+from tf2_ros import Buffer, TransformException, TransformListener
+
+from . import autonomy as au
+from .frames import load_frames
+from .maps import map_stem
+
+PACKAGE = 'racecar_neo_ros2_driver'
+SERVICE_TIMEOUT_SEC = 60.0
+MAP_SAVER_TIMEOUT_SEC = 60.0
+
+
+def driver_version() -> str:
+    try:
+        share = Path(get_package_share_directory(PACKAGE))
+        return ET.parse(share / 'package.xml').findtext('version') or 'unknown'
+    except Exception:  # noqa: BLE001  meta.yaml still gets written
+        return 'unknown'
+
+
+def yaw_of(q: Any) -> float:
+    return math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+
+
+class AutonomyNode(Node):
+    def __init__(self) -> None:
+        super().__init__('autonomy_node')
+        p = self.declare_parameter
+        p('mode', 'mapping')
+        p('map', '')
+        p('localizer', 'amcl')
+        p('session', '')
+        p('pose', '')
+        p('pose_source', '')
+        p('resumed_from_autosave', False)
+        p('pose_rate_hz', 20.0)
+        p('autosave_period_sec', 60.0)
+        p('last_pose_period_sec', 5.0)
+        p('scan_timeout_sec', 0.5)
+        p('localized_max_xy_sd_m', 0.25)
+        p('localized_max_yaw_sd_deg', 20.0)
+
+        def get(name: str) -> Any:
+            return self.get_parameter(name).value
+
+        self._mode = str(get('mode'))
+        self._map = str(get('map'))
+        self._localizer = str(get('localizer'))
+        self._session = str(get('session'))
+        self._pose_arg = str(get('pose'))
+        self._pose_source = str(get('pose_source'))
+        self._resumed = bool(get('resumed_from_autosave'))
+        self._limits = au.Limits(
+            float(get('scan_timeout_sec')),
+            float(get('localized_max_xy_sd_m')),
+            float(get('localized_max_yaw_sd_deg')),
+        )
+        self._stem = map_stem(self._map) if self._map else None
+        self._global_pending = self._mode == 'localization' and self._pose_arg == 'global'
+        self._global_requested = False
+
+        self._start = time.monotonic()
+        self._last_scan: float | None = None
+        self._sd: tuple[float, float] | None = None
+        self._poses_seen = 0
+        self._last_save = ''
+        self._last_autosave = ''
+        self._localized = False
+        self._pose: tuple[float, float, float] | None = None
+        self._latest_cov: list[float] | None = None
+        self._map_base_stamp: Any = None
+        self._save_lock = threading.Lock()
+        self._stopping = False
+
+        self._tf = Buffer()
+        TransformListener(self._tf, self)
+        clients = ReentrantCallbackGroup()
+        self._saves = MutuallyExclusiveCallbackGroup()
+
+        sensor = QoSProfile(depth=5, reliability=QoSReliabilityPolicy.BEST_EFFORT)
+        # Raw: only the arrival matters, so the 1080-beam scan is never deserialized.
+        self.create_subscription(LaserScan, '/scan', self._on_scan, sensor, raw=True)
+        if self._uses_amcl():
+            # AMCL keeps its last pose (transient local); taking it covers an
+            # update published before this node subscribed.
+            kept = QoSProfile(
+                depth=1,
+                reliability=QoSReliabilityPolicy.RELIABLE,
+                durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+            )
+            self.create_subscription(PoseWithCovarianceStamped, '/amcl_pose', self._on_pose, kept)
+        else:
+            self.create_subscription(PoseWithCovarianceStamped, '/pose', self._on_pose, 10)
+
+        latched = QoSProfile(
+            depth=1,
+            reliability=QoSReliabilityPolicy.RELIABLE,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self._pub_pose = self.create_publisher(PoseWithCovarianceStamped, '/autonomy/pose', 10)
+        self._pub_status = self.create_publisher(DiagnosticStatus, '/autonomy/status', latched)
+        self.create_service(
+            Trigger, '/autonomy/save_map', self._on_save_map, callback_group=clients
+        )
+        self.create_service(
+            Trigger, '/autonomy/autosave', self._on_autosave, callback_group=clients
+        )
+
+        from slam_toolbox.srv import SerializePoseGraph
+
+        self._serialize = self.create_client(
+            SerializePoseGraph, '/slam_toolbox/serialize_map', callback_group=clients
+        )
+        self._reinit = self.create_client(
+            Empty, '/reinitialize_global_localization', callback_group=clients
+        )
+        self._nomotion = self.create_client(
+            Empty, '/request_nomotion_update', callback_group=clients
+        )
+        self._srv_type = SerializePoseGraph
+
+        self.create_timer(1.0 / float(get('pose_rate_hz')), self._publish_pose)
+        self.create_timer(1.0, self._tick)
+        # localized can drop between ticks (a stopped lidar); publish the change
+        # within a tenth of a second rather than at the next tick.
+        self.create_timer(0.1, self._watch)
+        if self._mode == 'mapping':
+            self.create_timer(
+                float(get('autosave_period_sec')), self._timed_autosave, callback_group=self._saves
+            )
+        else:
+            self.create_timer(float(get('last_pose_period_sec')), self._write_last_pose)
+        self._publish_status()
+        self.get_logger().info(
+            f'autonomy_node: {self._mode} on {self._map or "(no map)"}'
+            + (f' with {self._localizer}' if self._mode == 'localization' else '')
+        )
+
+    def _uses_amcl(self) -> bool:
+        return self._mode == 'localization' and self._localizer == 'amcl'
+
+    # -- inputs --
+
+    def _on_scan(self, _: bytes) -> None:
+        self._last_scan = time.monotonic()
+
+    def _on_pose(self, msg: PoseWithCovarianceStamped) -> None:
+        self._poses_seen += 1
+        self._sd = au.covariance_sd(list(msg.pose.covariance))
+        if self._global_pending and self._global_requested and self._sd is not None:
+            if (
+                self._sd[0] <= self._limits.max_xy_sd_m
+                and self._sd[1] <= self._limits.max_yaw_sd_deg
+            ):
+                self._global_pending = False
+                self.get_logger().info('Global localization converged.')
+        self._latest_cov = list(msg.pose.covariance)
+
+    # -- outputs --
+
+    def _publish_pose(self) -> None:
+        try:
+            t = self._tf.lookup_transform('map', 'base_link', Time())
+        except TransformException:
+            self._map_base_stamp = None
+            return
+        self._map_base_stamp = t.header.stamp
+        out = PoseWithCovarianceStamped()
+        out.header.stamp = t.header.stamp
+        out.header.frame_id = 'map'
+        tr, q = t.transform.translation, t.transform.rotation
+        out.pose.pose.position.x, out.pose.pose.position.y = tr.x, tr.y
+        out.pose.pose.orientation = q
+        if self._latest_cov is not None:
+            out.pose.covariance = self._latest_cov
+        self._pose = (tr.x, tr.y, yaw_of(q))
+        self._pub_pose.publish(out)
+
+    def _has_map_odom(self) -> bool:
+        return self._tf.can_transform('map', 'odom', Time())
+
+    def _tf_age_ms(self) -> float | None:
+        if self._map_base_stamp is None:
+            return None
+        age = (self.get_clock().now() - Time.from_msg(self._map_base_stamp)).nanoseconds * 1e-6
+        return max(age, 0.0)
+
+    def _localized_now(self) -> bool:
+        scan_age = None if self._last_scan is None else time.monotonic() - self._last_scan
+        return au.is_localized(
+            self._mode,
+            self._has_map_odom(),
+            scan_age,
+            self._sd,
+            self._poses_seen,
+            self._global_pending,
+            self._limits,
+        )
+
+    def _watch(self) -> None:
+        if self._localized_now() != self._localized:
+            self._publish_status()
+
+    def _tick(self) -> None:
+        if self._global_pending and not self._global_requested and self._reinit.service_is_ready():
+            self._reinit.call_async(Empty.Request())
+            self._global_requested = True
+            self.get_logger().info('Searching the whole map (reinitialize_global_localization).')
+        # AMCL updates, and publishes the spread localized needs, only after the
+        # car moves; from a given start pose this lets a parked car localize.
+        # Not during a global search, where it could settle on a wrong match.
+        if (
+            self._uses_amcl()
+            and not self._localized
+            and not self._global_pending
+            and self._nomotion.service_is_ready()
+        ):
+            self._nomotion.call_async(Empty.Request())
+        self._publish_status()
+
+    def _publish_status(self, mode: str | None = None) -> None:
+        if self._stopping and mode is None:
+            return
+        now = time.monotonic()
+        scan_age = None if self._last_scan is None else now - self._last_scan
+        has_map_odom = self._has_map_odom()
+        localized = mode is None and au.is_localized(
+            self._mode,
+            has_map_odom,
+            scan_age,
+            self._sd,
+            self._poses_seen,
+            self._global_pending,
+            self._limits,
+        )
+        if localized != self._localized:
+            self.get_logger().info(f'localized: {str(localized).lower()}')
+        self._localized = localized
+        msg = DiagnosticStatus()
+        msg.name = 'autonomy'
+        msg.hardware_id = self._map
+        level = (
+            au.LEVEL_OK if mode else au.status_level(localized, has_map_odom, now - self._start)
+        )
+        msg.level = bytes([level])
+        msg.message = 'off' if mode else ('localized' if localized else 'not localized')
+        sd = self._sd or (None, None)
+        msg.values = [
+            KeyValue(key=k, value=v)
+            for k, v in au.status_values(
+                mode=mode or self._mode,
+                map=self._map,
+                localizer=self._localizer if self._mode == 'localization' else '',
+                localized=localized,
+                tf_age_ms=self._tf_age_ms(),
+                scan_age_ms=None if scan_age is None else scan_age * 1e3,
+                pose_sd_m=sd[0],
+                pose_sd_deg=sd[1],
+                last_save=self._last_save,
+                last_autosave=self._last_autosave,
+                resumed_from_autosave=self._resumed,
+                pose_source=self._pose_source,
+                scans_processed=self._poses_seen,
+                session=self._session,
+            )
+        ]
+        self._pub_status.publish(msg)
+
+    # -- saves --
+
+    def _call(self, client: Any, request: Any) -> Any:
+        if not client.wait_for_service(timeout_sec=5.0):
+            return None
+        future = client.call_async(request)
+        end = time.monotonic() + SERVICE_TIMEOUT_SEC
+        while not future.done() and time.monotonic() < end:
+            time.sleep(0.02)
+        return future.result() if future.done() else None
+
+    def _save_set(self, stem: Path) -> str:
+        """Write the pose graph and the .pgm/.yaml at a stem; return '' or the failure."""
+        stem.parent.mkdir(parents=True, exist_ok=True)
+        result = self._call(self._serialize, self._srv_type.Request(filename=str(stem)))
+        if result is None or result.result != self._srv_type.Response.RESULT_SUCCESS:
+            return 'slam_toolbox could not write the pose graph'
+        # Low priority: starting map_saver_cli costs seconds of CPU, which
+        # slam_toolbox needs while the car moves.
+        argv = [
+            'nice', '-n', '10',
+            'ros2', 'run', 'nav2_map_server', 'map_saver_cli', '-f', str(stem),
+            '--ros-args', '-p', 'map_subscribe_transient_local:=true',
+        ]  # fmt: skip
+        try:
+            done = subprocess.run(
+                argv, capture_output=True, timeout=MAP_SAVER_TIMEOUT_SEC, check=False
+            )
+        except subprocess.TimeoutExpired:
+            return 'map_saver_cli timed out'
+        return '' if done.returncode == 0 else 'map_saver_cli failed'
+
+    def _meta(self) -> dict[str, Any]:
+        try:
+            frames = load_frames(Path(get_package_share_directory(PACKAGE)) / 'config')
+        except Exception:  # noqa: BLE001  meta.yaml still gets written
+            frames = {}
+        return au.meta_record(
+            self._map, datetime.now(), driver_version(), frames, self._pose_arg, self._session
+        )
+
+    def save_map(self) -> tuple[bool, str]:
+        if self._mode != 'mapping' or self._stem is None:
+            return False, 'not mapping'
+        with self._save_lock:
+            t0 = time.monotonic()
+            error = self._save_set(self._stem)
+            if error:
+                return False, error
+            au.write_yaml_atomic(self._stem.parent / au.META_FILE, self._meta())
+            self._last_save = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        self._publish_status()
+        return True, f'saved to {self._stem.parent} in {time.monotonic() - t0:.1f} s'
+
+    def autosave(self) -> tuple[bool, str]:
+        if self._mode != 'mapping' or self._stem is None:
+            return False, 'not mapping'
+        folder = self._stem.parent
+        tmp = folder / (au.AUTOSAVE_DIR + '.tmp')
+        with self._save_lock:
+            t0 = time.monotonic()
+            if tmp.exists():
+                shutil.rmtree(tmp)
+            tmp.mkdir(parents=True)
+            error = self._save_set(tmp / self._map)
+            if error:
+                return False, error
+            record = au.pose_record(
+                self._pose or (0.0, 0.0, 0.0), datetime.now(), session=self._session
+            )
+            au.write_yaml_atomic(tmp / au.AUTOSAVE_FILE, record)
+            au.write_yaml_atomic(tmp / au.META_FILE, self._meta())
+            au.replace_dir(tmp, folder / au.AUTOSAVE_DIR)
+            self._last_autosave = record['time']
+        self.get_logger().info(f'Autosaved in {time.monotonic() - t0:.1f} s.')
+        self._publish_status()
+        return True, f'autosaved to {folder / au.AUTOSAVE_DIR}'
+
+    def _timed_autosave(self) -> None:
+        if self._poses_seen == 0:
+            return
+        ok, message = self.autosave()
+        if not ok:
+            self.get_logger().warning(f'Autosave failed: {message}')
+
+    def _on_save_map(self, _: Trigger.Request, response: Trigger.Response) -> Trigger.Response:
+        response.success, response.message = self.save_map()
+        return response
+
+    def _on_autosave(self, _: Trigger.Request, response: Trigger.Response) -> Trigger.Response:
+        response.success, response.message = self.autosave()
+        return response
+
+    def _write_last_pose(self) -> None:
+        if self._localized and self._pose is not None and self._stem is not None:
+            au.write_yaml_atomic(
+                self._stem.parent / au.LAST_POSE_FILE,
+                au.pose_record(self._pose, datetime.now(), localizer=self._localizer),
+            )
+
+    def shutdown(self) -> None:
+        """Keep the last pose (localization) and publish mode 'off' (lifts the speed cap)."""
+        self._stopping = True
+        if self._mode == 'localization':
+            self._write_last_pose()
+        self._publish_status(mode='off')
+        # Reliable delivery needs the publisher alive until subscribers acknowledge.
+        acked = self._pub_status.wait_for_all_acked(Duration(seconds=2.0))
+        self.get_logger().info(
+            'Stopped: status off' + ('' if acked else ' (not acknowledged by every subscriber)')
+        )
+
+
+def _interrupt(signum: int, frame: Any) -> None:
+    raise KeyboardInterrupt
+
+
+def main(args: list[str] | None = None) -> None:
+    # rclpy's handlers would shut the context down before shutdown() can send
+    # the final status that lifts the mapping speed cap. These replace them,
+    # and also cover a SIGINT inherited as ignored and systemd's SIGTERM.
+    rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
+    signal.signal(signal.SIGINT, _interrupt)
+    signal.signal(signal.SIGTERM, _interrupt)
+    node = AutonomyNode()
+    executor = MultiThreadedExecutor(num_threads=4)
+    executor.add_node(node)
+    # The executor spins in a thread; the main thread stays in Python, where the
+    # signal handlers run even while the executor waits (a stopped sim clock
+    # leaves it waiting in C indefinitely).
+    spinner = threading.Thread(target=executor.spin, daemon=True)
+    spinner.start()
+    try:
+        while spinner.is_alive():
+            spinner.join(timeout=0.2)
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
+    finally:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        # Callbacks stop first, so no status tick lands after the final one.
+        executor.shutdown(timeout_sec=1.0)
+        node.shutdown()
+        node.destroy_node()
+        rclpy.try_shutdown()
+
+
+if __name__ == '__main__':
+    main()

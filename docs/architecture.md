@@ -83,17 +83,18 @@ Teensy owns the MAX7219 chain.
 
 ## Node inventory
 
-Seven nodes ship in this package (`setup.py` console scripts):
+Eight nodes ship in this package (`setup.py` console scripts):
 
 | Node | Responsibility |
 |---|---|
 | `pit_node` | Sole owner of the Teensy UART. Encodes drive commands, decodes telemetry, forwards display and LED frames, and integrates odometry (`odometry.py`) into `odom -> base_link`. |
 | `mux_node` | Arbitrates teleop against autonomy, enforces speed and steering limits, gates on the controller or on a live FlySky transmitter, zeroes output when the joystick drops. |
-| `throttle_node` | Clamps `/mux_out` to `[-1, 1]` and applies per-direction speed and steering caps onto `/motor`. The Teensy maps the normalized command to PWM. |
+| `throttle_node` | Clamps `/mux_out` to `[-1, 1]` and applies per-direction speed and steering caps onto `/motor`; while `/autonomy/status` reports mapping, clips speed to `mapping_speed_cap`. The Teensy maps the normalized command to PWM. |
 | `gamepad_node` | Maps `/joy` axes into an Ackermann drive command. |
 | `imu_fusion_node` | Merges the RealSense and LSM9DS1 IMUs into one stream; passes through when only one is live. |
 | `dotmatrix_node` | Renders text, student pixel buffers, a startup splash, or a mode glyph into a display frame. |
 | `edgetpu_node` | Runs object detection on the color stream via the Coral Apex. |
+| `autonomy_node` | The SLAM interface: `/autonomy/pose`, `/autonomy/status`, `/autonomy/save_map`, `/autonomy/autosave`; autosaves while mapping, keeps the last pose while localizing. Started by `autonomy.launch.py`, not by teleop. |
 
 Four external nodes complete the graph: `joy_node` (`joy`), `sllidar_node`
 (`sllidar_ros2`), `realsense2_camera_node` (`realsense2_camera`), and
@@ -322,10 +323,11 @@ the `odom -> base_link -> laser` transforms teleop publishes. Its `mode`,
 
 ```
 autonomy.launch.py
-├── mode:=mapping                  slam_toolbox (async) + lifecycle_manager_slam
-└── mode:=localization map:=NAME
-    ├── localizer:=amcl (default)  map_server + amcl + lifecycle_manager_localization
-    └── localizer:=slam_toolbox    slam_toolbox (localization) + lifecycle_manager_slam
+├── mode:=mapping map:=NAME         slam_toolbox (async) + lifecycle_manager_slam
+├── mode:=localization map:=NAME
+│   ├── localizer:=amcl (default)  map_server + amcl + lifecycle_manager_localization
+│   └── localizer:=slam_toolbox    slam_toolbox (localization) + lifecycle_manager_slam
+└── every mode                     autonomy_node
 ```
 
 Each publishes `map -> odom`. slam_toolbox, AMCL, and map_server are lifecycle
@@ -335,6 +337,30 @@ exits ends the launch. Saved maps live under `~/data/maps/<name>/`
 `<name>.posegraph` and `<name>.data` from slam_toolbox, `<name>.pgm` and
 `<name>.yaml` from `map_saver_cli`. The validation scripts in
 `scripts/validation/` run test sessions on top of this launch.
+
+### Autonomy interface
+
+`autonomy_node` (`racecar_neo_ros2_driver/autonomy_node.py`; logic in
+`autonomy.py`; settings in `config/autonomy.yaml`) is the one interface for
+the CLI, the library, and dashboards, the same whichever localizer runs:
+
+| Name | Type | Behavior |
+|---|---|---|
+| `/autonomy/pose` | `geometry_msgs/PoseWithCovarianceStamped` | `map -> base_link` at `pose_rate_hz` (20), with the localizer's covariance |
+| `/autonomy/status` | `diagnostic_msgs/DiagnosticStatus`, transient local | 1 Hz and on change of `localized`. Level OK when localized. Keys: `mode` (`mapping`, `localization`, or `off` on exit), `map`, `localizer`, `localized`, `tf_age_ms`, `scan_age_ms`, `pose_sd_m`, `pose_sd_deg`, `last_save`, `last_autosave`, `resumed_from_autosave`, `pose_source`, `scans_processed`, `session` |
+| `/autonomy/save_map` | `std_srvs/Trigger` | Mapping: pose graph, `.pgm`/`.yaml`, and `meta.yaml` into `<map>/`; returns when written. Otherwise fails ("not mapping") |
+| `/autonomy/autosave` | `std_srvs/Trigger` | Mapping: the same set into `<map>/autosave/` (built in `autosave.tmp/`, then swapped in), with `autosave.yaml` (pose, session) |
+
+`localized`: both modes need `map -> odom` and a scan within
+`scan_timeout_sec` (0.5 s), so a stopped lidar clears it within about half a
+second. Localization also needs the localizer's pose spread within
+`localized_max_xy_sd_m` and `localized_max_yaw_sd_deg`, and with
+`pose:=global` (AMCL only) stays false until AMCL's search converges;
+`autonomy_node` starts that search through `reinitialize_global_localization`.
+While mapping it autosaves every `autosave_period_sec` (60 s); while localized
+it writes `<map>/last_pose.yaml` every `last_pose_period_sec` (5 s) and on
+exit. On exit (SIGINT or SIGTERM) it publishes `mode: off`, waiting for
+subscribers to acknowledge it, which lifts the mapping speed cap.
 
 ## Frame tree
 
@@ -486,7 +512,7 @@ node's `<name>_config` launch argument.
 |---|---|---|
 | `pit.yaml` | `pit_node` | serial device, axis order and polarity, topic names, CRC toggle |
 | `mux.yaml` | `mux_node` | speed and steering limits, arming buttons, joystick timeout, RC gate |
-| `throttle.yaml` | `throttle_node` | forward, reverse, and steering caps as fractions of full scale |
+| `throttle.yaml` | `throttle_node` | forward, reverse, and steering caps as fractions of full scale; `mapping_speed_cap` |
 | `gamepad.yaml` | `gamepad_node` | axis indices and signs |
 | `imu_fusion.yaml` | `imu_fusion_node` | source topics, output topic, rate, staleness timeout |
 | `lidar.yaml` | `sllidar_node` | serial device, baud, scan mode |
@@ -495,6 +521,7 @@ node's `<name>_config` launch argument.
 | `lsm9ds1_cal.yaml`, `lsm9ds1_mag_cal.yaml` | `pit_node` | IMU bias and iron correction, zero defaults |
 | `realsense_cal.yaml` | `imu_fusion_node` | RealSense IMU bias, zero defaults |
 | `odom.yaml` | `pit_node` (loaded by `pit.launch.py`) | odometry: yaw axis and sign, speed and yaw-rate scales, publish rate, stopped-car bias settings |
+| `autonomy.yaml` | `autonomy_node` | pose rate, autosave and last-pose periods, `localized` limits |
 | `slam_mapping.yaml`, `slam_localization.yaml` | `slam_toolbox`, `lifecycle_manager_slam` | frames, laser range 0.3 to 12 m, node spacing, loop closure |
 | `amcl.yaml` | `amcl`, `map_server`, `lifecycle_manager_localization` | motion and laser models, particles, beam skipping, update distances |
 | `frames.yaml` | `frames.launch.py` (not a node parameter file) | frame offsets in mm and deg, fleet base values; see [Frame tree](#frame-tree) |

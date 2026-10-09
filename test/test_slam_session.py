@@ -25,19 +25,13 @@ class TestCommands:
     def test_teleop_without_camera(self, ss):
         assert ss.teleop_argv(camera=False)[-1] == 'realsense_enable:=false'
 
-    def test_mapping_caps_the_speed(self, ss):
-        argv = ss.teleop_argv(camera=True, throttle_config=ss.MAPPING_THROTTLE)
-        assert argv[-1] == f'throttle_config:={ss.MAPPING_THROTTLE}'
-        p = yaml.safe_load(ss.MAPPING_THROTTLE.read_text())['throttle_node']['ros__parameters']
-        assert p['max_speed_forward'] == p['max_speed_backward'] == 0.02
-        assert p['max_steering'] == 1.0
-
     def test_autonomy_mapping(self, ss):
-        assert ss.autonomy_argv('mapping', 'room', 'amcl', '')[-1] == 'mode:=mapping'
+        argv = ss.autonomy_argv('mapping', 'room', 'amcl', '', 's1')
+        assert argv[-3:] == ['mode:=mapping', 'map:=room', 'session:=s1']
 
     def test_autonomy_localization(self, ss):
         argv = ss.autonomy_argv('localization', 'room', 'slam_toolbox', '1,2,0')
-        assert argv[-3:] == ['map:=room', 'localizer:=slam_toolbox', 'pose:=1,2,0']
+        assert 'map:=room' in argv and argv[-2:] == ['localizer:=slam_toolbox', 'pose:=1,2,0']
 
     def test_bag_records_the_slam_topics(self, ss, tmp_path):
         argv = ss.bag_argv(tmp_path / 'bag')
@@ -173,3 +167,36 @@ class TestReplay:
         )
         assert d.max_offset_m == pytest.approx(0.5) and d.max_yaw_deg == pytest.approx(8)
         assert d.yaw_sd_deg > 3
+
+
+def test_status_lines(ss, tmp_path):
+    f = tmp_path / 'status.csv'
+    f.write_text(
+        't_s,mode,localized,pose_sd_m,last_autosave\n'
+        '0.0,localization,false,,\n'
+        '2.0,localization,true,0.1,\n'
+        '6.0,localization,false,0.5,\n'
+        '8.0,localization,true,0.1,2026-10-09 10:00:00\n'
+        '10.0,off,false,,\n'
+    )
+    (line,) = ss.status_lines(f)
+    assert line.startswith('Localized 50% of 8 s; first at 2 s; dropped 1 time(s).')
+    assert 'Autosaves seen: 1' in line
+
+
+def test_first_moved(ss):
+    odom = [(0.0, 1.0, 1.0), (1.0, 1.01, 1.0), (2.0, 1.06, 1.0), (3.0, 2.0, 1.0)]
+    assert ss.first_moved(odom) == 2.0
+    assert ss.first_moved(odom[:2]) is None and ss.first_moved([]) is None
+
+
+def test_autonomy_replay_section(ss, tmp_path):
+    name, argv, section = ss.autonomy_replay('amcl', 'room', 'amcl', '1,2,0', tmp_path / 'o.yaml')
+    assert name == 'autonomy_node' and argv[-1] == str(tmp_path / 'o.yaml')
+    assert section == {
+        'mode': 'localization',
+        'map': 'room',
+        'localizer': 'amcl',
+        'pose': '1,2,0',
+        'use_sim_time': True,
+    }

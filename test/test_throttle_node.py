@@ -1,7 +1,13 @@
 """Unit tests for throttle math helpers."""
 
+from diagnostic_msgs.msg import DiagnosticStatus, KeyValue
 import pytest
-from racecar_neo_ros2_driver.throttle_node import scale_speed, scale_steering
+from racecar_neo_ros2_driver.throttle_node import (
+    cap_speed,
+    scale_speed,
+    scale_steering,
+    status_mode,
+)
 
 
 class TestScaleSpeed:
@@ -56,3 +62,18 @@ class TestSteeringTrim:
     def test_trimmed_output_stays_in_range(self):
         assert scale_steering(1.0, 1.0, trim=0.05) == 1.0
         assert scale_steering(-1.0, 1.0, trim=-0.05) == -1.0
+
+
+class TestMappingSpeedCap:
+    @pytest.mark.parametrize(
+        'speed,expected', [(1.0, 0.02), (-0.4, -0.02), (0.015, 0.015), (0.005, 0.005), (0.0, 0.0)]
+    )
+    def test_clips_and_keeps_the_deadband(self, speed, expected):
+        assert cap_speed(speed, 0.02) == pytest.approx(expected)
+
+    def test_mode_from_status(self):
+        msg = DiagnosticStatus(
+            values=[KeyValue(key='map', value='room'), KeyValue(key='mode', value='mapping')]
+        )
+        assert status_mode(msg) == 'mapping'
+        assert status_mode(DiagnosticStatus()) == ''

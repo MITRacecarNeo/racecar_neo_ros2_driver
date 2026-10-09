@@ -66,14 +66,14 @@ class TestMaps:
 
 class TestLaunch:
     def test_mapping_runs_slam_toolbox_async(self, autonomy):
-        node, manager = autonomy.node_specs('mapping', 'amcl', '', '', str(CONFIG))
+        node, manager = autonomy.slam_specs('mapping', 'amcl', '', '', str(CONFIG))
         assert node['executable'] == 'async_slam_toolbox_node'
         assert node['parameters'] == [str(CONFIG / 'slam_mapping.yaml')]
         assert manager['name'] == 'lifecycle_manager_slam'
 
     def test_amcl_localization(self, autonomy, tmp_path, monkeypatch):
         monkeypatch.setenv(maps.ROOT_ENV, str(tmp_path))
-        nodes = autonomy.node_specs('localization', 'amcl', 'room', '', str(CONFIG))
+        nodes = autonomy.slam_specs('localization', 'amcl', 'room', '', str(CONFIG))
         assert [n['name'] for n in nodes] == [
             'map_server',
             'amcl',
@@ -85,14 +85,14 @@ class TestLaunch:
         assert (p['initial_pose.x'], p['initial_pose.y'], p['initial_pose.yaw']) == (0, 0, 0)
 
     def test_amcl_start_pose(self, autonomy):
-        nodes = autonomy.node_specs('localization', 'amcl', 'room', '1,2,0.5', str(CONFIG))
+        nodes = autonomy.slam_specs('localization', 'amcl', 'room', '1,2,0.5', str(CONFIG))
         p = _dicts(nodes[1])
         assert p['set_initial_pose'] is True
         assert (p['initial_pose.x'], p['initial_pose.y'], p['initial_pose.yaw']) == (1.0, 2.0, 0.5)
 
     def test_slam_toolbox_localization(self, autonomy, tmp_path, monkeypatch):
         monkeypatch.setenv(maps.ROOT_ENV, str(tmp_path))
-        node, _ = autonomy.node_specs('localization', 'slam_toolbox', 'room', '', str(CONFIG))
+        node, _ = autonomy.slam_specs('localization', 'slam_toolbox', 'room', '', str(CONFIG))
         assert node['executable'] == 'localization_slam_toolbox_node'
         p = _dicts(node)
         assert p['map_file_name'] == str(tmp_path / 'room' / 'room')
@@ -109,12 +109,12 @@ class TestLaunch:
     )
     def test_bad_arguments(self, autonomy, args):
         with pytest.raises(ValueError):
-            autonomy.node_specs(*args, str(CONFIG))
+            autonomy.slam_specs(*args, str(CONFIG))
 
     def test_local_override_loads_last(self, autonomy, tmp_path):
         for name in ('slam_mapping.yaml', 'slam_mapping.local.yaml'):
             (tmp_path / name).write_text('slam_toolbox: {ros__parameters: {}}\n')
-        node, _ = autonomy.node_specs('mapping', 'amcl', '', '', str(tmp_path))
+        node, _ = autonomy.slam_specs('mapping', 'amcl', '', '', str(tmp_path))
         assert [Path(p).name for p in node['parameters']] == [
             'slam_mapping.yaml',
             'slam_mapping.local.yaml',
@@ -123,7 +123,44 @@ class TestLaunch:
     def test_launch_description_declares_the_arguments(self, autonomy):
         ld = autonomy.generate_launch_description()
         names = [e.name for e in ld.entities if isinstance(e, DeclareLaunchArgument)]
-        assert names == ['mode', 'localizer', 'map', 'pose']
+        assert names == ['mode', 'localizer', 'map', 'pose', 'session']
+
+
+class TestAutonomyNodeSpec:
+    def test_every_mode_adds_autonomy_node(self, autonomy):
+        for args in (('mapping', 'amcl', 'room', ''), ('localization', 'amcl', 'room', '')):
+            assert autonomy.node_specs(*args, str(CONFIG))[-1]['name'] == 'autonomy_node'
+
+    def test_autonomy_node_parameters(self, autonomy):
+        spec = autonomy.node_specs(
+            'localization', 'amcl', 'room', '1,2,0', str(CONFIG), session='s1'
+        )[-1]
+        assert spec['parameters'][0] == str(CONFIG / 'autonomy.yaml')
+        p = _dicts(spec)
+        assert (p['mode'], p['map'], p['session'], p['pose_source']) == (
+            'localization',
+            'room',
+            's1',
+            'pose',
+        )
+
+    @pytest.mark.parametrize(
+        'pose,source', [('', 'origin'), ('global', 'global'), ('1,2,0', 'pose')]
+    )
+    def test_pose_source(self, autonomy, pose, source):
+        spec = autonomy.node_specs('localization', 'amcl', 'room', pose, str(CONFIG))[-1]
+        assert _dicts(spec)['pose_source'] == source
+
+    def test_global_starts_amcl_without_a_pose(self, autonomy):
+        nodes = autonomy.slam_specs('localization', 'amcl', 'room', 'global', str(CONFIG))
+        assert _dicts(nodes[1])['set_initial_pose'] is False
+
+    @pytest.mark.parametrize(
+        'mode,localizer', [('mapping', 'amcl'), ('localization', 'slam_toolbox')]
+    )
+    def test_global_needs_amcl_localization(self, autonomy, mode, localizer):
+        with pytest.raises(ValueError):
+            autonomy.slam_specs(mode, localizer, 'room', 'global', str(CONFIG))
 
 
 class TestConfigs:

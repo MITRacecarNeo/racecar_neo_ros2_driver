@@ -33,6 +33,7 @@ setup(
     license='GPL-3.0-or-later',
     entry_points={
         'console_scripts': [
+            'autonomy_node = racecar_neo_ros2_driver.autonomy_node:main',
             'dotmatrix_node = racecar_neo_ros2_driver.dotmatrix_node:main',
             'edgetpu_node = racecar_neo_ros2_driver.edgetpu_node:main',
             'gamepad_node = racecar_neo_ros2_driver.gamepad_node:main',

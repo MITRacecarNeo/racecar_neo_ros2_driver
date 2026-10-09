@@ -5,7 +5,8 @@ One-terminal SLAM validation session on the car.
     slam_session.py map NAME [--camera off] [--edgetpu on]
     slam_session.py localize MAP [--localizer amcl|slam_toolbox] [--pose x,y,yaw] [--edgetpu on]
     slam_session.py analyze [SESSION_DIR]        # rewrite report.md; default the newest
-    slam_session.py replay SESSION_DIR TAG [--localizer amcl|slam_toolbox] [--set key=value ...]
+    slam_session.py replay SESSION_DIR TAG [--localizer amcl|slam_toolbox] [--autonomy]
+                           [--set key=value ...]
 
 A session stops the teleop service, then starts teleop (EdgeTPU off unless
 --edgetpu on), the
@@ -59,8 +60,6 @@ import slam_eval  # noqa: E402
 SESSIONS = slam_eval.EVAL_DIR / 'sessions'
 TELEOP_UNIT = 'racecar-teleop'
 FOXGLOVE_PARAMS = HERE / 'foxglove_validation.yaml'
-# Mapping sessions drive at the firmware's floor speed.
-MAPPING_THROTTLE = HERE / 'throttle_mapping.yaml'
 FOXGLOVE_PORT = 8765
 BAG_TOPICS = ('/scan', '/tf', '/tf_static', '/odom/integrated', '/pose', '/amcl_pose', '/map')
 READY_TIMEOUT = 90.0
@@ -87,23 +86,24 @@ def session_dir_name(mode: str, name: str, now: datetime) -> str:
     return f'{now:%Y%m%d-%H%M%S}-{mode}-{name}'
 
 
-def teleop_argv(
-    camera: bool, throttle_config: Path | None = None, edgetpu: bool = False
-) -> list[str]:
+def teleop_argv(camera: bool, edgetpu: bool = False) -> list[str]:
     argv = ['bash', str(REPO / 'scripts' / 'launch_teleop.sh')]
     if not edgetpu:
         argv.append('edgetpu_enable:=false')
     if not camera:
         argv.append('realsense_enable:=false')
-    if throttle_config is not None:
-        argv.append(f'throttle_config:={throttle_config}')
     return argv
 
 
-def autonomy_argv(mode: str, map_name: str, localizer: str, pose: str) -> list[str]:
-    argv = ['ros2', 'launch', 'racecar_neo_ros2_driver', 'autonomy.launch.py', f'mode:={mode}']
+def autonomy_argv(
+    mode: str, map_name: str, localizer: str, pose: str, session: str = ''
+) -> list[str]:
+    argv = [
+        'ros2', 'launch', 'racecar_neo_ros2_driver', 'autonomy.launch.py',
+        f'mode:={mode}', f'map:={map_name}', f'session:={session}',
+    ]  # fmt: skip
     if mode == 'localization':
-        argv += [f'map:={map_name}', f'localizer:={localizer}']
+        argv.append(f'localizer:={localizer}')
         if pose:
             argv.append(f'pose:={pose}')
     return argv
@@ -371,7 +371,6 @@ class Session:
         self.pose = getattr(args, 'pose', '') or ''
         self.camera = args.camera == 'on'
         self.edgetpu = args.edgetpu == 'on'
-        self.throttle_config = MAPPING_THROTTLE if self.mode == 'mapping' else None
         self.tag = 'mapping' if self.mode == 'mapping' else self.localizer
         self.dir = SESSIONS / session_dir_name(
             'map' if self.mode == 'mapping' else f'loc-{self.localizer}', self.name, datetime.now()
@@ -381,6 +380,7 @@ class Session:
         self.stop_event = threading.Event()
         self.pose_times: list[float] = []
         self.map_size = ''
+        self.status_rows: list[tuple[float, str, str, str, str]] = []
         self.marks = 0
         self.saving = ''
         self.messages: list[str] = []
@@ -462,6 +462,7 @@ class Session:
         from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
         from tf2_ros import Buffer, TransformListener
         from geometry_msgs.msg import PoseWithCovarianceStamped
+        from diagnostic_msgs.msg import DiagnosticStatus
         from nav_msgs.msg import OccupancyGrid
         from sensor_msgs.msg import LaserScan
 
@@ -490,6 +491,20 @@ class Session:
         self.node.create_subscription(LaserScan, '/scan', on_scan, sensor)
         self.node.create_subscription(PoseWithCovarianceStamped, '/pose', on_pose, 50)
         self.node.create_subscription(OccupancyGrid, '/map', on_map, latched)
+
+        def on_status(m: Any) -> None:
+            v = {kv.key: kv.value for kv in m.values}
+            self.status_rows.append(
+                (
+                    time.monotonic(),
+                    v.get('mode', ''),
+                    v.get('localized', ''),
+                    v.get('pose_sd_m', ''),
+                    v.get('last_autosave', ''),
+                )
+            )
+
+        self.node.create_subscription(DiagnosticStatus, '/autonomy/status', on_status, latched)
         self.executor = MultiThreadedExecutor()
         self.executor.add_node(self.node)
         threading.Thread(target=self.executor.spin, daemon=True).start()
@@ -517,12 +532,12 @@ class Session:
         table = {
             'teleop': Child(
                 'teleop',
-                teleop_argv(self.camera, self.throttle_config, self.edgetpu),
+                teleop_argv(self.camera, self.edgetpu),
                 logs / 'teleop.log',
             ),
             'autonomy': Child(
                 'autonomy',
-                autonomy_argv(self.mode, self.name, self.localizer, self.pose),
+                autonomy_argv(self.mode, self.name, self.localizer, self.pose, self.dir.name),
                 logs / 'autonomy.log',
                 {'ROS_LOG_DIR': str(logs / 'autonomy')},
             ),
@@ -564,16 +579,18 @@ class Session:
         return result is not None and result.result == SerializePoseGraph.Response.RESULT_SUCCESS
 
     def save_map(self) -> bool:
-        from racecar_neo_ros2_driver.maps import map_stem
+        """Save through /autonomy/save_map, the interface the CLI and library use."""
+        from std_srvs.srv import Trigger
 
-        stem = map_stem(self.name)
-        stem.parent.mkdir(parents=True, exist_ok=True)
         self.saving = 'saving'
-        ok = self.serialize(stem) and slam_eval.run_map_saver(
-            stem, self.dir / 'logs' / 'map_saver.log'
-        )
+        t0 = time.monotonic()
+        result = self.call(Trigger, '/autonomy/save_map', Trigger.Request())
         self.saving = ''
-        self.say(f'Map saved to {stem.parent}.' if ok else 'Map save failed; see logs/.')
+        ok = bool(result and result.success)
+        detail = result.message if result else 'no reply from autonomy_node'
+        self.say(
+            f'Map save {"done" if ok else "failed"} ({time.monotonic() - t0:.1f} s): {detail}'
+        )
         return ok
 
     def timed_save(self) -> None:
@@ -688,7 +705,6 @@ class Session:
             pose=self.pose or None,
             camera=self.camera,
             edgetpu=self.edgetpu,
-            speed_cap=None if self.throttle_config is None else 0.02,
             started=f'{datetime.now():%Y-%m-%d %H:%M:%S}',
             git=self.git_state(),
             disk_start=disk_line()[1],
@@ -729,11 +745,8 @@ class Session:
             print(f'Lichtblick: connect to ws://{hostname_ip()}:{FOXGLOVE_PORT}')
             if self.mode == 'localization':
                 print('Drive at least 0.5 m before the first mark so the localizer updates.')
-            if self.throttle_config is not None:
-                print(
-                    'Speed is held at the slowest setting. Press the trigger past halfway '
-                    'to move.'
-                )
+            if self.mode == 'mapping':
+                print('Speed is held at the slowest setting while mapping.')
             print('Drive with the gamepad. Keys are read without Enter.')
             with Terminal() as term:
                 try:
@@ -766,6 +779,12 @@ class Session:
         self.stop_event.set()
         if self.recorder:
             self.recorder.write_csv(self.dir / 'load.csv')
+        if self.status_rows:
+            with (self.dir / 'status.csv').open('w', newline='') as f:
+                w = csv.writer(f)
+                w.writerow(['t_s', 'mode', 'localized', 'pose_sd_m', 'last_autosave'])
+                for t, *rest in self.status_rows:
+                    w.writerow([f'{t - self.started:.1f}', *rest])
         ended: dict[str, str] = {}
         for n in ('bag', 'autonomy', 'foxglove'):
             for c in self.children:
@@ -904,6 +923,10 @@ def analyze(session: Path) -> Path:
     )
     lines += [f'    {line[:160]}' for line in found[:10]]
 
+    status = session / 'status.csv'
+    if status.exists():
+        lines += ['', '## Autonomy status', ''] + status_lines(status)
+
     stalls = session / 'stalls.csv'
     if stalls.exists():
         lines += ['', '## Timed saves', '', '```', stalls.read_text().rstrip(), '```']
@@ -1036,7 +1059,43 @@ def fit_line(stem: Path, bag: Path, map_odom: Any = None) -> str:
     return fit.line() if fit else 'No scans to score.'
 
 
-def replay(session: Path, tag: str, overrides: dict[str, Any], localizer: str | None) -> int:
+def autonomy_replay(
+    kind: str, map_name: str, localizer: str, pose_text: str, overrides: Path
+) -> tuple[str, list[str], dict[str, Any]]:
+    """Return the autonomy_node child and its parameter section for a replay."""
+    section = {
+        'mode': 'mapping' if kind == 'mapping' else 'localization',
+        'map': map_name,
+        'localizer': localizer,
+        'pose': pose_text,
+        'use_sim_time': True,
+    }
+    argv = _ros_node(
+        'racecar_neo_ros2_driver',
+        'autonomy_node',
+        'autonomy_node',
+        [REPO / 'config' / 'autonomy.yaml', overrides],
+    )
+    return 'autonomy_node', argv, section
+
+
+def first_moved(
+    odom: Sequence[tuple[float, float, float]], distance: float = 0.05
+) -> float | None:
+    """Time the odometry first moves `distance` from where it started."""
+    if not odom:
+        return None
+    x0, y0 = odom[0][1], odom[0][2]
+    return next((t for t, x, y in odom if math.hypot(x - x0, y - y0) >= distance), None)
+
+
+def replay(
+    session: Path,
+    tag: str,
+    overrides: dict[str, Any],
+    localizer: str | None,
+    with_autonomy: bool = False,
+) -> int:
     """Run a session's bag through a fresh localizer or mapper with overrides; write a report."""
     from racecar_neo_ros2_driver.maps import map_stem, parse_pose
 
@@ -1063,14 +1122,29 @@ def replay(session: Path, tag: str, overrides: dict[str, Any], localizer: str | 
     out.mkdir(parents=True)
     pose = parse_pose(meta.get('pose') or '') or (0.0, 0.0, 0.0)
     params = out / 'overrides.yaml'
-    params.write_text(
-        yaml.safe_dump(replay_overrides(kind, overrides, stem, pose), sort_keys=False)
-    )
+    sections = replay_overrides(kind, overrides, stem, pose)
+    autonomy = None
+    if with_autonomy:
+        autonomy = autonomy_replay(
+            kind, str(meta.get('map') or ''), kind, str(meta.get('pose') or ''), params
+        )
+        sections['autonomy_node'] = {'ros__parameters': autonomy[2]}
+    params.write_text(yaml.safe_dump(sections, sort_keys=False))
     # Every process of the replay, this one included, on its own domain.
     os.environ['ROS_DOMAIN_ID'] = str(REPLAY_DOMAIN)
     logs = out / 'logs'
     env = {'ROS_DOMAIN_ID': str(REPLAY_DOMAIN), 'ROS_LOG_DIR': str(logs)}
     children = [Child(n, argv, logs / f'{n}.log', env) for n, argv in replay_specs(kind, params)]
+    if autonomy is not None:
+        # Its map writes (last_pose.yaml, autosaves) stay inside the replay folder.
+        children.append(
+            Child(
+                autonomy[0],
+                autonomy[1],
+                logs / 'autonomy_node.log',
+                {**env, 'RACECAR_MAP_ROOT': str(out / 'maps')},
+            )
+        )
     play = Child('bag', play_argv(bag), logs / 'bag.log', env)
     rec, code = run_replay(children, play, out, save_map=kind == 'mapping')
 
@@ -1085,6 +1159,21 @@ def replay(session: Path, tag: str, overrides: dict[str, Any], localizer: str | 
             f'AMCL pose SD: median {np.median(sd[:, 0]):.2f} m, {np.median(sd[:, 1]):.1f} deg; '
             f'p90 {np.percentile(sd[:, 0], 90):.2f} m, {np.percentile(sd[:, 1], 90):.1f} deg.'
         )
+    if with_autonomy:
+        moved = first_moved(sorted(rec['odom']))
+        # A status received before the replay clock starts reads time 0.
+        status = sorted((t, ok) for t, ok in rec['status'] if t > 0)
+        t0 = status[0][0] if status else None
+        first = next((t for t, ok in status if ok), None)
+        lines += ['', '## autonomy_node', '']
+        if t0 is None:
+            lines.append('No /autonomy/status received.')
+        else:
+            loc = 'never' if first is None else f'{first - t0:.1f} s'
+            mov = 'never' if moved is None else f'{moved - t0:.1f} s'
+            lines.append(
+                f'From its first status: localized at {loc}; the car first moved at {mov}.'
+            )
     fit_stem = out / 'map' if kind == 'mapping' else stem
     lines += ['', '## Scan-to-map fit', '']
     if fit_stem is not None and Path(f'{fit_stem}.yaml').exists() and rec['map_odom']:
@@ -1111,12 +1200,14 @@ def run_replay(
     import rclpy
     from rclpy.executors import SingleThreadedExecutor
     from rclpy.parameter import Parameter
-    from rclpy.qos import qos_profile_sensor_data, QoSProfile, ReliabilityPolicy
+    from diagnostic_msgs.msg import DiagnosticStatus
+    from racecar_neo_ros2_driver.autonomy import covariance_sd
+    from rclpy.qos import DurabilityPolicy, qos_profile_sensor_data, QoSProfile, ReliabilityPolicy
     from geometry_msgs.msg import PoseWithCovarianceStamped
     from nav_msgs.msg import Odometry
     from tf2_msgs.msg import TFMessage
 
-    rec: dict[str, list[Any]] = {'map_odom': [], 'odom': [], 'amcl_sd': []}
+    rec: dict[str, list[Any]] = {'map_odom': [], 'odom': [], 'amcl_sd': [], 'status': []}
     rclpy.init()
     node = rclpy.create_node(
         'slam_replay', parameter_overrides=[Parameter('use_sim_time', value=True)]
@@ -1144,14 +1235,26 @@ def run_replay(
         rec['odom'].append((now(), p.x, p.y))
 
     def on_amcl(msg: Any) -> None:
-        c = msg.pose.covariance
-        rec['amcl_sd'].append((math.sqrt(c[0] + c[7]), math.degrees(math.sqrt(c[35]))))
+        # AMCL can publish slightly negative variances; covariance_sd clamps them.
+        rec['amcl_sd'].append(covariance_sd(list(msg.pose.covariance)))
 
     reliable = QoSProfile(depth=100, reliability=ReliabilityPolicy.RELIABLE)
     node.create_subscription(TFMessage, '/tf_bag', on_bag_tf, reliable)
     node.create_subscription(TFMessage, '/tf', on_tf, reliable)
     node.create_subscription(Odometry, '/odom/integrated', on_odom, qos_profile_sensor_data)
     node.create_subscription(PoseWithCovarianceStamped, '/amcl_pose', on_amcl, 10)
+
+    def on_status(msg: Any) -> None:
+        values = {kv.key: kv.value for kv in msg.values}
+        if values.get('mode') != 'off':
+            rec['status'].append((now(), values.get('localized') == 'true'))
+
+    kept = QoSProfile(
+        depth=1,
+        reliability=ReliabilityPolicy.RELIABLE,
+        durability=DurabilityPolicy.TRANSIENT_LOCAL,
+    )
+    node.create_subscription(DiagnosticStatus, '/autonomy/status', on_status, kept)
     executor = SingleThreadedExecutor()
     executor.add_node(node)
     threading.Thread(target=executor.spin, daemon=True).start()
@@ -1178,6 +1281,27 @@ def run_replay(
         node.destroy_node()
         rclpy.try_shutdown()
     return rec, code
+
+
+def status_lines(path: Path) -> list[str]:
+    """Share of the run localized, first time localized, and the autosaves seen."""
+    with path.open() as f:
+        rows = [r for r in csv.DictReader(f) if r['mode'] != 'off']
+    if not rows:
+        return ['No status messages.']
+    t = [float(r['t_s']) for r in rows]
+    loc = [r['localized'] == 'true' for r in rows]
+    span = t[-1] - t[0]
+    on = sum(b - a for a, b, ok in zip(t, t[1:], loc, strict=False) if ok)
+    first = next((ti for ti, ok in zip(t, loc, strict=False) if ok), None)
+    drops = sum(1 for a, b in zip(loc, loc[1:], strict=False) if a and not b)
+    autosaves = sorted({r['last_autosave'] for r in rows if r['last_autosave']})
+    return [
+        f'Localized {on / span:.0%} of {span:.0f} s; first at '
+        + (f'{first:.0f} s' if first is not None else 'never')
+        + f'; dropped {drops} time(s). Autosaves seen: {len(autosaves)}'
+        + (f' ({autosaves[0]} to {autosaves[-1]}).' if autosaves else '.')
+    ]
 
 
 def newest_session() -> Path | None:
@@ -1209,10 +1333,17 @@ def main(argv: list[str] | None = None) -> int:
         choices=('amcl', 'slam_toolbox'),
         help='localization bags: default the localizer of the run',
     )
+    p.add_argument(
+        '--autonomy',
+        action='store_true',
+        help='also run autonomy_node (its requests change the localizer; off for tuning)',
+    )
     args = parser.parse_args(argv)
 
     if args.cmd == 'replay':
-        return replay(args.session, args.tag, parse_overrides(args.set), args.localizer)
+        return replay(
+            args.session, args.tag, parse_overrides(args.set), args.localizer, args.autonomy
+        )
 
     if args.cmd == 'analyze':
         session = args.session or newest_session()

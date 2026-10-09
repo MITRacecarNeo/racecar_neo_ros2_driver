@@ -6,6 +6,17 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Added
 
+- `autonomy_node`, started by `autonomy.launch.py` in every mode: the SLAM
+  interface `/autonomy/pose` (20 Hz, map frame), `/autonomy/status`
+  (transient local; `localized` from `map -> odom`, a scan within 0.5 s, and
+  the localizer's pose spread), `/autonomy/save_map` and `/autonomy/autosave`
+  (pose graph, `.pgm`/`.yaml`, `meta.yaml`); autosave every 60 s while
+  mapping, `last_pose.yaml` every 5 s while localized; `mode: off` on exit.
+  `config/autonomy.yaml`. `autonomy.launch.py` takes `map:=` for mapping,
+  `session:=`, and `pose:=global` (AMCL searches the whole map).
+- `throttle_node` clips speed to `mapping_speed_cap` (0.02, the firmware's
+  floor) while `/autonomy/status` reports mapping, and lifts it on any other
+  mode.
 - `launch/autonomy.launch.py`, run beside teleop (`racecar launch
   autonomy`): `mode:=mapping` runs slam_toolbox (async); `mode:=localization
   map:=NAME` runs AMCL with map_server, or the slam_toolbox localizer with
@@ -28,10 +39,8 @@ All notable changes to this project will be documented in this file. The format 
   in `/pose` while slam_toolbox serializes), quit. On quit it stops them in
   order, saves a mapping run, and writes `report.md` (load, map size and
   cells, odometry correction from the bag, loop lines, timed saves, marks,
-  storage) and `map.png`. Mapping sessions start teleop with
-  `throttle_mapping.yaml`, which scales the gamepad speed to 0.02 of full
-  scale, the firmware's floor; `--edgetpu on` keeps the EdgeTPU running for
-  load tests. It warns below 10 GB free or above 80% used and
+  storage) and `map.png`. Saves go through `/autonomy/save_map`;
+  `--edgetpu on` keeps the EdgeTPU running for load tests. It warns below 10 GB free or above 80% used and
   refuses to start below 3 GB. `replay SESSION TAG --set key=value` runs a
   mapping bag through slam_toolbox with parameter overrides on its own ROS
   domain and writes a map and report per variant; localization runs replay
@@ -45,8 +54,8 @@ All notable changes to this project will be documented in this file. The format 
   stopped on a floor mark), `report` (repeat-visit spread and distances
   against taped pairs), `quality` (occupied, free, and unknown cells of a
   saved map). Records go to `~/data/slam_eval/`.
-- `package.xml` runs on `slam_toolbox`, `nav2_amcl`, `nav2_map_server`, and
-  `nav2_lifecycle_manager`.
+- `package.xml` runs on `slam_toolbox`, `nav2_amcl`, `nav2_map_server`,
+  `nav2_lifecycle_manager`, and `std_srvs`.
 - `setup_ros2.sh` installs `ros-jazzy-slam-toolbox`,
   `ros-jazzy-nav2-map-server`, `ros-jazzy-nav2-amcl`, and
   `ros-jazzy-nav2-lifecycle-manager`.

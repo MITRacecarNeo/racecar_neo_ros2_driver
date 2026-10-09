@@ -3,10 +3,13 @@ Throttle: clamps /mux_out to [-1, 1] and scales by per-direction caps onto /moto
 
 Software caps on top of the firmware PWM limits. +speed = forward, +steering = left.
 steering_trim (per car, from calibrate_steering.py) is added after the cap so
-every source drives straight at steering 0.
+every source drives straight at steering 0. While /autonomy/status reports
+mode 'mapping', speed is also clipped to mapping_speed_cap, which the firmware
+drives at its floor; the cap lifts when the status reports another mode.
 """
 
 from ackermann_msgs.msg import AckermannDriveStamped
+from diagnostic_msgs.msg import DiagnosticStatus
 import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
@@ -18,6 +21,15 @@ from .limits import clamp
 def scale_speed(speed: float, max_fwd: float, max_back: float) -> float:
     speed = clamp(speed)
     return speed * (max_fwd if speed >= 0 else max_back)
+
+
+def cap_speed(speed: float, cap: float) -> float:
+    """Clip speed to [-cap, cap]; a command inside the firmware deadband stays as is."""
+    return max(-cap, min(cap, speed))
+
+
+def status_mode(msg: DiagnosticStatus) -> str:
+    return next((kv.value for kv in msg.values if kv.key == 'mode'), '')
 
 
 def scale_steering(angle: float, max_steer: float, trim: float = 0.0) -> float:
@@ -33,11 +45,14 @@ class ThrottleNode(Node):
         self.declare_parameter('max_speed_backward', 0.24)
         self.declare_parameter('max_steering', 0.625)
         self.declare_parameter('steering_trim', 0.0)
+        self.declare_parameter('mapping_speed_cap', 0.02)
 
         self._max_fwd = self.get_parameter('max_speed_forward').value
         self._max_back = self.get_parameter('max_speed_backward').value
         self._max_steer = self.get_parameter('max_steering').value
         self._trim = float(self.get_parameter('steering_trim').value)
+        self._mapping_cap = float(self.get_parameter('mapping_speed_cap').value)
+        self._mapping = False
 
         qos = QoSProfile(
             depth=1,
@@ -47,6 +62,12 @@ class ThrottleNode(Node):
         )
         self._pub = self.create_publisher(AckermannDriveStamped, '/motor', qos)
         self.create_subscription(AckermannDriveStamped, '/mux_out', self._drive_cb, qos)
+        latched = QoSProfile(
+            depth=1,
+            reliability=QoSReliabilityPolicy.RELIABLE,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self.create_subscription(DiagnosticStatus, '/autonomy/status', self._status_cb, latched)
 
         self.get_logger().info(
             f'Throttle ready: max_fwd={self._max_fwd}, max_back={self._max_back}, '
@@ -58,10 +79,20 @@ class ThrottleNode(Node):
         out = AckermannDriveStamped()
         out.header = msg.header
         out.drive.speed = scale_speed(msg.drive.speed, self._max_fwd, self._max_back)
+        if self._mapping:
+            out.drive.speed = cap_speed(out.drive.speed, self._mapping_cap)
         out.drive.steering_angle = scale_steering(
             msg.drive.steering_angle, self._max_steer, self._trim
         )
         self._pub.publish(out)
+
+    def _status_cb(self, msg: DiagnosticStatus) -> None:
+        mapping = status_mode(msg) == 'mapping'
+        if mapping != self._mapping:
+            self.get_logger().info(
+                f'Mapping speed cap {self._mapping_cap:g} ' + ('on' if mapping else 'off')
+            )
+        self._mapping = mapping
 
 
 def main(args: list[str] | None = None) -> None:

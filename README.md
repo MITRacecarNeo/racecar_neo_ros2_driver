@@ -57,6 +57,7 @@ Sensor and ML nodes publish independently:
 - `/imu/lsm9ds1/raw`, `/mag/raw` (sensor_msgs/Imu, MagneticField): the same telemetry axis-remapped and sensitivity-scaled but with no bias applied; the calibration utilities fit against these
 - `/imu/fused` (sensor_msgs/Imu): `imu_fusion_node` blends `/imu/realsense` and `/imu/lsm9ds1` in REP-103 body axes (single-source passthrough when one is live)
 - `/scan` (sensor_msgs/LaserScan)
+- `/autonomy/pose`, `/autonomy/status`, `/autonomy/save_map`, `/autonomy/autosave`: `autonomy_node`, started by `racecar launch autonomy` (see docs/architecture.md, "Autonomy interface")
 - `/edgetpu/inference` (vision_msgs/Detection2DArray): `edgetpu_node` consumes `/camera/color`
 
 Display node subscribes:
