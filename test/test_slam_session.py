@@ -21,6 +21,13 @@ class TestCommands:
     def test_teleop_without_camera(self, ss):
         assert ss.teleop_argv(camera=False)[-1] == 'realsense_enable:=false'
 
+    def test_mapping_caps_the_speed(self, ss):
+        argv = ss.teleop_argv(camera=True, throttle_config=ss.MAPPING_THROTTLE)
+        assert argv[-1] == f'throttle_config:={ss.MAPPING_THROTTLE}'
+        p = yaml.safe_load(ss.MAPPING_THROTTLE.read_text())['throttle_node']['ros__parameters']
+        assert p['max_speed_forward'] == p['max_speed_backward'] == 0.02
+        assert p['max_steering'] == 1.0
+
     def test_autonomy_mapping(self, ss):
         assert ss.autonomy_argv('mapping', 'room', 'amcl', '')[-1] == 'mode:=mapping'
 

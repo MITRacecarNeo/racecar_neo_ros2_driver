@@ -19,7 +19,7 @@ cd ~/ros2_ws/src/racecar_neo_ros2_driver/scripts/validation
 ./slam_session.py replay SESSION_DIR TAG --set angle_variance_penalty=0.03   # offline tuning
 ```
 
-One terminal runs the whole session. The script stops the teleop service
+One terminal runs the whole session. Mapping sessions cap the gamepad speed at the firmware's floor (`throttle_mapping.yaml`: press the trigger past halfway to move); the RC transmitter is not capped. The script stops the teleop service
 (sudo may ask for a password), starts teleop with EdgeTPU off, the autonomy
 launch, `foxglove_bridge` with `foxglove_validation.yaml`, a bag, and the load
 recorder, then prints the Lichtblick address (`ws://<car>:8765`).

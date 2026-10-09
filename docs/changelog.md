@@ -26,7 +26,9 @@ All notable changes to this project will be documented in this file. The format 
   in `/pose` while slam_toolbox serializes), quit. On quit it stops them in
   order, saves a mapping run, and writes `report.md` (load, map size and
   cells, odometry correction from the bag, loop lines, timed saves, marks,
-  storage) and `map.png`. It warns below 10 GB free or above 80% used and
+  storage) and `map.png`. Mapping sessions start teleop with
+  `throttle_mapping.yaml`, which scales the gamepad speed to 0.02 of full
+  scale, the firmware's floor. It warns below 10 GB free or above 80% used and
   refuses to start below 3 GB. `replay SESSION TAG --set key=value` runs a
   mapping bag through slam_toolbox with parameter overrides on its own ROS
   domain and writes a map and report per variant.

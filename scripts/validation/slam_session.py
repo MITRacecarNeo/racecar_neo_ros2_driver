@@ -55,6 +55,8 @@ import slam_eval  # noqa: E402, I100
 SESSIONS = slam_eval.EVAL_DIR / 'sessions'
 TELEOP_UNIT = 'racecar-teleop'
 FOXGLOVE_PARAMS = HERE / 'foxglove_validation.yaml'
+# Mapping sessions drive at the firmware's floor speed.
+MAPPING_THROTTLE = HERE / 'throttle_mapping.yaml'
 FOXGLOVE_PORT = 8765
 BAG_TOPICS = ('/scan', '/tf', '/tf_static', '/odom/integrated', '/pose', '/amcl_pose', '/map')
 READY_TIMEOUT = 90.0
@@ -81,9 +83,13 @@ def session_dir_name(mode: str, name: str, now: datetime) -> str:
     return f'{now:%Y%m%d-%H%M%S}-{mode}-{name}'
 
 
-def teleop_argv(camera: bool) -> list[str]:
+def teleop_argv(camera: bool, throttle_config: Path | None = None) -> list[str]:
     argv = ['bash', str(REPO / 'scripts' / 'launch_teleop.sh'), 'edgetpu_enable:=false']
-    return argv if camera else [*argv, 'realsense_enable:=false']
+    if not camera:
+        argv.append('realsense_enable:=false')
+    if throttle_config is not None:
+        argv.append(f'throttle_config:={throttle_config}')
+    return argv
 
 
 def autonomy_argv(mode: str, map_name: str, localizer: str, pose: str) -> list[str]:
@@ -356,6 +362,7 @@ class Session:
         self.localizer = getattr(args, 'localizer', 'amcl')
         self.pose = getattr(args, 'pose', '') or ''
         self.camera = args.camera == 'on'
+        self.throttle_config = MAPPING_THROTTLE if self.mode == 'mapping' else None
         self.tag = 'mapping' if self.mode == 'mapping' else self.localizer
         self.dir = SESSIONS / session_dir_name(
             'map' if self.mode == 'mapping' else f'loc-{self.localizer}', self.name, datetime.now()
@@ -499,7 +506,9 @@ class Session:
     def start_children(self, *names: str) -> None:
         logs = self.dir / 'logs'
         table = {
-            'teleop': Child('teleop', teleop_argv(self.camera), logs / 'teleop.log'),
+            'teleop': Child(
+                'teleop', teleop_argv(self.camera, self.throttle_config), logs / 'teleop.log'
+            ),
             'autonomy': Child(
                 'autonomy',
                 autonomy_argv(self.mode, self.name, self.localizer, self.pose),
@@ -667,6 +676,7 @@ class Session:
             localizer=self.localizer if self.mode == 'localization' else None,
             pose=self.pose or None,
             camera=self.camera,
+            speed_cap=None if self.throttle_config is None else 0.02,
             started=f'{datetime.now():%Y-%m-%d %H:%M:%S}',
             git=self.git_state(),
             disk_start=disk_line()[1],
@@ -707,6 +717,11 @@ class Session:
             print(f'Lichtblick: connect to ws://{hostname_ip()}:{FOXGLOVE_PORT}')
             if self.mode == 'localization':
                 print('Drive at least 0.5 m before the first mark so the localizer updates.')
+            if self.throttle_config is not None:
+                print(
+                    'Speed is held at the slowest setting. Press the trigger past halfway '
+                    'to move.'
+                )
             print('Drive with the gamepad. Keys are read without Enter.')
             with Terminal() as term:
                 try:
