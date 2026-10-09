@@ -141,6 +141,8 @@ With the Pi powered off: connect the NEO-PIT PCB (motor, steering, IMU, and the 
 sudo reboot
 ```
 
+`racecar-autonomy.service` (SLAM mapping or localization on top of teleop) is installed but not enabled; it starts on demand.
+
 After reboot, `racecar-teleop.service` auto-starts and pulls the watchdog via `Wants=racecar-watchdog.service`. Verify:
 
 ```sh

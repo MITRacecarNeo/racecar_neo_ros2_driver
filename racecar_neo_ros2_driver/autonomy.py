@@ -8,6 +8,11 @@ Map directory layout (racecar_neo_ros2_driver/maps.py gives the root):
     <name>/meta.yaml                       written with each save
     <name>/last_pose.yaml                  written while localized
     <name>/autosave/                       the same file set, replaced whole
+    <name>/mapping_pose.yaml               the car's map pose each second while mapping
+
+A mapping run that stops without its stop sequence (slam_toolbox crashed)
+resumes from the autosave of the same session, at the newer of the autosave's
+pose and mapping_pose.yaml (resume_point).
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ AUTOSAVE_DIR = 'autosave'
 META_FILE = 'meta.yaml'
 LAST_POSE_FILE = 'last_pose.yaml'
 AUTOSAVE_FILE = 'autosave.yaml'
+MAPPING_POSE_FILE = 'mapping_pose.yaml'
 
 LEVEL_OK, LEVEL_WARN, LEVEL_ERROR = 0, 1, 2
 
@@ -120,6 +126,41 @@ def read_pose(path: Path) -> tuple[float, float, float] | None:
         return float(data['x']), float(data['y']), float(data['yaw'])
     except (OSError, KeyError, TypeError, ValueError, yaml.YAMLError):
         return None
+
+
+def _read_record(path: Path) -> dict[str, Any]:
+    try:
+        data = yaml.safe_load(path.read_text())
+    except (OSError, yaml.YAMLError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def resume_point(
+    folder: Path, name: str, session: str
+) -> tuple[Path, tuple[float, float, float]] | None:
+    """
+    Return the autosaved pose graph stem and the start pose to resume a run, or None.
+
+    Resumes only an autosave of the same session (a new run starts a new map).
+    The pose is the newer of the autosave's and mapping_pose.yaml's, so a
+    crash loses at most the time since the last autosave and the car resumes
+    near where it stopped. Both are in the map frame of that pose graph.
+    """
+    if not session:
+        return None
+    autosave = folder / AUTOSAVE_DIR
+    record = _read_record(autosave / AUTOSAVE_FILE)
+    stem = autosave / name
+    if record.get('session') != session or not Path(f'{stem}.posegraph').exists():
+        return None
+    pose = read_pose(autosave / AUTOSAVE_FILE)
+    latest = _read_record(folder / MAPPING_POSE_FILE)
+    if latest.get('session') == session and str(latest.get('time', '')) >= str(
+        record.get('time', '')
+    ):
+        pose = read_pose(folder / MAPPING_POSE_FILE) or pose
+    return (stem, pose) if pose is not None else None
 
 
 def meta_record(

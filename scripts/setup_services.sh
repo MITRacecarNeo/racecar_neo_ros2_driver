@@ -10,6 +10,8 @@
 #   racecar-watchdog.service  BindsTo=teleop, restart-on-failure supervisor
 #   racecar-dashboard.service web status page (port 8080)
 #   racecar-jupyter.service   JupyterLab (port 8888)
+# Installed, not enabled (started on demand):
+#   racecar-autonomy.service  SLAM mapping or localization, BindsTo=teleop
 #
 # After install: `sudo systemctl start racecar-teleop` or reboot.
 set -eo pipefail
@@ -22,9 +24,13 @@ SERVICES=(
     racecar-dashboard.service
     racecar-jupyter.service
 )
+# Mapping at boot would build an unsaved map and take CPU from every lab.
+INSTALL_ONLY=(
+    racecar-autonomy.service
+)
 
 changed=0
-for svc in "${SERVICES[@]}"; do
+for svc in "${SERVICES[@]}" "${INSTALL_ONLY[@]}"; do
     src="${SCRIPT_DIR}/${svc}"
     dst="/etc/systemd/system/${svc}"
     if [[ ! -f "$src" ]]; then

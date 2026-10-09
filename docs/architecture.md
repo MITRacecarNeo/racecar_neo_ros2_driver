@@ -408,6 +408,31 @@ racecar-jupyter.service     (independent, port 8888)
 `Wants=` pulls the watchdog up when teleop starts; `BindsTo=` takes it down
 when teleop stops, so the supervisor never outlives the thing it supervises.
 
+`racecar-autonomy.service` runs SLAM on top of teleop, installed but not
+enabled (mapping at boot would build an unsaved map and take CPU from every
+lab):
+
+```
+racecar-teleop.service ◀── After=, BindsTo=, PartOf= ── racecar-autonomy.service
+```
+
+It stops when teleop stops and restarts when teleop restarts. Its mode comes
+from `~/.config/racecar/autonomy.conf` (`EnvironmentFile`; `AUTONOMY_MODE`,
+`AUTONOMY_MAP`, `AUTONOMY_SESSION`, `AUTONOMY_POSE`, `AUTONOMY_POSE_SOURCE`,
+`AUTONOMY_LOCALIZER`, `AUTONOMY_FOXGLOVE`). `scripts/launch_autonomy.sh` turns
+it into `autonomy.launch.py` arguments with `scripts/autonomy_args.py` and logs
+to `~/logs/latest/autonomy_<time>/`. `ExecStop` runs `scripts/autonomy_stop.py`,
+which calls `/autonomy/autosave` while slam_toolbox is still alive, so a stop,
+a teleop restart, or a teleop shutdown keeps the map. `Restart=always`, since
+`ros2 launch` exits 0 when slam_toolbox dies and systemd never restarts after
+a requested stop; three failed starts in 2 minutes give up. A start whose map
+holds an autosave of the same `AUTONOMY_SESSION` resumes from it
+(`autonomy.resume_point`): slam_toolbox loads the autosaved pose graph and
+continues from the newer of the autosave's pose and `mapping_pose.yaml`,
+which `autonomy_node` writes each second, so a crash loses at most the time
+since the last autosave. `scripts/polkit/49-racecar-autonomy.rules` lets the
+`racecar` user start, stop, and restart this one unit without sudo.
+
 Beside them: the three lab-dashboard units (`racecar-webteleop`,
 `racecar-linefollow`, `racecar-wallfollow`), rendered by
 `setup_dashboards.sh` and installed disabled, and

@@ -40,7 +40,7 @@ STANDALONE_SCRIPTS = [
     'setup_nvme.sh',  # erases the target disk; must be an explicit, typed choice
 ]
 
-RUNTIME_SCRIPTS = ['launch_teleop.sh']
+RUNTIME_SCRIPTS = ['launch_teleop.sh', 'launch_autonomy.sh']
 
 ALL_SCRIPTS = PHASE_SCRIPTS + [ORCHESTRATOR] + STANDALONE_SCRIPTS + RUNTIME_SCRIPTS
 
@@ -337,8 +337,9 @@ class TestNetworkPolkitRule:
 
     def test_installed_by_setup_user_env(self):
         text = self.INSTALLER.read_text()
-        assert 'polkit/49-racecar-network.rules' in text
-        assert '/etc/polkit-1/rules.d/49-racecar-network.rules' in text
+        assert 'for rule in 49-racecar-network.rules 49-racecar-autonomy.rules; do' in text
+        assert 'POLKIT_SRC="${SCRIPT_DIR}/polkit/${rule}"' in text
+        assert 'POLKIT_DST="/etc/polkit-1/rules.d/${rule}"' in text
 
 
 class TestUdevRules:

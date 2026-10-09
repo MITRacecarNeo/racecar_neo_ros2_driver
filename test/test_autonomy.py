@@ -123,7 +123,16 @@ class TestLaunch:
     def test_launch_description_declares_the_arguments(self, autonomy):
         ld = autonomy.generate_launch_description()
         names = [e.name for e in ld.entities if isinstance(e, DeclareLaunchArgument)]
-        assert names == ['mode', 'localizer', 'map', 'pose', 'session']
+        assert names == [
+            'mode',
+            'localizer',
+            'map',
+            'pose',
+            'session',
+            'resume',
+            'foxglove',
+            'pose_source',
+        ]
 
 
 class TestAutonomyNodeSpec:
@@ -161,6 +170,47 @@ class TestAutonomyNodeSpec:
     def test_global_needs_amcl_localization(self, autonomy, mode, localizer):
         with pytest.raises(ValueError):
             autonomy.slam_specs(mode, localizer, 'room', 'global', str(CONFIG))
+
+
+class TestResumeAndFoxglove:
+    def test_resume_loads_the_autosave_at_the_pose(self, autonomy):
+        specs = autonomy.node_specs(
+            'mapping',
+            'amcl',
+            'room',
+            '1,2,0.5',
+            str(CONFIG),
+            session='s',
+            resume='/m/room/autosave/room',
+        )
+        slam = _dicts(specs[0])
+        assert slam == {
+            'map_file_name': '/m/room/autosave/room',
+            'map_start_pose': [1.0, 2.0, 0.5],
+        }
+        node = _dicts(specs[-1])
+        assert node['resumed_from_autosave'] is True and node['pose_source'] == 'autosave'
+
+    def test_fresh_mapping_loads_no_graph(self, autonomy):
+        specs = autonomy.node_specs('mapping', 'amcl', 'room', '', str(CONFIG))
+        assert _dicts(specs[0]) == {} and _dicts(specs[-1])['resumed_from_autosave'] is False
+
+    def test_resume_is_for_mapping(self, autonomy):
+        with pytest.raises(ValueError):
+            autonomy.slam_specs('localization', 'amcl', 'room', '', str(CONFIG), resume='/x')
+
+    def test_foxglove_on_demand(self, autonomy):
+        assert 'foxglove_bridge' not in [
+            s['name'] for s in autonomy.node_specs('mapping', 'amcl', 'r', '', str(CONFIG))
+        ]
+        specs = autonomy.node_specs('mapping', 'amcl', 'r', '', str(CONFIG), foxglove=True)
+        assert specs[-1]['parameters'][0] == str(CONFIG / 'foxglove.yaml')
+
+    def test_pose_source_given(self, autonomy):
+        spec = autonomy.node_specs(
+            'localization', 'amcl', 'r', '1,2,0', str(CONFIG), pose_source='last_pose'
+        )[-1]
+        assert _dicts(spec)['pose_source'] == 'last_pose'
 
 
 class TestConfigs:

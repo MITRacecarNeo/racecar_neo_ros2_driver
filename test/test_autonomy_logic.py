@@ -107,3 +107,40 @@ def test_status_values():
         'pose_sd_m': '0.123',
         'last_save': '',
     }
+
+
+class TestResumePoint:
+    def _autosave(self, folder, session, time, pose=(1.0, 2.0, 0.5)):
+        auto = folder / au.AUTOSAVE_DIR
+        auto.mkdir(parents=True, exist_ok=True)
+        (auto / 'room.posegraph').write_text('g')
+        au.write_yaml_atomic(auto / au.AUTOSAVE_FILE, au.pose_record(pose, time, session=session))
+
+    def test_same_session_resumes_at_the_autosave_pose(self, tmp_path):
+        self._autosave(tmp_path, 's1', datetime(2026, 10, 9, 10, 0, 0))
+        stem, pose = au.resume_point(tmp_path, 'room', 's1')
+        assert stem == tmp_path / 'autosave' / 'room' and pose == (1.0, 2.0, 0.5)
+
+    def test_a_newer_mapping_pose_wins(self, tmp_path):
+        self._autosave(tmp_path, 's1', datetime(2026, 10, 9, 10, 0, 0))
+        au.write_yaml_atomic(
+            tmp_path / au.MAPPING_POSE_FILE,
+            au.pose_record((3.0, 4.0, 1.0), datetime(2026, 10, 9, 10, 0, 40), session='s1'),
+        )
+        assert au.resume_point(tmp_path, 'room', 's1')[1] == (3.0, 4.0, 1.0)
+
+    def test_an_older_or_foreign_mapping_pose_loses(self, tmp_path):
+        self._autosave(tmp_path, 's1', datetime(2026, 10, 9, 10, 0, 0))
+        au.write_yaml_atomic(
+            tmp_path / au.MAPPING_POSE_FILE,
+            au.pose_record((3.0, 4.0, 1.0), datetime(2026, 10, 9, 10, 0, 40), session='s0'),
+        )
+        assert au.resume_point(tmp_path, 'room', 's1')[1] == (1.0, 2.0, 0.5)
+
+    @pytest.mark.parametrize('session', ['s2', ''])
+    def test_another_session_starts_fresh(self, tmp_path, session):
+        self._autosave(tmp_path, 's1', datetime(2026, 10, 9, 10, 0, 0))
+        assert au.resume_point(tmp_path, 'room', session) is None
+
+    def test_no_autosave(self, tmp_path):
+        assert au.resume_point(tmp_path, 'room', 's1') is None

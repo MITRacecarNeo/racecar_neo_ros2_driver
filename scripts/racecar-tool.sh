@@ -1354,7 +1354,7 @@ _racecar_complete() {
                 local action="${COMP_WORDS[2]}"
                 case "$action" in
                     start|stop|restart|logs|enable|disable)
-                        COMPREPLY=( $(compgen -W "teleop watchdog dashboard jupyter webteleop linefollow wallfollow" -- "$cur") )
+                        COMPREPLY=( $(compgen -W "teleop watchdog dashboard jupyter autonomy webteleop linefollow wallfollow" -- "$cur") )
                         ;;
                 esac
             fi

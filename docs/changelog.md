@@ -6,6 +6,19 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Added
 
+- `racecar-autonomy.service`, installed by `setup_services.sh` but not
+  enabled: SLAM on top of teleop (`After=`, `BindsTo=`, `PartOf=` teleop),
+  its mode from `~/.config/racecar/autonomy.conf` through
+  `scripts/launch_autonomy.sh` and `scripts/autonomy_args.py`; `ExecStop`
+  autosaves through `/autonomy/autosave` (`scripts/autonomy_stop.py`);
+  `Restart=always` with a start limit, and a restart with the same session
+  resumes mapping from the autosave (`resume:=` in `autonomy.launch.py`,
+  `mapping_pose.yaml` each second). `foxglove:=true` (`AUTONOMY_FOXGLOVE=1`)
+  adds `foxglove_bridge` with `config/foxglove.yaml` (view only, no camera
+  streams, `/initialpose` the one client topic).
+  `scripts/polkit/49-racecar-autonomy.rules`, installed by
+  `setup_user_env.sh`, lets the `racecar` user start, stop, and restart that
+  unit without sudo.
 - `autonomy_node`, started by `autonomy.launch.py` in every mode: the SLAM
   interface `/autonomy/pose` (20 Hz, map frame), `/autonomy/status`
   (transient local; `localized` from `map -> odom`, a scan within 0.5 s, and

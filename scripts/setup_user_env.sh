@@ -30,26 +30,29 @@ for grp in dialout i2c spi gpio video; do
     fi
 done
 
-# polkit rule: NetworkManager control from a terminal. Group membership covers
-# the hardware but not NetworkManager, which asks polkit instead.
-# See docs/troubleshooting.md, "NetworkManager authorization".
-POLKIT_SRC="${SCRIPT_DIR}/polkit/49-racecar-network.rules"
-POLKIT_DST="/etc/polkit-1/rules.d/49-racecar-network.rules"
-if [ ! -f "$POLKIT_SRC" ]; then
-    echo "Missing $POLKIT_SRC" >&2
-    exit 1
-fi
-if [ ! -d /etc/polkit-1/rules.d ]; then
-    # polkit < 0.106 reads .pkla files and has no rules.d.
-    echo "  WARNING: /etc/polkit-1/rules.d does not exist; skipping the" >&2
-    echo "           NetworkManager polkit rule. 'racecar wifi connect' will" >&2
-    echo "           need sudo on this system." >&2
-elif sudo cmp -s "$POLKIT_SRC" "$POLKIT_DST" 2>/dev/null; then
-    echo "  $POLKIT_DST already up to date"
-else
-    sudo install -m 0644 -o root -g root "$POLKIT_SRC" "$POLKIT_DST"
-    echo "  installed $POLKIT_DST"
-fi
+# polkit rules. 49-racecar-network: NetworkManager control from a terminal;
+# group membership covers the hardware but not NetworkManager, which asks
+# polkit instead (docs/troubleshooting.md, "NetworkManager authorization").
+# 49-racecar-autonomy: start, stop, and restart of racecar-autonomy.service
+# by the racecar user, for the map viewer and `racecar map`.
+for rule in 49-racecar-network.rules 49-racecar-autonomy.rules; do
+    POLKIT_SRC="${SCRIPT_DIR}/polkit/${rule}"
+    POLKIT_DST="/etc/polkit-1/rules.d/${rule}"
+    if [ ! -f "$POLKIT_SRC" ]; then
+        echo "Missing $POLKIT_SRC" >&2
+        exit 1
+    fi
+    if [ ! -d /etc/polkit-1/rules.d ]; then
+        # polkit < 0.106 reads .pkla files and has no rules.d.
+        echo "  WARNING: /etc/polkit-1/rules.d does not exist; skipping ${rule}." >&2
+        echo "           'racecar wifi connect' and 'racecar map' will need sudo." >&2
+    elif sudo cmp -s "$POLKIT_SRC" "$POLKIT_DST" 2>/dev/null; then
+        echo "  $POLKIT_DST already up to date"
+    else
+        sudo install -m 0644 -o root -g root "$POLKIT_SRC" "$POLKIT_DST"
+        echo "  installed $POLKIT_DST"
+    fi
+done
 
 BASHRC="$USER_HOME/.bashrc"
 

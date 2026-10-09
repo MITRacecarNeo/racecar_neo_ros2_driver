@@ -10,7 +10,8 @@ topics whichever runs:
     /autonomy/save_map   Trigger: mapping only; pose graph, .pgm/.yaml, meta.yaml
     /autonomy/autosave   Trigger: mapping only; the same set into <map>/autosave/
 
-In mapping it autosaves every autosave_period_sec. In localization it writes
+In mapping it autosaves every autosave_period_sec and keeps the car's map pose
+in <map>/mapping_pose.yaml each second for a crash resume. In localization it writes
 <map>/last_pose.yaml every last_pose_period_sec while localized, and on exit.
 With pose 'global' (AMCL only) it asks AMCL to search the whole map once AMCL
 is up. On exit it publishes mode 'off', which lifts the mapping speed cap in
@@ -246,6 +247,12 @@ class AutonomyNode(Node):
             self._publish_status()
 
     def _tick(self) -> None:
+        if self._mode == 'mapping' and self._pose is not None and self._stem is not None:
+            # A crash restart resumes near here (autonomy.resume_point).
+            au.write_yaml_atomic(
+                self._stem.parent / au.MAPPING_POSE_FILE,
+                au.pose_record(self._pose, datetime.now(), session=self._session),
+            )
         if self._global_pending and not self._global_requested and self._reinit.service_is_ready():
             self._reinit.call_async(Empty.Request())
             self._global_requested = True
