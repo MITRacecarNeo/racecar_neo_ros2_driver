@@ -2,12 +2,13 @@
 """
 One-terminal SLAM validation session on the car.
 
-    slam_session.py map NAME [--camera off]
-    slam_session.py localize MAP [--localizer amcl|slam_toolbox] [--pose x,y,yaw]
+    slam_session.py map NAME [--camera off] [--edgetpu on]
+    slam_session.py localize MAP [--localizer amcl|slam_toolbox] [--pose x,y,yaw] [--edgetpu on]
     slam_session.py analyze [SESSION_DIR]        # rewrite report.md; default the newest
     slam_session.py replay SESSION_DIR TAG [--localizer amcl|slam_toolbox] [--set key=value ...]
 
-A session stops the teleop service, then starts teleop (EdgeTPU off), the
+A session stops the teleop service, then starts teleop (EdgeTPU off unless
+--edgetpu on), the
 autonomy launch, foxglove_bridge (Lichtblick: ws://<car>:8765), a bag of the
 SLAM topics, and the load recorder, each logging into the session folder.
 Keys while driving: m mark, s save the map (mapping), t timed save (mapping),
@@ -86,8 +87,12 @@ def session_dir_name(mode: str, name: str, now: datetime) -> str:
     return f'{now:%Y%m%d-%H%M%S}-{mode}-{name}'
 
 
-def teleop_argv(camera: bool, throttle_config: Path | None = None) -> list[str]:
-    argv = ['bash', str(REPO / 'scripts' / 'launch_teleop.sh'), 'edgetpu_enable:=false']
+def teleop_argv(
+    camera: bool, throttle_config: Path | None = None, edgetpu: bool = False
+) -> list[str]:
+    argv = ['bash', str(REPO / 'scripts' / 'launch_teleop.sh')]
+    if not edgetpu:
+        argv.append('edgetpu_enable:=false')
     if not camera:
         argv.append('realsense_enable:=false')
     if throttle_config is not None:
@@ -365,6 +370,7 @@ class Session:
         self.localizer = getattr(args, 'localizer', 'amcl')
         self.pose = getattr(args, 'pose', '') or ''
         self.camera = args.camera == 'on'
+        self.edgetpu = args.edgetpu == 'on'
         self.throttle_config = MAPPING_THROTTLE if self.mode == 'mapping' else None
         self.tag = 'mapping' if self.mode == 'mapping' else self.localizer
         self.dir = SESSIONS / session_dir_name(
@@ -510,7 +516,9 @@ class Session:
         logs = self.dir / 'logs'
         table = {
             'teleop': Child(
-                'teleop', teleop_argv(self.camera, self.throttle_config), logs / 'teleop.log'
+                'teleop',
+                teleop_argv(self.camera, self.throttle_config, self.edgetpu),
+                logs / 'teleop.log',
             ),
             'autonomy': Child(
                 'autonomy',
@@ -679,6 +687,7 @@ class Session:
             localizer=self.localizer if self.mode == 'localization' else None,
             pose=self.pose or None,
             camera=self.camera,
+            edgetpu=self.edgetpu,
             speed_cap=None if self.throttle_config is None else 0.02,
             started=f'{datetime.now():%Y-%m-%d %H:%M:%S}',
             git=self.git_state(),
@@ -1182,11 +1191,13 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser('map', help='mapping run, saved under the map root as NAME')
     p.add_argument('name')
     p.add_argument('--camera', choices=('on', 'off'), default='on')
+    p.add_argument('--edgetpu', choices=('on', 'off'), default='off')
     p = sub.add_parser('localize', help='localization run on a saved map')
     p.add_argument('map')
     p.add_argument('--localizer', choices=('amcl', 'slam_toolbox'), default='amcl')
     p.add_argument('--pose', default='', help='start pose x,y,yaw in the map frame')
     p.add_argument('--camera', choices=('on', 'off'), default='on')
+    p.add_argument('--edgetpu', choices=('on', 'off'), default='off')
     p = sub.add_parser('analyze', help='rewrite report.md for a session')
     p.add_argument('session', nargs='?', type=Path)
     p = sub.add_parser('replay', help='replay a mapping bag with slam_toolbox overrides')

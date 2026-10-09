@@ -18,6 +18,10 @@ class TestCommands:
         argv = ss.teleop_argv(camera=True)
         assert argv[-1] == 'edgetpu_enable:=false' and argv[1].endswith('launch_teleop.sh')
 
+    def test_edgetpu_on_leaves_its_default(self, ss):
+        argv = ss.teleop_argv(camera=True, edgetpu=True)
+        assert not any(a.startswith('edgetpu_enable') for a in argv)
+
     def test_teleop_without_camera(self, ss):
         assert ss.teleop_argv(camera=False)[-1] == 'realsense_enable:=false'
 

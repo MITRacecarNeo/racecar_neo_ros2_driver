@@ -15,6 +15,7 @@ here is installed or exposed through `racecar`.
 cd ~/ros2_ws/src/racecar_neo_ros2_driver/scripts/validation
 ./slam_session.py map NAME                    # mapping; --camera off to drop the RealSense
 ./slam_session.py localize MAP                # AMCL; --localizer slam_toolbox, --pose x,y,yaw
+./slam_session.py localize MAP --edgetpu on   # EdgeTPU running too (off by default)
 ./slam_session.py analyze [SESSION_DIR]       # rewrite report.md; default the newest session
 ./slam_session.py replay SESSION_DIR TAG --set angle_variance_penalty=0.03   # offline tuning
 ./slam_session.py replay LOC_SESSION_DIR TAG --localizer slam_toolbox       # other localizer, same bag
