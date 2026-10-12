@@ -76,6 +76,12 @@ All notable changes to this project will be documented in this file. The format 
   0.1 in place of the Nav2 defaults), each with a
   `.local.yaml` override. Maps live in `~/data/maps/<name>/`
   (`racecar_neo_ros2_driver/maps.py`, `RACECAR_MAP_ROOT`).
+- `/autonomy/global_localization` (`std_srvs/Trigger`): with AMCL, search the
+  whole map, as `pose:=global` does at start; the search ends once AMCL's
+  spread has widened and then narrowed within the limits.
+- `slam_session.py` keys `e` (a timed note in `events.csv` and the report)
+  and `g` (the global search); `status.csv` gains `pose_sd_deg`; a taped
+  file's `point X Y` line sets the car point the tape was measured from.
 - `scripts/validation/live_fit.py` (a parked car's localized pose against
   the live scan and the best fit around it) and `compare_maps.py` (an
   extended map's walls against the map it came from, with an overlay).

@@ -241,7 +241,7 @@ def _launch_setup(context: LaunchContext) -> list[Node]:
     ]
 
 
-def _stop_timeouts(spec: dict[str, Any]) -> dict[str, str]:
+def _stop_timeouts(spec: dict[str, Any]) -> dict[str, Any]:
     """Return short stop timeouts for foxglove_bridge; it can ignore SIGINT with a client on."""
     if spec['name'] != 'foxglove_bridge':
         return {}

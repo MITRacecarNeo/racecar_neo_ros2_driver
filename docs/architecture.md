@@ -94,7 +94,7 @@ Eight nodes ship in this package (`setup.py` console scripts):
 | `imu_fusion_node` | Merges the RealSense and LSM9DS1 IMUs into one stream; passes through when only one is live. |
 | `dotmatrix_node` | Renders text, student pixel buffers, a startup splash, or a mode glyph into a display frame. |
 | `edgetpu_node` | Runs object detection on the color stream via the Coral Apex. |
-| `autonomy_node` | The SLAM interface: `/autonomy/pose`, `/autonomy/status`, `/autonomy/save_map`, `/autonomy/autosave`; autosaves while mapping, keeps the last pose while localizing. Started by `autonomy.launch.py`, not by teleop. |
+| `autonomy_node` | The SLAM interface: `/autonomy/pose`, `/autonomy/status`, `/autonomy/save_map`, `/autonomy/autosave`, `/autonomy/global_localization`; autosaves while mapping, keeps the last pose while localizing. Started by `autonomy.launch.py`, not by teleop. |
 
 Four external nodes complete the graph: `joy_node` (`joy`), `sllidar_node`
 (`sllidar_ros2`), `realsense2_camera_node` (`realsense2_camera`), and
@@ -350,6 +350,7 @@ the CLI, the library, and dashboards, the same whichever localizer runs:
 | `/autonomy/status` | `diagnostic_msgs/DiagnosticStatus`, transient local | 1 Hz and on change of `localized`. Level OK when localized. Keys: `mode` (`mapping`, `localization`, or `off` on exit), `map`, `localizer`, `localized`, `tf_age_ms`, `scan_age_ms`, `pose_sd_m`, `pose_sd_deg`, `last_save`, `last_autosave`, `resumed_from_autosave`, `pose_source`, `scans_processed`, `session` |
 | `/autonomy/save_map` | `std_srvs/Trigger` | Mapping: pose graph, `.pgm`/`.yaml`, and `meta.yaml` into `<map>/`; returns when written. Otherwise fails ("not mapping") |
 | `/autonomy/autosave` | `std_srvs/Trigger` | Mapping: the same set into `<map>/autosave/` (built in `autosave.tmp/`, then swapped in), with `autosave.yaml` (pose, session) |
+| `/autonomy/global_localization` | `std_srvs/Trigger` | Localization with AMCL: search the whole map, as `pose:=global` does at start (`localized` false until it converges). Otherwise fails |
 
 `localized`: both modes need `map -> odom` and a scan within
 `scan_timeout_sec` (0.5 s), so a stopped lidar clears it within about half a

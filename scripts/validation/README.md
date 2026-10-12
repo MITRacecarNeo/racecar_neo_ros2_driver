@@ -32,6 +32,8 @@ Keys while driving, read without Enter:
 | Key | Action |
 |---|---|
 | `m` | Record the map pose with the car stopped on a mark; asks for a label |
+| `e` | Note an event with the time (car set down, person walking); goes to `events.csv` and the report |
+| `g` | Ask AMCL to search the whole map (localization with AMCL); logged as an event |
 | `s` | Save the map now (mapping) |
 | `t` | Timed save: the longest gap in `/pose` while slam_toolbox serializes (mapping; drive while pressing it) |
 | `q` | Stop everything in order, save a mapping run, write the report |
@@ -41,7 +43,9 @@ Each session folder in `~/data/slam_eval/sessions/` holds `session.yaml`
 `.local.yaml` files), `load.csv`, `marks.csv`, `stalls.csv`, `bag/`, `logs/`,
 `report.md`, and `map.png`. A mapping run's map goes to `~/data/maps/NAME/`.
 Taped distances between marks go in `~/data/slam_eval/taped.txt`, one pair per
-line: `A B 2.35`.
+line: `A B 2.35`. A line `point X Y` gives the point on the car the tape was
+measured from, in `base_link` meters (default 0 0, the floor under the rear
+axle midpoint), for example `point 0 0.1045` beside the left rear tire.
 
 `replay` runs a session's bag through a fresh mapper or localizer with the
 `--set` overrides (repeatable, YAML values) applied to slam_toolbox or AMCL,

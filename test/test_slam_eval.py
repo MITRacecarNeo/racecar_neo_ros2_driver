@@ -66,6 +66,21 @@ class TestMarks:
         f = tmp_path / 'taped.txt'
         f.write_text('# pairs\nA B 2.50\nB C 1.25\n')
         assert ev.read_taped(f) == [('A', 'B', 2.5), ('B', 'C', 1.25)]
+        assert ev.read_point(f) == (0.0, 0.0)
+        f.write_text('point 0 0.1045\nA B 2.50\n')
+        assert ev.read_point(f) == (0.0, 0.1045)
+        assert ev.read_taped(f) == [('A', 'B', 2.5)]
+
+    def test_distances_from_a_point_on_the_car(self, ev):
+        # Base links 2 m apart along x, the car facing +y at A and -y at B: the
+        # left-side points (0, 0.1) sit at x -0.1 and x 2.1, 2.2 m apart.
+        marks = [
+            ev.Mark('A', 't', 0.0, 0.0, math.pi / 2),
+            ev.Mark('B', 't', 2.0, 0.0, -math.pi / 2),
+        ]
+        lines = ev.report_lines(marks, [('A', 'B', 2.2)], (0.0, 0.1))
+        pair = next(line for line in lines if line.startswith('A-B'))
+        assert pair.split()[2] == '2.200' and pair.split()[-1] == '+0'
 
 
 def test_cell_counts(ev):

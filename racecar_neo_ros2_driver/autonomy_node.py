@@ -9,6 +9,7 @@ topics whichever runs:
     /autonomy/status     DiagnosticStatus, transient local, 1 Hz and on change
     /autonomy/save_map   Trigger: mapping only; pose graph, .pgm/.yaml, meta.yaml
     /autonomy/autosave   Trigger: mapping only; the same set into <map>/autosave/
+    /autonomy/global_localization  Trigger: AMCL only; search the whole map
 
 In mapping it autosaves every autosave_period_sec and keeps the car's map pose
 in <map>/mapping_pose.yaml each second for a crash resume. A save into a
@@ -124,6 +125,7 @@ class AutonomyNode(Node):
         self._extended_from = str(get('extended_from')) or str(carried.get('extended_from') or '')
         self._global_pending = self._mode == 'localization' and self._pose_arg == 'global'
         self._global_requested = False
+        self._global_spread_seen = False
         # AMCL from a given or saved pose: re-seeded with a spread once it is up.
         self._seed: tuple[float, float, float] | None = None
         if self._uses_amcl() and not self._global_pending:
@@ -180,6 +182,9 @@ class AutonomyNode(Node):
         )
         self.create_service(
             Trigger, '/autonomy/autosave', self._on_autosave, callback_group=clients
+        )
+        self.create_service(
+            Trigger, '/autonomy/global_localization', self._on_global, callback_group=clients
         )
 
         from slam_toolbox.srv import SerializePoseGraph
@@ -255,10 +260,14 @@ class AutonomyNode(Node):
             self._last_change = au.change_time(datetime.now())
         self._sd = au.covariance_sd(list(msg.pose.covariance))
         if self._global_pending and self._global_requested and self._sd is not None:
-            if (
+            within = (
                 self._sd[0] <= self._limits.max_xy_sd_m
                 and self._sd[1] <= self._limits.max_yaw_sd_deg
-            ):
+            )
+            # A pose from before the search started still has a small spread.
+            if not within:
+                self._global_spread_seen = True
+            elif self._global_spread_seen:
                 self._global_pending = False
                 self.get_logger().info('Global localization converged.')
         self._latest_cov = list(msg.pose.covariance)
@@ -508,6 +517,19 @@ class AutonomyNode(Node):
 
     def _on_autosave(self, _: Trigger.Request, response: Trigger.Response) -> Trigger.Response:
         response.success, response.message = self.autosave()
+        return response
+
+    def _on_global(self, _: Trigger.Request, response: Trigger.Response) -> Trigger.Response:
+        if not self._uses_amcl():
+            response.success, response.message = False, 'needs localization with AMCL'
+            return response
+        # The tick asks AMCL to spread its particles over the map, as for pose:=global.
+        self._seed, self._seed_sent = None, None
+        self._global_pending, self._global_requested = True, False
+        self._global_spread_seen = False
+        self._pose_source = 'global'
+        self._publish_status()
+        response.success, response.message = True, 'searching the whole map; drive slowly'
         return response
 
     def _write_last_pose(self) -> None:

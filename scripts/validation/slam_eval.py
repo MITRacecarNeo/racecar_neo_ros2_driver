@@ -366,13 +366,36 @@ def read_taped(path: Path) -> list[tuple[str, str, float]]:
     pairs = []
     for line in path.read_text().splitlines():
         parts = line.split()
-        if len(parts) == 3 and not line.lstrip().startswith('#'):
+        if len(parts) == 3 and parts[0] != 'point' and not line.lstrip().startswith('#'):
             pairs.append((parts[0], parts[1], float(parts[2])))
     return pairs
 
 
-def report_lines(marks: list[Mark], taped: list[tuple[str, str, float]]) -> list[str]:
-    """Per tag: spread of repeated visits to each mark, then mark distances against the tape."""
+def read_point(path: Path) -> tuple[float, float]:
+    """
+    Return the car point the tape was measured from, in base_link (m).
+
+    A taped file line `point X Y` names it, for example the floor beside the
+    left rear tire at the axle; base_link itself is under the car. Default
+    (0, 0).
+    """
+    for line in path.read_text().splitlines():
+        parts = line.split()
+        if len(parts) == 3 and parts[0] == 'point':
+            return float(parts[1]), float(parts[2])
+    return 0.0, 0.0
+
+
+def report_lines(
+    marks: list[Mark],
+    taped: list[tuple[str, str, float]],
+    point: tuple[float, float] = (0.0, 0.0),
+) -> list[str]:
+    """
+    Per tag: spread of repeated visits to each mark, then mark distances against the tape.
+
+    Distances are between `point` (base_link coordinates) at each mark's mean pose.
+    """
     lines = []
     by_tag: dict[str, dict[str, list[Mark]]] = defaultdict(lambda: defaultdict(list))
     for m in marks:
@@ -384,7 +407,8 @@ def report_lines(marks: list[Mark], taped: list[tuple[str, str, float]]) -> list
         for label in sorted(by_tag[tag]):
             visits = by_tag[tag][label]
             mx, my, myaw = mean_pose([(v.x, v.y, v.yaw) for v in visits])
-            means[label] = (mx, my)
+            c, s_ = math.cos(myaw), math.sin(myaw)
+            means[label] = (mx + c * point[0] - s_ * point[1], my + s_ * point[0] + c * point[1])
             spread = max(math.hypot(v.x - mx, v.y - my) for v in visits)
             yaw_spread = max(
                 abs(math.degrees(math.atan2(math.sin(v.yaw - myaw), math.cos(v.yaw - myaw))))
@@ -460,7 +484,8 @@ def main(argv: list[str] | None = None) -> int:
         return mark(args.label, args.tag, EVAL_DIR)
     if args.cmd == 'report':
         taped = read_taped(args.taped) if args.taped else []
-        print('\n'.join(report_lines(read_marks(args.marks), taped)))
+        point = read_point(args.taped) if args.taped else (0.0, 0.0)
+        print('\n'.join(report_lines(read_marks(args.marks), taped, point)))
         return 0
     return quality(args.map)
 

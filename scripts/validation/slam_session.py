@@ -12,9 +12,10 @@ A session stops the teleop service, then starts teleop (EdgeTPU off unless
 --edgetpu on), the
 autonomy launch, foxglove_bridge (Lichtblick: ws://<car>:8765), a bag of the
 SLAM topics, and the load recorder, each logging into the session folder.
-Keys while driving: m mark, s save the map (mapping), t timed save (mapping),
-q quit. On quit everything stops in order, a mapping run is saved under the
-map root, and report.md and map.png are written to
+Keys while driving: m mark, e event note, g global search (AMCL), s save the
+map (mapping), t timed save (mapping), q quit. On quit everything stops in
+order, a mapping run is saved under the map root, and report.md and map.png
+are written to
 ~/data/slam_eval/sessions/<time>-<mode>-<name>/. Driving stays on the gamepad
 or transmitter; the session publishes no drive commands.
 
@@ -380,7 +381,7 @@ class Session:
         self.stop_event = threading.Event()
         self.pose_times: list[float] = []
         self.map_size = ''
-        self.status_rows: list[tuple[float, str, str, str, str]] = []
+        self.status_rows: list[tuple[float, str, str, str, str, str]] = []
         self.marks = 0
         self.saving = ''
         self.messages: list[str] = []
@@ -501,6 +502,7 @@ class Session:
                     v.get('localized', ''),
                     v.get('pose_sd_m', ''),
                     v.get('last_autosave', ''),
+                    v.get('pose_sd_deg', ''),
                 )
             )
 
@@ -634,6 +636,24 @@ class Session:
         self.marks += 1
         self.say(slam_eval.append_mark(self.dir / 'marks.csv', label, self.tag, poses))
 
+    def event(self, text: str) -> None:
+        """Append a timed note to events.csv (same clock as status.csv)."""
+        path = self.dir / 'events.csv'
+        new = not path.exists()
+        with path.open('a', newline='') as f:
+            w = csv.writer(f)
+            if new:
+                w.writerow(['t_s', 'event'])
+            w.writerow([f'{time.monotonic() - self.started:.1f}', text])
+        self.say(f'Event at {time.monotonic() - self.started:.0f} s: {text}')
+
+    def global_search(self) -> None:
+        from std_srvs.srv import Trigger
+
+        self.event('global search requested')
+        result = self.call(Trigger, '/autonomy/global_localization', Trigger.Request())
+        self.say(f'Global search: {result.message if result else "no reply from autonomy_node"}')
+
     def say(self, text: str) -> None:
         self.messages.append(text)
 
@@ -656,6 +676,11 @@ class Session:
             parts.append('THROTTLED' if s.throttled else 'ok')
         if self.map_size:
             parts.append(f'map {self.map_size}')
+        if self.mode == 'localization' and self.status_rows:
+            _, _, localized, sd_m, _, sd_deg = self.status_rows[-1]
+            parts.append(f'localized {"yes" if localized == "true" else "NO"}')
+            if sd_m:
+                parts.append(f'spread {sd_m} m {sd_deg} deg')
         parts.append(f'marks {self.marks}')
         if self.saving:
             parts.append(self.saving + '...')
@@ -663,7 +688,9 @@ class Session:
         if dead:
             parts.append('STOPPED: ' + ','.join(dead))
         keys = (
-            'm mark, s save, t timed save, q quit' if self.mode == 'mapping' else 'm mark, q quit'
+            'm mark, e event, s save, t timed save, q quit'
+            if self.mode == 'mapping'
+            else 'm mark, e event, g global search, q quit'
         )
         return '  '.join(parts) + f'  [{keys}]'
 
@@ -689,6 +716,13 @@ class Session:
                 label = term.line('Mark label (letters and digits, Enter cancels): ')
                 if re.fullmatch(r'[A-Za-z0-9_-]+', label):
                     self.in_background(self.mark, label)
+            elif k == 'e':
+                print()
+                note = term.line('Event (Enter cancels): ').strip()
+                if note:
+                    self.event(note.replace(',', ';'))
+            elif k == 'g' and self.mode == 'localization':
+                self.in_background(self.global_search)
             elif k == 's' and self.mode == 'mapping':
                 self.in_background(self.save_map)
             elif k == 't' and self.mode == 'mapping':
@@ -782,7 +816,9 @@ class Session:
         if self.status_rows:
             with (self.dir / 'status.csv').open('w', newline='') as f:
                 w = csv.writer(f)
-                w.writerow(['t_s', 'mode', 'localized', 'pose_sd_m', 'last_autosave'])
+                w.writerow(
+                    ['t_s', 'mode', 'localized', 'pose_sd_m', 'last_autosave', 'pose_sd_deg']
+                )
                 for t, *rest in self.status_rows:
                     w.writerow([f'{t - self.started:.1f}', *rest])
         ended: dict[str, str] = {}
@@ -927,6 +963,10 @@ def analyze(session: Path) -> Path:
     if status.exists():
         lines += ['', '## Autonomy status', ''] + status_lines(status)
 
+    events = session / 'events.csv'
+    if events.exists():
+        lines += ['', '## Events', '', '```', events.read_text().rstrip(), '```']
+
     stalls = session / 'stalls.csv'
     if stalls.exists():
         lines += ['', '## Timed saves', '', '```', stalls.read_text().rstrip(), '```']
@@ -935,8 +975,9 @@ def analyze(session: Path) -> Path:
     if marks.exists():
         taped = slam_eval.EVAL_DIR / 'taped.txt'
         rows = slam_eval.read_taped(taped) if taped.exists() else []
+        point = slam_eval.read_point(taped) if taped.exists() else (0.0, 0.0)
         lines += ['', '## Marks', '', '```']
-        lines += slam_eval.report_lines(slam_eval.read_marks(marks), rows)
+        lines += slam_eval.report_lines(slam_eval.read_marks(marks), rows, point)
         lines.append('```')
 
     lines += ['', '## Storage', '', f"Start {meta.get('disk_start')}; end {meta.get('disk_end')}."]
