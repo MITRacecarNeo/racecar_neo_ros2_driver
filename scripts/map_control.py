@@ -721,23 +721,38 @@ def _size_text(folder: Path, name: str) -> str:
     return f'{w * res:.1f} x {h * res:.1f} m'
 
 
-def list_maps(out: Out = print) -> int:
-    root = map_root()
-    names = map_names(root)
-    if not names:
-        out(f'No maps under {root}.')
-        return 0
+def map_rows(root: Path) -> list[dict[str, str]]:
+    """One row per map: name, state, saved (time), size, and note (mapping or loaded now)."""
     values = read_mode_file()
     active = values.get('AUTONOMY_MAP') if unit_running() else None
-    rows = [('NAME', 'STATE', 'SAVED', 'SIZE', '')]
-    for name in names:
+    rows = []
+    for name in map_names(root):
         state = au.map_state(root, name)
         folder = state.folder if state.saved else state.folder / au.AUTOSAVE_DIR
         when = _when_saved(state) if state.saved else f'autosave {state.autosave_time}'
         note = ''
         if name == active:
             note = 'mapping now' if values.get('AUTONOMY_MODE') == 'mapping' else 'loaded now'
-        rows.append((name, state_label(state), when, _size_text(folder, name), note))
+        rows.append(
+            {
+                'name': name,
+                'state': state_label(state),
+                'saved': when,
+                'size': _size_text(folder, name),
+                'note': note,
+            }
+        )
+    return rows
+
+
+def list_maps(out: Out = print) -> int:
+    root = map_root()
+    found = map_rows(root)
+    if not found:
+        out(f'No maps under {root}.')
+        return 0
+    rows = [('NAME', 'STATE', 'SAVED', 'SIZE', '')]
+    rows += [(r['name'], r['state'], r['saved'], r['size'], r['note']) for r in found]
     widths = [max(len(r[i]) for r in rows) for i in range(4)]
     for r in rows:
         out(

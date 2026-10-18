@@ -254,6 +254,7 @@ class TestSystemdServices:
         'racecar-watchdog.service',
         'racecar-dashboard.service',
         'racecar-jupyter.service',
+        'racecar-mapview.service',
     )
 
     @pytest.mark.parametrize('name', SERVICES)
@@ -282,6 +283,12 @@ class TestSystemdServices:
         text = (SCRIPTS_DIR / 'racecar-watchdog.service').read_text()
         assert 'BindsTo=racecar-teleop.service' in text
         assert 'After=racecar-teleop.service' in text
+
+    def test_mapview_independent_of_teleop(self):
+        # The page offers "Start mapping" while teleop and autonomy are down.
+        text = (SCRIPTS_DIR / 'racecar-mapview.service').read_text()
+        assert 'teleop' not in text.split('[Service]')[0]
+        assert 'scripts/mapview.py' in text
 
     def test_teleop_wants_watchdog(self):
         # Starting teleop, by hand or at boot, pulls the watchdog along.

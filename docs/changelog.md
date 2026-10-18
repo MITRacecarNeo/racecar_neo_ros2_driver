@@ -88,6 +88,15 @@ All notable changes to this project will be documented in this file. The format 
   it drops under `localized_min_fit` (0.5) and returns at
   `localized_enter_fit` (0.65). A car carried to another spot no longer
   reports `localized` at the old pose. `/autonomy/status` gains `scan_fit`.
+- Web map viewer on port 8084 (`scripts/mapview.py`, `mapview.html`,
+  `racecar-mapview.service`): the live map with the car's pose, trail, and
+  scan; mode, localized, scan fit, and a throttled or hot warning; start
+  (or extend, with the car's position dragged onto the saved map), save,
+  stop, load, and keep through `racecar map`; set pose by dragging; Find me.
+  No JavaScript libraries; the page never drives the car. Subscriptions
+  exist only while a browser polls (0.1% of a core idle, 6.6% polled).
+- `map_control.map_rows`: the map list as data, shared by `racecar map list`
+  and the viewer.
 - `slam_session.py replay` writes `map_odom.csv` and, with `--autonomy`,
   `status.csv`, and reports how long `localized` disagreed with the scan
   fit.

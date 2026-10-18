@@ -1,0 +1,560 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>RACECAR Map</title>
+<style>
+:root {
+  --bg: #f4f5f7; --panel: #ffffff; --text: #1d2330; --muted: #5d6675; --line: #d5d9e0;
+  --free: #fbfbfb; --wall: #1f2633; --unknown: #c9ced6; --car: #1565c0; --trail: #ef8f00;
+  --scan: #d81b60; --ok: #2e7d32; --warn: #b26a00; --bad: #c62828; --accent: #1565c0;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12151b; --panel: #1b2029; --text: #e6e9ef; --muted: #9aa3b2; --line: #2c3340;
+    --free: #2a303b; --wall: #e6e9ef; --unknown: #171b22; --car: #64b5f6; --trail: #ffb74d;
+    --scan: #f06292; --ok: #66bb6a; --warn: #ffa726; --bad: #ef5350; --accent: #64b5f6;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+  font: 15px/1.35 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+body { display: flex; flex-direction: column; overflow: hidden; }
+header { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; padding: 8px 12px;
+  background: var(--panel); border-bottom: 1px solid var(--line); }
+.badge { padding: 2px 8px; border-radius: 10px; font-size: 13px; font-weight: 600;
+  border: 1px solid var(--line); white-space: nowrap; }
+.badge.ok { color: var(--ok); border-color: var(--ok); }
+.badge.warn { color: var(--warn); border-color: var(--warn); }
+.badge.bad { color: var(--bad); border-color: var(--bad); }
+.muted { color: var(--muted); font-size: 13px; }
+#banner { display: none; padding: 6px 12px; font-weight: 600; text-align: center; }
+#banner.show { display: block; }
+#banner.warn { background: var(--warn); color: #000; }
+#banner.bad { background: var(--bad); color: #fff; }
+#banner.info { background: var(--accent); color: #fff; }
+main { position: relative; flex: 1; min-height: 0; }
+canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+#tools { position: absolute; right: 10px; top: 10px; display: flex; flex-direction: column; gap: 6px; }
+#tools button { width: 42px; height: 42px; padding: 0; font-size: 18px; }
+#hint { position: absolute; left: 10px; top: 10px; max-width: 70%; padding: 6px 10px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; display: none; }
+#hint.show { display: block; }
+footer { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 12px; background: var(--panel);
+  border-top: 1px solid var(--line); }
+button { font: inherit; padding: 9px 14px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--bg); color: var(--text); cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.danger { color: var(--bad); border-color: var(--bad); }
+button.on { outline: 2px solid var(--accent); }
+button:disabled { opacity: 0.45; cursor: default; }
+#job { display: none; padding: 8px 12px; background: var(--panel); border-top: 1px solid var(--line);
+  max-height: 30vh; overflow: auto; }
+#job.show { display: block; }
+#job pre { margin: 4px 0 0; white-space: pre-wrap; font: 12px/1.35 ui-monospace, Menlo, monospace; }
+.sheet { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.45); display: none;
+  align-items: flex-end; justify-content: center; z-index: 10; }
+.sheet.show { display: flex; }
+.sheet > div { width: 100%; max-width: 560px; max-height: 85vh; overflow: auto; background: var(--panel);
+  border-radius: 14px 14px 0 0; padding: 14px 16px 18px; }
+.sheet h2 { margin: 0 0 10px; font-size: 17px; }
+.row { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
+input[type=text] { font: inherit; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--bg); color: var(--text); flex: 1; min-width: 0; }
+.map { display: flex; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); }
+.map img { width: 72px; height: 72px; object-fit: contain; background: var(--unknown); border-radius: 6px;
+  flex: none; }
+.map .info { flex: 1; min-width: 0; }
+.map .name { font-weight: 600; word-break: break-all; }
+.map .acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.map .acts button { padding: 6px 10px; font-size: 14px; }
+</style>
+</head>
+<body>
+<header>
+  <span id="mode" class="badge">-</span>
+  <span id="mapname"></span>
+  <span id="loc" class="badge">-</span>
+  <span id="detail" class="muted"></span>
+  <span id="sys" class="muted" style="margin-left:auto"></span>
+</header>
+<div id="banner"></div>
+<main>
+  <canvas id="view"></canvas>
+  <div id="hint"></div>
+  <div id="tools">
+    <button id="zin" title="Zoom in">+</button>
+    <button id="zout" title="Zoom out">-</button>
+    <button id="center" title="Center on the car">&#9673;</button>
+  </div>
+</main>
+<div id="job"><span id="jobtitle"></span><pre id="joblines"></pre></div>
+<footer id="controls"></footer>
+
+<div class="sheet" id="maps"><div>
+  <h2>Maps</h2>
+  <div class="muted" id="mapsroot"></div>
+  <div id="maplist"></div>
+  <div class="row"><button id="mapsclose">Close</button></div>
+</div></div>
+
+<div class="sheet" id="startsheet"><div>
+  <h2 id="starttitle">Start mapping</h2>
+  <div class="muted" id="startnote">Teleop must be running. Drive with the gamepad or the transmitter.</div>
+  <div class="row"><input type="text" id="newname" placeholder="map name (letters, digits, - and _)"
+    autocomplete="off" autocapitalize="off" spellcheck="false"></div>
+  <div class="row"><button class="primary" id="startgo">Start</button><button id="startcancel">Cancel</button></div>
+</div></div>
+
+<div class="sheet" id="loadsheet"><div>
+  <h2 id="loadtitle">Load map</h2>
+  <div class="row"><label><input type="radio" name="from" value="last" checked> Start from the last saved position</label></div>
+  <div class="row"><label><input type="radio" name="from" value="global"> Search the whole map while driving</label></div>
+  <div class="row"><button class="primary" id="loadgo">Load</button><button id="loadcancel">Cancel</button></div>
+</div></div>
+
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+const canvas = $('view');
+const ctx = canvas.getContext('2d');
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+// View: screen = (world - center) * scale, y up.
+const view = { cx: 0, cy: 0, scale: 40, fitted: false };
+let state = {};
+let grid = null;           // {info, image (offscreen canvas)}
+let gridVersion = -1;
+let preview = null;        // saved map shown while picking an extend pose
+let trail = { id: -1, from: 0, points: [] };
+let renderKey = '';
+let poseTool = null;       // {purpose: 'set'|'extend', start: [x,y], end: [x,y]}
+let pending = null;        // extend request waiting for a pose
+let busy = false;
+
+function resize() {
+  const r = canvas.getBoundingClientRect();
+  canvas.width = Math.round(r.width * devicePixelRatio);
+  canvas.height = Math.round(r.height * devicePixelRatio);
+  draw();
+}
+// The canvas area changes height when the footer, banner, hint, or command output
+// changes, not only with the window; a stale buffer would be drawn stretched.
+new ResizeObserver(resize).observe(canvas);
+
+function toScreen(x, y) {
+  const d = devicePixelRatio;
+  return [canvas.width / 2 + (x - view.cx) * view.scale * d, canvas.height / 2 - (y - view.cy) * view.scale * d];
+}
+function toWorld(px, py) {
+  return [view.cx + (px - canvas.clientWidth / 2) / view.scale, view.cy - (py - canvas.clientHeight / 2) / view.scale];
+}
+
+function buildImage(info, data) {
+  const off = document.createElement('canvas');
+  off.width = info.width; off.height = info.height;
+  const octx = off.getContext('2d');
+  const img = octx.createImageData(info.width, info.height);
+  const rgb = (c) => [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)];
+  const free = rgb(css('--free')), wall = rgb(css('--wall')), unk = rgb(css('--unknown'));
+  for (let r = 0; r < info.height; r++) {
+    const dst = (info.height - 1 - r) * info.width;  // OccupancyGrid rows start at the bottom
+    for (let c = 0; c < info.width; c++) {
+      const v = data[r * info.width + c];
+      const col = v < 0 ? unk : (v >= 65 ? wall : free);
+      const i = (dst + c) * 4;
+      img.data[i] = col[0]; img.data[i + 1] = col[1]; img.data[i + 2] = col[2]; img.data[i + 3] = 255;
+    }
+  }
+  octx.putImageData(img, 0, 0);
+  return { info, image: off };
+}
+
+async function fetchGrid(url) {
+  const res = await fetch(url, { cache: 'no-store' });
+  if (res.status !== 200) return null;
+  const info = JSON.parse(res.headers.get('X-Map-Info'));
+  const data = new Int8Array(await res.arrayBuffer());
+  return buildImage(info, data);
+}
+
+function fit(g) {
+  const i = g.info;
+  view.cx = i.origin[0] + i.width * i.resolution / 2;
+  view.cy = i.origin[1] + i.height * i.resolution / 2;
+  view.scale = Math.max(5, Math.min(canvas.clientWidth / (i.width * i.resolution),
+    canvas.clientHeight / (i.height * i.resolution)) * 0.92);
+  view.fitted = true;
+}
+
+function drawGrid(g) {
+  const i = g.info, d = devicePixelRatio;
+  const [x0, y1] = toScreen(i.origin[0], i.origin[1] + i.height * i.resolution);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(g.image, x0, y1, i.width * i.resolution * view.scale * d, i.height * i.resolution * view.scale * d);
+}
+
+function drawCar(x, y, yaw, color, alpha) {
+  const d = devicePixelRatio, s = view.scale * d;
+  const [px, py] = toScreen(x, y);
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(px, py);
+  ctx.rotate(-yaw);
+  // Footprint from frames.yaml: rear -0.06, front 0.29, half width 0.105 (base_link at the rear axle).
+  ctx.fillStyle = color;
+  ctx.strokeStyle = css('--panel');
+  ctx.lineWidth = 1.5 * d;
+  const w = Math.max(0.105 * s, 5 * d), front = Math.max(0.29 * s, 12 * d), rear = Math.max(0.06 * s, 3 * d);
+  ctx.beginPath();
+  ctx.moveTo(-rear, -w); ctx.lineTo(front * 0.7, -w); ctx.lineTo(front, 0); ctx.lineTo(front * 0.7, w);
+  ctx.lineTo(-rear, w); ctx.closePath();
+  ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
+
+function drawScale() {
+  const d = devicePixelRatio;
+  const steps = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50];
+  const m = steps.find((s) => s * view.scale >= 60) || 50;
+  const len = m * view.scale * d, x = 14 * d, y = canvas.height - 16 * d;
+  ctx.strokeStyle = css('--text'); ctx.fillStyle = css('--text'); ctx.lineWidth = 2 * d;
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + len, y); ctx.moveTo(x, y - 5 * d); ctx.lineTo(x, y);
+  ctx.moveTo(x + len, y - 5 * d); ctx.lineTo(x + len, y); ctx.stroke();
+  ctx.font = `${12 * d}px system-ui`;
+  ctx.fillText(m >= 1 ? `${m} m` : `${m * 100} cm`, x, y - 8 * d);
+}
+
+function drawOrigin() {
+  const d = devicePixelRatio, [ox, oy] = toScreen(0, 0), l = 18 * d;
+  ctx.lineWidth = 2 * d;
+  ctx.strokeStyle = css('--bad'); ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(ox + l, oy); ctx.stroke();
+  ctx.strokeStyle = css('--ok'); ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(ox, oy - l); ctx.stroke();
+}
+
+function draw() {
+  const d = devicePixelRatio;
+  ctx.fillStyle = css('--unknown');
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const g = preview || grid;
+  if (g) drawGrid(g);
+  drawOrigin();
+  if (!preview) {
+    if (trail.points.length > 1) {
+      ctx.strokeStyle = css('--trail'); ctx.lineWidth = 2 * d; ctx.beginPath();
+      trail.points.forEach((p, i) => { const [x, y] = toScreen(p[0], p[1]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+      ctx.stroke();
+    }
+    ctx.fillStyle = css('--scan');
+    for (const p of state.scan || []) { const [x, y] = toScreen(p[0], p[1]); ctx.fillRect(x - d, y - d, 2 * d, 2 * d); }
+    if (state.pose) drawCar(state.pose[0], state.pose[1], state.pose[2], css('--car'), localized() ? 1 : 0.45);
+  }
+  if (poseTool && poseTool.end) {
+    const [a, b] = poseTool.start, [c, e] = poseTool.end;
+    drawCar(a, b, Math.atan2(e - b, c - a), css('--trail'), 0.9);
+  }
+  drawScale();
+}
+
+function localized() { return (state.status || {}).localized === 'true'; }
+
+// -- pan, zoom, pose tool --
+const pointers = new Map();
+let pinch = null;
+canvas.addEventListener('pointerdown', (e) => {
+  canvas.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, [e.offsetX, e.offsetY]);
+  if (poseTool && pointers.size === 1) {
+    poseTool.start = toWorld(e.offsetX, e.offsetY); poseTool.end = null; draw(); return;
+  }
+  if (pointers.size === 2) {
+    const [p, q] = [...pointers.values()];
+    pinch = { dist: Math.hypot(p[0] - q[0], p[1] - q[1]), scale: view.scale };
+  }
+});
+canvas.addEventListener('pointermove', (e) => {
+  if (!pointers.has(e.pointerId)) return;
+  const prev = pointers.get(e.pointerId);
+  pointers.set(e.pointerId, [e.offsetX, e.offsetY]);
+  if (poseTool && poseTool.start && pointers.size === 1) {
+    const w = toWorld(e.offsetX, e.offsetY);
+    if (Math.hypot(w[0] - poseTool.start[0], w[1] - poseTool.start[1]) * view.scale > 12) poseTool.end = w;
+    draw(); return;
+  }
+  if (pointers.size === 2 && pinch) {
+    const [p, q] = [...pointers.values()];
+    view.scale = Math.max(2, Math.min(400, pinch.scale * Math.hypot(p[0] - q[0], p[1] - q[1]) / pinch.dist));
+  } else if (pointers.size === 1) {
+    view.cx -= (e.offsetX - prev[0]) / view.scale; view.cy += (e.offsetY - prev[1]) / view.scale;
+  }
+  draw();
+});
+function pointerEnd(e) {
+  pointers.delete(e.pointerId);
+  if (pointers.size < 2) pinch = null;
+  if (poseTool && poseTool.start && pointers.size === 0) {
+    if (!poseTool.end) { hint('Drag from where the car is toward the way it faces.'); return; }
+    const [a, b] = poseTool.start, [c, e2] = poseTool.end;
+    finishPose(a, b, Math.atan2(e2 - b, c - a));
+  }
+}
+canvas.addEventListener('pointerup', pointerEnd);
+canvas.addEventListener('pointercancel', pointerEnd);
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const before = toWorld(e.offsetX, e.offsetY);
+  view.scale = Math.max(2, Math.min(400, view.scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+  const after = toWorld(e.offsetX, e.offsetY);
+  view.cx += before[0] - after[0]; view.cy += before[1] - after[1];
+  draw();
+}, { passive: false });
+$('zin').onclick = () => { view.scale = Math.min(400, view.scale * 1.3); draw(); };
+$('zout').onclick = () => { view.scale = Math.max(2, view.scale / 1.3); draw(); };
+$('center').onclick = () => {
+  if (state.pose) { view.cx = state.pose[0]; view.cy = state.pose[1]; } else if (grid) fit(grid);
+  draw();
+};
+
+function hint(text) { $('hint').textContent = text; $('hint').classList.toggle('show', !!text); }
+
+function startPoseTool(purpose) {
+  poseTool = { purpose, start: null, end: null };
+  hint(purpose === 'set'
+    ? 'Set pose: press where the car is and drag toward the way it faces.'
+    : 'Where is the car on this map? Press where it is and drag toward the way it faces.');
+  render();
+}
+function cancelPoseTool() { poseTool = null; pending = null; preview = null; hint(''); render(); draw(); }
+
+async function finishPose(x, y, yaw) {
+  const purpose = poseTool.purpose;
+  const text = `x ${x.toFixed(2)} m, y ${y.toFixed(2)} m, heading ${(yaw * 180 / Math.PI).toFixed(0)} deg`;
+  if (purpose === 'set') {
+    if (!confirm(`Set the car's pose to ${text}?`)) { poseTool.start = poseTool.end = null; draw(); return; }
+    poseTool = null; hint('');
+    report(await post('/api/pose', { x, y, yaw }));
+  } else {
+    const req = pending;
+    if (!confirm(`Start mapping "${req.name}" from "${req.source}" with the car at ${text}? The autonomy service restarts.`)) {
+      poseTool.start = poseTool.end = null; draw(); return;
+    }
+    poseTool = null; pending = null; preview = null; hint(''); view.fitted = false; gridVersion = -1;
+    await action({ action: 'start', name: req.name, source: req.source, pose: [x, y, yaw] });
+  }
+  render(); draw();
+}
+
+// -- requests --
+async function post(url, body) {
+  try {
+    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    return await res.json();
+  } catch (err) { return { ok: false, message: String(err) }; }
+}
+function report(r) { flash(r.message || (r.ok ? 'done' : 'failed'), r.ok ? 'info' : 'bad'); }
+// A flash message shows for FLASH_MS over the standing banner (throttled, hot, mapping cap).
+const FLASH_MS = 4000;
+let flashMsg = null;
+function flash(text, kind) { flashMsg = { text, kind, until: Date.now() + FLASH_MS }; showBanner(); }
+function showBanner() {
+  const b = $('banner'), s = state.status || {}, sys = state.sys || {};
+  let msg = null;
+  if (flashMsg && Date.now() < flashMsg.until) msg = flashMsg;
+  else if (lostContact) msg = { text: 'Lost contact with the car.', kind: 'bad' };
+  else if (sys.throttled_now && sys.throttled_now.length) msg = { text: `Pi throttled now: ${sys.throttled_now.join(', ')}. This run is not valid.`, kind: 'bad' };
+  else if (sys.temp_c != null && sys.temp_c >= 78) msg = { text: `Pi is hot (${sys.temp_c.toFixed(0)} C).`, kind: 'warn' };
+  else if (s.mode === 'mapping') msg = { text: 'Speed limited for mapping. Drive slowly with gentle turns.', kind: 'warn' };
+  b.textContent = msg ? msg.text : '';
+  b.className = msg ? `show ${msg.kind}` : '';
+}
+let lostContact = false;
+async function action(body) {
+  const r = await post('/api/action', body);
+  if (!r.ok) report(r);
+  poll();
+}
+
+// -- controls --
+function button(label, cls, onclick, disabled) {
+  const b = document.createElement('button');
+  b.textContent = label; if (cls) b.className = cls; b.onclick = onclick; b.disabled = !!disabled;
+  return b;
+}
+function render() {
+  const s = state.status || {}, mode = s.mode || 'off', f = $('controls');
+  const running = !!(state.job && state.job.running);
+  f.replaceChildren();
+  if (poseTool) {
+    f.append(button('Cancel', '', cancelPoseTool));
+    return;
+  }
+  if (mode === 'mapping') {
+    f.append(button('Save', 'primary', () => action({ action: 'save' }), running));
+    f.append(button('Stop', 'danger', () => {
+      if (confirm('Stop mapping? The map is autosaved; Save keeps it as the saved map.')) action({ action: 'stop' });
+    }, running));
+  } else if (mode === 'localization') {
+    f.append(button('Set pose', '', () => startPoseTool('set'), running));
+    f.append(button('Find me', '', async () => {
+      if (!confirm('Search the whole map for the car? Drive slowly until it shows localized.')) return;
+      report(await post('/api/find', {}));
+    }, running || s.localizer !== 'amcl'));
+    f.append(button('Stop', 'danger', () => { if (confirm('Stop localization?')) action({ action: 'stop' }); }, running));
+  } else {
+    f.append(button('Start mapping', 'primary', () => openStart(null), running));
+  }
+  f.append(button('Maps', '', openMaps, false));
+}
+
+function openStart(source) {
+  $('starttitle').textContent = source ? `Extend "${source}"` : 'Start mapping';
+  $('startnote').textContent = source
+    ? 'Name for the extended map. Use the same name to extend it in place. Next, show where the car is on it.'
+    : 'Teleop must be running. Drive with the gamepad or the transmitter.';
+  $('newname').value = source || '';
+  $('startsheet').dataset.source = source || '';
+  $('startsheet').classList.add('show');
+  setTimeout(() => $('newname').focus(), 50);
+}
+$('startcancel').onclick = () => $('startsheet').classList.remove('show');
+$('startgo').onclick = async () => {
+  const name = $('newname').value.trim(), source = $('startsheet').dataset.source;
+  if (!/^[A-Za-z0-9_-]+$/.test(name)) { alert('Map names use letters, digits, - and _.'); return; }
+  $('startsheet').classList.remove('show');
+  if (source) {
+    preview = await fetchGrid(`/api/saved?name=${encodeURIComponent(source)}`);
+    if (!preview) { flash(`Cannot read ${source}`, 'bad'); return; }
+    fit(preview); pending = { name, source }; startPoseTool('extend'); draw();
+    return;
+  }
+  if (!confirm(`Start mapping "${name}"? The autonomy service restarts.`)) return;
+  view.fitted = false; gridVersion = -1;
+  action({ action: 'start', name });
+};
+
+async function openMaps() {
+  $('maps').classList.add('show');
+  const res = await fetch('/api/maps', { cache: 'no-store' });
+  const data = await res.json();
+  $('mapsroot').textContent = `Folder: ${data.root}`;
+  const list = $('maplist'); list.replaceChildren();
+  if (!data.maps.length) { list.textContent = 'No maps yet.'; return; }
+  const running = !!(state.job && state.job.running);
+  for (const m of data.maps) {
+    const row = document.createElement('div'); row.className = 'map';
+    const img = document.createElement('img'); img.loading = 'lazy'; img.alt = '';
+    img.src = `/api/thumb?name=${encodeURIComponent(m.name)}&t=${encodeURIComponent(m.saved)}`;
+    const info = document.createElement('div'); info.className = 'info';
+    info.innerHTML = '<div class="name"></div><div class="muted"></div><div class="acts"></div>';
+    info.querySelector('.name').textContent = m.name + (m.note ? ` (${m.note})` : '');
+    info.querySelector('.muted').textContent = `${m.state}; ${m.saved}; ${m.size}`;
+    const acts = info.querySelector('.acts');
+    acts.append(button('Load', 'primary', () => openLoad(m.name), running || m.state === 'unsaved'));
+    acts.append(button('Extend', '', () => { $('maps').classList.remove('show'); openStart(m.name); }, running));
+    if (m.state !== 'saved') {
+      acts.append(button('Keep', '', () => {
+        if (confirm(`Keep the autosave of "${m.name}" as its saved map? The current saved files are kept in previous/.`)) {
+          $('maps').classList.remove('show'); action({ action: 'recover', name: m.name });
+        }
+      }, running));
+    }
+    row.append(img, info); list.append(row);
+  }
+}
+$('mapsclose').onclick = () => $('maps').classList.remove('show');
+
+function openLoad(name) {
+  $('maps').classList.remove('show');
+  $('loadtitle').textContent = `Load "${name}"`;
+  $('loadsheet').dataset.name = name;
+  $('loadsheet').classList.add('show');
+}
+$('loadcancel').onclick = () => $('loadsheet').classList.remove('show');
+$('loadgo').onclick = () => {
+  const name = $('loadsheet').dataset.name;
+  const search = document.querySelector('input[name=from]:checked').value === 'global';
+  $('loadsheet').classList.remove('show');
+  if (!confirm(`Load "${name}"? The autonomy service restarts.`)) return;
+  view.fitted = false; gridVersion = -1;
+  action({ action: 'load', name, search });
+};
+
+// -- status --
+function showStatus() {
+  const s = state.status || {}, mode = s.mode || 'off';
+  $('mode').textContent = mode === 'off' || !s.mode ? 'off' : mode;
+  $('mode').className = 'badge' + (mode === 'mapping' || mode === 'localization' ? ' ok' : '');
+  $('mapname').textContent = s.map || '';
+  const loc = $('loc');
+  if (mode === 'localization' || mode === 'mapping') {
+    loc.textContent = localized() ? 'localized' : 'not localized';
+    loc.className = 'badge ' + (localized() ? 'ok' : 'bad');
+  } else { loc.textContent = 'autonomy stopped'; loc.className = 'badge'; }
+  const parts = [];
+  if (mode === 'localization') {
+    if (s.scan_fit) parts.push(`fit ${(parseFloat(s.scan_fit) * 100).toFixed(0)}%`);
+    if (s.pose_sd_m) parts.push(`spread ${parseFloat(s.pose_sd_m).toFixed(2)} m ${parseFloat(s.pose_sd_deg || 0).toFixed(0)} deg`);
+    if (s.localizer) parts.push(s.localizer);
+  }
+  if (state.pose) parts.push(`x ${state.pose[0].toFixed(2)} y ${state.pose[1].toFixed(2)} ${(state.pose[2] * 180 / Math.PI).toFixed(0)} deg`);
+  $('detail').textContent = parts.join(' | ');
+  const sys = state.sys || {}, bits = [];
+  if (sys.cpu != null) bits.push(`CPU ${sys.cpu.toFixed(0)}%`);
+  if (sys.temp_c != null) bits.push(`${sys.temp_c.toFixed(0)} C`);
+  $('sys').textContent = bits.join('  ');
+  showBanner();
+}
+
+// A finished command's output stays JOB_HIDE_MS after success; a failure stays until the next one.
+const JOB_HIDE_MS = 8000;
+let jobDoneAt = null;
+function showJob() {
+  const j = state.job || {};
+  const el = $('job');
+  if (j.running || j.code !== 0) jobDoneAt = null;
+  else if (jobDoneAt === null) jobDoneAt = Date.now();
+  if (!j.action || (jobDoneAt !== null && Date.now() - jobDoneAt > JOB_HIDE_MS)) { el.classList.remove('show'); return; }
+  el.classList.add('show');
+  const result = j.running ? 'running...' : (j.code === 0 ? 'done' : `failed (exit ${j.code})`);
+  $('jobtitle').textContent = `racecar map ${j.argv.join(' ')}: ${result}`;
+  $('joblines').textContent = j.lines.join('\n');
+  el.scrollTop = el.scrollHeight;
+}
+
+async function poll() {
+  if (busy) return;
+  busy = true;
+  try {
+    const next = trail.from + trail.points.length;
+    const res = await fetch(`/api/state?trail_from=${next}&trail_id=${trail.id}`, { cache: 'no-store' });
+    const s = await res.json();
+    const t = s.trail;
+    // The server sends the points from `next` on, or the whole trail after a restart.
+    if (t.id === trail.id && t.from === next) trail.points.push(...t.points);
+    else trail = { id: t.id, from: t.from, points: t.points };
+    state = s;
+    lostContact = false;
+    if (s.map_version && s.map_version !== gridVersion) {
+      gridVersion = s.map_version;
+      const g = await fetchGrid('/api/map');
+      if (g) { grid = g; if (!view.fitted && !preview) fit(grid); }
+    }
+    if (!s.map_version) grid = null;
+    showStatus(); showJob();
+    // Rebuild the controls only when what they depend on changes.
+    const key = [(s.status || {}).mode, (s.status || {}).localizer, !!(s.job && s.job.running), !!poseTool].join('|');
+    if (key !== renderKey) { renderKey = key; render(); }
+    draw();
+  } catch (err) {
+    lostContact = true; showBanner();
+  } finally { busy = false; }
+}
+
+resize();
+render();
+poll();
+setInterval(poll, 100);
+</script>
+</body>
+</html>

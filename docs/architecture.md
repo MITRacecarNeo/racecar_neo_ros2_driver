@@ -397,6 +397,22 @@ save into a folder holding another run's map moves those files to
 `<map_root>/replaced/`. `list`, `info`, and `recover` read the folder without
 ROS.
 
+The web map viewer (`scripts/mapview.py`, page `scripts/mapview.html`, unit
+`racecar-mapview.service`) is the browser front end on port 8084: the live
+map, the car's pose and trail, the scan, and status, with the same controls.
+Start, save, stop, load, and keep run `racecar map` as a child process, one at
+a time, and the page shows its output; set pose publishes `/initialpose` with
+the spread `load` uses, and Find me calls `/autonomy/global_localization`. The
+page publishes no `/drive`. ROS subscriptions open on the first request and
+close 10 s after the last one; the map list, thumbnails, and saved maps are
+read from the map folder without ROS.
+
+```
+browser ──HTTP poll 10 Hz──▶ mapview.py ──subscribes while polled──▶ /autonomy/status, /autonomy/pose, /map, /scan
+                                 │
+                                 └── buttons ──▶ racecar_map.py (child) ──▶ map_control ──▶ systemctl, /autonomy/*
+```
+
 ## Frame tree
 
 ```
@@ -429,7 +445,7 @@ it as dead.
 
 ## Process model
 
-Four core systemd units, all `User=racecar`:
+Five core systemd units, all `User=racecar`:
 
 ```
 racecar-teleop.service ──── Wants= ───▶ racecar-watchdog.service
@@ -438,6 +454,7 @@ racecar-teleop.service ──── Wants= ───▶ racecar-watchdog.service
 
 racecar-dashboard.service   (independent, port 8080)
 racecar-jupyter.service     (independent, port 8888)
+racecar-mapview.service     (independent, port 8084)
 ```
 
 `Wants=` pulls the watchdog up when teleop starts; `BindsTo=` takes it down
