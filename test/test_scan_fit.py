@@ -54,3 +54,16 @@ def test_scans_outside_the_tracks_are_skipped(sf):
     track = np.array([[0.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]])
     pts = np.array([[1.0, 0.0]])
     assert sf.fit_scans(grid, [(5.0, pts)], track, track, (0.0, 0.0, 0.0)) is None
+
+
+def test_localized_against_fit(sf):
+    # Fit good for 0 to 4 s, bad from 5 s; localized from 1 s to 8 s, then false.
+    shares = [(t * 0.5, 0.8 if t * 0.5 < 5 else 0.2) for t in range(21)]
+    status = [(0.0, False), (1.0, True), (8.0, False)]
+    wrong, missed, span = sf.localized_against_fit(status, shares, window_sec=1.0)
+    assert span == pytest.approx(10.0)
+    assert wrong == pytest.approx(2.5)  # 5.5 to 8.0: the 1 s window is all bad from 5.5
+    assert missed == pytest.approx(0.0)
+    status = [(0.0, False), (1.0, True), (2.0, False)]
+    _, missed, _ = sf.localized_against_fit(status, shares, window_sec=1.0)
+    assert missed == pytest.approx(3.0)  # 2.0 to 5.0, good fit after the first localized

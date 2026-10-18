@@ -50,7 +50,8 @@ axle midpoint), for example `point 0 0.1045` beside the left rear tire.
 `replay` runs a session's bag through a fresh mapper or localizer with the
 `--set` overrides (repeatable, YAML values) applied to slam_toolbox or AMCL,
 and writes `replay/TAG/` in the session folder: `overrides.yaml`,
-`report.md`, `logs/`, and for a mapping run `map.pgm`, `map.yaml`, and
+`report.md`, `logs/`, `map_odom.csv`, with `--autonomy` `status.csv` (and the
+seconds `localized` disagreed with the scan fit in the report), and for a mapping run `map.pgm`, `map.yaml`, and
 `map.png`. A mapping run replays through slam_toolbox mapping
 (`config/slam_mapping.yaml`). A localization run replays through its own
 localizer, or the one `--localizer` names, on the run's map from its start

@@ -44,12 +44,14 @@ import xml.etree.ElementTree as ET
 from ament_index_python.packages import get_package_share_directory
 from diagnostic_msgs.msg import DiagnosticStatus, KeyValue
 from geometry_msgs.msg import PoseWithCovarianceStamped
+from nav_msgs.msg import OccupancyGrid
 import rclpy
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
 from rclpy.duration import Duration
 from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
+from rclpy.serialization import deserialize_message
 from rclpy.signals import SignalHandlerOptions
 from rclpy.time import Time
 from sensor_msgs.msg import LaserScan
@@ -100,6 +102,12 @@ class AutonomyNode(Node):
         p('localized_max_yaw_sd_deg', 20.0)
         p('start_spread_xy_m', 0.25)
         p('start_spread_yaw_deg', 10.0)
+        p('fit_rate_hz', 2.0)
+        p('fit_beams', 180)
+        p('fit_min_range_m', 0.3)
+        p('fit_window_sec', 2.0)
+        p('localized_min_fit', 0.5)
+        p('localized_enter_fit', 0.65)
 
         def get(name: str) -> Any:
             return self.get_parameter(name).value
@@ -135,6 +143,21 @@ class AutonomyNode(Node):
             float(get('start_spread_xy_m')), float(get('start_spread_yaw_deg'))
         )
 
+        # Live scan-to-map fit (localization): a pose that passes the spread
+        # test but not the scan is not localized; see autonomy.FitGate.
+        # The map comes from /map, the one the localizer uses.
+        self._walls: au.WallMask | None = None
+        self._fit_period = 1.0 / float(get('fit_rate_hz'))
+        self._fit_beams = int(get('fit_beams'))
+        self._fit_min_range = float(get('fit_min_range_m'))
+        self._fit_at = 0.0
+        self._fit_wanted = self._mode == 'localization'
+        self._gate = au.FitGate(
+            float(get('fit_window_sec')),
+            float(get('localized_min_fit')),
+            float(get('localized_enter_fit')),
+        )
+
         self._start = time.monotonic()
         self._last_scan: float | None = None
         self._sd: tuple[float, float] | None = None
@@ -155,7 +178,13 @@ class AutonomyNode(Node):
         self._saves = MutuallyExclusiveCallbackGroup()
 
         sensor = QoSProfile(depth=5, reliability=QoSReliabilityPolicy.BEST_EFFORT)
-        # Raw: only the arrival matters, so the 1080-beam scan is never deserialized.
+        latched_map = QoSProfile(
+            depth=1,
+            reliability=QoSReliabilityPolicy.RELIABLE,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        # Raw: the arrival is recorded for every scan; only the fit_rate_hz
+        # scans scored for the fit are deserialized.
         self.create_subscription(LaserScan, '/scan', self._on_scan, sensor, raw=True)
         if self._uses_amcl():
             # AMCL keeps its last pose (transient local); taking it covers an
@@ -168,6 +197,8 @@ class AutonomyNode(Node):
             self.create_subscription(PoseWithCovarianceStamped, '/amcl_pose', self._on_pose, kept)
         else:
             self.create_subscription(PoseWithCovarianceStamped, '/pose', self._on_pose, 10)
+        if self._fit_wanted:
+            self.create_subscription(OccupancyGrid, '/map', self._on_map, latched_map)
 
         latched = QoSProfile(
             depth=1,
@@ -222,8 +253,47 @@ class AutonomyNode(Node):
 
     # -- inputs --
 
-    def _on_scan(self, _: bytes) -> None:
-        self._last_scan = time.monotonic()
+    def _on_scan(self, raw: bytes) -> None:
+        now = time.monotonic()
+        self._last_scan = now
+        if self._walls is not None and now - self._fit_at >= self._fit_period:
+            self._fit_at = now
+            self._score_scan(self._walls, deserialize_message(raw, LaserScan), now)
+
+    def _score_scan(self, walls: au.WallMask, scan: LaserScan, now: float) -> None:
+        try:
+            stamp = Time.from_msg(scan.header.stamp)
+            t = self._tf.lookup_transform('map', scan.header.frame_id, stamp)
+        except TransformException:
+            try:
+                t = self._tf.lookup_transform('map', scan.header.frame_id, Time())
+            except TransformException:
+                return
+        tr = t.transform.translation
+        x, y = au.scan_points_in_map(
+            scan.ranges,
+            scan.angle_min,
+            scan.angle_increment,
+            (tr.x, tr.y, yaw_of(t.transform.rotation)),
+            max(self._fit_min_range, scan.range_min),
+            scan.range_max,
+            self._fit_beams,
+        )
+        self._gate.add(now, walls.share(x, y))
+
+    def _on_map(self, msg: OccupancyGrid) -> None:
+        info = msg.info
+        self._walls = au.WallMask.from_grid(
+            msg.data,
+            info.width,
+            info.height,
+            (info.origin.position.x, info.origin.position.y),
+            info.resolution,
+        )
+
+    def _fit_ok(self, now: float) -> bool:
+        # Until /map arrives the fit cannot be judged; localized waits for it.
+        return not self._fit_wanted or self._gate.passes(now, self._localized)
 
     def _seeding(self) -> bool:
         """Report whether AMCL's re-seeded start pose is still on its way."""
@@ -314,6 +384,7 @@ class AutonomyNode(Node):
             self._global_pending or self._seeding(),
             self._limits,
             self._localized,
+            self._fit_ok(time.monotonic()),
         )
 
     def _watch(self) -> None:
@@ -359,6 +430,7 @@ class AutonomyNode(Node):
             self._global_pending or self._seeding(),
             self._limits,
             self._localized,
+            self._fit_ok(now),
         )
         if localized != self._localized:
             self.get_logger().info(f'localized: {str(localized).lower()}')
@@ -383,6 +455,7 @@ class AutonomyNode(Node):
                 scan_age_ms=None if scan_age is None else scan_age * 1e3,
                 pose_sd_m=sd[0],
                 pose_sd_deg=sd[1],
+                scan_fit=self._gate.mean(now) if self._fit_wanted else None,
                 last_save=self._last_save,
                 last_autosave=self._last_autosave,
                 resumed_from_autosave=self._resumed,

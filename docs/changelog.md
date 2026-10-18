@@ -82,6 +82,15 @@ All notable changes to this project will be documented in this file. The format 
 - `slam_session.py` keys `e` (a timed note in `events.csv` and the report)
   and `g` (the global search); `status.csv` gains `pose_sd_deg`; a taped
   file's `point X Y` line sets the car point the tape was measured from.
+- `localized` in localization also needs the live scan to fit the map:
+  `autonomy_node` scores `fit_beams` (180) returns `fit_rate_hz` (2) times a
+  second against `/map` (share within 0.1 m of a wall, averaged over 2 s);
+  it drops under `localized_min_fit` (0.5) and returns at
+  `localized_enter_fit` (0.65). A car carried to another spot no longer
+  reports `localized` at the old pose. `/autonomy/status` gains `scan_fit`.
+- `slam_session.py replay` writes `map_odom.csv` and, with `--autonomy`,
+  `status.csv`, and reports how long `localized` disagreed with the scan
+  fit.
 - `scripts/validation/live_fit.py` (a parked car's localized pose against
   the live scan and the best fit around it) and `compare_maps.py` (an
   extended map's walls against the map it came from, with an overlay).

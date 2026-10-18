@@ -1120,6 +1120,32 @@ def autonomy_replay(
     return 'autonomy_node', argv, section
 
 
+def write_rows(path: Path, header: list[str], rows: Sequence[Sequence[Any]]) -> None:
+    with path.open('w', newline='') as f:
+        w = csv.writer(f)
+        w.writerow(header)
+        w.writerows(rows)
+
+
+def localized_fit_line(
+    stem: Path, bag: Path, map_odom: Any, status: Sequence[tuple[float, bool]]
+) -> str:
+    """How long autonomy_node's localized disagreed with the scan fit at the replayed pose."""
+    data = scan_fit.read_bag(bag, every=1)
+    shares = scan_fit.scan_shares(
+        scan_fit.load_grid(stem),
+        data['scans'],
+        scan_fit.as_track(map_odom),
+        data['odom_base'],
+        data['base_laser'],
+    )
+    wrong, missed, span = scan_fit.localized_against_fit(status, shares)
+    return (
+        f'Localized while the 2 s scan fit was under 50%: {wrong:.1f} s; not localized '
+        f'while it was 65% or more: {missed:.1f} s (of {span:.0f} s judged).'
+    )
+
+
 def first_moved(
     odom: Sequence[tuple[float, float, float]], distance: float = 0.05
 ) -> float | None:
@@ -1188,6 +1214,9 @@ def replay(
         )
     play = Child('bag', play_argv(bag), logs / 'bag.log', env)
     rec, code = run_replay(children, play, out, save_map=kind == 'mapping')
+    write_rows(out / 'map_odom.csv', ['t', 'x', 'y', 'yaw'], sorted(rec['map_odom']))
+    if rec['status']:
+        write_rows(out / 'status.csv', ['t', 'localized', 'scan_fit'], rec['status'])
 
     lines = [f'# Replay {tag} of {session.name}', '', f'Kind: {kind}. Overrides:', '', '```']
     lines += [f'{k}: {v}' for k, v in overrides.items()] or ['(none)']
@@ -1203,7 +1232,7 @@ def replay(
     if with_autonomy:
         moved = first_moved(sorted(rec['odom']))
         # A status received before the replay clock starts reads time 0.
-        status = sorted((t, ok) for t, ok in rec['status'] if t > 0)
+        status = sorted((t, ok) for t, ok, _ in rec['status'] if t > 0)
         t0 = status[0][0] if status else None
         first = next((t for t, ok in status if ok), None)
         lines += ['', '## autonomy_node', '']
@@ -1215,6 +1244,8 @@ def replay(
             lines.append(
                 f'From its first status: localized at {loc}; the car first moved at {mov}.'
             )
+            if stem is not None and Path(f'{stem}.yaml').exists() and rec['map_odom']:
+                lines.append(localized_fit_line(stem, bag, rec['map_odom'], status))
     fit_stem = out / 'map' if kind == 'mapping' else stem
     lines += ['', '## Scan-to-map fit', '']
     if fit_stem is not None and Path(f'{fit_stem}.yaml').exists() and rec['map_odom']:
@@ -1288,7 +1319,9 @@ def run_replay(
     def on_status(msg: Any) -> None:
         values = {kv.key: kv.value for kv in msg.values}
         if values.get('mode') != 'off':
-            rec['status'].append((now(), values.get('localized') == 'true'))
+            rec['status'].append(
+                (now(), values.get('localized') == 'true', values.get('scan_fit', ''))
+            )
 
     kept = QoSProfile(
         depth=1,

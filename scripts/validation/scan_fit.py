@@ -156,6 +156,65 @@ def fit_scans(
     )
 
 
+def scan_shares(
+    grid: GridMap,
+    scans: Sequence[tuple[float, np.ndarray]],
+    map_odom: np.ndarray,
+    odom_base: np.ndarray,
+    base_laser: Pose,
+) -> list[tuple[float, float]]:
+    """Return (time, share of points within FIT_INLIER_M) for each scan with a pose."""
+    out = []
+    for t, pts in scans:
+        mo, ob = pose_at(map_odom, t), pose_at(odom_base, t)
+        if mo is None or ob is None or len(pts) == 0:
+            continue
+        x, y = place(pts, compose(compose(mo, ob), base_laser))
+        out.append((t, float(np.mean(grid.lookup(x, y) <= FIT_INLIER_M))))
+    return out
+
+
+def localized_against_fit(
+    status: Sequence[tuple[float, bool]],
+    shares: Sequence[tuple[float, float]],
+    window_sec: float = 2.0,
+    bad: float = 0.5,
+    good: float = 0.65,
+) -> tuple[float, float, float]:
+    """
+    Return (wrong, missed, span) seconds of localized against the rolling scan fit.
+
+    wrong: localized while the fit was under `bad`. missed: not localized while it was
+    `good` or more, after the first localized status. span: the time judged.
+
+    `status` holds (time, localized) changes or samples; each scan takes the last one at
+    or before it, and counts until the next scan.
+    """
+    if not status or len(shares) < 2:
+        return 0.0, 0.0, 0.0
+    status = sorted(status)
+    first = next((t for t, ok in status if ok), None)
+    wrong = missed = span = 0.0
+    times = np.array([t for t, _ in shares])
+    vals = np.array([v for _, v in shares])
+    j = 0
+    for i in range(len(shares) - 1):
+        t, dt = times[i], times[i + 1] - times[i]
+        while j + 1 < len(status) and status[j + 1][0] <= t:
+            j += 1
+        if status[j][0] > t:
+            continue
+        win = vals[(times > t - window_sec) & (times <= t)]
+        m = float(win.mean())
+        loc = status[j][1]
+        span += dt
+        if loc and m < bad:
+            wrong += dt
+        elif not loc and m >= good and first is not None and t >= first:
+            missed += dt
+    return wrong, missed, span
+
+
 def read_bag(bag: Path, every: int = 3) -> dict[str, Any]:
     """Return scans (every Nth), map -> odom, odom -> base_link, and base_link -> laser."""
     import rosbag2_py

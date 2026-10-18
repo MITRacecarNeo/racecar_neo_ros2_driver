@@ -347,7 +347,7 @@ the CLI, the library, and dashboards, the same whichever localizer runs:
 | Name | Type | Behavior |
 |---|---|---|
 | `/autonomy/pose` | `geometry_msgs/PoseWithCovarianceStamped` | `map -> base_link` at `pose_rate_hz` (20), with the localizer's covariance |
-| `/autonomy/status` | `diagnostic_msgs/DiagnosticStatus`, transient local | 1 Hz and on change of `localized`. Level OK when localized. Keys: `mode` (`mapping`, `localization`, or `off` on exit), `map`, `localizer`, `localized`, `tf_age_ms`, `scan_age_ms`, `pose_sd_m`, `pose_sd_deg`, `last_save`, `last_autosave`, `resumed_from_autosave`, `pose_source`, `scans_processed`, `session` |
+| `/autonomy/status` | `diagnostic_msgs/DiagnosticStatus`, transient local | 1 Hz and on change of `localized`. Level OK when localized. Keys: `mode` (`mapping`, `localization`, or `off` on exit), `map`, `localizer`, `localized`, `tf_age_ms`, `scan_age_ms`, `pose_sd_m`, `pose_sd_deg`, `last_save`, `last_autosave`, `resumed_from_autosave`, `pose_source`, `scans_processed`, `scan_fit`, `session` |
 | `/autonomy/save_map` | `std_srvs/Trigger` | Mapping: pose graph, `.pgm`/`.yaml`, and `meta.yaml` into `<map>/`; returns when written. Otherwise fails ("not mapping") |
 | `/autonomy/autosave` | `std_srvs/Trigger` | Mapping: the same set into `<map>/autosave/` (built in `autosave.tmp/`, then swapped in), with `autosave.yaml` (pose, session) |
 | `/autonomy/global_localization` | `std_srvs/Trigger` | Localization with AMCL: search the whole map, as `pose:=global` does at start (`localized` false until it converges). Otherwise fails |
@@ -358,6 +358,12 @@ second. Localization also needs the localizer's pose spread within
 `localized_max_xy_sd_m` and `localized_max_yaw_sd_deg`, and with
 `pose:=global` (AMCL only) stays false until AMCL's search converges;
 `autonomy_node` starts that search through `reinitialize_global_localization`.
+It also needs the live scan to fit `/map`: `fit_rate_hz` times a second,
+`fit_beams` returns are placed at the localizer's pose and the share within
+0.1 m of a wall is averaged over `fit_window_sec` (`scan_fit` in the status;
+`autonomy.FitGate`). `localized` drops under `localized_min_fit` and returns
+at `localized_enter_fit`. The spread alone passes a car carried to another
+spot, since the particle cloud stays tight at the old pose; the fit does not.
 While mapping it autosaves every `autosave_period_sec` (60 s); while localized
 it writes `<map>/last_pose.yaml` every `last_pose_period_sec` (5 s) and on
 exit. On exit (SIGINT or SIGTERM) it publishes `mode: off`, waiting for

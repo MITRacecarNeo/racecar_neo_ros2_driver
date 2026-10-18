@@ -25,7 +25,9 @@ set's holds work that was never saved (map_state).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections import deque
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from datetime import datetime
 import math
 import os
@@ -73,6 +75,7 @@ def is_localized(
     global_pending: bool,
     limits: Limits,
     was_localized: bool = False,
+    fit_ok: bool = True,
 ) -> bool:
     """
     Decide `localized` for /autonomy/status.
@@ -84,16 +87,127 @@ def is_localized(
     limits, and stays false while a global search has not converged. The
     limits have hysteresis: the spread must fall to enter_fraction of them to
     become localized, so the car does not set off with a spread at the limit,
-    which the first motion can push over.
+    which the first motion can push over. Localization also needs the live
+    scan to fit the map (fit_ok, from FitGate): a car carried elsewhere keeps
+    a tight particle cloud at the old place, which the spread alone passes.
     """
     if not has_map_odom or scan_age is None or scan_age > limits.scan_timeout_sec:
         return False
     if mode == 'mapping':
         return True
-    if global_pending or sd is None:
+    if global_pending or sd is None or not fit_ok:
         return False
     scale = 1.0 if was_localized else limits.enter_fraction
     return sd[0] <= limits.max_xy_sd_m * scale and sd[1] <= limits.max_yaw_sd_deg * scale
+
+
+FIT_INLIER_M = 0.10
+
+
+class WallMask:
+    """Map cells within FIT_INLIER_M of an occupied cell, for the live scan-to-map fit."""
+
+    def __init__(self, near: Any, origin: tuple[float, float], resolution: float) -> None:
+        self.near = near  # bool (H, W), row 0 at the top edge as in the .pgm
+        self.origin = origin
+        self.resolution = resolution
+
+    @classmethod
+    def from_occupied(
+        cls,
+        occupied: Any,
+        origin: Sequence[float],
+        resolution: float,
+        inlier_m: float = FIT_INLIER_M,
+    ) -> WallMask:
+        from scipy.ndimage import distance_transform_edt
+
+        dist = distance_transform_edt(~occupied) * resolution
+        return cls(dist <= inlier_m, (float(origin[0]), float(origin[1])), float(resolution))
+
+    @classmethod
+    def from_grid(
+        cls,
+        data: Sequence[int],
+        width: int,
+        height: int,
+        origin: Sequence[float],
+        resolution: float,
+        occupied_at: int = 65,
+    ) -> WallMask:
+        """Build from nav_msgs/OccupancyGrid fields (row 0 at the bottom; -1 unknown)."""
+        import numpy as np
+
+        grid = np.asarray(data, dtype=np.int16).reshape(height, width)
+        return cls.from_occupied(np.flipud(grid >= occupied_at), origin, resolution)
+
+    def share(self, x: Any, y: Any) -> float:
+        """Return the share of points on a near-wall cell; points off the map miss."""
+        import numpy as np
+
+        if len(x) == 0:
+            return 0.0
+        h, w = self.near.shape
+        col = np.floor((x - self.origin[0]) / self.resolution).astype(int)
+        row = h - 1 - np.floor((y - self.origin[1]) / self.resolution).astype(int)
+        inside = (col >= 0) & (col < w) & (row >= 0) & (row < h)
+        hits = self.near[row[inside], col[inside]].sum()
+        return float(hits) / len(x)
+
+
+def scan_points_in_map(
+    ranges: Sequence[float],
+    angle_min: float,
+    angle_increment: float,
+    laser_pose: tuple[float, float, float],
+    min_range: float,
+    max_range: float,
+    beams: int,
+) -> tuple[Any, Any]:
+    """Return map x and y of about `beams` evenly spaced valid returns of one scan."""
+    import numpy as np
+
+    r = np.asarray(ranges, dtype=float)
+    step = max(1, len(r) // max(beams, 1))
+    idx = np.arange(0, len(r), step)
+    r = r[idx]
+    ok = np.isfinite(r) & (r >= min_range) & (r <= max_range)
+    a = angle_min + idx[ok] * angle_increment + laser_pose[2]
+    return laser_pose[0] + r[ok] * np.cos(a), laser_pose[1] + r[ok] * np.sin(a)
+
+
+@dataclass
+class FitGate:
+    """
+    Rolling scan-fit share with hysteresis, for the fit_ok input of is_localized.
+
+    Correct poses score 0.78 to 0.91 on a room map, including people passing
+    and 1 m/s driving; a car carried 2 m scores 0.29 to 0.52. Losing takes the
+    window mean under drop_share; becoming localized takes enter_share.
+    """
+
+    window_sec: float = 2.0
+    drop_share: float = 0.5
+    enter_share: float = 0.65
+    min_scores: int = 3
+    scores: deque[tuple[float, float]] = field(default_factory=deque)
+
+    def add(self, t: float, share: float) -> None:
+        self.scores.append((t, share))
+        while self.scores and self.scores[0][0] < t - self.window_sec:
+            self.scores.popleft()
+
+    def mean(self, now: float) -> float | None:
+        recent = [s for t, s in self.scores if t >= now - self.window_sec]
+        if len(recent) < self.min_scores:
+            return None
+        return sum(recent) / len(recent)
+
+    def passes(self, now: float, was_localized: bool) -> bool:
+        m = self.mean(now)
+        if m is None:
+            return False
+        return m >= (self.drop_share if was_localized else self.enter_share)
 
 
 SEED_WAIT_SEC = 3.0

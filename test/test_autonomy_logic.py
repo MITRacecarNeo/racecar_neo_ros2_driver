@@ -302,3 +302,66 @@ def test_localized_hysteresis():
     assert au.is_localized(*args, was_localized=True)
     assert au.is_localized('localization', True, 0.1, (0.14, 11.0), 10, False, LIMITS)
     assert not au.is_localized('localization', True, 0.1, (0.1, 13.0), 10, False, LIMITS)
+
+
+class TestScanFit:
+    def _walls(self):
+        # 20 x 20 cells of 0.1 m, origin (0, 0); a wall along the top row (y 1.9 to 2.0).
+        import numpy as np
+
+        occupied = np.zeros((20, 20), dtype=bool)
+        occupied[0, :] = True
+        return au.WallMask.from_occupied(occupied, (0.0, 0.0), 0.1)
+
+    def test_share_counts_near_wall_and_off_map_misses(self):
+        import numpy as np
+
+        walls = self._walls()
+        x = np.array([1.0, 1.0, 1.0, 5.0])
+        y = np.array([1.95, 1.85, 1.0, 1.95])  # on the wall, one cell off, far, off the map
+        assert walls.share(x, y) == pytest.approx(0.5)
+        assert walls.share(np.array([]), np.array([])) == 0.0
+
+    def test_from_grid_flips_rows_and_ignores_unknown(self):
+        # OccupancyGrid rows start at the bottom: an occupied bottom row is the mask's last row.
+        import numpy as np
+
+        width, height = 4, 3
+        data = [100, 100, 100, 100] + [-1, 0, 0, 0] + [0, 0, 64, 0]
+        walls = au.WallMask.from_grid(data, width, height, (0.0, 0.0), 1.0, occupied_at=65)
+        assert walls.near.shape == (3, 4)
+        assert walls.near[2].all()  # bottom row in the grid, last row in the mask
+        assert not walls.near[0].any()  # unknown (-1) and 64 are not walls
+        point = np.array([0.5])
+        assert walls.share(point, point) == 1.0  # map point (0.5, 0.5) is in the bottom row
+
+    def test_scan_points_in_map_turns_and_filters(self):
+        ranges = [1.0, float('inf'), 0.1, 2.0]
+        x, y = au.scan_points_in_map(ranges, 0.0, math.pi / 2, (1.0, 0.0, math.pi), 0.3, 12.0, 4)
+        # Beam 0 points along the laser's x, which faces -x in the map; beam 3 at 270 deg.
+        assert list(x) == pytest.approx([0.0, 1.0])
+        assert list(y) == pytest.approx([0.0, 2.0])
+
+    def test_scan_points_in_map_subsamples(self):
+        x, _ = au.scan_points_in_map([1.0] * 1080, 0.0, 0.01, (0.0, 0.0, 0.0), 0.3, 12.0, 180)
+        assert len(x) == 180
+
+    def test_gate_hysteresis_and_window(self):
+        gate = au.FitGate(window_sec=2.0, drop_share=0.5, enter_share=0.65, min_scores=3)
+        assert not gate.passes(0.0, False)  # no scores yet
+        for t in (0.0, 0.5, 1.0):
+            gate.add(t, 0.6)
+        assert not gate.passes(1.0, False)  # under the entry share
+        assert gate.passes(1.0, True)  # over the drop share
+        for t in (1.5, 2.0, 2.5, 3.0):
+            gate.add(t, 0.3)
+        assert gate.mean(3.0) == pytest.approx(0.36)  # the window still holds the 1.0 s score
+        assert gate.mean(3.1) == pytest.approx(0.3)  # the 0.6 scores aged out
+        assert not gate.passes(3.1, True)
+        assert gate.mean(10.0) is None  # nothing recent: not judged as good
+
+    def test_localized_needs_fit_in_localization_only(self):
+        args = ('localization', True, 0.1, (0.1, 5.0), 10, False, LIMITS)
+        assert au.is_localized(*args)
+        assert not au.is_localized(*args, fit_ok=False)
+        assert au.is_localized('mapping', True, 0.1, None, 0, False, LIMITS, fit_ok=False)
