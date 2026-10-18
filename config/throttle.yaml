@@ -19,6 +19,14 @@ throttle_node:
     # While mapping (/autonomy/status mode mapping), speed is clipped to this:
     # every command past the 0.01 deadband drives at the firmware floor.
     mapping_speed_cap: 0.02
+    # While mapping, steering is clipped to this (before steering_trim); 1.0 is
+    # off. The servo response is not linear: 0.25 drives 0.90 to 1.02/m of
+    # curvature, 0.5 already 1.85 to 2.05/m of full lock's 2.15 to 2.39/m. At
+    # 0.3 (0.71 m tightest radius, yaw p90 47 deg/s against 65) scans fit the
+    # finished map 97.9% within 0.1 m against 94.7% uncapped, but walls came out
+    # no thinner and the room took many three-point turns; set it per car for
+    # large open spaces.
+    mapping_steering_cap: 1.0
     # Added to every steering command after max_steering, so the car drives
     # straight at steering 0. Per car, in throttle.local.yaml, written by
     # calibrate_steering.py (racecar calibrate steering).

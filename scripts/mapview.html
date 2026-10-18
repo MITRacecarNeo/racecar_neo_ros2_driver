@@ -364,7 +364,7 @@ function showBanner() {
   else if (lostContact) msg = { text: 'Lost contact with the car.', kind: 'bad' };
   else if (sys.throttled_now && sys.throttled_now.length) msg = { text: `Pi throttled now: ${sys.throttled_now.join(', ')}. This run is not valid.`, kind: 'bad' };
   else if (sys.temp_c != null && sys.temp_c >= 78) msg = { text: `Pi is hot (${sys.temp_c.toFixed(0)} C).`, kind: 'warn' };
-  else if (s.mode === 'mapping') msg = { text: 'Speed limited for mapping. Drive slowly with gentle turns.', kind: 'warn' };
+  else if (s.mode === 'mapping') msg = { text: 'Speed limited for mapping. Turn gently; sharp turns blur the map.', kind: 'warn' };
   b.textContent = msg ? msg.text : '';
   b.className = msg ? `show ${msg.kind}` : '';
 }

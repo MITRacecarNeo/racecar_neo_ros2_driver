@@ -22,7 +22,7 @@ cd ~/ros2_ws/src/racecar_neo_ros2_driver/scripts/validation
 ./slam_session.py replay LOC_SESSION_DIR TAG --autonomy                     # with autonomy_node: time to localized
 ```
 
-One terminal runs the whole session. In a mapping session `throttle_node` holds the gamepad at the firmware's floor (the mapping speed cap, while `/autonomy/status` reports mapping); the RC transmitter is not capped. Saves go through `/autonomy/save_map`. The script stops the teleop service
+One terminal runs the whole session. In a mapping session `throttle_node` holds the gamepad at the firmware's floor speed (the mapping caps, while `/autonomy/status` reports mapping); the RC transmitter is not capped. Saves go through `/autonomy/save_map`. The script stops the teleop service
 (sudo may ask for a password), starts teleop with EdgeTPU off, the autonomy
 launch, `foxglove_bridge` with `foxglove_validation.yaml`, a bag, and the load
 recorder, then prints the Lichtblick address (`ws://<car>:8765`).

@@ -5,7 +5,8 @@ Software caps on top of the firmware PWM limits. +speed = forward, +steering = l
 steering_trim (per car, from calibrate_steering.py) is added after the cap so
 every source drives straight at steering 0. While /autonomy/status reports
 mode 'mapping', speed is also clipped to mapping_speed_cap, which the firmware
-drives at its floor; the cap lifts when the status reports another mode.
+drives at its floor, and steering to mapping_steering_cap (before the trim;
+1.0, off, by default). The caps lift when the status reports another mode.
 """
 
 from ackermann_msgs.msg import AckermannDriveStamped
@@ -32,8 +33,9 @@ def status_mode(msg: DiagnosticStatus) -> str:
     return next((kv.value for kv in msg.values if kv.key == 'mode'), '')
 
 
-def scale_steering(angle: float, max_steer: float, trim: float = 0.0) -> float:
-    return clamp(clamp(angle) * max_steer + trim)
+def scale_steering(angle: float, max_steer: float, trim: float = 0.0, cap: float = 1.0) -> float:
+    steer = clamp(angle) * max_steer
+    return clamp(max(-cap, min(cap, steer)) + trim)
 
 
 class ThrottleNode(Node):
@@ -46,12 +48,14 @@ class ThrottleNode(Node):
         self.declare_parameter('max_steering', 0.625)
         self.declare_parameter('steering_trim', 0.0)
         self.declare_parameter('mapping_speed_cap', 0.02)
+        self.declare_parameter('mapping_steering_cap', 1.0)
 
         self._max_fwd = self.get_parameter('max_speed_forward').value
         self._max_back = self.get_parameter('max_speed_backward').value
         self._max_steer = self.get_parameter('max_steering').value
         self._trim = float(self.get_parameter('steering_trim').value)
         self._mapping_cap = float(self.get_parameter('mapping_speed_cap').value)
+        self._mapping_steer = float(self.get_parameter('mapping_steering_cap').value)
         self._mapping = False
 
         qos = QoSProfile(
@@ -82,7 +86,10 @@ class ThrottleNode(Node):
         if self._mapping:
             out.drive.speed = cap_speed(out.drive.speed, self._mapping_cap)
         out.drive.steering_angle = scale_steering(
-            msg.drive.steering_angle, self._max_steer, self._trim
+            msg.drive.steering_angle,
+            self._max_steer,
+            self._trim,
+            self._mapping_steer if self._mapping else 1.0,
         )
         self._pub.publish(out)
 
@@ -90,7 +97,8 @@ class ThrottleNode(Node):
         mapping = status_mode(msg) == 'mapping'
         if mapping != self._mapping:
             self.get_logger().info(
-                f'Mapping speed cap {self._mapping_cap:g} ' + ('on' if mapping else 'off')
+                f'Mapping caps (speed {self._mapping_cap:g}, steering {self._mapping_steer:g}) '
+                + ('on' if mapping else 'off')
             )
         self._mapping = mapping
 

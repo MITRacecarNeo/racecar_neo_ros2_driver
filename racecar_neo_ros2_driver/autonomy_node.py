@@ -23,7 +23,7 @@ is up. AMCL takes its start pose with no spread and would never correct it, so
 once AMCL is up this node sends the start pose again on /initialpose with
 start_spread_xy_m and start_spread_yaw_deg; the no-motion updates then match it
 to the scan before `localized` turns true. On exit it publishes mode 'off',
-which lifts the mapping speed cap in throttle_node. File layout and the
+which lifts the mapping caps in throttle_node. File layout and the
 localized test: autonomy.py.
 """
 
@@ -634,7 +634,7 @@ def _interrupt(signum: int, frame: Any) -> None:
 
 def main(args: list[str] | None = None) -> None:
     # rclpy's handlers would shut the context down before shutdown() can send
-    # the final status that lifts the mapping speed cap. These replace them,
+    # the final status that lifts the mapping caps. These replace them,
     # and also cover a SIGINT inherited as ignored and systemd's SIGTERM.
     rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
     signal.signal(signal.SIGINT, _interrupt)

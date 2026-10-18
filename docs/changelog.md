@@ -62,7 +62,8 @@ All notable changes to this project will be documented in this file. The format 
   `session:=`, and `pose:=global` (AMCL searches the whole map).
 - `throttle_node` clips speed to `mapping_speed_cap` (0.02, the firmware's
   floor) while `/autonomy/status` reports mapping, and lifts it on any other
-  mode.
+  mode. `mapping_steering_cap` clips steering the same way, before the trim;
+  1.0 (off) by default.
 - `launch/autonomy.launch.py`, run beside teleop (`racecar launch
   autonomy`): `mode:=mapping` runs slam_toolbox (async); `mode:=localization
   map:=NAME` runs AMCL with map_server, or the slam_toolbox localizer with
