@@ -196,13 +196,13 @@ racecar teleop              # launch the full stack via launch_teleop.sh
 racecar launch dotmatrix    # ros2 launch racecar_neo_ros2_driver dotmatrix.launch.py
 racecar watchdog            # run the supervisor in the foreground
 
-racecar service status      # active/enabled snapshot, core units and dashboards
+racecar service status      # active/enabled snapshot, core units, autonomy, and dashboards
 racecar service install     # drop unit files in /etc/systemd/system/ + enable
 racecar service start       # default: start teleop (watchdog follows via Wants=)
 racecar service stop        # default: stop teleop (watchdog follows via BindsTo=)
 racecar service logs teleop # journalctl -u racecar-teleop -f
 racecar service start wallfollow  # a lab dashboard; stops the other /drive publishers
-racecar service enable wallfollow # enable one unit; bare `enable` covers the core four
+racecar service enable wallfollow # enable one unit; bare `enable` covers the core five
 
 racecar setup all                       # run the 12-phase orchestrator
 racecar setup networking --ssid=racecar-neo-2   # configure eth0 addressing + ALFA-dongle AP
@@ -212,7 +212,7 @@ racecar setup realsense                 # offline D435i firmware flash
 
 racecar udev                        # re-install the udev rules
 racecar cleanup [--force]           # list / kill stale racecar processes + SHM orphans
-racecar status                      # full diagnostic (devices, sensors, system, network)
+racecar status                      # full diagnostic (devices, sensors, autonomy, system, network)
 racecar status --quick              # host checks only; skips the ROS sampling phase
 racecar status --strict             # exit non-zero on any WARN or SKIP as well
 racecar eth status                  # eth0 addressing mode + conflict checks
@@ -388,6 +388,7 @@ Once `racecar-teleop.service` is running, browse to `http://<robot>:8080` for a 
 - **Nodes**: one card per monitored subsystem (9 total): green when the expected topic is being advertised, red when not. EdgeTPU and dot matrix, which the watchdog does not restart, show gray (`unsupervised`) instead of red.
 - **System Health**: RTC backup battery voltage (green >= 3.0 V, yellow 2.7-3.0 V, red < 2.7 V) and the Pi 5 PMIC sticky under-voltage alarm.
 - **Topic Rates**: live Hz for `/motor`, `/mux_out`, `/imu/fused`, `/imu/lsm9ds1`, `/scan`, `/edgetpu/inference`, `/camera/color`, `/camera/depth`, and `/imu/realsense`. Yellow when stale (< 0.5 Hz), red when missing. The three RealSense rows are read from the camera's own `/diagnostics` stream; the rest are counted from raw subscriptions, which keeps the dashboard's own CPU cost near 20%.
+- **Autonomy**: mode and map, localized, scan fit and pose spread while localizing, the last save while mapping, and a link to the map viewer on port 8084. Gray when the autonomy service is stopped, yellow when it runs but is not localized, red when its status stops arriving.
 - **Watchdog Log**: tail of `~/logs/latest/watchdog.log` so you can see restart events.
 
 Refreshes every 3 s; System Health refreshes every 60 s, since the cell voltage changes over weeks.
@@ -529,6 +530,7 @@ reports its position on it. Teleop must be running (`racecar service start
 teleop`). You drive the car with the gamepad or the RC transmitter as usual.
 While mapping, the gamepad speed is held at the firmware minimum of 0.5 m/s.
 The RC transmitter is not limited, so switch it to slow mode before mapping.
+The same steps run from a phone or laptop in the [map viewer](#map-viewer).
 
 ```sh
 racecar map start room_1                    # begin mapping
@@ -547,12 +549,16 @@ racecar map foxglove on                     # foxglove_bridge on port 8765 from 
 
 To build a map:
 
-1. Place the car where the map should begin.
-2. Run `racecar map start NAME`. A name uses letters, digits, `-` and `_`.
-3. Drive slowly through the space with gentle turns.
-4. Drive back to where you started.
-5. Run `racecar map save`.
-6. Run `racecar map stop`.
+1. Clear chairs, bags, and cables at about 20 cm above the floor (the lidar's
+   height) out of the space, if you want clean walls.
+2. Place the car where the map should begin.
+3. Run `racecar map start NAME`. A name uses letters, digits, `-` and `_`.
+4. Drive slowly through the space with wide, gentle turns. Sharp turns blur
+   the walls.
+5. Drive each area once or twice, not back and forth many times.
+6. Drive back to where you started.
+7. Run `racecar map save`.
+8. Run `racecar map stop`.
 
 The map is also autosaved every 60 s and on stop. A run stopped without
 `save` is marked `unsaved` in `racecar map list`. `racecar map recover NAME`
@@ -563,6 +569,13 @@ To localize on a saved map:
 1. Run `racecar map load NAME`.
 2. Check that `racecar map status` reports `localized  true`.
 3. If it reports `false`, drive a short distance and check again.
+
+`localized` needs both a small pose spread from the localizer and the live
+scan to fit the map (`scan_fit`, the share of lidar points within 0.1 m of a
+wall). A car picked up and set down elsewhere reports `false` within a few
+seconds; give its pose with `--pose`, or use `--global` and drive.
+[docs/troubleshooting.md](docs/troubleshooting.md), "Localization state",
+lists the causes of `false`.
 
 Without `--pose` or `--global`, `load` starts from the car's last pose on that
 map. A map that was never loaded starts from where mapping began. If the car
@@ -580,6 +593,32 @@ Each map folder holds `NAME.pgm` (the image) and `NAME.yaml` for viewing and
 AMCL, `NAME.posegraph` and `NAME.data` for slam_toolbox, and `meta.yaml`
 (date, driver version, frame offsets, start pose). `scripts/setup_jupyter.sh`
 links `~/jupyter_ws/maps` to `~/data/maps`, so JupyterLab shows the maps.
+
+### Map viewer
+
+`racecar-mapview.service` serves a map page on port 8084 from boot,
+independent of teleop: `http://<robot>:8084` on a phone or laptop on the
+car's network. It shows the live map with the car's pose and path, the
+lidar scan, mode, localized, scan fit, and a warning when the Pi is
+throttled or hot. Its buttons run the same `racecar map` commands, and the
+page shows their output:
+
+| Button | Does |
+|---|---|
+| Start mapping | `racecar map start NAME` |
+| Save, Stop | `racecar map save`, `racecar map stop` |
+| Maps | Lists the saved maps with thumbnails; Load, Extend, and Keep (on an unsaved map) |
+| Extend | Shows the saved map; drag from the car's position toward the way it faces, then `racecar map start NEW --from NAME --pose ...` |
+| Set pose | Drag on the map from where the car is toward the way it faces |
+| Find me | Searches the whole map (AMCL only); drive slowly until `localized` |
+
+The page never drives the car. Start, stop, and load restart the autonomy
+service and ask first. With no browser open it holds no ROS subscriptions
+and uses about 0.1% of a core; with one open, about 6%.
+
+`racecar map foxglove on` adds `foxglove_bridge` for Lichtblick from the next
+start or load; see [docs/advanced-settings.md](docs/advanced-settings.md),
+"Foxglove bridge".
 
 ## Jupyter notebooks
 
@@ -875,7 +914,13 @@ Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
 - **Unreleased**: 2D SLAM beside teleop (`racecar map` to build, save,
   load, extend, and recover maps through `racecar-autonomy.service`;
   `racecar launch autonomy`: slam_toolbox mapping, AMCL or slam_toolbox
-  localization; maps in `~/data/maps`); integrated odometry in `pit_node` (`odom -> base_link`,
+  localization; maps in `~/data/maps`); a web map viewer on port 8084
+  (`racecar-mapview.service`: live map, pose, scan, the `racecar map`
+  controls, set pose, find me); `localized` also needs the live scan to fit
+  the map, so a car carried elsewhere reports not localized; autonomy in
+  `racecar status`, `racecar service`, and the 8080 dashboard; a Lichtblick
+  layout (`config/foxglove_layout.json`); a mapping steering cap, off by
+  default; integrated odometry in `pit_node` (`odom -> base_link`,
   `/odom/integrated`); telemetry stamped with the Teensy sample time;
   `racecar calibrate` (guided calibration, status, backup,
   `check` against the live sensors including a magnetometer turn test and

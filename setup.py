@@ -13,6 +13,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', glob.glob('launch/*.launch.py')),
         ('share/' + package_name + '/config', glob.glob('config/*.yaml')),
+        ('share/' + package_name + '/config', glob.glob('config/*.json')),
         ('share/' + package_name + '/urdf', glob.glob('urdf/*.xacro')),
         (
             'share/' + package_name + '/scripts',

@@ -40,7 +40,7 @@ import sysinfo  # noqa: E402
 OK, WARN, FAIL, SKIP = 'OK', 'WARN', 'FAIL', 'SKIP'
 SEVERITY = {OK: 0, SKIP: 1, WARN: 2, FAIL: 3}
 
-SECTIONS = ('devices', 'sensors', 'actuators', 'system', 'services', 'network')
+SECTIONS = ('devices', 'sensors', 'actuators', 'autonomy', 'system', 'services', 'network')
 
 # Shorter windows measure the PIT stream's clumping rather than its rate.
 # See docs/troubleshooting.md, "Diagnostic rate checks".
@@ -139,7 +139,23 @@ USB_DEVICES = [
     ('045e:028e', 'Gamepad'),
 ]
 
-SERVICE_UNITS = ('racecar-teleop', 'racecar-watchdog', 'racecar-dashboard', 'racecar-jupyter')
+SERVICE_UNITS = (
+    'racecar-teleop',
+    'racecar-watchdog',
+    'racecar-dashboard',
+    'racecar-jupyter',
+    'racecar-mapview',
+)
+
+# Started by `racecar map` or the map viewer, never at boot, so it is not a
+# service row; the autonomy section samples these while it runs.
+AUTONOMY_UNIT = 'racecar-autonomy'
+AUTONOMY_TOPICS = [
+    TopicSpec('/autonomy/pose', 'pose rate', 20.0),
+    TopicSpec('/autonomy/status', 'status rate', 1.0, 0.5),
+]
+# localized drops under 0.5 and returns at 0.65 (config/autonomy.yaml).
+SCAN_FIT_WARN = 0.65
 
 
 def worst(*statuses: str) -> str:
@@ -560,6 +576,17 @@ def read_drive(msg: Any) -> tuple[str, str]:
     return OK, f'speed {d.speed:+.2f} m/s, steer {d.steering_angle:+.2f} rad'
 
 
+def read_autonomy_pose(msg: Any) -> tuple[str, str]:
+    p, q = msg.pose.pose.position, msg.pose.pose.orientation
+    yaw = math.degrees(math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z)))
+    return OK, f'x {p.x:+.2f} m, y {p.y:+.2f} m, heading {yaw:+.0f} deg'
+
+
+def read_autonomy_status(msg: Any) -> tuple[str, str]:
+    values = {kv.key: kv.value for kv in msg.values}
+    return OK, f"{values.get('mode', '?')} {values.get('map', '')}".rstrip()
+
+
 SAMPLE_READERS: dict[str, Callable[[Any], tuple[str, str]]] = {
     '/camera/color': read_color,
     '/camera/depth': read_depth,
@@ -576,6 +603,8 @@ SAMPLE_READERS: dict[str, Callable[[Any], tuple[str, str]]] = {
     '/joy': read_joy,
     '/motor': read_drive,
     '/mux_out': read_drive,
+    '/autonomy/pose': read_autonomy_pose,
+    '/autonomy/status': read_autonomy_status,
 }
 
 
@@ -814,6 +843,57 @@ def actuator_checks(ros: RosResult) -> list[Check]:
     return out
 
 
+def autonomy_checks(unit_state: str, ros: RosResult, sampled: bool) -> list[Check]:
+    """
+    Mode, localized, scan fit, spread, and saves from /autonomy/status, plus the pose rate.
+
+    `unit_state` is `systemctl is-active` for the autonomy unit; with `sampled`
+    false (--quick, or the unit stopped) only the unit row is reported.
+    """
+    g = 'autonomy'
+    if unit_state == 'failed':
+        return [Check(g, 'unit', WARN, f'{AUTONOMY_UNIT} failed; journalctl -u {AUTONOMY_UNIT}')]
+    if unit_state != 'active':
+        return [Check(g, 'unit', OK, 'stopped; racecar map start or load runs it')]
+    out = [Check(g, 'unit', OK, 'active')]
+    if not sampled:
+        return out
+    out += [c for c in rate_checks(g, AUTONOMY_TOPICS, ros) if c.name == 'pose rate']
+    msg = ros.values.get('/autonomy/status')
+    if not ros.available:
+        return out
+    if msg is None:
+        out.append(Check(g, 'status', FAIL, 'no /autonomy/status; see racecar map status'))
+        return out
+    v = {kv.key: kv.value for kv in msg.values}
+    mode = v.get('mode', '')
+    where = f"{mode} on {v.get('map') or '(no map)'}"
+    if mode == 'localization' and v.get('localizer'):
+        where += f" with {v['localizer']}"
+    out.append(Check(g, 'mode', OK, where, f"session {v.get('session', '')}".rstrip()))
+    localized = v.get('localized') == 'true'
+    if localized:
+        out.append(Check(g, 'localized', OK, 'yes'))
+    elif mode == 'localization':
+        hint = 'drive slowly, or Set pose / Find me in the map viewer (port 8084)'
+        out.append(Check(g, 'localized', WARN, f'no; {hint}'))
+    else:
+        out.append(Check(g, 'localized', WARN, 'no; is the lidar running?'))
+    if mode == 'localization':
+        if v.get('scan_fit'):
+            fit = float(v['scan_fit'])
+            status = OK if fit >= SCAN_FIT_WARN else WARN
+            out.append(Check(g, 'scan fit', status, f'{fit:.0%} of points within 0.1 m of a wall'))
+        if v.get('pose_sd_m'):
+            spread = f"{float(v['pose_sd_m']):.2f} m, {float(v.get('pose_sd_deg') or 0):.1f} deg"
+            out.append(Check(g, 'pose spread', OK, spread))
+    if mode == 'mapping':
+        saved = v.get('last_save') or 'not saved yet'
+        autosave = v.get('last_autosave') or '-'
+        out.append(Check(g, 'saves', OK, f'saved {saved}; autosave {autosave}'))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Presentation
 # ---------------------------------------------------------------------------
@@ -938,6 +1018,11 @@ def main() -> int:
     if args.quick:
         requested = [s for s in requested if s not in ('sensors', 'actuators')]
 
+    autonomy_state = ''
+    if 'autonomy' in requested:
+        autonomy_state = _run(['systemctl', 'is-active', AUTONOMY_UNIT]).strip()
+    sample_autonomy = autonomy_state == 'active' and not args.quick
+
     started = time.monotonic()
 
     # Host checks do not need the graph, so they run while it is being
@@ -958,9 +1043,10 @@ def main() -> int:
     worker.start()
 
     ros = RosResult()
-    needs_ros = any(s in requested for s in ('sensors', 'actuators'))
+    needs_ros = any(s in requested for s in ('sensors', 'actuators')) or sample_autonomy
     if needs_ros:
-        ros = sample_ros(args.window, SENSOR_TOPICS + ACTUATOR_TOPICS)
+        specs = SENSOR_TOPICS + ACTUATOR_TOPICS + (AUTONOMY_TOPICS if sample_autonomy else [])
+        ros = sample_ros(args.window, specs)
 
     worker.join(timeout=30)
 
@@ -970,6 +1056,8 @@ def main() -> int:
         checks.extend(rate_checks('sensors', SENSOR_TOPICS, ros))
     if 'actuators' in requested:
         checks.extend(actuator_checks(ros))
+    if 'autonomy' in requested:
+        checks.extend(autonomy_checks(autonomy_state, ros, sample_autonomy))
     checks.extend(host.get('system', []))
     checks.extend(host.get('services', []))
     checks.extend(host.get('network', []))

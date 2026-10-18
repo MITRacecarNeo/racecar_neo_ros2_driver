@@ -204,6 +204,8 @@ class TestService:
             'racecar-watchdog',
             'racecar-dashboard',
             'racecar-jupyter',
+            'racecar-mapview',
+            'racecar-autonomy',
             'racecar-webteleop',
             'racecar-linefollow',
             'racecar-wallfollow',
@@ -216,6 +218,12 @@ class TestService:
         assert 'update' in result.stdout
         for name, port in (('webteleop', '8081'), ('linefollow', '8082'), ('wallfollow', '8083')):
             assert f'{name}({port})' in result.stdout
+
+    def test_help_lists_core_ports_and_autonomy(self):
+        result = _run('service', 'help')
+        for name, port in (('dashboard', '8080'), ('jupyter', '8888'), ('mapview', '8084')):
+            assert f'{name}({port})' in result.stdout
+        assert 'racecar map' in result.stdout
 
     def test_help_states_the_one_at_a_time_rule(self):
         result = _run('service', 'help')
@@ -671,6 +679,9 @@ class TestCompletionInstalled:
         words = self._complete('racecar', 'service', 'start', '')
         for name in ('teleop', 'webteleop', 'linefollow', 'wallfollow'):
             assert name in words
+
+    def test_service_units_include_mapview(self):
+        assert 'mapview' in self._complete('racecar', 'service', 'start', '')
 
     def test_service_units_exclude_retired_dashboards(self):
         words = self._complete('racecar', 'service', 'start', '')

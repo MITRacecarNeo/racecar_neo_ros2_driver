@@ -21,6 +21,9 @@ comment in the source can point here instead of carrying the full account.
 - [raspi-config on Ubuntu](#raspi-config-on-ubuntu)
 - [Gamepad hid_nintendo blacklist](#gamepad-hid_nintendo-blacklist)
 - [Lidar /scan stalls](#lidar-scan-stalls)
+- [Map quality](#map-quality)
+- [Localization state](#localization-state)
+- [Localizer choice](#localizer-choice)
 - [Lab dashboard checkouts](#lab-dashboard-checkouts)
 - [WiFi persistence](#wifi-persistence)
 - [Boot brownout with ethernet attached](#boot-brownout-with-ethernet-attached)
@@ -374,6 +377,95 @@ the SDK swallows transient read errors. Two guards cover it. The udev rule sets
 `ID_MM_DEVICE_IGNORE=1`, so ModemManager never opens the port. The watchdog
 restarts the lidar when `/scan` is older than `freshness_sec` (5 s), which
 catches a stall from any other cause.
+
+## Map quality
+
+Walls in a saved map are usually two cells (about 10 cm) thick and ragged
+where furniture stands. The map is built by slam_toolbox during
+`racecar map start`; AMCL only uses the finished map and does not change it.
+
+Causes, largest first:
+
+- Turning during a lidar sweep. One sweep takes 146 ms, and neither
+  slam_toolbox nor AMCL corrects a scan for the car's motion within it. At
+  70 deg/s the car turns 10 deg per sweep, which moves a wall 3 m away by up
+  to 0.5 m between the start and end of one scan. On a room map, scans taken
+  turning faster than 80 deg/s fit the finished map 85 to 89% within 0.1 m,
+  against 96 to 97% driving straight. Forward motion adds about 7 cm per
+  sweep at the 0.5 m/s mapping speed, which is why `throttle_node` holds the
+  gamepad there while mapping (`mapping_speed_cap`).
+- Repeated passes. Each pass adds the wall again from a slightly different
+  pose, so a wall driven past many times becomes a band.
+- The 5 cm grid and the lidar's range noise of a few centimeters.
+- The room. The lidar sees a single plane about 20 cm above the floor: chair
+  and table legs, cables, bags, and baseboards at that height show as
+  speckle and ragged edges; anything lower is not seen. Glass, mirrors, and
+  dark gloss return few points. Doorways let the lidar see past the walls.
+
+What helps: wide, gentle turns; each area driven once or twice; a loop back
+to the start at the end, which lets slam_toolbox close the loop; clutter at
+lidar height cleared first. Limiting the steering while mapping
+(`mapping_steering_cap` in `config/throttle.yaml`, off by default) lowers the
+turn rate but needs many three-point turns in a room, and in a test the walls
+came out no thinner; see docs/advanced-settings.md, "Mapping limits".
+
+Thick walls barely affect localization: AMCL scores each scan point by its
+distance to the nearest wall, and on these maps the median is 25 to 28 mm.
+
+## Localization state
+
+`autonomy_node` reports `localized` in `/autonomy/status`
+(`racecar_neo_ros2_driver/autonomy.py`, `is_localized`). In localization it
+needs all of:
+
+- a scan within 0.5 s (`scan_timeout_sec`), so a stopped lidar clears it;
+- the localizer's pose spread within 0.25 m and 20 deg, tighter (0.6 of
+  each) to become localized again;
+- the live scan to fit the map: twice a second, 180 lidar points placed at
+  the localizer's pose are checked against `/map`, and the share within 0.1 m
+  of a wall is averaged over 2 s (`scan_fit`). It drops under 0.5 and
+  returns at 0.65 (`config/autonomy.yaml`).
+
+The spread alone is not enough. A car carried to another spot keeps AMCL's
+particle cloud tight at the old pose, because AMCL updates only when the
+wheels move and its recovery settings are off; it reported `localized` at the
+wrong place for 40 s in a test. The scan fit falls from about 80% to 25 to
+30% as soon as the car is lifted, which clears `localized` within a few
+seconds. AMCL's own recovery (`recovery_alpha_slow`, `recovery_alpha_fast`)
+was tried and stays off: on normal drives it caused pose jumps of up to
+5.7 m and 90 deg and never found the carried car.
+
+Causes of `localized: false`, and what to do:
+
+| Cause | Sign | Remedy |
+|---|---|---|
+| Car moved since the last pose, or carried | `scan_fit` low, spread small | Set pose in the map viewer, `racecar map load NAME --pose x,y,yaw`, or Find me / `--global` and drive slowly |
+| Global search not converged | spread large | Drive slowly through a distinct part of the room; in identical corridors it can settle on the wrong one |
+| Furniture moved since mapping | `scan_fit` between 0.5 and 0.65 | `racecar map start NAME --from NAME` over the changed area |
+| Wheels spun or slipped hard | spread jumps | Stop, then Set pose or Find me and drive slowly |
+| Lidar stopped | `scan_age_ms` large | `racecar status`, "Lidar /scan stalls" |
+
+`racecar status` shows these fields in its autonomy section, and the map
+viewer shows the fit and spread in its status bar.
+
+## Localizer choice
+
+AMCL is the default localizer (`racecar map load NAME`); the slam_toolbox
+localizer is `--localizer slam_toolbox`. On the same 6 min drive both fit the
+map equally well (80.1% and 79.4% of points within 0.1 m).
+
+| | AMCL | slam_toolbox |
+|---|---|---|
+| Parked car after load | localizes | needs a short drive first |
+| Whole-map search (Find me, `--global`) | yes | no; needs a start pose |
+| Long drive (168 m) | held | lost the car, did not recover |
+| Wheel spin or slip | `localized` drops; set the pose or search | corrects it by scan matching |
+| Furniture moved within a session | degrades | tracks through it |
+| CPU | about 5% of a core | not measured; scan matches every scan |
+
+Use AMCL for rooms that stay as mapped. Use the slam_toolbox localizer for a
+space that changes while the car drives (a classroom with people and bags
+moving), and remap with `--from` when a space has changed for good.
 
 ## Lab dashboard checkouts
 

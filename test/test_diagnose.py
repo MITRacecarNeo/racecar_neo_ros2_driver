@@ -91,6 +91,7 @@ class TestTopicSpecs:
 
     def test_every_sampled_topic_has_a_reader(self, diag):
         sampled = {s.topic for s in diag.SENSOR_TOPICS + diag.ACTUATOR_TOPICS}
+        sampled |= {s.topic for s in diag.AUTONOMY_TOPICS}
         assert set(diag.SAMPLE_READERS) == sampled
 
 
@@ -645,3 +646,65 @@ class TestWatchdogCheck:
         row = diag.watchdog_check(_wd_state(pit='healthy', lidar='disabled', mux='starting'))
         assert row.status == diag.OK
         assert 'disabled: lidar' in row.detail and 'starting: mux' in row.detail
+
+
+def _status(**values):
+    return SimpleNamespace(values=[SimpleNamespace(key=k, value=v) for k, v in values.items()])
+
+
+class TestAutonomy:
+    def _ros(self, diag, status, pose_count=100, elapsed=5.0):
+        present = {'/autonomy/pose', '/autonomy/status'}
+        return diag.RosResult(
+            available=True,
+            counts={'/autonomy/pose': pose_count, '/autonomy/status': 5},
+            elapsed=elapsed,
+            present=present,
+            values={'/autonomy/status': status} if status is not None else {},
+        )
+
+    def test_stopped_unit_is_one_ok_row(self, diag):
+        rows = diag.autonomy_checks('inactive', diag.RosResult(), sampled=False)
+        assert [(c.name, c.status) for c in rows] == [('unit', 'OK')]
+        assert 'racecar map' in rows[0].detail
+
+    def test_failed_unit_warns(self, diag):
+        assert diag.autonomy_checks('failed', diag.RosResult(), sampled=False)[0].status == 'WARN'
+
+    def test_quick_reports_the_unit_only(self, diag):
+        rows = diag.autonomy_checks('active', diag.RosResult(), sampled=False)
+        assert [c.name for c in rows] == ['unit']
+
+    def test_localization_rows(self, diag):
+        status = _status(
+            mode='localization', map='room', localizer='amcl', localized='true',
+            scan_fit='0.812', pose_sd_m='0.120', pose_sd_deg='5.300', session='s1',
+        )  # fmt: skip
+        rows = {c.name: c for c in diag.autonomy_checks('active', self._ros(diag, status), True)}
+        assert rows['mode'].detail == 'localization on room with amcl'
+        assert rows['localized'].status == 'OK'
+        assert rows['scan fit'].status == 'OK' and rows['scan fit'].detail.startswith('81%')
+        assert rows['pose spread'].detail == '0.12 m, 5.3 deg'
+        assert rows['pose rate'].status == 'OK'
+
+    def test_not_localized_and_poor_fit_warn(self, diag):
+        status = _status(mode='localization', map='room', localized='false', scan_fit='0.300')
+        rows = {c.name: c for c in diag.autonomy_checks('active', self._ros(diag, status), True)}
+        assert rows['localized'].status == 'WARN' and '8084' in rows['localized'].detail
+        assert rows['scan fit'].status == 'WARN'
+
+    def test_mapping_reports_saves(self, diag):
+        status = _status(mode='mapping', map='hall', localized='true', last_autosave='12:00:01')
+        rows = {c.name: c for c in diag.autonomy_checks('active', self._ros(diag, status), True)}
+        assert 'scan fit' not in rows
+        assert rows['saves'].detail == 'saved not saved yet; autosave 12:00:01'
+
+    def test_silent_node_fails(self, diag):
+        rows = {c.name: c for c in diag.autonomy_checks('active', self._ros(diag, None), True)}
+        assert rows['status'].status == 'FAIL'
+
+    def test_pose_samples_read(self, diag):
+        q = SimpleNamespace(x=0.0, y=0.0, z=0.7071068, w=0.7071068)
+        pose = SimpleNamespace(pose=SimpleNamespace(pose=SimpleNamespace(
+            position=SimpleNamespace(x=1.0, y=-2.0), orientation=q)))  # fmt: skip
+        assert diag.read_autonomy_pose(pose) == ('OK', 'x +1.00 m, y -2.00 m, heading +90 deg')

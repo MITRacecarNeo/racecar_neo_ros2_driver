@@ -46,6 +46,9 @@
 <div class="section-title">Nodes</div>
 <div class="grid" id="nodes"></div>
 
+<div class="section-title">Autonomy</div>
+<div class="grid" id="autonomy"></div>
+
 <div class="section-title">System health</div>
 <div class="grid" id="system-health"></div>
 
@@ -77,6 +80,16 @@ function update() {
         </div>`;
       }
       document.getElementById('nodes').innerHTML = nh;
+
+      const a = data.autonomy || {};
+      if (a.status) {
+        const url = `http://${location.hostname}:${a.port}`;
+        document.getElementById('autonomy').innerHTML = `<div class="card ${a.status}">
+          <h2><span class="indicator ${a.status}"></span>${a.headline}</h2>
+          ${a.lines.map(l => `<div style="margin-top:0.3rem">${l}</div>`).join('')}
+          <div style="margin-top:0.5rem"><a style="color:#7ec8e3" href="${url}">Map viewer (port ${a.port})</a></div>
+        </div>`;
+      }
 
       let sh = '';
       for (const item of Object.values(data.system_health || {})) {

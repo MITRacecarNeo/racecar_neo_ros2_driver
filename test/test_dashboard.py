@@ -2,6 +2,7 @@
 
 from collections import deque
 import json
+from pathlib import Path
 import threading
 from types import SimpleNamespace
 
@@ -57,6 +58,7 @@ class TestGetStatus:
             'rates',
             'watchdog_log',
             'log_dir',
+            'autonomy',
         ):
             assert key in snapshot
 
@@ -211,3 +213,38 @@ class TestWatchdogView:
 
     def test_disabled_is_gray(self, dashboard):
         assert dashboard.watchdog_view('dead', {'state': 'disabled'})[0] == 'unsupervised'
+
+
+class TestAutonomyView:
+    def test_stopped_or_never_started_is_gray(self, dashboard):
+        for values in (None, {'mode': 'off', 'map': 'room'}):
+            view = dashboard.autonomy_view(values, 1.0)
+            assert view['status'] == 'unsupervised' and view['headline'] == 'Stopped'
+            assert view['port'] == 8084
+
+    def test_localized_is_healthy_with_fit_and_spread(self, dashboard):
+        values = {
+            'mode': 'localization', 'map': 'room', 'localizer': 'amcl', 'localized': 'true',
+            'scan_fit': '0.81', 'pose_sd_m': '0.12', 'pose_sd_deg': '5.3',
+        }  # fmt: skip
+        view = dashboard.autonomy_view(values, 0.5)
+        assert view['status'] == 'healthy'
+        assert view['headline'] == 'Localization on room (amcl)'
+        assert view['lines'] == ['Localized', 'Scan fit 81%', 'Spread 0.12 m, 5 deg']
+
+    def test_not_localized_is_yellow(self, dashboard):
+        view = dashboard.autonomy_view({'mode': 'localization', 'localized': 'false'}, 0.5)
+        assert view['status'] == 'stale' and view['lines'][0] == 'Not localized'
+
+    def test_mapping_shows_the_save(self, dashboard):
+        values = {'mode': 'mapping', 'map': 'hall', 'localized': 'true'}
+        view = dashboard.autonomy_view(values, 0.5)
+        assert view['headline'] == 'Mapping on hall' and view['lines'][-1] == 'Saved not yet'
+
+    def test_old_status_is_red(self, dashboard):
+        view = dashboard.autonomy_view({'mode': 'mapping', 'map': 'hall'}, 12.0)
+        assert view['status'] == 'dead' and '12 s' in view['lines'][0]
+
+    def test_html_has_the_autonomy_section(self, dashboard):
+        html = (Path(dashboard.__file__).parent / 'dashboard.html').read_text()
+        assert 'id="autonomy"' in html and 'Map viewer' in html

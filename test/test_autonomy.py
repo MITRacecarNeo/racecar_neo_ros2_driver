@@ -284,3 +284,24 @@ def test_foxglove_stops_quickly(autonomy):
     specs = autonomy.node_specs('mapping', 'amcl', 'r', '', str(CONFIG), foxglove=True)
     assert autonomy._stop_timeouts(specs[-1]) == {'sigterm_timeout': '2', 'sigkill_timeout': '2'}
     assert autonomy._stop_timeouts(specs[0]) == {}
+
+
+def test_foxglove_layout_uses_only_bridged_topics():
+    import json
+    import re
+
+    layout = json.loads((CONFIG / 'foxglove_layout.json').read_text())
+    bridge = yaml.safe_load((CONFIG / 'foxglove.yaml').read_text())
+    allowed = bridge['foxglove_bridge']['ros__parameters']['topic_whitelist']
+    panels = layout['configById']
+    topics = set(panels['3D!map']['topics'])
+    topics.add(panels['Table!status']['topicPath'].split('.')[0])
+    topics |= {p['value'].split('.')[0] for p in panels['Plot!pose']['paths']}
+    for topic in topics:
+        assert any(re.match(pattern, topic) for pattern in allowed), f'{topic} not bridged'
+    client = bridge['foxglove_bridge']['ros__parameters']['client_topic_whitelist']
+    estimate = panels['3D!map']['publish']['poseEstimateTopic']
+    assert any(re.match(pattern, estimate) for pattern in client)
+    # Every configured panel appears in the mosaic layout.
+    text = json.dumps(layout['layout'])
+    assert all(f'"{panel}"' in text for panel in panels)

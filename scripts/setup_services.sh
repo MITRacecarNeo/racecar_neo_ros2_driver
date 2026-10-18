@@ -10,6 +10,7 @@
 #   racecar-watchdog.service  BindsTo=teleop, restart-on-failure supervisor
 #   racecar-dashboard.service web status page (port 8080)
 #   racecar-jupyter.service   JupyterLab (port 8888)
+#   racecar-mapview.service   web map viewer (port 8084)
 # Installed, not enabled (started on demand):
 #   racecar-autonomy.service  SLAM mapping or localization, BindsTo=teleop
 #
@@ -23,6 +24,7 @@ SERVICES=(
     racecar-watchdog.service
     racecar-dashboard.service
     racecar-jupyter.service
+    racecar-mapview.service
 )
 # Mapping at boot would build an unsaved map and take CPU from every lab.
 INSTALL_ONLY=(

@@ -416,6 +416,8 @@ browser ──HTTP poll 10 Hz──▶ mapview.py ──subscribes while polled�
 ## Frame tree
 
 ```
+map ──► odom ──► base_link               map -> odom while autonomy runs (slam_toolbox,
+                                         or AMCL); odom -> base_link from pit_node
 base_link ──► laser                      lidar; yaw 180 deg, the mount faces aft
           ├─► imu_link                   IMU position; same axes as base_link
           └─► camera_bottom_screw_frame  camera mount; pitch and roll act here
@@ -551,17 +553,24 @@ their cards as `unsupervised` rather than dead when they are down.
 resolve from topic advertisement; rate rows come from raw subscriptions
 (counted without deserializing) except the three RealSense streams, which are
 read from the camera's `/diagnostics` output. System Health reports the RTC
-backup cell voltage and the sticky PMIC under-voltage alarm.
+backup cell voltage and the sticky PMIC under-voltage alarm. The Autonomy card
+reads only `/autonomy/status` (1 Hz, latched) for mode, map, localized, scan
+fit, and spread (`autonomy_view`), and links to the map viewer; the 20 Hz pose
+is left to the viewer, which subscribes only while a browser is open.
 
 `scripts/diagnose.py` is the one-shot counterpart behind `racecar status`,
 where the dashboard is the continuous view. It opens every subscription at
 once and shares a single 5 s sample window rather than measuring topics in
 sequence, and runs the host checks on a worker thread beside it. Checks are
-grouped as devices, sensors, actuators, system, services and network; rate
+grouped as devices, sensors, actuators, autonomy, system, services and
+network; rate
 checks compare observed Hz against a per-topic floor rather than testing for
 presence. Each rate row also carries one decoded sample from its topic in a
 tab-separated column, and a payload outside its expected range (gravity,
-pack voltage, channel count) sets the row's status. The RealSense streams
+pack voltage, channel count) sets the row's status. The autonomy section
+reports the unit's state; while it runs, `/autonomy/pose` and
+`/autonomy/status` join the window, giving the pose rate, mode, localized,
+scan fit, spread, and saves (`autonomy_checks`). The RealSense streams
 are read once after the window closes, so their decode costs no rate. It is
 read-only and never commands the hardware. The measurement
 cost of that window, and the floors, are covered in docs/troubleshooting.md,
@@ -598,9 +607,11 @@ node's `<name>_config` launch argument.
 | `lsm9ds1_cal.yaml`, `lsm9ds1_mag_cal.yaml` | `pit_node` | IMU bias and iron correction, zero defaults |
 | `realsense_cal.yaml` | `imu_fusion_node` | RealSense IMU bias, zero defaults |
 | `odom.yaml` | `pit_node` (loaded by `pit.launch.py`) | odometry: yaw axis and sign, speed and yaw-rate scales, publish rate, stopped-car bias settings |
-| `autonomy.yaml` | `autonomy_node` | pose rate, autosave and last-pose periods, `localized` limits |
+| `autonomy.yaml` | `autonomy_node` | pose rate, autosave and last-pose periods, `localized` limits, scan-fit rate and thresholds |
 | `slam_mapping.yaml`, `slam_localization.yaml` | `slam_toolbox`, `lifecycle_manager_slam` | frames, laser range 0.3 to 12 m, node spacing, loop closure |
 | `amcl.yaml` | `amcl`, `map_server`, `lifecycle_manager_localization` | motion and laser models, particles, beam skipping, update distances |
+| `foxglove.yaml` | `foxglove_bridge` (autonomy launch, when on) | port, topic whitelist, `/initialpose` as the only client topic |
+| `foxglove_layout.json` | Lichtblick, imported by hand (not a node file) | 3D view, status table, pose plot |
 | `frames.yaml` | `frames.launch.py` (not a node parameter file) | frame offsets in mm and deg, fleet base values; see [Frame tree](#frame-tree) |
 
 `config/*.local.yaml` is gitignored. Each launch file loads `<name>.local.yaml`

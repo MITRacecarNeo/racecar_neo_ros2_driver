@@ -98,6 +98,18 @@ All notable changes to this project will be documented in this file. The format 
   exist only while a browser polls (0.1% of a core idle, 6.6% polled).
 - `map_control.map_rows`: the map list as data, shared by `racecar map list`
   and the viewer.
+- `racecar status` autonomy section: the unit's state, and while it runs the
+  pose rate, mode and map, localized, scan fit, spread, and saves.
+- Dashboard (8080) Autonomy card from `/autonomy/status`, with a link to the
+  map viewer.
+- `racecar service` lists `racecar-mapview` with the core units and shows
+  each unit's address and the autonomy unit; `setup_services.sh` installs and
+  enables the map viewer.
+- `config/foxglove_layout.json`: a Lichtblick layout (top-down map, scan,
+  particles, and pose; status table; pose plot), installed with the config.
+- Docs: map quality, localization state, and localizer choice in
+  `docs/troubleshooting.md`; Foxglove bridge and mapping limits in
+  `docs/advanced-settings.md`; map viewer and mapping steps in README.
 - `slam_session.py replay` writes `map_odom.csv` and, with `--autonomy`,
   `status.csv`, and reports how long `localized` disagreed with the scan
   fit.

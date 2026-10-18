@@ -98,7 +98,8 @@ racecar() {
             local action="${1:-status}"
             shift || true
             local -a core_units=("racecar-teleop" "racecar-watchdog"
-                                 "racecar-dashboard" "racecar-jupyter")
+                                 "racecar-dashboard" "racecar-jupyter"
+                                 "racecar-mapview")
             # Lab dashboards, installed by setup_dashboards.sh. All three
             # publish /drive; a second publisher fights the mux, so starting
             # one stops the others.
@@ -168,9 +169,20 @@ racecar() {
                     for u in "${core_units[@]}"; do
                         state=$(systemctl is-active "$u" 2>&1 || true)
                         enabled=$(systemctl is-enabled "$u" 2>&1 || true)
-                        printf "  %-22s  active=%-12s enabled=%s\n" \
-                            "$u" "$state" "$enabled"
+                        port=$(sed -n 's/.*(port \([0-9]*\)).*/\1/p' \
+                            "/etc/systemd/system/$u.service" 2>/dev/null | head -1)
+                        printf "  %-22s  active=%-12s enabled=%-10s %s\n" \
+                            "$u" "$state" "$enabled" \
+                            "${port:+http://$(hostname).local:$port}"
                     done
+                    echo "autonomy (started by racecar map):"
+                    u=racecar-autonomy
+                    if [[ ! -f "/etc/systemd/system/$u.service" ]]; then
+                        printf "  %-22s  not installed\n" "$u"
+                    else
+                        state=$(systemctl is-active "$u" 2>&1 || true)
+                        printf "  %-22s  active=%s\n" "$u" "$state"
+                    fi
                     echo "dashboards:"
                     for u in "${dash_units[@]}"; do
                         if [[ ! -f "/etc/systemd/system/$u.service" ]]; then
@@ -197,11 +209,12 @@ actions:
                   Starting a lab dashboard stops the other /drive publishers first.
   stop [name]     Stop racecar-<name>; default = teleop
   restart [name]  Restart racecar-<name>; default = teleop
-  enable [name]   Enable one unit, or with no name the four core units
-  disable [name]  Disable one unit, or with no name the four core units
+  enable [name]   Enable one unit, or with no name the five core units
+  disable [name]  Disable one unit, or with no name the five core units
   logs [name]     journalctl -u racecar-<name> -f; default = teleop
-  status          active/enabled snapshot, core and dashboards (default)
-core units: teleop, watchdog, dashboard, jupyter
+  status          active/enabled snapshot, core, autonomy, and dashboards (default)
+core units: teleop, watchdog, dashboard(8080), jupyter(8888), mapview(8084)
+autonomy: started and stopped by `racecar map` or the map viewer, not at boot
 dashboards: webteleop(8081) linefollow(8082) wallfollow(8083)
 All three publish /drive, so only one runs at a time; starting one stops
 the others.
@@ -1417,7 +1430,7 @@ _racecar_complete() {
                 local action="${COMP_WORDS[2]}"
                 case "$action" in
                     start|stop|restart|logs|enable|disable)
-                        COMPREPLY=( $(compgen -W "teleop watchdog dashboard jupyter autonomy webteleop linefollow wallfollow" -- "$cur") )
+                        COMPREPLY=( $(compgen -W "teleop watchdog dashboard jupyter mapview autonomy webteleop linefollow wallfollow" -- "$cur") )
                         ;;
                 esac
             fi

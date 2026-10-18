@@ -16,7 +16,7 @@ import time
 from types import FrameType
 from typing import Any
 
-from diagnostic_msgs.msg import DiagnosticArray
+from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
@@ -40,6 +40,9 @@ from sysinfo import (  # noqa: E402
 
 PORT = 8080
 RATE_WINDOW_SEC = 3.0
+MAPVIEW_PORT = 8084
+# /autonomy/status arrives at 1 Hz; older than this, the node has stopped.
+AUTONOMY_STALE_SEC = 5.0
 SYSTEM_HEALTH_REFRESH_SEC = 60.0
 
 # supervised: the watchdog restarts this node. An unsupervised card that loses
@@ -89,6 +92,7 @@ _latest_status: dict[str, Any] = {
     'system_health': {},
     'watchdog_log': [],
     'log_dir': str(Path.home() / 'logs' / 'latest'),
+    'autonomy': {},
 }
 _monitor_running = True
 
@@ -124,6 +128,16 @@ class _RateSampler(Node):
             self._record_diagnostics,
             10,
         )
+        # 1 Hz and latched: the autonomy card costs one small message a second.
+        self._autonomy: tuple[dict[str, str], float] | None = None
+        latched = QoSProfile(
+            depth=1,
+            reliability=QoSReliabilityPolicy.RELIABLE,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self._autonomy_sub = self.create_subscription(
+            DiagnosticStatus, '/autonomy/status', self._record_autonomy, latched
+        )
 
     def _record(self, topic: str) -> None:
         now = time.monotonic()
@@ -144,6 +158,19 @@ class _RateSampler(Node):
             self._diagnostic_rates.update(updates)
             for topic in updates:
                 self._diagnostic_last_update[topic] = now
+
+    def _record_autonomy(self, msg: DiagnosticStatus) -> None:
+        values = {kv.key: kv.value for kv in msg.values}
+        with self._lock:
+            self._autonomy = (values, time.monotonic())
+
+    def autonomy(self) -> tuple[dict[str, str] | None, float | None]:
+        """Return the last /autonomy/status values and their age in seconds."""
+        with self._lock:
+            if self._autonomy is None:
+                return None, None
+            values, at = self._autonomy
+            return dict(values), time.monotonic() - at
 
     def attach_subscriptions(self) -> None:
         """Resolve each topic's type and create a subscription. Re-runnable; idempotent."""
@@ -280,6 +307,48 @@ def watchdog_view(status: str, watched: dict[str, Any] | None) -> tuple[str, str
     return view_status, detail
 
 
+def autonomy_view(values: dict[str, str] | None, age: float | None) -> dict[str, Any]:
+    """
+    Card for the autonomy service: status (card color), headline, and detail lines.
+
+    healthy: localized; stale: running but not localized; dead: status stopped
+    arriving without the node saying it stopped; unsupervised (gray): stopped.
+    """
+    if values is None or values.get('mode') in (None, '', 'off'):
+        return {
+            'status': 'unsupervised',
+            'headline': 'Stopped',
+            'lines': ['Start mapping or load a map in the map viewer.'],
+            'port': MAPVIEW_PORT,
+        }
+    mode, name = values.get('mode', ''), values.get('map') or '(no map)'
+    headline = f'{mode.capitalize()} on {name}'
+    if mode == 'localization' and values.get('localizer'):
+        headline += f" ({values['localizer']})"
+    if age is not None and age > AUTONOMY_STALE_SEC:
+        return {
+            'status': 'dead',
+            'headline': headline,
+            'lines': [f'No status for {age:.0f} s; the autonomy service may have stopped.'],
+            'port': MAPVIEW_PORT,
+        }
+    localized = values.get('localized') == 'true'
+    lines = ['Localized' if localized else 'Not localized']
+    if mode == 'localization' and values.get('scan_fit'):
+        lines.append(f"Scan fit {float(values['scan_fit']):.0%}")
+    if mode == 'localization' and values.get('pose_sd_m'):
+        sd = f"{float(values['pose_sd_m']):.2f} m, {float(values.get('pose_sd_deg') or 0):.0f} deg"
+        lines.append(f'Spread {sd}')
+    if mode == 'mapping':
+        lines.append(f"Saved {values.get('last_save') or 'not yet'}")
+    return {
+        'status': 'healthy' if localized else 'stale',
+        'headline': headline,
+        'lines': lines,
+        'port': MAPVIEW_PORT,
+    }
+
+
 def _monitor_loop() -> None:
     """Background thread that continuously refreshes the cached status snapshot."""
     last_system_health = 0.0
@@ -336,6 +405,7 @@ def _monitor_loop() -> None:
                 'system_health': system_health,
                 'watchdog_log': _read_watchdog_tail(),
                 'log_dir': str(Path.home() / 'logs' / 'latest'),
+                'autonomy': autonomy_view(*(_sampler.autonomy() if _sampler else (None, None))),
             }
 
             with _status_lock:
@@ -466,11 +536,10 @@ def main() -> None:
         _monitor_running = False
         server.server_close()
         monitor.join(timeout=5)
-        try:
-            sampler.destroy_node()
-        except Exception:  # noqa: BLE001
-            pass
+        # rclpy shutdown wakes the spin thread; destroying the node while it
+        # waits can block or abort the interpreter at exit.
         rclpy.try_shutdown()
+        spinner.join(timeout=2)
         log.info('Dashboard stopped')
 
 
