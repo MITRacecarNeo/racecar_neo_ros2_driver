@@ -24,7 +24,7 @@ comment in the source can point here instead of carrying the full account.
 - [Map quality](#map-quality)
 - [Localization state](#localization-state)
 - [Localizer choice](#localizer-choice)
-- [Lab dashboard checkouts](#lab-dashboard-checkouts)
+- [Lab dashboards](#lab-dashboards)
 - [WiFi persistence](#wifi-persistence)
 - [Boot brownout with ethernet attached](#boot-brownout-with-ethernet-attached)
   - [Not a flat pack](#not-a-flat-pack)
@@ -467,28 +467,22 @@ Use AMCL for rooms that stay as mapped. Use the slam_toolbox localizer for a
 space that changes while the car drives (a classroom with people and bags
 moving), and remap with `--from` when a space has changed for good.
 
-## Lab dashboard checkouts
+## Lab dashboards
 
-`scripts/setup_dashboards.sh`.
+`scripts/setup_dashboards.sh`, `scripts/dashboards/`.
 
-The three dashboards are forks under MITRacecarNeo of Neobotics Foundation
-repositories built for the NeoRacer. The forks carry this platform's lidar
-convention, ports and branding, so unlike the four unforked dashboards that
-v0.8.0 shipped they can be corrected at the source.
-
-The unit is still rendered from the checkout's `.service.in` rather than
-copied. A fork synced from Neobotics upstream comes back carrying Humble and
-the neoracer names, and rendering is what keeps that car working instead of
-pointing a unit at a ROS that is not installed. `unit_name` strips either
-project's prefix so both land on the same `racecar-<name>.service`.
-
-Updates are `git pull --ff-only` and never `reset --hard`, so a car's tuned
-YAML survives.
+Each unit is rendered from the dashboard's `.service.in`, substituting its
+directory and adding the discovery scope, rather than copied, so the unit
+always points at the tree it was installed from.
 
 The script also stops, disables and removes the units of the four retired
 dashboards (`camlabel`, `eps`, `pursuit`, `smartfollow`), so a car upgraded
-from v0.8.0 does not keep a second `/drive` publisher installed. Their
-checkouts under `scripts/dashboards/` are left in place; delete them by hand.
+from v0.8.0 does not keep a second `/drive` publisher installed. Their old
+checkouts under `scripts/dashboards/` are gitignored and left in place.
+
+Saved tuning lives in `<name>.local.yaml`, never in the shipped
+`<name>.yaml`, so updating the driver keeps a car's tuning and the tree stays
+clean.
 
 ## WiFi persistence
 

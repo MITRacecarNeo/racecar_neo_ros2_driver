@@ -422,7 +422,7 @@ class TestRecover:
         autosave(root, 'room', last_change='2026-10-09 12:00:00.000')
         lines: list[str] = []
         mc.recover('room', out=lines.append)
-        assert 'nothing to recover' in lines[0]
+        assert lines[0] == 'room is saved. Nothing to recover.'
         assert (root / 'room' / 'room.posegraph').read_text() == 'm'
 
     def test_refused_while_mapping_it(self, mc, root, systemd):

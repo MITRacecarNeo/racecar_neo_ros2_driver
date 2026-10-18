@@ -843,6 +843,18 @@ def actuator_checks(ros: RosResult) -> list[Check]:
     return out
 
 
+def note_mapping_pause(checks: list[Check], ros: RosResult) -> list[Check]:
+    """While mapping, edgetpu_node drops its camera input (pause_while_mapping); say so."""
+    msg = ros.values.get('/autonomy/status')
+    mode = {kv.key: kv.value for kv in msg.values}.get('mode') if msg is not None else None
+    if mode != 'mapping':
+        return checks
+    return [
+        Check(c.group, c.name, OK, 'paused while mapping') if c.name == 'Coral inference' else c
+        for c in checks
+    ]
+
+
 def autonomy_checks(unit_state: str, ros: RosResult, sampled: bool) -> list[Check]:
     """
     Mode, localized, scan fit, spread, and saves from /autonomy/status, plus the pose rate.
@@ -854,7 +866,7 @@ def autonomy_checks(unit_state: str, ros: RosResult, sampled: bool) -> list[Chec
     if unit_state == 'failed':
         return [Check(g, 'unit', WARN, f'{AUTONOMY_UNIT} failed; journalctl -u {AUTONOMY_UNIT}')]
     if unit_state != 'active':
-        return [Check(g, 'unit', OK, 'stopped; racecar map start or load runs it')]
+        return [Check(g, 'unit', OK, 'stopped')]
     out = [Check(g, 'unit', OK, 'active')]
     if not sampled:
         return out
@@ -1053,7 +1065,7 @@ def main() -> int:
     checks: list[Check] = []
     checks.extend(host.get('devices', []))
     if 'sensors' in requested:
-        checks.extend(rate_checks('sensors', SENSOR_TOPICS, ros))
+        checks.extend(note_mapping_pause(rate_checks('sensors', SENSOR_TOPICS, ros), ros))
     if 'actuators' in requested:
         checks.extend(actuator_checks(ros))
     if 'autonomy' in requested:

@@ -52,7 +52,13 @@ button:disabled { opacity: 0.45; cursor: default; }
 #job { display: none; padding: 8px 12px; background: var(--panel); border-top: 1px solid var(--line);
   max-height: 30vh; overflow: auto; }
 #job.show { display: block; }
-#job pre { margin: 4px 0 0; white-space: pre-wrap; font: 12px/1.35 ui-monospace, Menlo, monospace; }
+#job pre { margin: 4px 0 0; white-space: pre-wrap; font: 12px/1.35 ui-monospace, Menlo, monospace; display: none; }
+#job.open pre { display: block; }
+#jobmore { margin-left: 8px; padding: 2px 8px; font-size: 13px; display: none; }
+#job.failed #jobmore { display: inline-block; }
+#details { display: none; width: 100%; }
+header.open #details { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+#more { margin-left: auto; padding: 2px 10px; font-size: 13px; }
 .sheet { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.45); display: none;
   align-items: flex-end; justify-content: center; z-index: 10; }
 .sheet.show { display: flex; }
@@ -72,12 +78,12 @@ input[type=text] { font: inherit; padding: 9px 10px; border-radius: 8px; border:
 </style>
 </head>
 <body>
-<header>
+<header id="head">
   <span id="mode" class="badge">-</span>
   <span id="mapname"></span>
   <span id="loc" class="badge">-</span>
-  <span id="detail" class="muted"></span>
-  <span id="sys" class="muted" style="margin-left:auto"></span>
+  <button id="more" aria-expanded="false">Details</button>
+  <div id="details"><span id="detail" class="muted"></span><span id="sys" class="muted"></span></div>
 </header>
 <div id="banner"></div>
 <main>
@@ -89,12 +95,11 @@ input[type=text] { font: inherit; padding: 9px 10px; border-radius: 8px; border:
     <button id="center" title="Center on the car">&#9673;</button>
   </div>
 </main>
-<div id="job"><span id="jobtitle"></span><pre id="joblines"></pre></div>
+<div id="job"><span id="jobtitle"></span><button id="jobmore">Show output</button><pre id="joblines"></pre></div>
 <footer id="controls"></footer>
 
 <div class="sheet" id="maps"><div>
   <h2>Maps</h2>
-  <div class="muted" id="mapsroot"></div>
   <div id="maplist"></div>
   <div class="row"><button id="mapsclose">Close</button></div>
 </div></div>
@@ -321,8 +326,8 @@ function hint(text) { $('hint').textContent = text; $('hint').classList.toggle('
 function startPoseTool(purpose) {
   poseTool = { purpose, start: null, end: null };
   hint(purpose === 'set'
-    ? 'Set pose: press where the car is and drag toward the way it faces.'
-    : 'Where is the car on this map? Press where it is and drag toward the way it faces.');
+    ? 'Set pose: Tap where the car currently is and drag toward the way it faces.'
+    : 'Where is the car on this map? Tap where it is and drag toward the way it faces.');
   render();
 }
 function cancelPoseTool() { poseTool = null; pending = null; preview = null; hint(''); render(); draw(); }
@@ -336,7 +341,7 @@ async function finishPose(x, y, yaw) {
     report(await post('/api/pose', { x, y, yaw }));
   } else {
     const req = pending;
-    if (!confirm(`Start mapping "${req.name}" from "${req.source}" with the car at ${text}? The autonomy service restarts.`)) {
+    if (!confirm(`Start mapping "${req.name}" from "${req.source}" with the car at ${text}?`)) {
       poseTool.start = poseTool.end = null; draw(); return;
     }
     poseTool = null; pending = null; preview = null; hint(''); view.fitted = false; gridVersion = -1;
@@ -364,7 +369,7 @@ function showBanner() {
   else if (lostContact) msg = { text: 'Lost contact with the car.', kind: 'bad' };
   else if (sys.throttled_now && sys.throttled_now.length) msg = { text: `Pi throttled now: ${sys.throttled_now.join(', ')}. This run is not valid.`, kind: 'bad' };
   else if (sys.temp_c != null && sys.temp_c >= 78) msg = { text: `Pi is hot (${sys.temp_c.toFixed(0)} C).`, kind: 'warn' };
-  else if (s.mode === 'mapping') msg = { text: 'Speed limited for mapping. Turn gently; sharp turns blur the map.', kind: 'warn' };
+  else if (s.mode === 'mapping') msg = { text: 'Speed limited for mapping. Turn gently to prevent map blur.', kind: 'warn' };
   b.textContent = msg ? msg.text : '';
   b.className = msg ? `show ${msg.kind}` : '';
 }
@@ -392,7 +397,7 @@ function render() {
   if (mode === 'mapping') {
     f.append(button('Save', 'primary', () => action({ action: 'save' }), running));
     f.append(button('Stop', 'danger', () => {
-      if (confirm('Stop mapping? The map is autosaved; Save keeps it as the saved map.')) action({ action: 'stop' });
+      if (confirm('Stop mapping?')) action({ action: 'stop' });
     }, running));
   } else if (mode === 'localization') {
     f.append(button('Set pose', '', () => startPoseTool('set'), running));
@@ -410,7 +415,7 @@ function render() {
 function openStart(source) {
   $('starttitle').textContent = source ? `Extend "${source}"` : 'Start mapping';
   $('startnote').textContent = source
-    ? 'Name for the extended map. Use the same name to extend it in place. Next, show where the car is on it.'
+    ? 'Name for the extended map. Use the same name to extend it in place.'
     : 'Teleop must be running. Drive with the gamepad or the transmitter.';
   $('newname').value = source || '';
   $('startsheet').dataset.source = source || '';
@@ -428,7 +433,7 @@ $('startgo').onclick = async () => {
     fit(preview); pending = { name, source }; startPoseTool('extend'); draw();
     return;
   }
-  if (!confirm(`Start mapping "${name}"? The autonomy service restarts.`)) return;
+  if (!confirm(`Start mapping "${name}"?`)) return;
   view.fitted = false; gridVersion = -1;
   action({ action: 'start', name });
 };
@@ -437,7 +442,6 @@ async function openMaps() {
   $('maps').classList.add('show');
   const res = await fetch('/api/maps', { cache: 'no-store' });
   const data = await res.json();
-  $('mapsroot').textContent = `Folder: ${data.root}`;
   const list = $('maplist'); list.replaceChildren();
   if (!data.maps.length) { list.textContent = 'No maps yet.'; return; }
   const running = !!(state.job && state.job.running);
@@ -454,7 +458,7 @@ async function openMaps() {
     acts.append(button('Extend', '', () => { $('maps').classList.remove('show'); openStart(m.name); }, running));
     if (m.state !== 'saved') {
       acts.append(button('Keep', '', () => {
-        if (confirm(`Keep the autosave of "${m.name}" as its saved map? The current saved files are kept in previous/.`)) {
+        if (confirm(`Keep the autosave of "${m.name}" as its saved map?`)) {
           $('maps').classList.remove('show'); action({ action: 'recover', name: m.name });
         }
       }, running));
@@ -475,7 +479,7 @@ $('loadgo').onclick = () => {
   const name = $('loadsheet').dataset.name;
   const search = document.querySelector('input[name=from]:checked').value === 'global';
   $('loadsheet').classList.remove('show');
-  if (!confirm(`Load "${name}"? The autonomy service restarts.`)) return;
+  if (!confirm(`Load "${name}"?`)) return;
   view.fitted = false; gridVersion = -1;
   action({ action: 'load', name, search });
 };
@@ -506,9 +510,23 @@ function showStatus() {
   showBanner();
 }
 
-// A finished command's output stays JOB_HIDE_MS after success; a failure stays until the next one.
-const JOB_HIDE_MS = 8000;
+// A success title stays JOB_HIDE_MS; a failure stays until the next command.
+const JOB_HIDE_MS = 4000;
 let jobDoneAt = null;
+function jobTitle(j) {
+  const [action, name] = j.argv;
+  const extend = j.argv.includes('--from');
+  if (j.running) {
+    return {
+      start: extend ? `Extending into ${name}...` : `Starting mapping ${name}...`,
+      save: 'Saving...', stop: 'Stopping...', load: `Loading ${name}...`, recover: `Keeping ${name}...`,
+    }[action] || 'Working...';
+  }
+  if (j.code !== 0) return `Failed: ${j.lines.length ? j.lines[j.lines.length - 1].replace(/^racecar map: /, '') : 'see output'}`;
+  return {
+    start: `Mapping ${name}`, save: 'Saved', stop: 'Stopped', load: `Localizing on ${name}`, recover: `Kept ${name}`,
+  }[action] || 'Done';
+}
 function showJob() {
   const j = state.job || {};
   const el = $('job');
@@ -516,11 +534,17 @@ function showJob() {
   else if (jobDoneAt === null) jobDoneAt = Date.now();
   if (!j.action || (jobDoneAt !== null && Date.now() - jobDoneAt > JOB_HIDE_MS)) { el.classList.remove('show'); return; }
   el.classList.add('show');
-  const result = j.running ? 'running...' : (j.code === 0 ? 'done' : `failed (exit ${j.code})`);
-  $('jobtitle').textContent = `racecar map ${j.argv.join(' ')}: ${result}`;
+  el.classList.toggle('failed', !j.running && j.code !== 0);
+  if (j.running) el.classList.remove('open');
+  $('jobtitle').textContent = jobTitle(j);
   $('joblines').textContent = j.lines.join('\n');
-  el.scrollTop = el.scrollHeight;
 }
+$('jobmore').onclick = () => $('job').classList.toggle('open');
+$('more').onclick = () => {
+  const open = $('head').classList.toggle('open');
+  $('more').setAttribute('aria-expanded', open);
+  $('more').textContent = open ? 'Hide' : 'Details';
+};
 
 async function poll() {
   if (busy) return;

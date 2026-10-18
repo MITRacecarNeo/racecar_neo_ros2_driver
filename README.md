@@ -395,12 +395,8 @@ Refreshes every 3 s; System Health refreshes every 60 s, since the cell voltage 
 
 ## Lab dashboards
 
-Three browser-based labs, each a fork under the
-[MITRacecarNeo](https://github.com/MITRacecarNeo) organization of the
-corresponding [Neobotics
-Foundation](https://github.com/Neobotics-Foundation-Inc) repository, installed
-as `racecar-*` systemd units. The forks carry this platform's lidar convention,
-ports and branding.
+Three browser-based labs in `scripts/dashboards/`, installed as `racecar-*`
+systemd units. Internals: [docs/dashboards.md](docs/dashboards.md).
 
 | Dashboard | Port | Reads | Publishes |
 |---|---|---|---|
@@ -411,9 +407,7 @@ ports and branding.
 Install (also runs as phase 12 of `setup_all.sh`):
 
 ```bash
-racecar setup dashboards          # clone or fast-forward, install units
-racecar setup dashboards --update # pull only
-racecar service update            # same, from the service subcommand
+racecar setup dashboards          # install the units, stopped and disabled
 ```
 
 The install also stops, disables and removes the units of the four retired
@@ -432,41 +426,17 @@ racecar service stop wallfollow
 **One at a time.** All three publish `/drive`, and a second publisher fights the
 mux, so `racecar service start` stops the others before starting the one you
 asked for. Units install disabled; `racecar service enable <name>` makes one
-survive a reboot, and bare `racecar service enable` covers only the core four.
-
-**Checkouts live in `scripts/dashboards/`**, gitignored, on the forks'
-`racecar-neo` branch (`RACECAR_DASHBOARD_BRANCH` overrides). Updates are
-`git pull --ff-only`, so a car's tuned `wallfollow.yaml` survives. Each unit is
-rendered from its checkout's `.service.in` template.
-
-**Versions.** Each checkout carries a `VERSION` tracking this driver's release.
-`setup_dashboards.sh` pins the expected version (`RACECAR_DASHBOARD_VERSION`
-overrides) and reports a mismatch without stopping the install:
-
-```
-==> Dashboard versions (driver pins 0.8.3)
-  teleop_dashboard: 0.8.3
-  linefollow_dashboard: 0.8.2, driver pins 0.8.3
-  wallfollow_dashboard: 0.8.3
-```
+survive a reboot, and bare `racecar service enable` covers only the core five.
 
 **Safety.** `mux_node` forwards `/drive` only while the RB bumper is held, and
 zeroes the output when `/joy` or the active source goes stale. See
 [Autonomy gate](#autonomy-gate) for the case where a transmitter holds the
 gate.
 
-**Tuning.** The shipped YAML is tuned for the NeoRacer's chassis and lidar.
-Expect to retune `max_mps`, `kp`, `kd`, `lookahead` and the `linefollow` HSV
-thresholds per car.
-
-The lidar mounting convention (`LIDAR_MOUNT_YAW_DEG` for this car's aft-facing
-RPLIDAR) is documented in the
-[wallfollow architecture notes](https://github.com/MITRacecarNeo/wallfollow_dashboard/blob/racecar-neo/docs/architecture.md),
-and the shared palette in the
-[webteleop architecture notes](https://github.com/MITRacecarNeo/teleop_dashboard/blob/racecar-neo/docs/architecture.md).
-Where lidar normalization belongs for every consumer is still open with the
-Neobotics Foundation; the preferred direction is for the dashboards to consume
-the `racecar-neo-library` API rather than raw `/scan`.
+**Tuning.** Save in the page writes `<name>.local.yaml` beside the shipped
+`<name>.yaml` (gitignored); the shipped file keeps the defaults. Expect to
+retune `max_mps`, `kp`, `kd`, `lookahead` and the `linefollow` HSV thresholds
+per car. Logs go to `~/data/dashboards/<name>/`.
 
 ## Autonomy gate
 

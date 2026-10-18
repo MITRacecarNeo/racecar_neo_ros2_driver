@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/png" href="data:image/png;base64,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">
+<title>Web Teleop Dashboard</title>
+<style>
+  /* RACECAR Neo tokens, same scheme as the other lab dashboards.
+
+     The mark's gradient runs crimson to orange; orange now leads. The two
+     ends are near inverses in contrast, so neither can do the other's job:
+     crimson is 7.8:1 on white and 2.1:1 on tarmac, orange 2.5:1 on white
+     and 6.5:1 on tarmac. Each is therefore used only where it is legible.
+     Orange on the dark surfaces, ember (the same 26 deg hue held down to
+     L 0.36, 5.5:1 on white) on the light ones, and crimson kept back for
+     STOP and fault: one colour on this page means stop and nothing else. */
+  :root { --white: #FFFFFF; --page: #FAF7F4; --halo: #F5F5F7; --steel: #E7E1DB; --carbon: #231F20; --tarmac: #231F20;
+          --rc-crimson: #A01936; --rc-orange: #EC8B48; --rc-ember: #A55312; --rc-ink: #231F20;
+          --accent: #A55312;          /* interactive, on the light surfaces */
+          --accent-dark: #EC8B48;     /* the same role on the dark ones */
+          --red: #A01936;             /* stop and fault only */ }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background: var(--page); color: var(--carbon); }
+  .topbar { background: var(--tarmac); color: var(--halo); padding: 0.8rem 1.5rem; display: flex; justify-content: space-between; align-items: center; }
+  .topbar button { background: transparent; border: 1px solid rgba(245, 245, 247, 0.5); color: var(--halo); font-family: inherit; padding: 0.4rem 1rem; border-radius: 6px; cursor: pointer; margin: 0 0 0 0.5rem; }
+  .topbar button:hover { background: rgba(245, 245, 247, 0.15); }
+  .topbar button.stop { border-color: var(--red); color: var(--red); font-weight: bold; }
+  .topbar button.stop:hover { background: var(--red); color: var(--white); }
+  /* Brand lockup: the R-mark beside the wordmark. */
+  .topbar .logo { height: 22px; vertical-align: -5px; margin-right: 0.45rem; }
+  .wordmark { font-family: 'Space Grotesk', 'Helvetica Neue', sans-serif; font-size: 1.05rem; font-weight: 700; letter-spacing: 0.02em; background: linear-gradient(100deg, var(--rc-orange), var(--rc-crimson)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .wordmark i { font-style: normal; opacity: 0.85; margin-left: 0.28em; }
+  /* The mark's gradient as the rule under the bar. */
+  .topbar { border-bottom: 3px solid transparent; border-image: linear-gradient(100deg, var(--rc-orange), var(--rc-crimson)) 1; }
+  .topbar h1 { font-family: 'Space Grotesk', 'Helvetica Neue', sans-serif; font-size: 1.3rem; }
+  .meta { color: rgba(245, 245, 247, 0.72); font-size: 0.85rem; margin-top: 0.2rem; }
+  .meta b { color: var(--white); }
+  main { padding: 1rem 1.5rem; }
+  /* Row 1: the camera stack, the lidar, then the encoder and the logs down
+     the rest of the width. 592 = 560 + the card's 1rem padding either side,
+     so the lidar lands at exactly 560 px, the width the sibling dashboards
+     cap their camera at. The camera column is 400 instead, because it now
+     carries two views one above the other: at 368 px each the pair stands
+     about as tall as the 560 px lidar beside it, so the row still reads as
+     a row. align-items: start keeps a column that runs short from being
+     stretched into empty card. Row 2: the drive pad and the tune sliders. */
+  .grid { display: grid; grid-template-columns: 400px 592px 1fr; gap: 1rem; align-items: start; }
+  @media (max-width: 1400px) { .grid { grid-template-columns: 1fr; } }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 900px) { .row2 { grid-template-columns: 1fr; } }
+  .card { background: var(--white); border: 1px solid var(--steel); border-radius: 12px; padding: 1rem; margin-bottom: 1rem; box-shadow: 0 6px 18px rgba(35, 31, 32, 0.07); }
+  .card h2 { font-family: 'Space Grotesk', 'Helvetica Neue', sans-serif; font-size: 1rem; color: var(--tarmac); margin-bottom: 0.5rem; padding-bottom: 0.35rem; border-bottom: 2px solid var(--accent-dark); }
+  .view { background: var(--tarmac); border-radius: 6px; width: 100%; max-width: 560px; height: auto; display: block; aspect-ratio: 4 / 3; object-fit: contain; }
+  /* Camera card: the color frame over the depth frame, same width, so a
+     feature lines up vertically between the two. */
+  .stack { display: grid; gap: 0.7rem; }
+  .stack .view { max-width: 368px; }
+  /* The overlay is a canvas the size of the colour view, on top of it. The
+     figure is the positioning context; the canvas never takes pointer
+     events, so the view stays as clickable as it was. */
+  .stack figure { position: relative; }
+  /* The generic canvas rule below paints a tarmac background and caps the
+     width; both would put an opaque panel over the frame, so the overlay
+     opts out of them. Its size is set in px by drawOverlay. */
+  #overlay { position: absolute; left: 0; top: 0; pointer-events: none; border-radius: 6px;
+             background: none; max-width: none; width: auto; height: auto; }
+  /* The `hidden` attribute works through the UA stylesheet, which the
+     `canvas` rule below outranks: without this, setting hidden on the
+     overlay leaves it displayed. */
+  #overlay[hidden] { display: none; }
+  /* The card rule moves to the row so it still spans the card, not just
+     the width of the heading text now sharing it. */
+  .viewhead { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem;
+              margin-bottom: 0.5rem; padding-bottom: 0.35rem; border-bottom: 2px solid var(--accent-dark); }
+  .viewhead h2 { margin-bottom: 0; padding-bottom: 0; border-bottom: none; }
+  /* A switch rather than a bare checkbox: it is the one control on the card
+     and it should read as one from across the room. */
+  .switch { display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.7rem;
+            letter-spacing: 0.07em; text-transform: uppercase; color: rgba(35, 31, 32, 0.55); user-select: none; }
+  .switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+  .switch .track { width: 30px; height: 17px; border-radius: 9px; background: var(--steel);
+                   border: 1px solid rgba(35, 31, 32, 0.22); position: relative; transition: background 140ms ease-out; }
+  .switch .track::after { content: ""; position: absolute; left: 2px; top: 1px; width: 13px; height: 13px;
+                          border-radius: 50%; background: var(--white); box-shadow: 0 1px 2px rgba(35, 31, 32, 0.3);
+                          transition: transform 140ms ease-out; }
+  .switch input:checked + .track { background: var(--accent); border-color: var(--accent); }
+  .switch input:checked + .track::after { transform: translateX(13px); }
+  .switch input:focus-visible + .track { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .switch input:disabled + .track { opacity: 0.4; }
+  .switch input:disabled ~ span { opacity: 0.5; }
+  .stack figure { margin: 0; }
+  .stack figcaption { font-size: 0.7rem; letter-spacing: 0.07em; text-transform: uppercase; color: rgba(35, 31, 32, 0.55); margin-top: 0.3rem; }
+  canvas { background: var(--tarmac); border-radius: 6px; width: 100%; max-width: 560px; height: auto; display: block; }
+  canvas.wide { max-width: 100%; height: 200px; }
+  label { display: block; color: rgba(35, 31, 32, 0.6); font-size: 0.8rem; margin-top: 0.6rem; }
+  label b { color: var(--carbon); }
+  input[type=range] { width: 100%; accent-color: var(--accent); border: none; padding: 0; }
+  button, select { background: var(--white); border: 1px solid rgba(35, 31, 32, 0.28); color: var(--tarmac); font-family: inherit; padding: 0.35rem 0.8rem; border-radius: 6px; margin: 0.8rem 0.4rem 0 0; cursor: pointer; }
+  button:hover, select:hover { background: var(--halo); border-color: var(--accent); color: var(--accent); }
+  button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .readout { font-size: 0.85rem; margin-top: 0.5rem; white-space: pre-line; }
+  /* What the car is doing, readable from across the room. */
+  .state { font-family: 'Space Grotesk', 'Helvetica Neue', sans-serif; font-size: 1.35rem;
+           color: var(--white); background: var(--tarmac); border-radius: 8px;
+           padding: 1.1rem 0.6rem; margin-bottom: 0.7rem; text-align: center; letter-spacing: 0.02em; }
+  /* Stopped is neutral, moving is ember, timed out is crimson. Moving used
+     to be red as well, which spent the alarm colour on the normal case and
+     left the fault sharing it with the STOP button. */
+  .state.moving { background: var(--accent); }
+  .state.timeout { background: var(--red); }
+  /* The drive pad: a 3x3 grid with the four arrows. Buttons latch while a
+     pointer or a key holds them; two at once is normal (forward and left). */
+  .pad { display: grid; grid-template-columns: repeat(3, 84px); grid-template-rows: repeat(3, 84px); gap: 8px; justify-content: center; margin: 0.8rem auto; touch-action: none; user-select: none; }
+  .pad button { margin: 0; font-size: 1.8rem; border-radius: 12px; border: 2px solid var(--tarmac); background: var(--white); color: var(--tarmac); cursor: pointer; touch-action: none; }
+  .pad button.down { background: var(--accent); border-color: var(--accent); color: var(--white); }
+  .pad button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .pad .key { display: block; font-size: 0.65rem; letter-spacing: 0.05em; color: inherit; opacity: 0.7; }
+  .pad .mid { background: var(--halo); border: 1px solid var(--steel); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 0.7rem; color: rgba(35, 31, 32, 0.5); text-align: center; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+<div>
+<img class="logo" src="data:image/png;base64,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" alt="RACECAR Neo"><span class="wordmark">RACECAR<i>Neo</i></span>
+<h1>Web Teleop Dashboard</h1>
+<div class="meta">throttle: <b id="thr">?</b> &bull; steer: <b id="steer">?</b> &bull; odom: <b id="enc">?</b> m/s
+  &bull; camera: <b id="fps">?</b> fps &bull; depth: <b id="dfps">?</b> fps &bull; frame: <b id="res">?</b></div>
+</div>
+<div>
+<button class="stop" onclick="stopCar()" title="Release every button and set speed to 0">STOP</button>
+<button onclick="reset()" title="Re-read teleop.yaml">Reset</button>
+</div>
+</div>
+<main>
+<div class="grid">
+  <div class="card">
+    <div class="viewhead">
+      <h2>Camera</h2>
+      <label class="switch" id="detswitch" title="Draw the object detector's boxes on the color frame. Reads vision_msgs/Detection2DArray from detections_topic in teleop.yaml.">
+        <input type="checkbox" id="dettoggle">
+        <span class="track"></span>
+        <span>Detections</span>
+      </label>
+    </div>
+    <div class="stack">
+      <figure>
+        <img id="color" class="view" alt="color camera view" title="Live color frame.">
+        <canvas id="overlay"></canvas>
+        <figcaption>Color</figcaption>
+      </figure>
+      <figure id="depthfig">
+        <img id="depth" class="view" alt="depth camera view" title="Live depth frame, same lens and the same framing as the color view above. Bright is near, dark is far, black is a pixel the camera got no return from: glass, a mirror, or past the far end of the ramp.">
+        <figcaption>Depth</figcaption>
+      </figure>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Lidar</h2>
+    <canvas id="lidar" width="420" height="420" title="Scan points around the car; the nose is up. Scroll to zoom."></canvas>
+  </div>
+  <div>
+    <div class="card">
+      <h2>Encoder</h2>
+      <div class="state" id="state"></div>
+      <canvas id="chart" class="wide" width="420" height="160" title="White: measured speed from the wheel encoder, m/s. Orange: the throttle being commanded, -1 to 1. Dashed rules: slider changes."></canvas>
+    </div>
+    <div class="card">
+      <h2>Logs</h2>
+      <button onclick="saveLog()">Save log</button>
+      <select id="logsel"></select>
+      <button onclick="loadLog()">Load log</button>
+      <span class="readout" id="loginfo"></span>
+      <canvas id="logchart" class="wide" width="900" height="160"></canvas>
+    </div>
+  </div>
+</div>
+
+<div class="row2">
+  <div class="card">
+    <h2>Drive</h2>
+    <div class="pad" id="pad">
+      <div></div>
+      <button data-axis="fwd" data-val="1" title="Forward: W or the up arrow">&#9650;<span class="key">W</span></button>
+      <div></div>
+      <button data-axis="turn" data-val="-1" title="Left: A or the left arrow">&#9664;<span class="key">A</span></button>
+      <div class="mid" title="Hold two at once to turn while moving. Keys work anywhere on the page.">WASD<br>or arrows</div>
+      <button data-axis="turn" data-val="1" title="Right: D or the right arrow">&#9654;<span class="key">D</span></button>
+      <div></div>
+      <button data-axis="fwd" data-val="-1" title="Back: S or the down arrow">&#9660;<span class="key">S</span></button>
+      <div></div>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Tune</h2>
+    <div id="tuneform"></div>
+    <button onclick="post('/save')">Save</button>
+    <button onclick="reset()">Load</button>
+  </div>
+</div>
+
+
+<script>
+const SLIDERS = [
+  { key: 'speed', tip: '0 to 1 throttle while forward or back is held', min: 0, max: 1, step: 0.01 },
+  { key: 'angle', tip: '0 to 1 steering while left or right is held; 1 is full lock', min: 0, max: 1, step: 0.01 },
+];
+const KEYS = {
+  KeyW: ['fwd', 1], ArrowUp: ['fwd', 1], KeyS: ['fwd', -1], ArrowDown: ['fwd', -1],
+  KeyA: ['turn', -1], ArrowLeft: ['turn', -1], KeyD: ['turn', 1], ArrowRight: ['turn', 1],
+};
+
+let last = null;
+
+function post(path, body) {
+  return fetch(path, { method: 'POST', body: body ? JSON.stringify(body) : null });
+}
+
+// ---- the command: whatever is held right now, from any source ----
+// held: set of "axis:val" strings. Two on different axes give a diagonal;
+// two on the same axis cancel to 0, which is what a car should do when
+// asked for both forward and back.
+const held = new Set();
+
+function command() {
+  const sum = axis => [...held].filter(h => h.startsWith(axis + ':')).reduce((a, h) => a + parseInt(h.split(':')[1]), 0);
+  return { fwd: Math.sign(sum('fwd')), turn: Math.sign(sum('turn')) };
+}
+
+let lastSent = '';
+function sendCmd(force) {
+  const c = command(), s = JSON.stringify(c);
+  if (s !== lastSent || force) { lastSent = s; post('/cmd', c); }
+  for (const b of document.querySelectorAll('#pad button')) {
+    b.classList.toggle('down', held.has(`${b.dataset.axis}:${b.dataset.val}`));
+  }
+}
+
+function press(axis, val) { held.add(`${axis}:${val}`); sendCmd(false); }
+function release(axis, val) { held.delete(`${axis}:${val}`); sendCmd(false); }
+function releaseAll() { held.clear(); sendCmd(true); }
+
+// The service drops a command older than cmd_timeout, so repeat it while
+// anything is held. Sending nothing while released is what lets the
+// timeout catch a page that vanished with a key down.
+setInterval(() => { if (held.size) sendCmd(true); }, 100);
+
+// Keyboard. Auto-repeat keydown events are ignored so a held key does not
+// flood; keyup releases. Typing in a field is not driving.
+document.addEventListener('keydown', e => {
+  if (e.repeat || !(e.code in KEYS) || e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  e.preventDefault();
+  press(...KEYS[e.code]);
+});
+document.addEventListener('keyup', e => {
+  if (!(e.code in KEYS)) return;
+  e.preventDefault();
+  release(...KEYS[e.code]);
+});
+// A page that loses focus loses its keyup events too. Treat that as
+// releasing everything rather than waiting for the timeout.
+window.addEventListener('blur', releaseAll);
+document.addEventListener('visibilitychange', () => { if (document.hidden) releaseAll(); });
+
+// Pointer and touch. Each pointer is its own press, so two fingers on two
+// buttons are two holds; a pointer that leaves its button releases it.
+for (const b of document.querySelectorAll('#pad button')) {
+  const axis = b.dataset.axis, val = parseInt(b.dataset.val);
+  b.addEventListener('pointerdown', e => { e.preventDefault(); b.setPointerCapture(e.pointerId); press(axis, val); });
+  for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+    b.addEventListener(ev, () => release(axis, val));
+  }
+  b.addEventListener('contextmenu', e => e.preventDefault());
+}
+
+function stopCar() {
+  releaseAll();
+  post('/params', { speed: 0 }).then(() => { document.getElementById('tuneform').dataset.built = ''; });
+}
+
+function reset() {
+  post('/load').then(() => { document.getElementById('tuneform').dataset.built = ''; });
+}
+
+// ---- tune sliders: name only, the explanation on hover ----
+const SEND_MS = 60;
+let pending = {}, sendTimer = null;
+function queue(key, value) {
+  pending[key] = value;
+  if (sendTimer) return;
+  sendTimer = setTimeout(() => {
+    const body = pending; pending = {}; sendTimer = null;
+    post('/params', body);
+  }, SEND_MS);
+}
+
+function buildForm(p) {
+  // Rebuild only on Reset/Load/Stop so a drag is not interrupted by polling.
+  const form = document.getElementById('tuneform');
+  if (form.dataset.built) return;
+  form.dataset.built = '1';
+  form.innerHTML = SLIDERS.map(s => `
+    <label title="${s.tip}">${s.key} <b id="val_${s.key}">${p[s.key]}</b>
+      <input id="in_${s.key}" type="range" min="${s.min}" max="${s.max}" step="${s.step}" value="${p[s.key]}"></label>`).join('');
+  for (const s of SLIDERS) {
+    document.getElementById(`in_${s.key}`).oninput = e => {
+      document.getElementById(`val_${s.key}`).textContent = e.target.value;
+      queue(s.key, parseFloat(e.target.value));
+    };
+  }
+}
+
+function syncForm(p) {
+  if (document.querySelector('input:active')) return;
+  for (const s of SLIDERS) {
+    const el = document.getElementById(`in_${s.key}`);
+    if (el && parseFloat(el.value) !== p[s.key]) {
+      el.value = p[s.key];
+      document.getElementById(`val_${s.key}`).textContent = p[s.key];
+    }
+  }
+}
+
+// ---- views ----
+// Pull frames one at a time per view, so a congested link drops frame rate
+// instead of building a lag queue. Each view has its own loop: a car with
+// no depth stream 503s on /depth and the color view keeps its rate.
+// Pauses when the tab is hidden.
+function liveView(id, path) {
+  const img = document.getElementById(id);
+  (function tick() {
+    if (document.hidden) { setTimeout(tick, 250); return; }
+    const t = Date.now();
+    const done = () => {
+      img.removeEventListener('load', done); img.removeEventListener('error', done);
+      setTimeout(tick, Math.max(20, 120 - (Date.now() - t)));
+    };
+    img.addEventListener('load', done); img.addEventListener('error', done);
+    img.src = `${path}?${t}`;
+  })();
+}
+liveView('color', '/frame');
+liveView('depth', '/depth');
+
+// ---- detection overlay ----
+// Boxes arrive as fractions of the source frame, so they are drawn against
+// the colour view's own displayed size and stay correct when the column
+// resizes or the preview width changes.
+const DET_TIMEOUT_S = 1.5;  // matches DET_TIMEOUT_S in teleop.py
+const detToggle = document.getElementById('dettoggle');
+// Seeded from the control rather than assumed off: a browser restores a
+// checkbox across a reload, and the overlay has to agree with the switch.
+const DET = { on: detToggle.checked, boxes: [] };
+detToggle.addEventListener('change', () => { DET.on = detToggle.checked; drawOverlay(); });
+
+function drawOverlay() {
+  const img = document.getElementById('color'), cv = document.getElementById('overlay');
+  const w = Math.round(img.clientWidth), h = Math.round(img.clientHeight);
+  // Wipe first, every time. Switching the overlay off has to take the boxes
+  // with it: a stale box left painted over a live frame is a claim about
+  // what is out there right now.
+  if (cv.width && cv.height) cv.getContext('2d').clearRect(0, 0, cv.width, cv.height);
+  // Nothing to draw, or nothing to draw on: take the canvas out of the page
+  // rather than leaving an empty one sitting over the frame.
+  cv.hidden = !(DET.on && w && h);
+  if (cv.hidden) return;
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  cv.style.width = w + 'px'; cv.style.height = h + 'px';
+  const x = cv.getContext('2d');
+  x.clearRect(0, 0, w, h);
+  x.font = '600 11px Helvetica';
+  for (const [bx, by, bw, bh, label, score] of DET.boxes) {
+    const px = bx * w, py = by * h, pw = bw * w, ph = bh * h;
+    x.strokeStyle = '#EC8B48'; x.lineWidth = 2;
+    x.strokeRect(px, py, pw, ph);
+    // The chip flips inside the box when the box is against the top edge,
+    // so a detection at the frame's edge keeps its label on screen.
+    const text = score ? `${label} ${Math.round(score * 100)}%` : label;
+    if (!text) continue;
+    const tw = x.measureText(text).width + 8;
+    const above = py >= 15;
+    x.fillStyle = '#EC8B48';
+    x.fillRect(px, above ? py - 15 : py, Math.min(tw, w - px), 15);
+    x.fillStyle = '#231F20';
+    x.fillText(text, px + 4, (above ? py - 4 : py + 11));
+  }
+}
+
+window.addEventListener('resize', drawOverlay);
+
+let VIEW = 4.0;  // lidar view radius in meters, scroll wheel to zoom
+
+function drawLidar(scan) {
+  const c = document.getElementById('lidar'), x = c.getContext('2d');
+  const cx = c.width / 2, cy = c.height / 2, scale = cx / VIEW;
+  x.clearRect(0, 0, c.width, c.height);
+  // 0 deg is the nose (up). Positive degrees are to the right.
+  x.fillStyle = '#F5F5F7';
+  for (const [deg, r] of scan) {
+    const a = deg * Math.PI / 180;
+    x.fillRect(cx + Math.sin(a) * r * scale - 1, cy - Math.cos(a) * r * scale - 1, 2, 2);
+  }
+  x.strokeStyle = 'rgba(245, 245, 247, 0.25)';
+  for (const m of [1, 2, 3]) {
+    if (m >= VIEW) break;
+    x.beginPath(); x.arc(cx, cy, m * scale, 0, 2 * Math.PI); x.stroke();
+  }
+  x.fillStyle = '#EC8B48';
+  x.fillRect(cx - 4, cy - 7, 8, 14);  // the car
+  x.fillStyle = 'rgba(245, 245, 247, 0.72)'; x.font = '11px Helvetica';
+  x.fillText(`view ${VIEW.toFixed(1)} m`, 6, c.height - 6);
+}
+
+document.getElementById('lidar').addEventListener('wheel', e => {
+  e.preventDefault();
+  VIEW = Math.min(12, Math.max(1, VIEW * (e.deltaY > 0 ? 1.2 : 1 / 1.2)));
+});
+
+function drawSeries(canvasId, series, labels, marks) {
+  // series: list of {pts: [[t, v]], color, fixed?}. Each scaled to its own
+  // max unless fixed. marks: [[t, label]] slider changes, drawn as neutral
+  // dashed rules: they annotate the traces rather than being one.
+  const cv = document.getElementById(canvasId), x = cv.getContext('2d');
+  // Match the backing store to the box. A canvas left at its attribute size
+  // is scaled to fit, and its labels are scaled with it: at this column's
+  // width the axis text came out half again too big and ran into the trace.
+  const cw = Math.round(cv.clientWidth), ch = Math.round(cv.clientHeight);
+  if (cw && ch && (cv.width !== cw || cv.height !== ch)) { cv.width = cw; cv.height = ch; }
+  x.clearRect(0, 0, cv.width, cv.height);
+  x.strokeStyle = 'rgba(245, 245, 247, 0.48)'; x.setLineDash([4, 4]);
+  x.beginPath(); x.moveTo(0, cv.height / 2); x.lineTo(cv.width, cv.height / 2); x.stroke();
+  x.setLineDash([]);
+  for (const s of series) {
+    if (s.pts.length < 2) continue;
+    const t0 = s.pts[0][0], t1 = s.pts[s.pts.length - 1][0];
+    const max = s.fixed || Math.max(0.2, ...s.pts.map(p => Math.abs(p[1])));
+    x.strokeStyle = s.color; x.lineWidth = 1.5; x.beginPath();
+    for (let i = 0; i < s.pts.length; i++) {
+      const px = (s.pts[i][0] - t0) / (t1 - t0 || 1) * cv.width;
+      const py = cv.height / 2 - s.pts[i][1] / max * (cv.height / 2 - 8);
+      i ? x.lineTo(px, py) : x.moveTo(px, py);
+    }
+    x.stroke();
+    s.max = max;
+  }
+  const m0 = series[0];
+  if (marks && m0 && m0.pts.length > 1) {
+    const t0 = m0.pts[0][0], t1 = m0.pts[m0.pts.length - 1][0];
+    x.save();
+    for (const [t, label] of marks) {
+      if (t < t0 || t > t1) continue;
+      const px = (t - t0) / (t1 - t0 || 1) * cv.width;
+      x.strokeStyle = 'rgba(245, 245, 247, 0.55)'; x.lineWidth = 1;
+      x.setLineDash([6, 4]);
+      x.beginPath(); x.moveTo(px, 18); x.lineTo(px, cv.height); x.stroke();
+      x.setLineDash([]);
+      x.fillStyle = 'rgba(245, 245, 247, 0.8)'; x.font = '11px Helvetica';
+      x.fillText(label, Math.min(px + 4, cv.width - x.measureText(label).width - 4), 30);
+    }
+    x.restore();
+  }
+  // Axis values from the first series: y ticks at +max / 0 / -max, x in seconds.
+  const s0 = series[0];
+  if (s0 && s0.pts.length > 1) {
+    const u = s0.unit || '';
+    const t0 = s0.pts[0][0], t1 = s0.pts[s0.pts.length - 1][0];
+    x.fillStyle = 'rgba(245, 245, 247, 0.72)'; x.font = '11px Helvetica';
+    x.fillText(`+${s0.max.toFixed(2)} ${u}`, 4, 40);
+    x.fillText(`0 ${u}`, 4, cv.height / 2 - 4);
+    x.fillText(`-${s0.max.toFixed(2)} ${u}`, 4, cv.height - 22);
+    x.fillText(`${t0.toFixed(1)} s`, 4, cv.height - 8);
+    const end = `${t1.toFixed(1)} s`;
+    x.fillText(end, cv.width - x.measureText(end).width - 4, cv.height - 8);
+  }
+  x.fillStyle = '#F5F5F7'; x.font = '12px Helvetica';
+  x.fillText(labels(series), 8, 14);
+}
+
+const WORDS = { '1': 'FORWARD', '-1': 'BACK' }, TURNS = { '1': 'RIGHT', '-1': 'LEFT' };
+
+let busy = false;
+function update() {
+  if (busy) return;  // do not stack requests if the network lags
+  busy = true;
+  fetch('/state').then(r => r.json()).then(d => {
+    busy = false;
+    last = d;
+    document.getElementById('thr').textContent = d.speed_cmd;
+    document.getElementById('steer').textContent = d.steer;
+    document.getElementById('enc').textContent = d.enc_speed;
+    document.getElementById('fps').textContent = d.cam_fps;
+    document.getElementById('dfps').textContent = d.depth_fps;
+
+    // The switch reads "Detections" whatever the detector is doing; the
+    // state lives in the tooltip and in the disabled styling, so the caption
+    // row stays as quiet as the two under the views.
+    DET.boxes = d.dets || [];
+    detToggle.disabled = !d.params.detections_topic;
+    document.getElementById('detswitch').title =
+      !d.params.detections_topic
+        ? 'No detections_topic set in teleop.yaml, so there is nothing to draw.'
+      : !d.det_ok
+        ? `Nothing published on ${d.params.detections_topic} for the last `
+          + `${DET_TIMEOUT_S} s. Is the detector running?`
+      : `${d.dets.length} detection(s) at ${d.det_fps} Hz from `
+        + `${d.params.detections_topic}. Each box carries its class and confidence.`;
+    drawOverlay();
+    document.getElementById('res').textContent = d.res[0] ? `${d.res[0]}x${d.res[1]}` : 'none';
+
+    // A car with no depth topic configured drops the pane; a car that has
+    // one and is not receiving keeps it, so a dead stream stays visible as
+    // a fault rather than quietly disappearing.
+    document.getElementById('depthfig').hidden = !d.params.depth_topic;
+    // The ramp's far end belongs in the tooltip; the caption is a label.
+    document.getElementById('depth').title =
+      `Live depth frame, same lens and framing as the color view above. `
+      + `Bright is near, dark is ${d.params.depth_max_m} m, black is a pixel `
+      + `the camera got no return from: glass, a mirror, or past the far end.`;
+
+    const box = document.getElementById('state');
+    const words = [WORDS[d.fwd], TURNS[d.turn]].filter(Boolean).join(' ');
+    box.textContent = d.timed_out ? 'TIMED OUT' : (words || 'STOPPED');
+    box.className = 'state' + (d.timed_out ? ' timeout' : (words ? ' moving' : ''));
+    box.title = d.timed_out
+      ? `No command reached the service for ${d.params.cmd_timeout} s; driving zero until a button or key is pressed again.`
+      : d.params.speed === 0 ? 'speed is 0: the buttons steer but the car will not move until the slider is raised.'
+      : `Throttle ${d.speed_cmd}, steer ${d.steer}; measured ${d.enc_speed} m/s.`;
+
+    buildForm(d.params);
+    syncForm(d.params);
+    drawLidar(d.scan);
+    drawSeries('chart', [
+      { pts: d.hist.map(r => [r[0], r[1]]), color: '#FFFFFF', unit: 'm/s' },
+      { pts: d.hist.map(r => [r[0], r[2]]), color: '#EC8B48', fixed: 1 },
+    ], s => `odom ${d.enc_speed} m/s (white, +/- ${s[0].max?.toFixed(2)}) | throttle ${d.speed_cmd} (orange, +/- 1)`, d.marks);
+  }).catch(() => { busy = false; });
+}
+
+function loadLog() {
+  const f = document.getElementById('logsel').value;
+  if (!f) return;
+  fetch('/logs/' + f).then(r => r.text()).then(txt => {
+    const lines = txt.trim().split('\n');
+    const marks = lines.filter(l => l.startsWith('# mark'))
+      .map(l => { const p = l.split(','); return [parseFloat(p[1]), p.slice(2).join(',')]; });
+    const rows = lines.filter(l => !l.startsWith('#')).slice(1).map(l => l.split(',').map(Number));
+    const moving = rows.filter(r => r[1] || r[2]).length;
+    document.getElementById('loginfo').textContent =
+      `${f}: ${rows.length} rows, ${marks.length} changes, ${moving} with a button down`;
+    drawSeries('logchart', [
+      { pts: rows.map(r => [r[0], r[5]]), color: '#FFFFFF', unit: 'm/s' },
+      { pts: rows.map(r => [r[0], r[3]]), color: '#EC8B48', fixed: 1 },
+      { pts: rows.map(r => [r[0], r[4]]), color: '#6FC9D4', fixed: 1 },
+    ], s => `odom m/s (white, +/- ${s[0].max?.toFixed(2)}) | throttle (orange) | steer (cyan)`, marks);
+  });
+}
+
+function saveLog() {
+  // Snapshot what is on the live chart to a csv, then show it right away.
+  post('/logs/save').then(() => refreshLogs(true));
+}
+
+function refreshLogs(loadLatest) {
+  fetch('/logs').then(r => r.json()).then(names => {
+    const sel = document.getElementById('logsel');
+    sel.innerHTML = names.map(n => `<option>${n}</option>`).join('');
+    sel.selectedIndex = names.length - 1;  // Load defaults to the latest save
+    if (loadLatest && names.length) loadLog();
+  });
+}
+
+refreshLogs(false);
+
+update();
+setInterval(update, 120);  // /drive runs at 15 Hz; poll a little faster
+</script>
+</main>
+</body>
+</html>

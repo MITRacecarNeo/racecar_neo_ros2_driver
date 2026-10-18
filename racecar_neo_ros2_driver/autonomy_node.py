@@ -640,7 +640,10 @@ def main(args: list[str] | None = None) -> None:
     signal.signal(signal.SIGINT, _interrupt)
     signal.signal(signal.SIGTERM, _interrupt)
     node = AutonomyNode()
-    executor = MultiThreadedExecutor(num_threads=4)
+    # Three threads: a save's handler blocks on slam_toolbox's reply, which a
+    # second thread receives, while the third keeps the timers running. Each
+    # thread costs CPU on every wake-up, so no more than that.
+    executor = MultiThreadedExecutor(num_threads=3)
     executor.add_node(node)
     # The executor spins in a thread; the main thread stays in Python, where the
     # signal handlers run even while the executor waits (a stopped sim clock

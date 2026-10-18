@@ -108,12 +108,7 @@ racecar() {
             case "$action" in
                 install)
                     bash "$pkg_dir/scripts/setup_services.sh"
-                    # Units only: the checkouts are cloned by
-                    # `racecar setup dashboards`, which needs the network.
-                    bash "$pkg_dir/scripts/setup_dashboards.sh" --units-only
-                    ;;
-                update)
-                    bash "$pkg_dir/scripts/setup_dashboards.sh" --update
+                    bash "$pkg_dir/scripts/setup_dashboards.sh"
                     ;;
                 start)
                     if [[ -n "$1" ]]; then
@@ -204,7 +199,6 @@ usage: racecar service <action> [unit]
 actions:
   install         Install and enable the core units; install the dashboard
                   units stopped and disabled
-  update          Fast-forward the dashboard checkouts and re-render their units
   start [name]    Start racecar-<name>; default = teleop (watchdog follows via BindsTo).
                   Starting a lab dashboard stops the other /drive publishers first.
   stop [name]     Stop racecar-<name>; default = teleop
@@ -1155,10 +1149,8 @@ Commands:
                                            --eth-mode=static|dynamic
                                            --show
                                            --reset (disable the wlan1 AP + clear saved ID)
-                          dashboards   clone or fast-forward the three lab dashboards
-                                         and install their units (stopped, disabled).
-                                         Flags: --update (pull, then re-render units)
-                                                --units-only (no network)
+                          dashboards   install the three lab dashboards' units
+                                         (stopped, disabled).
                                          Skip with RACECAR_DASHBOARDS=0.
                           realsense    flash D435i firmware from the locally-staged
                                          image (offline; for airgapped units). Reads
@@ -1171,7 +1163,6 @@ Commands:
                           stop [name]          default: teleop
                           restart [name]       default: teleop
                           enable|disable [name] one unit, or the core units
-                          update               ff-only pull, then re-render dashboard units
                           logs [name]          journalctl -f for racecar-<name>
                           status               active/enabled summary (default)
                         Core units: teleop, watchdog, dashboard, jupyter
@@ -1418,14 +1409,14 @@ _racecar_complete() {
             elif [[ "${COMP_WORDS[2]}" == "networking" ]]; then
                 COMPREPLY=( $(compgen -W "--ssid= --psk= --channel= --ap-addr= --ap-iface= --eth-static= --eth-mode= --show --reset --help" -- "$cur") )
             elif [[ "${COMP_WORDS[2]}" == "dashboards" ]]; then
-                COMPREPLY=( $(compgen -W "--update --units-only --help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "--help" -- "$cur") )
             elif [[ "${COMP_WORDS[2]}" == "realsense" ]]; then
                 COMPREPLY=( $(compgen -W "--check --force --version --serial --fw-dir --help" -- "$cur") )
             fi
             ;;
         service)
             if [[ $COMP_CWORD -eq 2 ]]; then
-                COMPREPLY=( $(compgen -W "install update start stop restart enable disable logs status help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "install start stop restart enable disable logs status help" -- "$cur") )
             elif [[ $COMP_CWORD -eq 3 ]]; then
                 local action="${COMP_WORDS[2]}"
                 case "$action" in

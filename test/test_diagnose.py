@@ -666,7 +666,7 @@ class TestAutonomy:
     def test_stopped_unit_is_one_ok_row(self, diag):
         rows = diag.autonomy_checks('inactive', diag.RosResult(), sampled=False)
         assert [(c.name, c.status) for c in rows] == [('unit', 'OK')]
-        assert 'racecar map' in rows[0].detail
+        assert rows[0].detail == 'stopped'
 
     def test_failed_unit_warns(self, diag):
         assert diag.autonomy_checks('failed', diag.RosResult(), sampled=False)[0].status == 'WARN'
@@ -708,3 +708,14 @@ class TestAutonomy:
         pose = SimpleNamespace(pose=SimpleNamespace(pose=SimpleNamespace(
             position=SimpleNamespace(x=1.0, y=-2.0), orientation=q)))  # fmt: skip
         assert diag.read_autonomy_pose(pose) == ('OK', 'x +1.00 m, y -2.00 m, heading +90 deg')
+
+
+def test_coral_row_reads_paused_while_mapping(diag):
+    row = diag.Check('sensors', 'Coral inference', 'FAIL', 'not published')
+    other = diag.Check('sensors', 'RPLIDAR', 'OK', '7.2/7.2 Hz')
+    mapping = diag.RosResult(available=True, values={'/autonomy/status': _status(mode='mapping')})
+    out = diag.note_mapping_pause([row, other], mapping)
+    assert (out[0].status, out[0].detail) == ('OK', 'paused while mapping') and out[1] is other
+    localizing = diag.RosResult(available=True, values={'/autonomy/status': _status(mode='off')})
+    assert diag.note_mapping_pause([row], localizing)[0] is row
+    assert diag.note_mapping_pause([row], diag.RosResult())[0] is row

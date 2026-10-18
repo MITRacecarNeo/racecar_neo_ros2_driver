@@ -212,10 +212,10 @@ class TestService:
         ):
             assert unit in result.stdout, f'status missing {unit}'
 
-    def test_help_lists_the_dashboards_and_update(self):
+    def test_help_lists_the_dashboards(self):
         result = _run('service', 'help')
         assert result.returncode == 0
-        assert 'update' in result.stdout
+        assert 'update' not in result.stdout
         for name, port in (('webteleop', '8081'), ('linefollow', '8082'), ('wallfollow', '8083')):
             assert f'{name}({port})' in result.stdout
 
@@ -672,8 +672,8 @@ class TestCompletionInstalled:
     def test_top_level_offers_log(self):
         assert 'log' in self._complete('racecar', '')
 
-    def test_service_actions_include_update(self):
-        assert 'update' in self._complete('racecar', 'service', '')
+    def test_service_actions_drop_update(self):
+        assert 'update' not in self._complete('racecar', 'service', '')
 
     def test_service_units_include_dashboards(self):
         words = self._complete('racecar', 'service', 'start', '')

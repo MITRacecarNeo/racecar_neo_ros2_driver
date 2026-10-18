@@ -7,7 +7,6 @@ systemd, udev, polkit and modprobe files they install.
 
 import os
 from pathlib import Path
-import re
 import subprocess
 
 import pytest
@@ -531,19 +530,18 @@ class TestEthScript:
 
 
 class TestDashboardScript:
-    """setup_dashboards.sh renders our own units from the upstream templates."""
+    """setup_dashboards.sh installs units for the dashboards shipped in scripts/dashboards/."""
 
     SCRIPT = SCRIPTS_DIR / 'setup_dashboards.sh'
+    DASHBOARDS = {
+        'teleop_dashboard': ('racecar-webteleop', '8081'),
+        'linefollow_dashboard': ('racecar-linefollow', '8082'),
+        'wallfollow_dashboard': ('racecar-wallfollow', '8083'),
+    }
 
     @pytest.fixture(scope='class')
     def text(self):
         return self.SCRIPT.read_text()
-
-    def test_pulls_are_fast_forward_only(self, text):
-        # A diverged checkout means someone edited it; losing that is worse
-        # than skipping the update.
-        assert '--ff-only' in text
-        assert 'reset --hard' not in text
 
     def test_never_enables_or_starts(self, text):
         # All three publish /drive; enabling them all would put three
@@ -551,77 +549,49 @@ class TestDashboardScript:
         assert 'systemctl enable' not in text
         assert 'systemctl start' not in text
 
-    def test_renders_jazzy_not_humble(self, text):
-        assert '/opt/ros/humble|/opt/ros/jazzy' in text
+    def test_no_network(self, text):
+        assert 'git clone' not in text and 'git -C' not in text
 
     def test_injects_the_discovery_scope(self, text):
         assert 'ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST' in text
-
-    def test_renames_units_to_the_racecar_prefix(self, text):
-        # Either project's prefix comes off, so a fork and a fork synced from
-        # Neobotics upstream land on the same racecar-<name>.service.
-        assert 'unit_name()' in text
-        assert 'base="${base#neoracer-}"' in text
-        assert 'base="${base#racecar-}"' in text
 
     def test_verifies_every_substitution_token(self, text):
         # A template that stops carrying a token has changed shape; installing
         # the result anyway would point the unit at the wrong directory.
         for token in ('@DIR@', 'Environment=HOME='):
             assert token in text
-        # The ROS overlay may read humble (upstream) or jazzy (the forks), but
-        # one of them has to be there to rewrite.
-        assert '/opt/ros/(humble|jazzy)' in text
-
-    def test_clone_failure_is_not_fatal(self, text):
-        assert 'fetch_repo "$repo" || true' in text
-
-    def test_units_only_skips_the_network(self, text):
-        assert '--units-only' in text
-        assert 'MODE="units"' in text
 
     def test_env_var_skips_the_phase(self, text):
         assert 'RACECAR_DASHBOARDS' in text
 
-    def test_the_three_forked_repositories(self, text):
-        for repo in ('teleop', 'linefollow', 'wallfollow'):
-            assert f'{repo}_dashboard' in text
-        for gone in ('camlabel', 'pursuit', 'eps', 'smartfollow'):
-            assert f'{gone}_dashboard' not in text
+    def test_ships_the_three_dashboards(self, text):
+        listed = text.split('DASHBOARDS=(', 1)[1].split(')', 1)[0].split()
+        assert listed == list(self.DASHBOARDS)
 
-    def test_clones_the_platform_branch(self, text):
-        # The forks' default branch is the Neobotics original: upstream
-        # ports, neoracer unit names, Humble paths, forward-facing lidar.
-        # Cloning it would install the wrong dashboards on a fresh car.
-        assert 'BRANCH="${RACECAR_DASHBOARD_BRANCH:-racecar-neo}"' in text
-        assert '--branch "$BRANCH"' in text
+    @pytest.mark.parametrize(
+        'name', ['teleop_dashboard', 'linefollow_dashboard', 'wallfollow_dashboard']
+    )
+    def test_templates_ship_in_tree(self, name):
+        unit, port = self.DASHBOARDS[name]
+        body = (SCRIPTS_DIR / 'dashboards' / name / f'{unit}.service.in').read_text()
+        assert '/opt/ros/jazzy' in body and '/opt/ros/humble' not in body
+        assert f'(port {port})' in body
+        assert body.count('@DIR@') == 2
 
-    def test_pull_names_the_remote_branch(self, text):
-        # A checkout made before the clone set tracking has no upstream, so
-        # a bare `git pull` fails with 'no tracking information'.
-        assert 'pull --ff-only --quiet origin "$BRANCH"' in text
-
-    def test_a_checkout_on_another_branch_is_left_alone(self, text):
-        assert "not '$BRANCH'; left alone" in text
-
-    def test_pins_the_dashboard_version(self, text):
-        # The dashboards track the driver's release rather than a count of
-        # their own, the same way the RealSense firmware target is pinned.
-        assert 'DASHBOARD_VERSION="${RACECAR_DASHBOARD_VERSION:-' in text
-
-    def test_the_pin_matches_the_driver_version(self, text):
-        pinned = re.search(r'DASHBOARD_VERSION="\$\{RACECAR_DASHBOARD_VERSION:-([^}]+)\}"', text)
-        assert pinned, 'no pinned dashboard version'
-        setup_py = (SCRIPTS_DIR.parent / 'setup.py').read_text()
-        driver = re.search(r"version='([^']+)'", setup_py)
-        assert driver, 'no version in setup.py'
-        assert pinned.group(1) == driver.group(1)
-
-    def test_a_version_mismatch_is_not_fatal(self, text):
-        # A car mid-upgrade should still end up with working units; which
-        # release to run is the operator's call, not the script's.
-        assert 'mismatched+=' in text
-        assert 'exit 1' not in text.split('check_version()')[1].split('}')[0]
+    def test_installs_rendered_units(self, tmp_path, monkeypatch):
+        units = tmp_path / 'units'
+        units.mkdir()
+        monkeypatch.setenv('RACECAR_SYSTEMD_DIR', str(units))
+        monkeypatch.setenv('RACECAR_SUDO', '')
+        monkeypatch.setenv('RACECAR_SYSTEMCTL', 'true')
+        r = subprocess.run(['bash', str(self.SCRIPT)], capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+        for name, (unit, _) in self.DASHBOARDS.items():
+            body = (units / f'{unit}.service').read_text()
+            assert f'WorkingDirectory={SCRIPTS_DIR / "dashboards" / name}' in body
+            assert 'ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST' in body
+        again = subprocess.run(['bash', str(self.SCRIPT)], capture_output=True, text=True)
+        assert again.stdout.count('already up to date') == 3
 
     def test_a_failed_install_is_not_reported_as_success(self, text):
         # install_unit runs under `|| true`, which suppresses errexit for its
@@ -632,64 +602,18 @@ class TestDashboardScript:
     def test_a_failed_daemon_reload_still_reaches_the_summary(self, text):
         assert 'if $SYSTEMCTL daemon-reload; then' in text
 
-    def _check_version(self, tmp_path, contents, pinned='0.8.1'):
-        """Run the shipped check_version() against a throwaway checkout."""
-        text = self.SCRIPT.read_text()
-        body = text.split('check_version() {', 1)[1].split('\n}\n', 1)[0]
-        repo = tmp_path / 'teleop_dashboard'
-        repo.mkdir()
-        if contents is not None:
-            (repo / 'VERSION').write_text(contents)
-        script = (
-            f'DASH_DIR={tmp_path}\n'
-            f'DASHBOARD_VERSION={pinned}\n'
-            'mismatched=()\n'
-            'check_version() {' + body + '\n}\n'
-            'check_version teleop_dashboard\n'
-            'printf "MISMATCHED:%s\\n" "${mismatched[*]}"\n'
-        )
-        return subprocess.run(['bash', '-c', script], capture_output=True, text=True)
+    def test_gitignore_tracks_the_dashboards(self):
+        gitignore = (SCRIPTS_DIR.parent / '.gitignore').read_text().splitlines()
+        assert 'scripts/dashboards/' not in gitignore
+        for kept_out in ('camlabel', 'eps', 'pursuit', 'smartfollow'):
+            assert f'scripts/dashboards/{kept_out}_dashboard/' in gitignore
+        assert 'scripts/dashboards/*/*.local.yaml' in gitignore
 
-    def test_a_matching_checkout_passes(self, tmp_path):
-        r = self._check_version(tmp_path, '0.8.1\n')
-        assert 'teleop_dashboard: 0.8.1' in r.stdout
-        assert 'MISMATCHED:\n' in r.stdout
-
-    def test_a_stale_checkout_is_named(self, tmp_path):
-        r = self._check_version(tmp_path, '0.8.0\n')
-        assert 'driver pins 0.8.1' in r.stderr
-        assert '0.8.0' in r.stdout.split('MISMATCHED:')[1]
-
-    def test_a_checkout_with_no_version_is_caught(self, tmp_path):
-        # A checkout with no VERSION file must not pass.
-        r = self._check_version(tmp_path, None)
-        assert 'no VERSION' in r.stderr
-        assert 'no VERSION' in r.stdout.split('MISMATCHED:')[1]
-
-    def test_trailing_whitespace_in_version_is_tolerated(self, tmp_path):
-        r = self._check_version(tmp_path, '  0.8.1  \n\n')
-        assert 'MISMATCHED:\n' in r.stdout
-
-    def test_clones_from_the_racecar_org(self, text):
-        # The forks carry this platform's lidar convention, ports and
-        # branding; the Neobotics originals do not.
-        assert 'github.com/MITRacecarNeo' in text
-        assert 'Neobotics-Foundation-Inc' not in text
-
-    def test_checkouts_are_gitignored(self):
-        gitignore = (SCRIPTS_DIR.parent / '.gitignore').read_text()
-        assert 'scripts/dashboards/' in gitignore
-
-    def test_linters_exclude_the_checkouts(self):
+    def test_linters_exclude_the_dashboards(self):
         flake8 = (SCRIPTS_DIR.parent / 'test' / 'test_flake8.py').read_text()
         pep257 = (SCRIPTS_DIR.parent / 'test' / 'test_pep257.py').read_text()
         assert 'dashboards' in flake8
         assert 'dashboards' in pep257
-
-    def test_pytest_does_not_collect_the_checkouts(self):
-        cfg = (SCRIPTS_DIR.parent / 'setup.cfg').read_text()
-        assert 'norecursedirs' in cfg
-        assert 'scripts/dashboards' in cfg
 
     def _retired(self, tmp_path, installed):
         """Run the shipped remove_retired_unit() against a throwaway unit dir."""

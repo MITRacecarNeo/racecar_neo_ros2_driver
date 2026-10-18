@@ -120,7 +120,7 @@ def check_name(name: str, what: str = 'map name') -> None:
     if not valid_name(name):
         raise MapError(f'{what} must be letters, digits, - and _: {name!r}', 2)
     if name in RESERVED_NAMES:
-        raise MapError(f'{name!r} is reserved for moved-aside maps; pick another {what}', 2)
+        raise MapError(f'{name!r} is reserved. Pick another {what}', 2)
 
 
 def format_pose(pose: tuple[float, float, float]) -> str:
@@ -166,7 +166,7 @@ def saved_pose(
         if record.get(au.LOCALIZED_AT_STOP) is False:
             text += (
                 f'. The car was not localized when the run on {state.name} stopped at '
-                f'{record.get("stopped", "?")}, so it may have moved since'
+                f'{record.get("stopped", "?")}. It may have moved since'
             )
             return pose, 'last_pose', text, False
         age = _age_sec(when, now)
@@ -299,8 +299,7 @@ def plan_load(
         raise MapError(f'no map named {name} under {root}')
     if not state.saved:
         raise MapError(
-            f'{name} was never saved; its autosave is from {state.autosave_time}. '
-            f'Keep it with `racecar map recover {name}`, then load it.'
+            f'{name} was never saved. Keep it with `racecar map recover {name}`, then load it.'
         )
     plan = Plan(
         {
@@ -312,8 +311,8 @@ def plan_load(
     )
     if state.unsaved:
         plan.notes.append(
-            f'{name} has an autosave from {state.autosave_time} with changes the saved map lacks; '
-            f'loading the saved map. To keep them, run `racecar map recover {name}`.'
+            f'{name} has an autosave from {state.autosave_time} with unsaved changes. '
+            f'Loading the saved map. To keep them, run `racecar map recover {name}`.'
         )
     if search:
         plan.values['AUTONOMY_POSE'] = 'global'
@@ -495,8 +494,9 @@ def _wait_ready(values: dict[str, str], out: Out, timeout: float) -> int:
     if not alive():
         raise MapError(f'the autonomy unit stopped while starting; see {LOG_HINT}')
     if last is not None and ours(last) and mode == 'localization':
+        reason = not_ready_reason(last)
         out(
-            f'Running, {not_ready_reason(last)}. Drive a short distance, '
+            f'Running. {reason[:1].upper()}{reason[1:]}. Drive a short distance, '
             'then check `racecar map status`.'
         )
         return 0
@@ -638,15 +638,15 @@ def recover(name: str, out: Out = print) -> int:
         and values.get('AUTONOMY_MODE') == 'mapping'
         and unit_running()
     ):
-        raise MapError(f'{name} is being mapped; stop the run first with `racecar map stop`.')
+        raise MapError(f'{name} is being mapped. Stop the run first with `racecar map stop`.')
     if not state.unsaved:
-        out(f'{name} is saved and its autosave has nothing newer; nothing to recover.')
+        out(f'{name} is saved. Nothing to recover.')
         return 0
     moved = au.archive_map_files(state.folder, name, datetime.now())
     au.copy_autosave(state.folder, name)
     out(f'Recovered {name} from its autosave of {state.autosave_time}.')
     if moved is not None:
-        out(f'The map it replaces is in {moved}.')
+        out(f'The replaced map is in {moved}.')
     return 0
 
 

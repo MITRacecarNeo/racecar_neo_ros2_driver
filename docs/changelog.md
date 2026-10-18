@@ -107,6 +107,13 @@ All notable changes to this project will be documented in this file. The format 
   enables the map viewer.
 - `config/foxglove_layout.json`: a Lichtblick layout (top-down map, scan,
   particles, and pose; status table; pose plot), installed with the config.
+- The lab dashboards (webteleop, linefollow, wallfollow) ship in
+  `scripts/dashboards/` and are tracked here; `setup_dashboards.sh` installs
+  their units without cloning. Saved tuning goes to `<name>.local.yaml`
+  (gitignored), logs to `~/data/dashboards/<name>/`. Internals in
+  `docs/dashboards.md`; tests in `test/test_dashboard_*.py`.
+- `edgetpu_node` pauses inference while mapping (`pause_while_mapping`);
+  `racecar status` reads the Coral row as paused.
 - Docs: map quality, localization state, and localizer choice in
   `docs/troubleshooting.md`; Foxglove bridge and mapping limits in
   `docs/advanced-settings.md`; map viewer and mapping steps in README.
@@ -367,6 +374,12 @@ All notable changes to this project will be documented in this file. The format 
   flexed), plus a post-repair check. The unseated BEC bulk capacitor stays
   listed as a known cause on other cars. Brownout references in the
   troubleshooting guide point to the fix.
+### Removed
+
+- `racecar service update` and `setup_dashboards.sh --update`, and the
+  dashboard version pin (`RACECAR_DASHBOARD_VERSION`): the dashboards ship
+  with the driver.
+
 
 ## [0.8.3] - 2026-09-22
 

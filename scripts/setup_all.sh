@@ -67,7 +67,7 @@ echo "==> [11/12] systemd services (teleop, watchdog, dashboard, jupyter)"
 bash "$SCRIPT_DIR/setup_services.sh"
 
 echo
-echo "==> [12/12] Lab dashboards (clone + install units, disabled)"
+echo "==> [12/12] Lab dashboards (install units, disabled)"
 bash "$SCRIPT_DIR/setup_dashboards.sh"
 
 echo

@@ -329,7 +329,7 @@ def autonomy_view(values: dict[str, str] | None, age: float | None) -> dict[str,
         return {
             'status': 'dead',
             'headline': headline,
-            'lines': [f'No status for {age:.0f} s; the autonomy service may have stopped.'],
+            'lines': [f'No status for {age:.0f} s. The autonomy service may have stopped.'],
             'port': MAPVIEW_PORT,
         }
     localized = values.get('localized') == 'true'

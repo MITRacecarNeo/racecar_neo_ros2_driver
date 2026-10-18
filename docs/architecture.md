@@ -163,26 +163,14 @@ is slow and revoking immediate: one bad frame hands the gate back.
 
 ### Lab dashboards
 
-Three dashboards run as `racecar-*` units, installed by
-`scripts/setup_dashboards.sh` from gitignored checkouts under
-`scripts/dashboards/`: `webteleop` on 8081, `linefollow` on 8082 and
-`wallfollow` on 8083, continuing from the driver's own dashboard on 8080. All
-three publish `/drive` and so are mutually exclusive; a second publisher fights
-the mux, and `racecar service start` enforces one at a time.
-`setup_dashboards.sh` also stops, disables and removes units left by the four
-retired dashboards (`camlabel`, `eps`, `pursuit`, `smartfollow`).
-
-Each is a fork under MITRacecarNeo of the corresponding Neobotics Foundation
-repository, checked out on its `racecar-neo` branch, so the lidar convention,
-ports and branding are corrected at the source. Each checkout carries
-`VERSION`, `docs/changelog.md` and `docs/architecture.md`; the version tracks
-this driver's release, and `setup_dashboards.sh` reports a checkout that does
-not match the version it pins. Dashboard internals (depth preview, lidar
-convention, palette) are documented in each fork's `docs/architecture.md`.
-
-Units are rendered from each checkout's `.service.in` rather than copied, so a
-fork synced from Neobotics upstream keeps working: the ROS distribution, unit
-prefix and discovery scope are absorbed on this side either way.
+Three dashboards in `scripts/dashboards/` run as `racecar-*` units, installed
+by `scripts/setup_dashboards.sh`: `webteleop` on 8081, `linefollow` on 8082
+and `wallfollow` on 8083, beside the driver's own dashboard on 8080 and the
+map viewer on 8084. All three publish `/drive` and so are mutually exclusive;
+a second publisher fights the mux, and `racecar service start` enforces one at
+a time. `setup_dashboards.sh` also removes units left by the four retired
+dashboards (`camlabel`, `eps`, `pursuit`, `smartfollow`). Internals, data
+pipelines and the lidar convention: `docs/dashboards.md`.
 
 ## Sensor and perception nodes
 
