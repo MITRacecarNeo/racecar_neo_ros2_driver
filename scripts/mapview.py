@@ -39,6 +39,7 @@ import numpy as np
 from racecar_neo_ros2_driver import autonomy as au
 from racecar_neo_ros2_driver.maps import map_root, valid_name
 import sysinfo
+import webui
 import yaml
 
 PORT = 8084
@@ -262,6 +263,8 @@ class Job:
         code = proc.wait()
         with self._lock:
             self.code, self.running = code, False
+            last = self.lines[-1] if self.lines else ''
+        print(f'mapview: racecar map {" ".join(argv)}: exit {code}: {last}', flush=True)
 
     def state(self) -> dict[str, Any]:
         with self._lock:
@@ -523,6 +526,15 @@ class Handler(BaseHTTPRequestHandler):
         return data
 
     def do_GET(self) -> None:  # noqa: N802
+        asset = webui.static_file(self.path)
+        if asset is not None:
+            self.send_response(200)
+            self.send_header('Content-Type', asset[1])
+            self.send_header('Content-Length', str(len(asset[0])))
+            self.send_header('Cache-Control', webui.CACHE_CONTROL)
+            self.end_headers()
+            self.wfile.write(asset[0])
+            return
         url = urlparse(self.path)
         q = {k: v[0] for k, v in parse_qs(url.query).items()}
         if url.path in ('/', '/index.html'):

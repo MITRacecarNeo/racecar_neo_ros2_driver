@@ -68,6 +68,12 @@ header.open #details { display: flex; flex-wrap: wrap; gap: 4px 12px; }
 .row { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
 input[type=text] { font: inherit; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--line);
   background: var(--bg); color: var(--text); flex: 1; min-width: 0; }
+#maps { position: absolute; top: 0; left: 0; bottom: 0; width: min(340px, 80%); display: none;
+  overflow: auto; background: var(--panel); border-right: 1px solid var(--line); padding: 12px 14px; z-index: 5; }
+main.maps-open #maps { display: block; }
+main.maps-open #hint { left: calc(min(340px, 80%) + 10px); }
+#maps .top { display: flex; align-items: center; justify-content: space-between; }
+#maps h2 { margin: 0; font-size: 17px; }
 .map { display: flex; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); }
 .map img { width: 72px; height: 72px; object-fit: contain; background: var(--unknown); border-radius: 6px;
   flex: none; }
@@ -89,6 +95,7 @@ input[type=text] { font: inherit; padding: 9px 10px; border-radius: 8px; border:
 <main>
   <canvas id="view"></canvas>
   <div id="hint"></div>
+  <aside id="maps"><div class="top"><h2>Maps</h2><button id="mapsclose">Close</button></div><div id="maplist"></div></aside>
   <div id="tools">
     <button id="zin" title="Zoom in">+</button>
     <button id="zout" title="Zoom out">-</button>
@@ -98,11 +105,6 @@ input[type=text] { font: inherit; padding: 9px 10px; border-radius: 8px; border:
 <div id="job"><span id="jobtitle"></span><button id="jobmore">Show output</button><pre id="joblines"></pre></div>
 <footer id="controls"></footer>
 
-<div class="sheet" id="maps"><div>
-  <h2>Maps</h2>
-  <div id="maplist"></div>
-  <div class="row"><button id="mapsclose">Close</button></div>
-</div></div>
 
 <div class="sheet" id="startsheet"><div>
   <h2 id="starttitle">Start mapping</h2>
@@ -134,6 +136,7 @@ let gridVersion = -1;
 let preview = null;        // saved map shown while picking an extend pose
 let trail = { id: -1, from: 0, points: [] };
 let renderKey = '';
+let mapsOpen = false;     // map list sidebar
 let poseTool = null;       // {purpose: 'set'|'extend', start: [x,y], end: [x,y]}
 let pending = null;        // extend request waiting for a pose
 let busy = false;
@@ -223,7 +226,9 @@ function drawScale() {
   const d = devicePixelRatio;
   const steps = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50];
   const m = steps.find((s) => s * view.scale >= 60) || 50;
-  const len = m * view.scale * d, x = 14 * d, y = canvas.height - 16 * d;
+  // Clear of the map list when it is open on the left.
+  const left = mapsOpen ? $('maps').offsetWidth : 0;
+  const len = m * view.scale * d, x = (left + 14) * d, y = canvas.height - 16 * d;
   ctx.strokeStyle = css('--text'); ctx.fillStyle = css('--text'); ctx.lineWidth = 2 * d;
   ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + len, y); ctx.moveTo(x, y - 5 * d); ctx.lineTo(x, y);
   ctx.moveTo(x + len, y - 5 * d); ctx.lineTo(x + len, y); ctx.stroke();
@@ -409,7 +414,7 @@ function render() {
   } else {
     f.append(button('Start mapping', 'primary', () => openStart(null), running));
   }
-  f.append(button('Maps', '', openMaps, false));
+  f.append(button('Maps', mapsOpen ? 'on' : '', toggleMaps, false));
 }
 
 function openStart(source) {
@@ -438,8 +443,12 @@ $('startgo').onclick = async () => {
   action({ action: 'start', name });
 };
 
+function closeMaps() { mapsOpen = false; document.querySelector('main').classList.remove('maps-open'); render(); draw(); }
+function toggleMaps() { if (mapsOpen) closeMaps(); else openMaps(); }
 async function openMaps() {
-  $('maps').classList.add('show');
+  mapsOpen = true;
+  document.querySelector('main').classList.add('maps-open');
+  render(); draw();
   const res = await fetch('/api/maps', { cache: 'no-store' });
   const data = await res.json();
   const list = $('maplist'); list.replaceChildren();
@@ -455,21 +464,21 @@ async function openMaps() {
     info.querySelector('.muted').textContent = `${m.state}; ${m.saved}; ${m.size}`;
     const acts = info.querySelector('.acts');
     acts.append(button('Load', 'primary', () => openLoad(m.name), running || m.state === 'unsaved'));
-    acts.append(button('Extend', '', () => { $('maps').classList.remove('show'); openStart(m.name); }, running));
+    acts.append(button('Extend', '', () => { closeMaps(); openStart(m.name); }, running));
     if (m.state !== 'saved') {
       acts.append(button('Keep', '', () => {
         if (confirm(`Keep the autosave of "${m.name}" as its saved map?`)) {
-          $('maps').classList.remove('show'); action({ action: 'recover', name: m.name });
+          closeMaps(); action({ action: 'recover', name: m.name });
         }
       }, running));
     }
     row.append(img, info); list.append(row);
   }
 }
-$('mapsclose').onclick = () => $('maps').classList.remove('show');
+$('mapsclose').onclick = closeMaps;
 
 function openLoad(name) {
-  $('maps').classList.remove('show');
+  closeMaps();
   $('loadtitle').textContent = `Load "${name}"`;
   $('loadsheet').dataset.name = name;
   $('loadsheet').classList.add('show');
@@ -489,7 +498,7 @@ function showStatus() {
   const s = state.status || {}, mode = s.mode || 'off';
   $('mode').textContent = mode === 'off' || !s.mode ? 'off' : mode;
   $('mode').className = 'badge' + (mode === 'mapping' || mode === 'localization' ? ' ok' : '');
-  $('mapname').textContent = s.map || '';
+  $('mapname').textContent = mode === 'mapping' || mode === 'localization' ? s.map || '' : '';
   const loc = $('loc');
   if (mode === 'localization' || mode === 'mapping') {
     loc.textContent = localized() ? 'localized' : 'not localized';
@@ -568,7 +577,11 @@ async function poll() {
     showStatus(); showJob();
     // Rebuild the controls only when what they depend on changes.
     const key = [(s.status || {}).mode, (s.status || {}).localizer, !!(s.job && s.job.running), !!poseTool].join('|');
-    if (key !== renderKey) { renderKey = key; render(); }
+    if (key !== renderKey) {
+      // A command just finished: the open map list may show a stale state.
+      if (mapsOpen && renderKey.split('|')[2] === 'true' && !(s.job && s.job.running)) openMaps();
+      renderKey = key; render();
+    }
     draw();
   } catch (err) {
     lostContact = true; showBanner();

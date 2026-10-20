@@ -3,119 +3,195 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>RACECAR Neo Dashboard</title>
+<title>RACECAR Neo</title>
+<link rel="stylesheet" href="/ui/rcn.css">
+<link rel="icon" href="/ui/brand/app-icon-32.png">
+<link rel="apple-touch-icon" href="/ui/brand/app-icon-180.png">
 <style>
-  :root { --bg: #1a1a2e; --card: #16213e; --green: #0f0; --yellow: #ff0; --red: #f44; --text: #e0e0e0; --muted: #888; }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: 'Courier New', monospace; background: var(--bg); color: var(--text); padding: 1rem; }
-  h1 { color: #7ec8e3; margin-bottom: 0.5rem; font-size: 1.4rem; }
-  .meta { color: var(--muted); font-size: 0.85rem; margin-bottom: 1rem; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
-  .card { background: var(--card); border-radius: 8px; padding: 1rem; border-left: 4px solid var(--muted); }
-  .card.healthy { border-left-color: var(--green); }
-  .card.stale   { border-left-color: var(--yellow); }
-  .card.dead    { border-left-color: var(--red); }
-  .card.unsupervised { border-left-color: var(--muted); }
-  .card h2 { font-size: 1rem; margin-bottom: 0.5rem; }
-  .indicator { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
-  .indicator.healthy { background: var(--green); box-shadow: 0 0 6px var(--green); }
-  .indicator.stale   { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); }
-  .indicator.dead    { background: var(--red); box-shadow: 0 0 6px var(--red); }
-  .indicator.unsupervised { background: var(--muted); }
-  table { width: 100%; border-collapse: collapse; margin-bottom: 1.5rem; }
-  th, td { text-align: left; padding: 0.4rem 0.8rem; border-bottom: 1px solid #2a2a4a; font-size: 0.85rem; }
-  th { color: #7ec8e3; }
-  .hz { font-weight: bold; }
-  .hz.ok    { color: var(--green); }
-  .hz.stale { color: var(--yellow); }
-  .hz.dead  { color: var(--red); }
-  .log-box { background: #0d1117; border-radius: 6px; padding: 0.8rem; font-size: 0.78rem; max-height: 200px; overflow-y: auto; white-space: pre-wrap; color: var(--muted); }
-  .section-title { color: #7ec8e3; font-size: 1rem; margin-bottom: 0.5rem; }
-  #error-banner { display: none; background: #4a1010; color: var(--red); padding: 0.5rem 1rem; border-radius: 6px; margin-bottom: 1rem; }
+  .layout { display: grid; grid-template-columns: 280px 1fr; gap: var(--rcn-space-6); max-width: 1200px; margin: 0 auto; padding: var(--rcn-space-6) var(--rcn-space-4); }
+  @media (max-width: 760px) { .layout { grid-template-columns: 1fr; gap: var(--rcn-space-4); padding: var(--rcn-space-4); } }
+  .hero { display: flex; flex-wrap: wrap; align-items: end; gap: var(--rcn-space-3) var(--rcn-space-6); margin-bottom: var(--rcn-space-6); }
+  .hero img { width: 320px; max-width: 100%; height: auto; display: block; }
+  @media (max-width: 760px) { .hero { display: none; } }
+
+  aside { align-self: start; }
+  aside h2 { font-size: 20px; line-height: 28px; margin-bottom: var(--rcn-space-3); }
+  .choice { display: flex; align-items: center; gap: var(--rcn-space-3); padding: 10px 12px; border-radius: var(--rcn-radius-md); cursor: pointer; }
+  .choice:hover { background: var(--rcn-bg); }
+  .choice input { width: 18px; height: 18px; margin: 0; }
+  .choice .rcn-icon { width: 20px; height: 20px; color: var(--rcn-orange); }
+  .choice .live { margin-left: auto; }
+  #activate { width: 100%; justify-content: center; margin-top: var(--rcn-space-3); }
+  #activate-msg { min-height: 20px; margin-top: var(--rcn-space-2); }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: var(--rcn-space-4); margin-top: var(--rcn-space-3); }
+  .tile { display: flex; flex-direction: column; gap: var(--rcn-space-2); padding: var(--rcn-space-4); border: 1px solid var(--rcn-border); border-radius: var(--rcn-radius-lg); color: var(--rcn-text); text-decoration: none; min-height: 150px; }
+  a.tile:hover { border-color: var(--rcn-orange); }
+  .tile .top { display: flex; align-items: center; justify-content: space-between; }
+  .tile .glyph { width: 44px; height: 44px; border-radius: var(--rcn-radius-md); background: var(--rcn-surface); display: grid; place-items: center; color: var(--rcn-orange); }
+  .tile .glyph .rcn-icon { width: 26px; height: 26px; }
+  .tile .foot { margin-top: auto; display: flex; align-items: center; gap: var(--rcn-space-2); }
+  .tile .foot .rcn-icon { width: 16px; height: 16px; }
+
+  details { margin-top: var(--rcn-space-8); border-top: 1px solid var(--rcn-border); padding-top: var(--rcn-space-4); }
+  summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: var(--rcn-space-2); font: 700 20px/28px var(--rcn-font-display); }
+  summary::-webkit-details-marker { display: none; }
+  summary .rcn-icon { transition: transform 0.15s; }
+  details[open] summary .rcn-icon { transform: rotate(180deg); }
+  .sys-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: var(--rcn-space-3); margin: var(--rcn-space-3) 0 var(--rcn-space-6); }
+  .sys-card { background: var(--rcn-surface); border-radius: var(--rcn-radius-md); padding: var(--rcn-space-3) var(--rcn-space-4); }
+  .sys-card .row { display: flex; align-items: center; justify-content: space-between; gap: var(--rcn-space-2); }
+  .sys-card .name { font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; margin: var(--rcn-space-3) 0 var(--rcn-space-6); font-size: 14px; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--rcn-border); }
+  th { color: var(--rcn-text-muted); font-weight: 600; }
+  h3.sec { margin-top: var(--rcn-space-4); }
 </style>
 </head>
 <body>
 
-<h1>RACECAR Neo system dashboard</h1>
-<div class="meta">
-  <span id="timestamp">Loading...</span> &bull;
-  <span id="log-dir"></span>
+<header class="rcn-header">
+  <img class="rcn-mark" src="/ui/brand/mark-white.png" alt="RACECAR Neo">
+  <span class="rcn-title" id="host">RACECAR Neo</span>
+  <span class="rcn-spacer"></span>
+  <span class="rcn-status off" id="overall"><svg class="rcn-icon"><use href="/ui/icons.svg#info"/></svg>Loading</span>
+</header>
+
+<div class="layout">
+  <aside class="rcn-panel">
+    <h2>Active lab dashboard</h2>
+    <div id="choices"></div>
+    <button class="rcn-btn primary" id="activate"><svg class="rcn-icon"><use href="/ui/icons.svg#play"/></svg>Activate</button>
+    <div class="rcn-small rcn-muted" id="activate-msg"></div>
+  </aside>
+
+  <main>
+    <div class="hero">
+      <img src="/ui/brand/lockup-horizontal-reversed.png" alt="RACECAR Neo">
+    </div>
+    <div class="rcn-eyebrow">Dashboards</div>
+    <div class="tiles" id="tiles"></div>
+
+    <details id="system">
+      <summary>System status <svg class="rcn-icon"><use href="/ui/icons.svg#chevron-down"/></svg></summary>
+      <h3 class="sec">Autonomy</h3>
+      <div class="sys-grid" id="autonomy"></div>
+      <h3 class="sec">Nodes</h3>
+      <div class="sys-grid" id="nodes"></div>
+      <h3 class="sec">Health</h3>
+      <div class="sys-grid" id="system-health"></div>
+      <h3 class="sec">Topic rates</h3>
+      <table><thead><tr><th>Topic</th><th>Rate</th><th>Status</th></tr></thead><tbody id="rates"></tbody></table>
+      <h3 class="sec">Watchdog log</h3>
+      <pre class="rcn-code" id="watchdog-log">No watchdog events yet.</pre>
+      <p class="rcn-small rcn-muted" id="timestamp"></p>
+    </details>
+  </main>
 </div>
-<div id="error-banner"></div>
-
-<div class="section-title">Nodes</div>
-<div class="grid" id="nodes"></div>
-
-<div class="section-title">Autonomy</div>
-<div class="grid" id="autonomy"></div>
-
-<div class="section-title">System health</div>
-<div class="grid" id="system-health"></div>
-
-<div class="section-title">Topic rates</div>
-<table>
-  <thead><tr><th>Topic</th><th>Rate</th><th>Status</th></tr></thead>
-  <tbody id="rates"></tbody>
-</table>
-
-<div class="section-title">Watchdog log</div>
-<div class="log-box" id="watchdog-log">No watchdog events yet.</div>
 
 <script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const icon = (name) => `<svg class="rcn-icon"><use href="/ui/icons.svg#${name}"/></svg>`;
+// kind: ok | warn | err | off, each with its icon and word.
+const pill = (kind, word) => `<span class="rcn-status ${kind}">${icon({ ok: 'check', warn: 'alert', err: 'cross', off: 'info' }[kind])}${esc(word)}</span>`;
+const STATUS = { healthy: 'ok', stale: 'warn', dead: 'err', unsupervised: 'off' };
+const WORD = { healthy: 'OK', stale: 'Check', dead: 'Down', unsupervised: 'Off' };
+
+let apps = [];
+let chosen = null;   // the user's pick in the panel; null follows the running one
+let busy = false;
+
+function appPill(app) {
+  if (app.state === 'active') return pill('ok', app.lab ? 'Active' : 'Running');
+  if (app.state === 'activating') return pill('warn', 'Starting');
+  if (app.state === 'failed') return pill('err', 'Failed');
+  return pill('off', app.lab ? 'Off' : 'Stopped');
+}
+
+function renderTiles() {
+  $('tiles').innerHTML = apps.map((a) => {
+    const url = `http://${location.hostname}:${a.port}`;
+    const running = a.state === 'active';
+    const foot = running
+      ? `${icon('external')}<span class="rcn-small">Open, port ${a.port}</span>`
+      : `<span class="rcn-small rcn-muted">${a.lab ? 'Activate in the panel.' : `Port ${a.port}`}</span>`;
+    const body = `<div class="top"><span class="glyph">${icon(a.icon)}</span>${appPill(a)}</div>
+      <h3>${esc(a.name)}</h3><div class="rcn-muted rcn-small">${esc(a.desc)}</div><div class="foot">${foot}</div>`;
+    return running ? `<a class="tile" href="${url}" target="_blank" rel="noopener">${body}</a>` : `<div class="tile">${body}</div>`;
+  }).join('');
+}
+
+function renderChoices() {
+  const labs = apps.filter((a) => a.lab);
+  const live = labs.find((a) => a.state === 'active');
+  const pick = chosen ?? (live ? live.id : 'none');
+  const rows = [{ id: 'none', name: 'None', icon: 'stop' }, ...labs];
+  $('choices').innerHTML = rows.map((r) => `<label class="choice">
+      <input type="radio" name="lab" value="${r.id}" ${r.id === pick ? 'checked' : ''}>
+      ${icon(r.icon)}<span>${esc(r.name)}</span>
+      ${r.state === 'active' ? `<span class="live">${pill('ok', 'Active')}</span>` : ''}</label>`).join('');
+  $('activate').disabled = busy;
+}
+$('choices').addEventListener('change', (e) => { if (e.target.name === 'lab') chosen = e.target.value; });
+
+$('activate').onclick = async () => {
+  const target = (document.querySelector('input[name=lab]:checked') || {}).value || 'none';
+  busy = true; renderChoices();
+  $('activate-msg').textContent = target === 'none' ? 'Stopping...' : 'Starting...';
+  try {
+    const res = await fetch('/api/activate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target }) });
+    const r = await res.json();
+    $('activate-msg').textContent = r.message;
+  } catch (err) {
+    $('activate-msg').textContent = 'Lost contact with the car.';
+  }
+  busy = false; chosen = null; update();
+};
+
+function renderSystem(data) {
+  const a = data.autonomy || {};
+  if (a.status) {
+    $('autonomy').innerHTML = `<div class="sys-card"><div class="row"><span class="name">${esc(a.headline)}</span>${pill(STATUS[a.status] || 'off', WORD[a.status] || '')}</div>
+      ${a.lines.map((l) => `<div class="rcn-small rcn-muted">${esc(l)}</div>`).join('')}</div>`;
+  }
+  $('nodes').innerHTML = Object.values(data.nodes || {}).map((n) => `<div class="sys-card"><div class="row">
+      <span class="name">${esc(n.label)}</span>${pill(STATUS[n.status] || 'off', WORD[n.status] || n.status)}</div>
+      <div class="rcn-small rcn-muted rcn-mono">${esc(n.topic)}</div>${n.detail ? `<div class="rcn-small rcn-muted">${esc(n.detail)}</div>` : ''}</div>`).join('');
+  $('system-health').innerHTML = Object.values(data.system_health || {}).map((h) => `<div class="sys-card"><div class="row">
+      <span class="name">${esc(h.label)}</span>${pill(STATUS[h.status] || 'off', WORD[h.status] || h.status)}</div>
+      <div class="rcn-small rcn-muted">${esc(h.detail)}</div></div>`).join('');
+  $('rates').innerHTML = Object.entries(data.rates || {}).map(([topic, r]) => {
+    const kind = r.hz === null ? 'err' : (r.stale ? 'warn' : 'ok');
+    const word = r.hz === null ? 'No data' : (r.stale ? 'Stale' : 'OK');
+    return `<tr><td class="rcn-mono">${esc(topic)}</td><td class="rcn-num">${r.hz === null ? '-' : r.hz.toFixed(1) + ' Hz'}</td><td>${pill(kind, word)}</td></tr>`;
+  }).join('');
+  const wl = data.watchdog_log || [];
+  $('watchdog-log').textContent = wl.length ? wl.join('\n') : 'No watchdog events yet.';
+  $('timestamp').textContent = `Updated ${data.timestamp}`;
+
+  const bad = Object.values(data.nodes || {}).some((n) => n.status === 'dead')
+    || Object.values(data.system_health || {}).some((h) => h.status === 'dead');
+  const warn = Object.values(data.nodes || {}).some((n) => n.status === 'stale')
+    || Object.values(data.system_health || {}).some((h) => h.status === 'stale');
+  $('overall').outerHTML = bad ? pill('err', 'Check system').replace('class="', 'id="overall" class="')
+    : warn ? pill('warn', 'Check system').replace('class="', 'id="overall" class="')
+    : pill('ok', 'System OK').replace('class="', 'id="overall" class="');
+}
+
 function update() {
   fetch('/api/status')
-    .then(r => r.json())
-    .then(data => {
-      document.getElementById('error-banner').style.display = 'none';
-      document.getElementById('timestamp').textContent = data.timestamp;
-      document.getElementById('log-dir').textContent = data.log_dir;
-
-      let nh = '';
-      for (const n of Object.values(data.nodes)) {
-        nh += `<div class="card ${n.status}">
-          <h2><span class="indicator ${n.status}"></span>${n.label}</h2>
-          <div style="color:var(--muted);font-size:0.8rem">${n.topic}</div>
-          <div style="margin-top:0.3rem">${n.alive ? 'Publishing' : 'NOT DETECTED'}</div>
-          ${n.detail ? `<div style="margin-top:0.3rem;color:var(--muted);font-size:0.8rem">${n.detail}</div>` : ''}
-        </div>`;
-      }
-      document.getElementById('nodes').innerHTML = nh;
-
-      const a = data.autonomy || {};
-      if (a.status) {
-        const url = `http://${location.hostname}:${a.port}`;
-        document.getElementById('autonomy').innerHTML = `<div class="card ${a.status}">
-          <h2><span class="indicator ${a.status}"></span>${a.headline}</h2>
-          ${a.lines.map(l => `<div style="margin-top:0.3rem">${l}</div>`).join('')}
-          <div style="margin-top:0.5rem"><a style="color:#7ec8e3" href="${url}">Map viewer (port ${a.port})</a></div>
-        </div>`;
-      }
-
-      let sh = '';
-      for (const item of Object.values(data.system_health || {})) {
-        sh += `<div class="card ${item.status}">
-          <h2><span class="indicator ${item.status}"></span>${item.label}</h2>
-          <div style="margin-top:0.3rem">${item.detail}</div>
-        </div>`;
-      }
-      document.getElementById('system-health').innerHTML = sh;
-
-      let rh = '';
-      for (const [topic, info] of Object.entries(data.rates)) {
-        const hz = info.hz !== null ? info.hz.toFixed(1) + ' Hz' : '-';
-        const cls = info.hz === null ? 'dead' : (info.stale ? 'stale' : 'ok');
-        const label = info.hz === null ? 'NO DATA' : (info.stale ? 'STALE' : 'OK');
-        rh += `<tr><td>${topic}</td><td class="hz ${cls}">${hz}</td><td class="hz ${cls}">${label}</td></tr>`;
-      }
-      document.getElementById('rates').innerHTML = rh;
-
-      const wl = data.watchdog_log;
-      document.getElementById('watchdog-log').textContent = wl.length ? wl.join('\n') : 'No watchdog events yet.';
+    .then((r) => r.json())
+    .then((data) => {
+      apps = data.apps || [];
+      $('host').textContent = data.host || 'RACECAR Neo';
+      renderTiles();
+      if (!busy) renderChoices();
+      renderSystem(data);
     })
-    .catch(err => {
-      const banner = document.getElementById('error-banner');
-      banner.textContent = 'Failed to fetch status: ' + err;
-      banner.style.display = 'block';
+    .catch(() => {
+      $('overall').outerHTML = pill('err', 'No contact').replace('class="', 'id="overall" class="');
     });
 }
 

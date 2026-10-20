@@ -247,4 +247,77 @@ class TestAutonomyView:
 
     def test_html_has_the_autonomy_section(self, dashboard):
         html = (Path(dashboard.__file__).parent / 'dashboard.html').read_text()
-        assert 'id="autonomy"' in html and 'Map viewer' in html
+        assert 'id="autonomy"' in html and 'data.autonomy' in html
+
+
+class FakeRun:
+    """subprocess.run stand-in: answers is-active from `states`, records the rest."""
+
+    def __init__(self, states, fail=None, stderr=''):
+        self.states, self.fail, self.stderr, self.calls = dict(states), fail, stderr, []
+
+    def __call__(self, argv, **_):
+        self.calls.append(argv)
+        if argv[1] == 'is-active':
+            out = '\n'.join(self.states.get(u, 'inactive') for u in argv[2:])
+            return SimpleNamespace(stdout=out, returncode=0, stderr='')
+        verb, unit = argv[-2], argv[-1]
+        if self.fail == verb:
+            return SimpleNamespace(stdout='', returncode=1, stderr=self.stderr)
+        self.states[unit] = 'active' if verb == 'start' else 'inactive'
+        return SimpleNamespace(stdout='', returncode=0, stderr='')
+
+
+class TestHome:
+    def test_apps_cover_the_five_dashboards(self, dashboard):
+        assert [a['port'] for a in dashboard.APPS] == [8084, 8888, 8081, 8082, 8083]
+        labs = [a['id'] for a in dashboard.APPS if a['lab']]
+        assert labs == ['webteleop', 'linefollow', 'wallfollow']
+
+    def test_unit_states_in_order(self, dashboard):
+        run = FakeRun({'racecar-mapview': 'active', 'racecar-jupyter': 'failed'})
+        states = dashboard.unit_states(['racecar-mapview', 'racecar-jupyter', 'racecar-x'], run)
+        assert states == {
+            'racecar-mapview': 'active', 'racecar-jupyter': 'failed', 'racecar-x': 'inactive'
+        }
+        apps = dashboard.app_list(states)
+        assert apps[0]['state'] == 'active' and apps[2]['state'] == 'unknown'
+
+    def test_activate_stops_the_running_lab_first(self, dashboard):
+        run = FakeRun({'racecar-webteleop': 'active', 'racecar-mapview': 'active'})
+        ok, message = dashboard.activate('wallfollow', run)
+        assert ok and message == 'Wall follow active.'
+        verbs = [(c[-2], c[-1]) for c in run.calls if c[1] == '--no-ask-password']
+        assert verbs == [('stop', 'racecar-webteleop'), ('start', 'racecar-wallfollow')]
+        assert run.states['racecar-mapview'] == 'active'  # core services untouched
+
+    def test_activate_none_stops_every_lab(self, dashboard):
+        run = FakeRun({'racecar-linefollow': 'active'})
+        assert dashboard.activate('none', run) == (True, 'Lab dashboards stopped.')
+        assert run.states['racecar-linefollow'] == 'inactive'
+
+    def test_activate_names_the_missing_permission(self, dashboard):
+        stderr = 'Failed to start: Interactive authentication required.'
+        run = FakeRun({}, fail='start', stderr=stderr)
+        ok, message = dashboard.activate('linefollow', run)
+        assert not ok and 'Permission rule missing' in message
+
+    def test_activate_refuses_unknown_and_core_units(self, dashboard):
+        run = FakeRun({})
+        for target in ('mapview', 'jupyter', '../x', ''):
+            ok, _ = dashboard.activate(target, run)
+            assert not ok
+        assert all(c[1] == 'is-active' for c in run.calls) or run.calls == []
+
+    def test_polkit_rule_scope(self):
+        scripts = Path(__file__).resolve().parent.parent / 'scripts'
+        text = (scripts / 'polkit' / '49-racecar-dashboards.rules').read_text()
+        for unit in ('racecar-webteleop', 'racecar-linefollow', 'racecar-wallfollow'):
+            assert f'"{unit}.service"' in text
+        assert '["start", "stop"]' in text and 'subject.user === "racecar"' in text
+        assert 'racecar-mapview' not in text and 'enable' not in text.split('polkit.addRule')[1]
+        assert '49-racecar-dashboards.rules' in (scripts / 'setup_user_env.sh').read_text()
+
+    def test_page_uses_the_shared_assets(self, dashboard):
+        html = dashboard._load_dashboard_html()
+        assert '/ui/rcn.css' in html and '/ui/brand/' in html and "fetch('/api/activate'" in html

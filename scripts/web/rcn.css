@@ -1,0 +1,166 @@
+/* RACECAR Neo dashboard styles, shared by every page the car serves.
+   Values from the RACECAR Neo design tokens, dark theme only. Served at
+   /ui/rcn.css by scripts/webui.py; fonts and logos beside it. */
+
+@font-face { font-family: "Barlow"; font-weight: 400; font-style: normal; font-display: swap; src: url("fonts/barlow-400.woff2") format("woff2"); }
+@font-face { font-family: "Barlow"; font-weight: 500; font-style: normal; font-display: swap; src: url("fonts/barlow-500.woff2") format("woff2"); }
+@font-face { font-family: "Barlow"; font-weight: 600; font-style: normal; font-display: swap; src: url("fonts/barlow-600.woff2") format("woff2"); }
+@font-face { font-family: "Barlow"; font-weight: 700; font-style: normal; font-display: swap; src: url("fonts/barlow-700.woff2") format("woff2"); }
+@font-face { font-family: "Barlow Semi Condensed"; font-weight: 600; font-style: normal; font-display: swap; src: url("fonts/barlow-semi-condensed-600.woff2") format("woff2"); }
+@font-face { font-family: "Barlow Semi Condensed"; font-weight: 700; font-style: normal; font-display: swap; src: url("fonts/barlow-semi-condensed-700.woff2") format("woff2"); }
+@font-face { font-family: "Barlow Semi Condensed"; font-weight: 800; font-style: normal; font-display: swap; src: url("fonts/barlow-semi-condensed-800.woff2") format("woff2"); }
+@font-face { font-family: "Barlow Semi Condensed"; font-weight: 700; font-style: italic; font-display: swap; src: url("fonts/barlow-semi-condensed-700-italic.woff2") format("woff2"); }
+@font-face { font-family: "Barlow Semi Condensed"; font-weight: 800; font-style: italic; font-display: swap; src: url("fonts/barlow-semi-condensed-800-italic.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-weight: 400 600; font-style: normal; font-display: swap; src: url("fonts/jetbrains-mono-var.woff2") format("woff2"); }
+
+:root {
+  color-scheme: dark;
+
+  /* Brand */
+  --rcn-crimson-deep: #850028;
+  --rcn-crimson: #a01936;
+  --rcn-red: #bc3345;
+  --rcn-coral: #df7a46;
+  --rcn-orange: #f49a4b;
+  --rcn-gold: #ffb84a;
+
+  /* Neutrals */
+  --rcn-ink: #231f20;
+  --rcn-charcoal: #2f2d38;
+  --rcn-slate: #423f52;
+  --rcn-steel: #505166;
+  --rcn-mist: #e3e3eb;
+  --rcn-paper: #ffffff;
+  --rcn-led-red: #f63c47;
+  --rcn-success: #19686c;
+
+  --rcn-gradient-mark: linear-gradient(90deg, var(--rcn-crimson) 22%, var(--rcn-orange) 100%);
+
+  /* Type */
+  --rcn-font-sans: "Barlow", Arial, sans-serif;
+  --rcn-font-display: "Barlow Semi Condensed", "Barlow", "Arial Narrow", sans-serif;
+  --rcn-font-mono: "JetBrains Mono", Consolas, monospace;
+
+  /* Space and shape */
+  --rcn-space-1: 4px;
+  --rcn-space-2: 8px;
+  --rcn-space-3: 12px;
+  --rcn-space-4: 16px;
+  --rcn-space-6: 24px;
+  --rcn-space-8: 32px;
+  --rcn-radius-sm: 4px;
+  --rcn-radius-md: 8px;
+  --rcn-radius-lg: 16px;
+  --rcn-radius-pill: 999px;
+  --rcn-skew-badge: -15deg;
+
+  /* Semantic, dark */
+  --rcn-bg: var(--rcn-charcoal);
+  --rcn-surface: var(--rcn-slate);
+  --rcn-text: var(--rcn-paper);
+  --rcn-text-muted: var(--rcn-mist);
+  --rcn-accent: var(--rcn-orange);
+  --rcn-on-accent: var(--rcn-ink);
+  --rcn-accent-hover: var(--rcn-gold);
+  --rcn-link: var(--rcn-orange);
+  --rcn-border: var(--rcn-steel);
+  --rcn-focus: var(--rcn-gold);
+  --rcn-code-bg: #232228;
+  --rcn-code-text: var(--rcn-mist);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--rcn-bg);
+  color: var(--rcn-text);
+  /* Under 16 px on dark, one weight heavier than on light. */
+  font: 500 16px/26px var(--rcn-font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+h1, h2 { font-family: var(--rcn-font-display); font-weight: 700; margin: 0; }
+h1 { font-size: 31px; line-height: 40px; }
+h2 { font-size: 25px; line-height: 32px; }
+h3 { font: 600 20px/28px var(--rcn-font-sans); margin: 0; }
+a { color: var(--rcn-link); }
+code, pre, .rcn-mono { font-family: var(--rcn-font-mono); }
+.rcn-muted { color: var(--rcn-text-muted); }
+.rcn-num { font-variant-numeric: tabular-nums; }
+.rcn-small { font-size: 14px; line-height: 20px; font-weight: 600; }
+.rcn-eyebrow { font: 600 13px/16px var(--rcn-font-sans); text-transform: uppercase; letter-spacing: 0.08em; color: var(--rcn-text-muted); }
+
+:focus-visible { outline: 2px solid var(--rcn-focus); outline-offset: 2px; }
+
+/* Header: the page's one gradient element is the bar under it. */
+.rcn-header {
+  display: flex; align-items: center; gap: var(--rcn-space-3);
+  padding: var(--rcn-space-2) var(--rcn-space-4);
+  background: var(--rcn-bg);
+  border-bottom: 4px solid transparent;
+  border-image: var(--rcn-gradient-mark) 1;
+}
+.rcn-header .rcn-mark { height: 28px; width: auto; display: block; }
+.rcn-header .rcn-title { font: 700 20px/28px var(--rcn-font-display); white-space: nowrap; }
+.rcn-header .rcn-spacer { flex: 1; }
+
+/* Buttons */
+.rcn-btn {
+  font: 600 16px/24px var(--rcn-font-sans);
+  padding: 10px 18px; border-radius: var(--rcn-radius-md);
+  border: 2px solid var(--rcn-accent); cursor: pointer;
+  background: transparent; color: var(--rcn-accent);
+  display: inline-flex; align-items: center; gap: var(--rcn-space-2);
+  text-decoration: none;
+}
+.rcn-btn.primary { background: var(--rcn-accent); color: var(--rcn-on-accent); }
+.rcn-btn.primary:hover { background: var(--rcn-accent-hover); border-color: var(--rcn-accent-hover); }
+.rcn-btn:not(.primary):hover { border-color: var(--rcn-accent-hover); color: var(--rcn-accent-hover); }
+.rcn-btn.danger { background: var(--rcn-crimson); border-color: var(--rcn-crimson); color: var(--rcn-paper); }
+.rcn-btn.danger:hover { background: var(--rcn-red); border-color: var(--rcn-red); color: var(--rcn-paper); }
+.rcn-btn.quiet { border-color: var(--rcn-border); color: var(--rcn-text); }
+.rcn-btn.small { font-size: 14px; line-height: 20px; padding: 6px 12px; }
+.rcn-btn[aria-pressed="true"], .rcn-btn.on { background: var(--rcn-surface); border-color: var(--rcn-accent); color: var(--rcn-text); }
+.rcn-btn:disabled { opacity: 0.45; cursor: default; pointer-events: none; }
+.rcn-btn svg { width: 20px; height: 20px; flex: none; }
+
+/* Cards and panels */
+.rcn-card {
+  background: var(--rcn-bg); border: 1px solid var(--rcn-border);
+  border-radius: var(--rcn-radius-lg); padding: var(--rcn-space-6);
+}
+.rcn-panel { background: var(--rcn-surface); border-radius: var(--rcn-radius-md); padding: var(--rcn-space-4); }
+
+/* Status: color, icon, and word together. */
+.rcn-status {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 2px 10px 2px 8px; border-radius: var(--rcn-radius-pill);
+  font: 700 13px/20px var(--rcn-font-sans); white-space: nowrap;
+  background: var(--rcn-steel); color: var(--rcn-paper);
+}
+.rcn-status svg { width: 14px; height: 14px; flex: none; }
+.rcn-status.ok { background: var(--rcn-success); color: var(--rcn-paper); }
+.rcn-status.warn { background: var(--rcn-gold); color: var(--rcn-ink); }
+.rcn-status.err { background: var(--rcn-crimson); color: var(--rcn-paper); }
+.rcn-status.info, .rcn-status.off { background: var(--rcn-steel); color: var(--rcn-paper); }
+
+/* Badge: parallelogram, text upright. */
+.rcn-badge { display: inline-block; transform: skewX(var(--rcn-skew-badge)); background: var(--rcn-gold); padding: 2px 10px; }
+.rcn-badge > span { display: inline-block; transform: skewX(15deg); color: var(--rcn-ink); font: 700 12px/16px var(--rcn-font-sans); text-transform: uppercase; letter-spacing: 0.08em; }
+
+/* Forms */
+.rcn-input, input[type="text"].rcn-input, select.rcn-input {
+  font: 500 16px/24px var(--rcn-font-sans); color: var(--rcn-text);
+  background: var(--rcn-surface); border: 1px solid var(--rcn-border);
+  border-radius: var(--rcn-radius-md); padding: 8px 12px;
+}
+input[type="range"], input[type="checkbox"], input[type="radio"] { accent-color: var(--rcn-accent); }
+
+pre.rcn-code, .rcn-code {
+  background: var(--rcn-code-bg); color: var(--rcn-code-text);
+  font: 400 14px/22px var(--rcn-font-mono);
+  border-radius: var(--rcn-radius-md); padding: var(--rcn-space-3) var(--rcn-space-4);
+  white-space: pre-wrap; margin: 0;
+}
+
+/* Icons from /ui/icons.svg: <svg class="rcn-icon"><use href="/ui/icons.svg#map"/></svg> */
+.rcn-icon { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }

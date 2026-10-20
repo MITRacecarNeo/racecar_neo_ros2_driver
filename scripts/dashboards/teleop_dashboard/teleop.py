@@ -40,6 +40,7 @@ import math
 from pathlib import Path
 import re
 import signal
+import sys
 import threading
 import time
 
@@ -62,6 +63,9 @@ import yaml
 
 PORT = 8081
 BASE = Path(__file__).resolve().parent
+# The shared styles, fonts and logos are served from scripts/web/ (webui.py).
+sys.path.insert(0, str(BASE.parents[1]))
+import webui  # noqa: E402
 # Shipped defaults stay untouched; saved tuning goes to the per-car file,
 # which loads on top of them (gitignored, like config/*.local.yaml).
 DEFAULTS_PATH = BASE / 'teleop.yaml'
@@ -446,6 +450,15 @@ class Handler(BaseHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
 
     def do_GET(self):
+        asset = webui.static_file(self.path)
+        if asset is not None:
+            self.send_response(200)
+            self.send_header('Content-Type', asset[1])
+            self.send_header('Content-Length', str(len(asset[0])))
+            self.send_header('Cache-Control', webui.CACHE_CONTROL)
+            self.end_headers()
+            self.wfile.write(asset[0])
+            return
         if self.path == '/':
             self._send((BASE / 'teleop.html').read_bytes(), 'text/html; charset=utf-8')
         elif self.path.startswith('/frame'):

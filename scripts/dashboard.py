@@ -5,11 +5,13 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Callable
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import logging
 from pathlib import Path
 import signal
+import socket
+import subprocess
 import sys
 import threading
 import time
@@ -33,12 +35,34 @@ from sysinfo import (  # noqa: E402
     read_watchdog_state,
     REALSENSE_DIAGNOSTIC_NAMES,
 )
+import webui  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
 PORT = 8080
+
+# Home page tiles. Lab dashboards publish /drive, so one runs at a time;
+# switching needs scripts/polkit/49-racecar-dashboards.rules.
+APPS: list[dict[str, Any]] = [
+    {'id': 'mapview', 'name': 'Map viewer', 'icon': 'map', 'port': 8084,
+     'unit': 'racecar-mapview', 'lab': False,
+     'desc': 'Build and load maps; see the car on them.'},
+    {'id': 'jupyter', 'name': 'JupyterLab', 'icon': 'notebook', 'port': 8888,
+     'unit': 'racecar-jupyter', 'lab': False,
+     'desc': 'Notebooks and the student library.'},
+    {'id': 'webteleop', 'name': 'Web teleop', 'icon': 'gamepad', 'port': 8081,
+     'unit': 'racecar-webteleop', 'lab': True,
+     'desc': 'Drive from the browser with camera and lidar.'},
+    {'id': 'linefollow', 'name': 'Line follow', 'icon': 'line', 'port': 8082,
+     'unit': 'racecar-linefollow', 'lab': True,
+     'desc': 'Follow a colored line with the camera.'},
+    {'id': 'wallfollow', 'name': 'Wall follow', 'icon': 'wall', 'port': 8083,
+     'unit': 'racecar-wallfollow', 'lab': True,
+     'desc': 'Follow walls with the lidar.'},
+]
+SYSTEMCTL_TIMEOUT_SEC = 30.0
 RATE_WINDOW_SEC = 3.0
 MAPVIEW_PORT = 8084
 # /autonomy/status arrives at 1 Hz; older than this, the node has stopped.
@@ -93,6 +117,7 @@ _latest_status: dict[str, Any] = {
     'watchdog_log': [],
     'log_dir': str(Path.home() / 'logs' / 'latest'),
     'autonomy': {},
+    'apps': [],
 }
 _monitor_running = True
 
@@ -349,6 +374,61 @@ def autonomy_view(values: dict[str, str] | None, age: float | None) -> dict[str,
     }
 
 
+def unit_states(units: list[str], run: Callable[..., Any] = subprocess.run) -> dict[str, str]:
+    """Return systemctl is-active for each unit: active, inactive, failed, activating, ..."""
+    try:
+        out = run(['systemctl', 'is-active', *units], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return dict.fromkeys(units, 'unknown')
+    lines = out.stdout.split()
+    return {u: (lines[i] if i < len(lines) else 'unknown') for i, u in enumerate(units)}
+
+
+def app_list(states: dict[str, str]) -> list[dict[str, Any]]:
+    return [{**app, 'state': states.get(app['unit'], 'unknown')} for app in APPS]
+
+
+def activate(target: str, run: Callable[..., Any] = subprocess.run) -> tuple[bool, str]:
+    """Make `target` the one running lab dashboard, or stop them all for 'none'."""
+    labs = {a['id']: a['unit'] for a in APPS if a['lab']}
+    if target != 'none' and target not in labs:
+        return False, f'Unknown dashboard: {target}'
+    states = unit_states(list(labs.values()), run)
+
+    def systemctl(verb: str, unit: str) -> str:
+        try:
+            r = run(
+                ['systemctl', '--no-ask-password', verb, unit],
+                capture_output=True, text=True, timeout=SYSTEMCTL_TIMEOUT_SEC,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return str(exc)
+        if r.returncode == 0:
+            return ''
+        if 'auth' in (r.stderr or '').lower():
+            return 'Permission rule missing. Run scripts/setup_user_env.sh.'
+        return (r.stderr or '').strip().splitlines()[-1] if r.stderr else f'{verb} failed'
+
+    for lab_id, unit in labs.items():
+        if lab_id != target and states.get(unit) in ('active', 'activating'):
+            error = systemctl('stop', unit)
+            if error:
+                return False, error
+    if target == 'none':
+        return True, 'Lab dashboards stopped.'
+    error = systemctl('start', labs[target])
+    if error:
+        return False, error
+    name = next(a['name'] for a in APPS if a['id'] == target)
+    return True, f'{name} active.'
+
+
+def _refresh_apps() -> None:
+    apps = app_list(unit_states([a['unit'] for a in APPS]))
+    with _status_lock:
+        _latest_status['apps'] = apps
+
+
 def _monitor_loop() -> None:
     """Background thread that continuously refreshes the cached status snapshot."""
     last_system_health = 0.0
@@ -406,6 +486,8 @@ def _monitor_loop() -> None:
                 'watchdog_log': _read_watchdog_tail(),
                 'log_dir': str(Path.home() / 'logs' / 'latest'),
                 'autonomy': autonomy_view(*(_sampler.autonomy() if _sampler else (None, None))),
+                'apps': app_list(unit_states([a['unit'] for a in APPS])),
+                'host': socket.gethostname(),
             }
 
             with _status_lock:
@@ -447,6 +529,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
     """Serve GET / (HTML) and GET /api/status (JSON snapshot)."""
 
     def do_GET(self) -> None:
+        asset = webui.static_file(self.path)
+        if asset is not None:
+            self.send_response(200)
+            self.send_header('Content-Type', asset[1])
+            self.send_header('Content-Length', str(len(asset[0])))
+            self.send_header('Cache-Control', webui.CACHE_CONTROL)
+            self.end_headers()
+            self.wfile.write(asset[0])
+            return
         if self.path == '/':
             self._serve_html()
         elif self.path == '/api/status':
@@ -455,7 +546,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_error(404)
 
     def _serve_html(self) -> None:
-        content = DASHBOARD_HTML.encode()
+        content = _load_dashboard_html().encode()
         self.send_response(200)
         self.send_header('Content-Type', 'text/html; charset=utf-8')
         self.send_header('Content-Length', str(len(content)))
@@ -466,6 +557,25 @@ class DashboardHandler(BaseHTTPRequestHandler):
         data = get_status()
         body = json.dumps(data).encode()
         self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self) -> None:  # noqa: N802
+        if self.path != '/api/activate':
+            self.send_error(404)
+            return
+        try:
+            length = int(self.headers.get('Content-Length') or 0)
+            target = str(json.loads(self.rfile.read(length) or b'{}').get('target', ''))
+        except (ValueError, AttributeError):
+            target = ''
+        ok, message = activate(target)
+        _refresh_apps()
+        log.info('activate %s: %s', target, message)
+        body = json.dumps({'ok': ok, 'message': message}).encode()
+        self.send_response(200 if ok else 400)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', str(len(body)))
         self.end_headers()
@@ -518,7 +628,8 @@ def main() -> None:
     monitor.start()
     log.info('Background monitor started')
 
-    server = HTTPServer(('0.0.0.0', PORT), DashboardHandler)
+    server = ThreadingHTTPServer(('0.0.0.0', PORT), DashboardHandler)
+    server.daemon_threads = True
     log.info('Dashboard listening on http://0.0.0.0:%d', PORT)
 
     def _shutdown(signum: int, _frame: FrameType | None) -> None:

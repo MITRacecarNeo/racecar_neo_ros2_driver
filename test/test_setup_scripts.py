@@ -343,7 +343,8 @@ class TestNetworkPolkitRule:
 
     def test_installed_by_setup_user_env(self):
         text = self.INSTALLER.read_text()
-        assert 'for rule in 49-racecar-network.rules 49-racecar-autonomy.rules; do' in text
+        rules = '49-racecar-network.rules 49-racecar-autonomy.rules 49-racecar-dashboards.rules'
+        assert f'for rule in {rules}; do' in text
         assert 'POLKIT_SRC="${SCRIPT_DIR}/polkit/${rule}"' in text
         assert 'POLKIT_DST="/etc/polkit-1/rules.d/${rule}"' in text
 
