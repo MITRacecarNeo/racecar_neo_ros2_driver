@@ -61,13 +61,23 @@ EOF
     echo "Created $JUPYTER_WS"
 fi
 
-# Saved maps (`racecar map`) live in ~/data/maps; the link shows them in the
-# JupyterLab file browser, which is rooted at ~/jupyter_ws.
-MAP_ROOT="$USER_HOME/data/maps"
+# The data root (racecar_neo_ros2_driver/data_root.py) and its saved maps,
+# linked into the JupyterLab file browser, which is rooted at ~/jupyter_ws.
+# `racecar disk setup` points the links again when the root moves.
+if [ -r /run/racecar/data_root ]; then
+    DATA_ROOT="$(cat /run/racecar/data_root)"
+else
+    DATA_ROOT="$USER_HOME/data"
+fi
+MAP_ROOT="$DATA_ROOT/maps"
 if [ ! -d "$MAP_ROOT" ]; then
     sudo -u "$USER_NAME" mkdir -p "$MAP_ROOT"
 fi
-if [ ! -e "$JUPYTER_WS/maps" ] && [ ! -L "$JUPYTER_WS/maps" ]; then
-    sudo -u "$USER_NAME" ln -s "$MAP_ROOT" "$JUPYTER_WS/maps"
-    echo "Linked $JUPYTER_WS/maps -> $MAP_ROOT"
-fi
+for link in data maps; do
+    target="$DATA_ROOT"
+    [ "$link" = maps ] && target="$MAP_ROOT"
+    if [ -L "$JUPYTER_WS/$link" ] || [ ! -e "$JUPYTER_WS/$link" ]; then
+        sudo -u "$USER_NAME" ln -sfn "$target" "$JUPYTER_WS/$link"
+        echo "Linked $JUPYTER_WS/$link -> $target"
+    fi
+done

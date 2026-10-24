@@ -16,7 +16,7 @@ Keys while driving: m mark, e event note, g global search (AMCL), s save the
 map (mapping), t timed save (mapping), q quit. On quit everything stops in
 order, a mapping run is saved under the map root, and report.md and map.png
 are written to
-~/data/slam_eval/sessions/<time>-<mode>-<name>/. Driving stays on the gamepad
+slam_eval/sessions/<time>-<mode>-<name>/ under the data root. Driving stays on the gamepad
 or transmitter; the session publishes no drive commands.
 
 `replay` runs a session's bag through a fresh mapper (mapping runs) or

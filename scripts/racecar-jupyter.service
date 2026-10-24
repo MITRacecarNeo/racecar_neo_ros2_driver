@@ -1,5 +1,7 @@
 [Unit]
 Description=RACECAR Neo JupyterLab (port 8888)
+Wants=racecar-data.service
+After=racecar-data.service
 After=network-online.target
 Wants=network-online.target
 
@@ -21,6 +23,8 @@ ExecStart=/bin/bash -c '\
 Restart=on-failure
 RestartSec=5
 Environment=HOME=/home/racecar
+# RACECAR_DATA_DIR, from racecar-data.service.
+EnvironmentFile=-/run/racecar/environment
 Environment=PYTHONPATH=/opt/ros/jazzy/lib/python3.12/site-packages:/home/racecar/ros2_ws/install/racecar_neo_ros2_driver/lib/python3.12/site-packages
 Environment=AMENT_PREFIX_PATH=/home/racecar/ros2_ws/install/racecar_neo_ros2_driver:/opt/ros/jazzy
 Environment=LD_LIBRARY_PATH=/opt/ros/jazzy/lib/aarch64-linux-gnu:/opt/ros/jazzy/lib

@@ -3,6 +3,17 @@
 # Not executed directly: it defines a `racecar` shell function so the build /
 # test / source / cd subcommands can mutate the current shell (PWD, env).
 
+# Where the car's data goes, for terminals that are not login shells (login
+# shells get it from /etc/profile.d/racecar-data.sh).
+if [ -z "${RACECAR_DATA_DIR:-}" ]; then
+    if [ -r /run/racecar/data_root ]; then
+        RACECAR_DATA_DIR="$(cat /run/racecar/data_root)"
+    else
+        RACECAR_DATA_DIR="$HOME/data"
+    fi
+    export RACECAR_DATA_DIR
+fi
+
 racecar() {
     local pkg="racecar_neo_ros2_driver"
     local ws="$HOME/ros2_ws"
@@ -1075,6 +1086,16 @@ __RC_CLEANUP_HELP__
             python3 "${RACECAR_CALIBRATE_SCRIPT:-$pkg_dir/scripts/calibration/calibrate.py}" "$@"
             ;;
 
+        disk|data)
+            # The NVMe data drive and the data root; see scripts/racecar_disk.py
+            # and racecar_neo_ros2_driver/data_root.py.
+            if [[ "$cmd" == "data" ]]; then
+                python3 "${RACECAR_DISK_SCRIPT:-$pkg_dir/scripts/racecar_disk.py}" data "$@"
+            else
+                python3 "${RACECAR_DISK_SCRIPT:-$pkg_dir/scripts/racecar_disk.py}" "$@"
+            fi
+            ;;
+
         profile)
             # This car's settings outside the driver folder; see
             # scripts/racecar_profile.py and racecar_neo_ros2_driver/car_profile.py.
@@ -1220,6 +1241,16 @@ Commands:
                         To fully prepare a car for a project, run the
                         calibration step, then restart teleop, and finally
                         run the check command.
+    data [path]         Where the car's data goes (the data root): the NVMe at
+                        /mnt/nvme/data when set up, else ~/data. Programs read
+                        it from $RACECAR_DATA_DIR. `path` prints it alone.
+    disk [action]       The NVMe data drive. Actions:
+                          status    model, serial, size, mount, fstab, health
+                          setup     set up a blank drive, or move one from
+                                    /data, at /mnt/nvme; copy ~/data onto it
+                          format    erase a drive with data on it (asks for
+                                    its serial)
+                          check     unmount, e2fsck, mount again
     profile [action]    This car's settings, kept in ~/.config/racecar so a
                         driver update or re-clone keeps the calibration.
                           (none)        path, car name, files and dates
@@ -1293,7 +1324,7 @@ _racecar_complete() {
     local sub="${COMP_WORDS[1]:-}"
 
     if [[ $COMP_CWORD -eq 1 ]]; then
-        COMPREPLY=( $(compgen -W "build test source cd teleop launch lint udev watchdog service setup eth wifi desktop library log calibrate profile cleanup map status help" -- "$cur") )
+        COMPREPLY=( $(compgen -W "build test source cd teleop launch lint udev watchdog service setup eth wifi desktop library log calibrate profile disk data cleanup map status help" -- "$cur") )
         return
     fi
 
@@ -1340,6 +1371,12 @@ _racecar_complete() {
             ;;
         status)
             COMPREPLY=( $(compgen -W "--quick --json --strict --section --window --help" -- "$cur") )
+            ;;
+        disk)
+            COMPREPLY=( $(compgen -W "status setup format check" -- "$cur") )
+            ;;
+        data)
+            COMPREPLY=( $(compgen -W "path" -- "$cur") )
             ;;
         profile)
             if [[ $COMP_CWORD -eq 2 ]]; then

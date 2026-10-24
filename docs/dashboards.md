@@ -50,7 +50,8 @@ defaults on the first save) and rewrites its numbers in place so the comments
 survive. The file it replaces goes to the profile's `history/`. The shipped
 file stays unchanged, so a driver update keeps a car's tuning.
 
-CSV logs go to `~/data/dashboards/<name>/` and are listed and downloaded
+CSV logs go to `dashboards/<name>/` under the data root
+(`racecar_neo_ros2_driver/data_root.py`) and are listed and downloaded
 through the page.
 
 ## Lidar convention

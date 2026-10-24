@@ -18,6 +18,7 @@ This package is the v2 successor to [`racecar-neo-ros2-backend`](https://github.
 - [Web dashboard](#web-dashboard)
 - [Lab dashboards](#lab-dashboards)
 - [Autonomy gate](#autonomy-gate)
+- [Car data](#car-data)
 - [Bag recording](#bag-recording)
 - [Maps](#maps)
 - [Jupyter notebooks](#jupyter-notebooks)
@@ -70,7 +71,7 @@ Safety and uptime layers:
 - **Watchdog** (`scripts/watchdog.py`) supervises 7 nodes with two liveness signals (ROS topic + the node's entry-point path in `/proc`) and restarts a node when either fails. A 60 s startup grace, backoff of 30, 60, 120 and 240 s between restarts, and a give-up after 5 restarts that do not hold 60 s, re-armed by replugging the device or restarting teleop. Logs on state changes only, skips subsystems disabled at launch, and writes `~/logs/latest/watchdog_state.json`, which `racecar status` and the dashboard read. SIGTERM to SIGKILL escalation, FastRTPS SHM orphan sweep every 60 s, Pi 5 PMIC under-voltage alarm. Restart is skipped when the device is physically missing.
 - **Four core systemd units** (`racecar-{teleop,watchdog,dashboard,jupyter}.service`) wired with `BindsTo=` so watchdog dies when teleop dies, and `Wants=` so watchdog auto-starts when teleop starts. Three more units carry the lab dashboards; they install disabled and are started one at a time.
 - **Launch wrapper** (`scripts/launch_teleop.sh`) creates `~/logs/<timestamp>/`, updates `~/logs/latest` atomically, sweeps FastRTPS SHM orphans, and `exec`s `ros2 launch` so systemd tracks the launch PID directly.
-- **Web dashboard** at `http://<robot>:8080`: 9 node cards, 9 topic-rate rows, System Health (RTC battery + Pi under-voltage alarm), watchdog log tail. Auto-refresh.
+- **Web dashboard** at `http://<robot>:8080`: 9 node cards, 9 topic-rate rows, System Health (data drive, RTC battery, Pi under-voltage alarm), watchdog log tail. Auto-refresh.
 - **JupyterLab** at `http://<robot>:8888` with PYTHONPATH/AMENT_PREFIX_PATH pre-set so `import rclpy` works in notebooks.
 - **`colcon test` suite** covering the nodes, scripts, setup phases and attached peripherals, with fix commands in the failure messages.
 
@@ -168,7 +169,7 @@ This brings up an isolated AP on the ALFA dongle (`wlan1`) and puts eth0 in one 
 
 Twelve phases, all under `scripts/`:
 
-1. **`setup_ros2.sh`**: ROS2 Jazzy apt repo + message/driver packages
+1. **`setup_ros2.sh`**: ROS2 Jazzy apt repo + message/driver packages, `nvme-cli` and `gdisk` for `racecar disk`
 2. **`setup_dev_tools.sh`**: build tools, Python hardware libs (`smbus` / `serial` / `spidev`), and the pinned linters (`ruff`, `black`, `mypy`) per-user
 3. **`setup_user_env.sh`**: joins `dialout` / `i2c` / `spi` / `gpio` / `video` groups; installs `/etc/polkit-1/rules.d/49-racecar-network.rules` so `racecar wifi` can control NetworkManager from a terminal; sources ROS2 + the `racecar` shell tool in `.bashrc` and puts `~/.local/bin` on `PATH`
 4. **`setup_raspi_config.sh`**: boot-level configuration: enable I2C, enable SPI, disable serial console (frees the GPIO UART / `ttyAMA0` for the NEO-PIT link), enable RTC backup-cell trickle charging (`RTC_VCHG_UV=0` turns it off; see [RTC backup cell](#rtc-backup-cell)), and reconcile the bootloader EEPROM (`RACECAR_EEPROM=0` skips it; see [Bootloader EEPROM](#bootloader-eeprom))
@@ -177,8 +178,8 @@ Twelve phases, all under `scripts/`:
 7. **`setup_coral.sh`**: installs `libedgetpu1-std`, `tflite_runtime`, `pycoral` from vendored `depend/` artifacts; with the M.2 card present, also the gasket DKMS driver and the `coral-msi` overlay (reboot required)
 8. **`setup_realsense.sh`**: installs `realsense2_camera` (apt) + the Pi 5 IMU IIO permission fix (script, udev rule, boot service)
 9. **`setup_workspace.sh`**: clones `sllidar_ros2` and runs `colcon build --symlink-install`; `setup_all.sh` then runs `racecar profile migrate` (see [Car profile](#car-profile))
-10. **`setup_jupyter.sh`**: `pip install --user jupyterlab`, creates `~/jupyter_ws/`
-11. **`setup_services.sh`**: installs and enables the four core systemd units (`racecar-{teleop,watchdog,dashboard,jupyter}.service`)
+10. **`setup_jupyter.sh`**: `pip install --user jupyterlab`, creates `~/jupyter_ws/`, links `~/jupyter_ws/data` and `~/jupyter_ws/maps` to the [data root](#car-data)
+11. **`setup_services.sh`**: installs and enables the core systemd units (`racecar-{data,teleop,watchdog,dashboard,jupyter}.service`) and `/etc/profile.d/racecar-data.sh`
 12. **`setup_dashboards.sh`**: clones or fast-forwards the three lab-dashboard checkouts into `scripts/dashboards/`, installs a stopped, disabled `racecar-*` unit for each, and removes units left by retired dashboards (`RACECAR_DASHBOARDS=0` skips it)
 
 Individual phase scripts can be run on their own to re-do or skip steps (e.g. `racecar setup networking` for just the networking phase, or `bash scripts/setup_udev.sh` to reinstall the udev rules after a hardware swap).
@@ -224,6 +225,8 @@ racecar log analyze                 # summarize the newest bag
 racecar map start room_1            # build a map; racecar map save, then racecar map stop
 racecar map load room_1             # localize on a saved map
 racecar profile                     # this car's settings in ~/.config/racecar
+racecar data                        # where the car's data goes, free space
+racecar disk                        # the NVMe data drive; setup, format, check
 racecar library --list              # student library folders under ~/jupyter_ws
 racecar help                        # full usage
 ```
@@ -450,7 +453,10 @@ The 2-hour history starts over when the dashboard service restarts.
   autonomy, each with its name, topic rate in Hz, and a status mark. Hover or
   tap an indicator for details. The LED strip shows Off until a program
   drives it.
-- Advanced view: node cards, health (RTC backup cell, Pi under-voltage alarm),
+- Basic view also has a Data indicator: the data root, NVMe or SD card, and
+  free space.
+- Advanced view: node cards, health (data drive, RTC backup cell, Pi
+  under-voltage alarm),
   topic rates, autonomy, and the watchdog log. Clear log hides the lines so
   far; the log file is kept.
 - The header shows "System OK" or "Check system".
@@ -471,7 +477,7 @@ systemd units and opened from the [web dashboard](#web-dashboard). Internals:
 | `webteleop` | 8081 | `/camera/color`, `/camera/depth`, `/scan`, `/odom`, `/edgetpu/inference` | `/drive` |
 | `linefollow` | 8082 | `/camera/color`, `/odom` | `/drive` |
 | `wallfollow` | 8083 | `/scan`, `/odom` | `/drive` |
-| `camlabel` | 8085 | `/camera/color` | nothing; saves frames and labels to `~/data/camlabel/` |
+| `camlabel` | 8085 | `/camera/color` | nothing; saves frames and labels to `datasets/camlabel/` under the [data root](#car-data) |
 
 Install (also runs as phase 12 of `setup_all.sh`):
 
@@ -507,7 +513,7 @@ gate.
 **Tuning.** Save in the page writes `dashboards/<name>.yaml` in the
 [car profile](#car-profile); the shipped `<name>.yaml` keeps the defaults. Expect to
 retune `max_mps`, `kp`, `kd`, `lookahead` and the `linefollow` HSV thresholds
-per car. Logs go to `~/data/dashboards/<name>/`.
+per car. Logs go to `dashboards/<name>/` under the [data root](#car-data).
 
 ## Autonomy gate
 
@@ -537,6 +543,61 @@ revokes it immediately and hands the gate back to the bumpers.
 from what this assumes, and a receiver configured to emit failsafe values with
 the transmitter off would look like a live link. Wheels off the ground.
 
+## Car data
+
+Everything the car produces goes under one folder, the data root:
+`/mnt/nvme/data` when the NVMe is mounted at `/mnt/nvme` and that folder can
+be written, else `~/data` on the SD card. Settings never go there; they stay
+in the [car profile](#car-profile).
+
+| Folder | Holds |
+|---|---|
+| `bags/` | `racecar log` recordings |
+| `images/` | image captures |
+| `datasets/` | datasets; `datasets/camlabel/` from the camera label dashboard |
+| `maps/` | saved maps (`racecar map`) |
+| `slam_eval/` | SLAM validation records |
+| `dashboards/<name>/` | lab dashboard logs |
+| `health/` | health reports |
+
+```sh
+racecar data          # data root, NVMe or SD card, free space, a warning on fallback
+racecar data path     # the path only, for scripts
+racecar disk          # model, serial, size, partitions, fstab line, health, data root
+racecar disk setup    # set up the NVMe at /mnt/nvme
+racecar disk format   # erase the NVMe; asks for its serial
+racecar disk check    # unmount, e2fsck -f -p, mount again
+```
+
+`racecar disk setup` on a blank drive makes one ext4 partition labeled
+`racecar-data` and adds an fstab line by UUID with `nofail` and a 45 s device
+timeout. It mounts the drive at `/mnt/nvme` and gives you `data/` on it. A
+drive mounted at `/data` moves to `/mnt/nvme` with nothing erased, and its
+top-level bags move into `data/bags`. Setup then offers to copy `~/data` to
+the new root and leaves `~/data` in place. It points `~/jupyter_ws/data` and
+`~/jupyter_ws/maps` at the new root, then asks for a reboot. It refuses the
+system drive, a drive holding other data, and a blank-looking drive with
+filesystem signatures; `racecar disk format` handles those. Format shows the
+drive and its contents and asks you to type its serial. It refuses while
+mapping or recording, and stops the services that write data. `setup_all.sh`
+never formats; it prints `racecar disk setup` when an NVMe is present but not
+set up. An existing car with the drive at `/data` runs `racecar disk setup`
+once.
+
+`racecar-data.service` works out the root once at boot and writes it to
+`/run/racecar/data_root`. Services, login shells
+(`/etc/profile.d/racecar-data.sh`) and the `racecar` shell tool set
+`RACECAR_DATA_DIR` from it. Python code calls
+`racecar_neo_ros2_driver.data_root.data_dir(sub)`; the student library has
+`rc_utils.get_data_dir(subfolder)`.
+
+A new session (`racecar log start`, `racecar map start`, `load`, `resume`)
+refuses when the data root cannot be written, as when the drive drops out
+after boot. `racecar status` has a `data root` row: WARN when data falls back
+to the SD card while an NVMe is present, or at 80% used or under 10 GB free.
+See [docs/troubleshooting.md](docs/troubleshooting.md), "Data drive missing at
+boot".
+
 ## Bag recording
 
 ```bash
@@ -546,28 +607,17 @@ racecar log status                         # size, rate, time until full
 racecar log stop                           # SIGINT, so rosbag2 finalizes
 racecar log list
 racecar log analyze                        # newest bag: duration, per-topic rates
-racecar log config --dir=/data --storage=mcap
+racecar log config --storage=mcap        # saved defaults; --dir sets a fixed bag folder
 ```
 
-Bags go to `/data` when an NVMe is mounted there, and `~/logs/bags` otherwise.
-`racecar log` names an NVMe that is present but unmounted rather than silently
-falling back.
+Bags go to `bags/` under the [data root](#car-data). `--dir` and
+`RACECAR_LOG_DIR` override it. `racecar log` names an NVMe that is present
+but not set up rather than falling back without a word.
 
-### Recorded data on the NVMe
-
-The SD card holds the operating system and has little free space. Write
-recordings to the NVMe and copy them off the car from there.
-
-- `racecar log start` already writes to `/data` on the NVMe.
-- For your own recordings, give the output path on the NVMe:
-  `ros2 bag record -o /data/my_run /scan /odom`.
+- For your own recordings, give a path under the data root:
+  `ros2 bag record -o "$RACECAR_DATA_DIR/bags/my_run" /scan /odom`.
 - To copy a recording to your computer, run this on your computer:
-  `rsync -av racecar@<ip>:/data/my_run .`
-- Check free space with `df -h /data`.
-
-A drive shipped raw has no `/data` to fall back from; `bash scripts/setup_nvme.sh`
-partitions, formats and mounts it. That script erases the target disk, so it is
-not part of `setup_all.sh`.
+  `rsync -av racecar@<ip>:/mnt/nvme/data/bags/my_run .`
 
 Recording every topic pulls in `/camera/color` and `/camera/depth`, roughly
 73 MB/s against a sustained SD write near 30 MB/s. `start` refuses on an SD card
@@ -578,7 +628,7 @@ the bag looks healthy until it is read. Name the topics you need, or
 ## Maps
 
 `racecar map` builds a 2D map of a room or hallway from the lidar and saves it
-under `~/data/maps/NAME/`. A saved map can be loaded later, and the car then
+under `maps/NAME/` in the [data root](#car-data). A saved map can be loaded later, and the car then
 reports its position on it. Teleop must be running (`racecar service start
 teleop`). You drive the car with the gamepad or the RC transmitter as usual.
 While mapping, the gamepad speed is held at the firmware minimum of 0.5 m/s.
@@ -639,14 +689,16 @@ until `localized` turns true.
 To extend a map, load it, drive to the edge of the mapped area, and run
 `racecar map start NEW --from NAME`. `racecar map start NAME --from NAME`
 extends it in place. A start on an existing name needs `--force`, which moves
-the old folder to `~/data/maps/replaced/`. A save that replaces a map's files
+the old folder to `maps/replaced/`. A save that replaces a map's files
 moves the old ones to `NAME/previous/`. The tools never delete anything
-under `~/data/maps`.
+under `maps/`.
 
 Each map folder holds `NAME.pgm` (the image) and `NAME.yaml` for viewing and
 AMCL, `NAME.posegraph` and `NAME.data` for slam_toolbox, and `meta.yaml`
-(date, driver version, frame offsets, start pose). `scripts/setup_jupyter.sh`
-links `~/jupyter_ws/maps` to `~/data/maps`, so JupyterLab shows the maps.
+(date, driver version, frame offsets, start pose). `RACECAR_MAP_ROOT`
+overrides the folder. `scripts/setup_jupyter.sh` links `~/jupyter_ws/data` to
+the data root and `~/jupyter_ws/maps` to its `maps/`, so JupyterLab shows
+them.
 
 ### Map viewer
 
@@ -699,7 +751,7 @@ racecar launch lidar
 racecar launch edgetpu
 racecar launch dotmatrix
 racecar launch autonomy                 # SLAM beside teleop: mapping by default
-racecar launch autonomy mode:=localization map:=NAME   # on ~/data/maps/NAME; localizer:=slam_toolbox, pose:=x,y,yaw
+racecar launch autonomy mode:=localization map:=NAME   # on maps/NAME in the data root; localizer:=slam_toolbox, pose:=x,y,yaw
 ```
 
 `autonomy.launch.py` needs teleop running.

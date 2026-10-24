@@ -6,6 +6,19 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Added
 
+- Data root: everything the car produces (bags, maps, sessions, captures,
+  datasets, dashboard logs, health reports) goes under `/mnt/nvme/data` when
+  the NVMe is set up, else `~/data`
+  (`racecar_neo_ros2_driver/data_root.py`). `racecar-data.service` records
+  it at boot; `RACECAR_DATA_DIR` in the units, login shells, and the
+  `racecar` tool; `racecar data [path]`; a `data root` row in `racecar
+  status` and a Data indicator on 8080. A new recording or map run refuses
+  when the root cannot be written.
+- `racecar disk` (`scripts/racecar_disk.py`): `status`, `setup` (a blank
+  drive, or one mounted at `/data`, moved to `/mnt/nvme` without erasing;
+  offers to copy `~/data`), `format` (type the serial), `check` (e2fsck).
+  fstab line with a 45 s device timeout. `setup_ros2.sh` installs
+  `nvme-cli` and `gdisk`.
 - Car profile: this car's settings in `~/.config/racecar`, outside the
   driver folder (`racecar_neo_ros2_driver/car_profile.py`). Calibration
   writes `params/<name>.yaml`; launch reads it at launch, so a new value
@@ -348,6 +361,10 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Changed
 
+- Bags go to `bags/` under the data root (was `/data`, else `~/logs/bags`);
+  maps, `slam_eval/`, lab dashboard logs, and the camera label dataset
+  (`datasets/camlabel`) follow the data root. `~/jupyter_ws/data` and
+  `~/jupyter_ws/maps` link to it.
 - `config/*.local.yaml` and the dashboards' `.local.yaml` files in the
   driver folder are no longer read; run `racecar profile migrate` once.
   `racecar calibrate` no longer copies results to

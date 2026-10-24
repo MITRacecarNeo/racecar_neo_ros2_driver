@@ -369,6 +369,14 @@ class TestChangeMode:
         assert mc.resume(out=lines.append) == 0
         assert lines == ['Autonomy is already running.'] and systemd.actions() == []
 
+    def test_refuses_when_the_data_root_cannot_be_written(self, mc, root, systemd,
+                                                          monkeypatch):
+        monkeypatch.delenv('RACECAR_MAP_ROOT', raising=False)
+        monkeypatch.setattr(mc.data_root, 'session_problem', lambda: 'drive dropped out')
+        with pytest.raises(mc.MapError, match='drive dropped out'):
+            mc.start('room', out=lambda line: None)
+        assert systemd.actions() == []
+
     def test_teleop_must_run(self, mc, root, systemd):
         systemd.states['racecar-teleop.service'] = 'inactive'
         with pytest.raises(mc.MapError) as err:
@@ -600,5 +608,5 @@ def test_tool_dispatch_and_completion():
 
 def test_setup_links_the_maps_into_jupyter():
     text = (Path(__file__).resolve().parent.parent / 'scripts' / 'setup_jupyter.sh').read_text()
-    assert 'MAP_ROOT="$USER_HOME/data/maps"' in text
-    assert 'ln -s "$MAP_ROOT" "$JUPYTER_WS/maps"' in text
+    assert 'MAP_ROOT="$DATA_ROOT/maps"' in text
+    assert 'ln -sfn "$target" "$JUPYTER_WS/$link"' in text

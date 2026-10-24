@@ -18,6 +18,7 @@ and what supervises them. Companion to the operational instructions in
 - [Process model](#process-model)
 - [Supervision and observability](#supervision-and-observability)
 - [Configuration](#configuration)
+- [Data root](#data-root)
 - [Calibration data flow](#calibration-data-flow)
 - [Repository layout](#repository-layout)
 - [Known structural issues](#known-structural-issues)
@@ -40,10 +41,9 @@ BEC-fed car (no USB-PD negotiation) otherwise gets; see README "Bootloader
 EEPROM".
 
 Storage: root runs from the SD card. The PCIe lane is split by an ASMedia
-ASM1182e switch between the Coral Edge TPU and an NVMe drive. The NVMe holds
-`/data` (ext4, made by `scripts/setup_nvme.sh`, which `setup_all.sh` does not
-run because it erases the disk); `racecar log` records bags there when it is
-mounted.
+ASM1182e switch between the Coral Edge TPU and an NVMe drive. The NVMe, ext4
+labeled `racecar-data` and mounted at `/mnt/nvme` by `racecar disk setup`,
+holds the data root; see [Data root](#data-root).
 
 ## Hardware topology
 
@@ -370,8 +370,8 @@ autonomy.launch.py
 
 Each publishes `map -> odom`. slam_toolbox, AMCL, and map_server are lifecycle
 nodes; a Nav2 lifecycle manager configures and activates them. A node that
-exits ends the launch. Saved maps live under `~/data/maps/<name>/`
-(`racecar_neo_ros2_driver/maps.py`; `RACECAR_MAP_ROOT` overrides the root):
+exits ends the launch. Saved maps live under `maps/<name>/` in the data root
+(`racecar_neo_ros2_driver/maps.py`; `RACECAR_MAP_ROOT` overrides the folder):
 `<name>.posegraph` and `<name>.data` from slam_toolbox, `<name>.pgm` and
 `<name>.yaml` from `map_saver_cli`. The validation scripts in
 `scripts/validation/` run test sessions on top of this launch.
@@ -485,9 +485,11 @@ it as dead.
 
 ## Process model
 
-Five core systemd units, all `User=racecar`:
+Six core systemd units, all `User=racecar`:
 
 ```
+racecar-data.service        (oneshot at boot, before the others)
+
 racecar-teleop.service ──── Wants= ───▶ racecar-watchdog.service
         ▲                                        │
         └────────────── BindsTo= ────────────────┘
@@ -499,6 +501,9 @@ racecar-mapview.service     (independent, port 8084)
 
 `Wants=` pulls the watchdog up when teleop starts; `BindsTo=` takes it down
 when teleop stops, so the supervisor never outlives the thing it supervises.
+`racecar-data.service` writes the data root to `/run/racecar/`; teleop,
+dashboard, jupyter, mapview and autonomy order after it and load
+`RACECAR_DATA_DIR` from `/run/racecar/environment` (`EnvironmentFile=`).
 
 `racecar-autonomy.service` runs SLAM on top of teleop, installed but not
 enabled (mapping at boot would build an unsaved map and take CPU from every
@@ -590,8 +595,9 @@ their cards as `unsupervised` rather than dead when they are down.
 `scripts/dashboard.py` serves `/` and `/api/status` on port 8080. Node cards
 resolve from topic advertisement; rate rows come from raw subscriptions
 (counted without deserializing) except the three RealSense streams, which are
-read from the camera's `/diagnostics` output. System Health reports the RTC
-backup cell voltage and the sticky PMIC under-voltage alarm. The Autonomy card
+read from the camera's `/diagnostics` output. System Health reports the data
+drive (`data_root_health`), the RTC backup cell voltage, and the sticky PMIC
+under-voltage alarm. The Autonomy card
 reads only `/autonomy/status` (1 Hz, latched) for mode, map, localized, scan
 fit, and spread (`autonomy_view`), and links to the map viewer; the 20 Hz pose
 is left to the viewer, which subscribes only while a browser is open.
@@ -665,6 +671,45 @@ driver folder is not read; `racecar profile check`, run by
 `launch_teleop.sh`, logs a warning per file, and `racecar profile migrate`
 moves them in.
 
+## Data root
+
+`racecar_neo_ros2_driver/data_root.py` holds the rule for where the car's
+data goes: `/mnt/nvme/data` when the NVMe is mounted at `/mnt/nvme` and that
+folder can be written, else `~/data` on the SD card. Settings stay in the car
+profile.
+
+```
+racecar-data.service (boot) ──▶ /run/racecar/data_root    (path)
+                           └──▶ /run/racecar/environment  (RACECAR_DATA_DIR=...)
+                                   │
+   systemd units (EnvironmentFile=) ┤
+   /etc/profile.d/racecar-data.sh   ┤──▶ RACECAR_DATA_DIR
+   racecar-tool.sh                  ┘
+```
+
+`data_root.current()` reads `RACECAR_DATA_DIR`, then the run file, then
+applies the rule itself, once per process; `data_dir(sub)` returns a folder
+under the root, created if absent. The student library's
+`rc_utils.get_data_dir(subfolder)` is the notebook counterpart.
+
+| Folder | Writer |
+|---|---|
+| `bags/` | `scripts/racecar_log.py` (`RACECAR_LOG_DIR`, `--dir` override) |
+| `maps/` | `maps.py`, `scripts/map_control.py` (`RACECAR_MAP_ROOT` overrides) |
+| `datasets/camlabel/` | the camlabel dashboard |
+| `dashboards/<name>/` | lab dashboard CSV logs |
+| `slam_eval/` | `scripts/validation/slam_eval.py`, `slam_session.py` |
+| `images/` | lab programs, through the library's `rc_utils.get_data_dir("images")` |
+| `health/` | `racecar health` reports |
+
+The root is fixed for the boot. `data_root.session_problem()` makes a new
+`racecar log start` or `racecar map start`, `load`, or `resume` refuse when
+the root cannot be written, so a drive that drops out after boot never splits a
+session across two folders. `scripts/racecar_disk.py` backs `racecar data`
+and `racecar disk` (status, setup, format, check); privileged steps run
+through sudo. `diagnose.check_data_root` gives the `racecar status` row, and
+`dashboard.data_root_health` the 8080 Data indicator.
+
 ## Calibration data flow
 
 The committed calibration files hold zero defaults. Each utility subscribes to
@@ -709,7 +754,8 @@ saves the profile to one `.tar.gz` for a fresh image or SD card swap.
 racecar_neo_ros2_driver/
 ├── racecar_neo_ros2_driver/   node implementations, launch_common, pit_protocol,
 │                              limits (shared clamp), frames (frames.yaml loader),
-│                              car_profile (per-car settings in ~/.config/racecar)
+│                              car_profile (per-car settings in ~/.config/racecar),
+│                              data_root (where the car's data goes)
 ├── launch/                    one file per subsystem plus teleop composite
 ├── config/                    one YAML per node, keyed by node name;
 │                              frames.yaml (frame offsets); per-car
@@ -720,6 +766,7 @@ racecar_neo_ros2_driver/
 │                              racecar_log, analyze_odom, dmatrix_patterns,
 │                              racecar_map and map_control (`racecar map`),
 │                              racecar_profile (`racecar profile`),
+│                              racecar_disk (`racecar disk`, `racecar data`),
 │                              autonomy unit launcher and stop step,
 │                              systemd units, udev, polkit and modprobe rules,
 │   │                          Coral overlay and gasket patch
@@ -753,6 +800,6 @@ pure enough to test against fixtures without hardware.
 
 - The layout follows the ament and `colcon test` conventions rather than the
   `src/`, `tests/`, `data/` scaffold used elsewhere on this machine: the Python
-  package sits at the top level, the suite lives in `test/`, and there is no
-  data directory.
+  package sits at the top level, the suite lives in `test/`, and the car's
+  data lives in the data root outside the tree.
 - `edgetpu_node` and `dotmatrix_node` run without watchdog supervision.

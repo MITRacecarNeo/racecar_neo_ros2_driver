@@ -80,6 +80,13 @@ echo
 echo "==> [12/12] Lab dashboards (install units, disabled)"
 bash "$SCRIPT_DIR/setup_dashboards.sh"
 
+# The NVMe data drive is never formatted here; `racecar disk setup` asks first.
+if [ -e /dev/nvme0n1 ] && ! findmnt -n /mnt/nvme >/dev/null 2>&1; then
+    echo
+    echo "An NVMe drive is present but not set up at /mnt/nvme."
+    echo "To store the car's data on it: racecar disk setup"
+fi
+
 echo
 echo "Setup complete."
 echo "Log out and back in (or 'newgrp dialout') so group changes apply."

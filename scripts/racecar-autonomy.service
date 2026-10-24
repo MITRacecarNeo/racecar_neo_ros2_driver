@@ -13,6 +13,8 @@ StartLimitBurst=3
 Type=exec
 User=racecar
 Group=racecar
+# RACECAR_DATA_DIR, from racecar-data.service.
+EnvironmentFile=-/run/racecar/environment
 # Written by `racecar map` and the map viewer; see scripts/autonomy_args.py.
 EnvironmentFile=-/home/racecar/.config/racecar/autonomy.conf
 ExecStart=/home/racecar/ros2_ws/src/racecar_neo_ros2_driver/scripts/launch_autonomy.sh

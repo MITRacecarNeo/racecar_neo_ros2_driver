@@ -25,6 +25,7 @@ comment in the source can point here instead of carrying the full account.
 - [Map quality](#map-quality)
 - [Localization state](#localization-state)
 - [Localizer choice](#localizer-choice)
+- [Data drive missing at boot](#data-drive-missing-at-boot)
 - [Lab dashboards](#lab-dashboards)
 - [WiFi persistence](#wifi-persistence)
 - [Boot brownout with ethernet attached](#boot-brownout-with-ethernet-attached)
@@ -487,6 +488,30 @@ map equally well (80.1% and 79.4% of points within 0.1 m).
 Use AMCL for rooms that stay as mapped. Use the slam_toolbox localizer for a
 space that changes while the car drives (a classroom with people and bags
 moving), and remap with `--from` when a space has changed for good.
+
+## Data drive missing at boot
+
+`scripts/racecar_disk.py` (`MOUNT_OPTIONS`, `DEVICE_TIMEOUT_SEC`),
+`racecar_neo_ros2_driver/data_root.py`, `scripts/racecar-data.service`.
+
+The fstab line for `/mnt/nvme` carries `nofail` and
+`x-systemd.device-timeout=45`. A dead or unplugged drive does not stop boot.
+systemd waits up to 45 s for the device, since a drive can take 30 s to answer
+its first read, then boots without it. `racecar-data.service` then sets the
+data root to `~/data` on the SD card. `racecar data`, `racecar status` (the
+`data root` row, WARN), and the 8080 Data indicator show the fallback.
+
+To check the drive:
+
+1. Run `racecar disk`. It lists the drive, its partitions and mount, the fstab
+   line, and health.
+2. If no drive is listed, power off the car and reseat the NVMe drive.
+3. If the drive is listed but not mounted, run `racecar disk check`.
+4. Reboot, then run `racecar data` to confirm the root is `/mnt/nvme/data`.
+
+Data written to `~/data` during the fallback stays there. A drive that drops
+out after boot leaves the root on `/mnt/nvme/data`; new `racecar log` and
+`racecar map` sessions refuse until a reboot.
 
 ## Lab dashboards
 

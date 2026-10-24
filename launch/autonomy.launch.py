@@ -1,8 +1,8 @@
 """
 SLAM on top of a running teleop stack: mapping, or localization on a saved map.
 
-    racecar launch autonomy map:=room                         # mapping, saved as ~/data/maps/room
-    racecar launch autonomy mode:=localization map:=room      # AMCL on ~/data/maps/room
+    racecar launch autonomy map:=room                         # mapping, saved in <data root>/maps
+    racecar launch autonomy mode:=localization map:=room      # AMCL on <data root>/maps/room
     racecar launch autonomy mode:=localization map:=room localizer:=slam_toolbox pose:=1.0,0.5,1.57
     racecar launch autonomy mode:=localization map:=room pose:=global    # AMCL searches the map
 

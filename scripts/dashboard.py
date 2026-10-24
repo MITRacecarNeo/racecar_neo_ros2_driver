@@ -11,6 +11,7 @@ import json
 import logging
 from pathlib import Path
 import secrets
+import shutil
 import signal
 import socket
 import subprocess
@@ -548,8 +549,28 @@ def clear_watchdog_log() -> tuple[bool, str]:
     return True, 'Log cleared.'
 
 
+def data_root_health() -> dict[str, str]:
+    """Report where data goes now: the NVMe, or the SD card when the drive is missing."""
+    from racecar_neo_ros2_driver import data_root
+
+    root, warning = data_root.resolve()
+    try:
+        free = shutil.disk_usage(root).free / 1e9 if root.is_dir() else None
+    except OSError:
+        free = None
+    if free is None:
+        return {'label': 'Data drive', 'status': 'dead', 'detail': f'{root} missing'}
+    where = 'NVMe' if data_root.on_nvme(root) else 'SD card'
+    detail = f'{root} ({where}), {free:.0f} GB free'
+    if warning:
+        detail = f'{warning} {free:.0f} GB free'
+        return {'label': 'Data drive', 'status': 'stale', 'detail': detail}
+    return {'label': 'Data drive', 'status': 'healthy' if free >= 10 else 'stale',
+            'detail': detail}
+
+
 def _collect_system_health() -> dict[str, dict[str, str]]:
-    """Slow-refresh diagnostics: RTC battery + Pi under-voltage alarm."""
+    """Slow-refresh diagnostics: data drive, RTC battery, Pi under-voltage alarm."""
     volts = _read_battery_voltage()
     rtc_status, rtc_label = _classify_rtc(volts)
     uv_alarm = _read_under_voltage_alarm()
@@ -560,6 +581,7 @@ def _collect_system_health() -> dict[str, dict[str, str]]:
     else:
         uv_status, uv_label = ('healthy', 'OK')
     return {
+        'data': data_root_health(),
         'rtc': {'label': 'RTC battery', 'status': rtc_status, 'detail': rtc_label},
         'under_voltage': {
             'label': 'Pi under-voltage alarm',

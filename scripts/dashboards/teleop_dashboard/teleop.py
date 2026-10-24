@@ -56,7 +56,7 @@ from ackermann_msgs.msg import AckermannDriveStamped
 import cv2
 from nav_msgs.msg import Odometry
 import numpy as np
-from racecar_neo_ros2_driver import car_profile
+from racecar_neo_ros2_driver import car_profile, data_root
 import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
@@ -81,7 +81,7 @@ import webui  # noqa: E402
 # which loads on top of them, in the car profile (dashboards/<name>.yaml).
 DEFAULTS_PATH = BASE / 'teleop.yaml'
 YAML_PATH = car_profile.dashboard_settings('teleop')
-LOG_DIR = Path.home() / 'data' / 'dashboards' / 'teleop'
+LOG_DIR = data_root.current()[0] / 'dashboards' / 'teleop'
 
 MAX_SPEED = 1.0         # hard throttle cap either way, as drive_real.set_max_speed
 PUBLISH_RATE_HZ = 15.0  # /drive rate, independent of the browser

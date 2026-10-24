@@ -350,7 +350,33 @@ def check_system(cpu_interval: float = CPU_SAMPLE_SEC) -> list[Check]:
         out.append(Check(g, 'clock', WARN, f'not NTP synced, up {up_s}'))
 
     out.append(check_profile())
+    out.append(check_data_root())
     return out
+
+
+# The data root warns at this share used or below this much free.
+DATA_WARN_PCT = 80
+DATA_WARN_FREE_GB = 10
+
+
+def check_data_root(nvme_sys: Path = Path('/sys/class/nvme/nvme0')) -> Check:
+    """Report where the car's data goes, its free space, and a fallback to the SD card."""
+    try:
+        from racecar_neo_ros2_driver import data_root
+    except ImportError:
+        return Check('system', 'data root', SKIP, 'driver not built')
+    root, warning = data_root.current()
+    if not warning and not data_root.on_nvme(root):
+        warning = data_root.resolve()[1]
+    disk = sysinfo.read_disk(str(root)) if root.is_dir() else None
+    if disk is None:
+        return Check('system', 'data root', FAIL, f'{root} missing')
+    where = 'NVMe' if data_root.on_nvme(root) else 'SD card'
+    detail = f'{root} ({where}), {disk["free"]}G free ({disk["percent_used"]}% used)'
+    low = disk['percent_used'] >= DATA_WARN_PCT or disk['free'] < DATA_WARN_FREE_GB
+    if warning and nvme_sys.exists():
+        return Check('system', 'data root', WARN, f'{detail}; {warning}')
+    return Check('system', 'data root', WARN if low else OK, detail)
 
 
 def check_profile() -> Check:

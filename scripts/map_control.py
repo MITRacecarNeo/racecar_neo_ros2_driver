@@ -31,8 +31,8 @@ import subprocess
 import time
 from typing import Any
 
-from racecar_neo_ros2_driver import autonomy as au
-from racecar_neo_ros2_driver.maps import map_root, parse_pose, valid_name
+from racecar_neo_ros2_driver import autonomy as au, data_root
+from racecar_neo_ros2_driver.maps import map_root, parse_pose, ROOT_ENV, valid_name
 
 UNIT = 'racecar-autonomy.service'
 TELEOP_UNIT = 'racecar-teleop.service'
@@ -542,6 +542,10 @@ def _change_mode(
 ) -> int:
     make_plan()  # usage and map errors before anything stops
     require_teleop()
+    if not os.environ.get(ROOT_ENV):
+        problem = data_root.session_problem()
+        if problem:
+            raise MapError(problem)
     stop_driving_apps(out)
     if unit_running():
         out('Stopping the current autonomy run.')

@@ -11,7 +11,7 @@ subcommands below stay for single measurements.
     slam_eval.py report [--taped FILE]     # mark repeatability and distances against a tape
     slam_eval.py quality MAP               # occupied, free, and unknown cells of a saved map
 
-Records go to ~/data/slam_eval/: one CSV per `load` run and marks.csv for
+Records go to slam_eval/ under the data root: one CSV per `load` run and marks.csv for
 `mark`. A taped file has one line per pair of marks, `A B meters`.
 """
 
@@ -31,12 +31,14 @@ import sys
 import time
 from typing import Any
 
+from racecar_neo_ros2_driver import data_root
+
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 
 import sysinfo  # noqa: E402
 
-EVAL_DIR = Path.home() / 'data' / 'slam_eval'
+EVAL_DIR = data_root.current()[0] / 'slam_eval'
 MARKS_FILE = 'marks.csv'
 # Label -> substring of /proc/<pid>/cmdline. Python nodes run as python3, so
 # match the executable path, not the process name.

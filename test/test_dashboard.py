@@ -152,7 +152,7 @@ class TestSystemHealth:
     def test_collect_system_health_keys(self, dashboard):
         # Without vcgencmd or rpi_volt both entries still exist, as unavailable.
         health = dashboard._collect_system_health()
-        assert set(health) == {'rtc', 'under_voltage'}
+        assert set(health) == {'data', 'rtc', 'under_voltage'}
         for entry in health.values():
             assert {'label', 'status', 'detail'} <= set(entry)
             assert entry['status'] in ('healthy', 'stale', 'dead')

@@ -6,6 +6,7 @@
 # only update files that changed.
 #
 # Services installed:
+#   racecar-data.service      oneshot: the data root (NVMe, else SD card)
 #   racecar-teleop.service    full stack via launch_teleop.sh
 #   racecar-watchdog.service  BindsTo=teleop, restart-on-failure supervisor
 #   racecar-dashboard.service web status page (port 8080)
@@ -20,6 +21,7 @@ set -eo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 SERVICES=(
+    racecar-data.service
     racecar-teleop.service
     racecar-watchdog.service
     racecar-dashboard.service
@@ -62,6 +64,16 @@ for svc in "${SERVICES[@]}"; do
         echo "  $svc: enabled"
     fi
 done
+
+# RACECAR_DATA_DIR for login shells (SSH) from the path racecar-data.service writes.
+PROFILE_SRC="${SCRIPT_DIR}/profile.d-racecar-data.sh"
+PROFILE_DST="/etc/profile.d/racecar-data.sh"
+if cmp -s "$PROFILE_SRC" "$PROFILE_DST" 2>/dev/null; then
+    echo "  $PROFILE_DST: already up to date"
+else
+    sudo install -m 0644 "$PROFILE_SRC" "$PROFILE_DST"
+    echo "  $PROFILE_DST: installed/updated"
+fi
 
 echo
 echo "Services installed and enabled. To start now:"

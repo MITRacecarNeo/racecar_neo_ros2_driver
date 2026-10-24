@@ -1,5 +1,7 @@
 [Unit]
 Description=RACECAR Neo Web Map Viewer (port 8084)
+Wants=racecar-data.service
+After=racecar-data.service
 After=network.target
 
 [Service]
@@ -15,6 +17,8 @@ Restart=on-failure
 RestartSec=5
 TimeoutStopSec=10
 Environment=HOME=/home/racecar
+# RACECAR_DATA_DIR, from racecar-data.service.
+EnvironmentFile=-/run/racecar/environment
 Environment=ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
 WorkingDirectory=/home/racecar/ros2_ws
 

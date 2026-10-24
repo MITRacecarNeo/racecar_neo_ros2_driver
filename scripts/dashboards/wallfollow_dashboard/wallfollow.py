@@ -31,7 +31,7 @@ import threading
 import time
 
 from ackermann_msgs.msg import AckermannDriveStamped
-from racecar_neo_ros2_driver import car_profile
+from racecar_neo_ros2_driver import car_profile, data_root
 import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
@@ -49,7 +49,7 @@ import webui  # noqa: E402
 # which loads on top of them, in the car profile (dashboards/<name>.yaml).
 DEFAULTS_PATH = BASE / 'wallfollow.yaml'
 YAML_PATH = car_profile.dashboard_settings('wallfollow')
-LOG_DIR = Path.home() / 'data' / 'dashboards' / 'wallfollow'
+LOG_DIR = data_root.current()[0] / 'dashboards' / 'wallfollow'
 
 MAX_SPEED = 1.0      # hard throttle cap, same idea as drive_real.set_max_speed
 SEARCH_STEP = 2      # degrees between candidate headings (dynamic)

@@ -7,7 +7,8 @@ Two-stage workflow on port 8085 (stdlib HTTP + rclpy, wallfollow pattern):
            images/ with a YOLO label file in labels/ (class_id cx cy w h,
            normalized) and classes.txt stays in sync.
 
-Everything is written under ~/data/camlabel, created at startup when absent.
+Everything is written under datasets/camlabel in the data root, created at
+startup when absent.
 
 camlabel.yaml sets the live-preview resolution sent to the browser. Saved
 images are always the full camera frame. Thumbnails, immutable file names
@@ -25,6 +26,7 @@ import threading
 
 import cv2
 import numpy as np
+from racecar_neo_ros2_driver import data_root
 import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
@@ -37,9 +39,9 @@ BASE = Path(__file__).resolve().parent
 # The shared styles, fonts and logos are served from scripts/web/ (webui.py).
 sys.path.insert(0, str(BASE.parents[1]))
 import webui  # noqa: E402
-# Dataset lives outside the code tree, so reinstalling or re-cloning camlabel
-# never touches collected frames or labels.
-DATASET = Path.home() / 'data' / 'camlabel'
+# Dataset lives under the data root (data_root.py), outside the code tree, so
+# reinstalling or re-cloning never touches collected frames or labels.
+DATASET = data_root.current()[0] / 'datasets' / 'camlabel'
 UNLABELED = DATASET / 'unlabeled'
 IMAGES = DATASET / 'images'
 LABELS = DATASET / 'labels'

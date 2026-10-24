@@ -7,13 +7,16 @@ import os
 from pathlib import Path
 import re
 
-MAP_ROOT = Path.home() / 'data' / 'maps'
+from .data_root import current as data_root
+
 ROOT_ENV = 'RACECAR_MAP_ROOT'
 NAME_PATTERN = re.compile(r'[A-Za-z0-9_-]+')
 
 
 def map_root() -> Path:
-    return Path(os.environ.get(ROOT_ENV) or MAP_ROOT)
+    """RACECAR_MAP_ROOT, else maps/ under the data root (data_root.py)."""
+    env = os.environ.get(ROOT_ENV)
+    return Path(env) if env else data_root()[0] / 'maps'
 
 
 def valid_name(name: str) -> bool:

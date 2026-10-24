@@ -34,9 +34,40 @@ def load_script(name: str) -> ModuleType:
     return module
 
 
+@pytest.fixture(scope='session', autouse=True)
+def _car_profile_session(tmp_path_factory):
+    """Point the car profile away from the car's own before module fixtures run."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv('RACECAR_CONFIG_DIR', str(tmp_path_factory.mktemp('car_profile_session')))
+        yield
+
+
 @pytest.fixture(autouse=True)
-def car_profile_dir(tmp_path, monkeypatch):
+def car_profile_dir(_car_profile_session, tmp_path, monkeypatch):
     """Point the car profile at a temporary folder, so no test touches the car's own."""
     path = tmp_path / 'car_profile'
     monkeypatch.setenv('RACECAR_CONFIG_DIR', str(path))
     return path
+
+
+@pytest.fixture(scope='session', autouse=True)
+def _data_root_session(tmp_path_factory):
+    """
+    Point the data root at a temporary folder for the whole session.
+
+    Session scope runs before module fixtures that import scripts, which read
+    the data root into module constants (LOG_DIR, DATASET).
+    """
+    from racecar_neo_ros2_driver import data_root
+
+    path = tmp_path_factory.mktemp('data_root')
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv('RACECAR_DATA_DIR', str(path))
+        data_root.reset()
+        yield path
+    data_root.reset()
+
+
+@pytest.fixture
+def data_root_dir(_data_root_session):
+    return _data_root_session

@@ -38,9 +38,9 @@ class TestMaps:
         monkeypatch.setenv(maps.ROOT_ENV, str(tmp_path))
         assert maps.map_stem('room') == tmp_path / 'room' / 'room'
 
-    def test_default_root_is_data_maps(self, monkeypatch):
+    def test_default_root_is_maps_under_the_data_root(self, monkeypatch, data_root_dir):
         monkeypatch.delenv(maps.ROOT_ENV, raising=False)
-        assert maps.map_root() == Path.home() / 'data' / 'maps'
+        assert maps.map_root() == data_root_dir / 'maps'
 
     def test_path_drops_a_map_suffix(self):
         assert maps.map_stem('/tmp/a/room.yaml') == Path('/tmp/a/room')
