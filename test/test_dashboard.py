@@ -1,6 +1,7 @@
 """Unit tests for scripts/dashboard.py."""
 
 from collections import deque
+import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
@@ -515,3 +516,94 @@ class TestOnDemand:
         assert dashboard.note_view() is True and dashboard._wake.is_set()
         assert dashboard.viewing()
         assert dashboard.note_view() is False
+
+
+class TestOverrideSession:
+    def test_off_publishes_zero(self, dashboard):
+        assert dashboard.OverrideSession().session(10.0) == 0
+
+    def test_start_publishes_a_nonzero_number(self, dashboard):
+        o = dashboard.OverrideSession()
+        o.start(10.0)
+        assert o.session(10.5) != 0
+
+    def test_each_start_is_a_new_number(self, dashboard):
+        o = dashboard.OverrideSession()
+        o.start(10.0)
+        first = o.number
+        o.start(11.0)
+        assert o.number != first
+
+    def test_lapses_without_keepalive(self, dashboard):
+        o = dashboard.OverrideSession()
+        o.start(10.0)
+        o.mux_active(True, 10.2)
+        o.keep(11.5)
+        assert o.session(13.4) != 0
+        assert o.session(13.6) == 0
+        assert 'stopped responding' in o.ended
+
+    def test_keepalive_does_not_restart(self, dashboard):
+        o = dashboard.OverrideSession()
+        o.keep(10.0)
+        assert o.session(10.0) == 0
+
+    def test_mux_cancel_ends_it_for_good(self, dashboard):
+        o = dashboard.OverrideSession()
+        o.start(10.0)
+        o.mux_active(False, 10.1)
+        assert o.session(10.1) != 0
+        o.mux_active(True, 10.3)
+        o.mux_active(False, 10.8)
+        o.keep(10.9)
+        assert o.session(10.9) == 0
+        assert o.ended == 'Ended by the controller.'
+
+    def test_unconfirmed_ends_when_teleop_is_down(self, dashboard):
+        o = dashboard.OverrideSession()
+        o.start(10.0)
+        o.keep(12.0)
+        o.keep(13.5)
+        assert o.session(13.5) == 0
+        assert o.ended == 'Teleop is not running.'
+
+    def test_view(self, dashboard):
+        o = dashboard.OverrideSession()
+        o.start(10.0)
+        assert o.view(10.0) == {'on': True, 'confirmed': False, 'ended': ''}
+        o.mux_active(True, 10.1)
+        assert o.view(10.1)['confirmed']
+        o.stop()
+        assert o.view(10.2) == {'on': False, 'confirmed': False, 'ended': ''}
+
+
+class TestOverrideEndpoint:
+    @pytest.fixture
+    def post(self, dashboard, monkeypatch):
+        monkeypatch.setattr(dashboard, '_override', dashboard.OverrideSession())
+        server = ThreadingHTTPServer(('127.0.0.1', 0), dashboard.DashboardHandler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+
+        def send(action):
+            conn = http.client.HTTPConnection('127.0.0.1', server.server_address[1], timeout=5)
+            conn.request('POST', '/api/override', body=json.dumps({'action': action}))
+            resp = conn.getresponse()
+            return resp.status, json.loads(resp.read())
+
+        yield send
+        server.shutdown()
+        server.server_close()
+
+    def test_start_keep_stop(self, post):
+        assert post('start')[1]['on'] is True
+        assert post('keep')[1]['on'] is True
+        assert post('stop')[1]['on'] is False
+        assert post('keep')[1]['on'] is False
+
+    def test_unknown_action_is_rejected(self, post):
+        assert post('go')[0] == 400
+
+    def test_page_has_the_toggle_and_warning(self, dashboard):
+        html = dashboard._load_dashboard_html()
+        assert 'id="override"' in html and 'id="override-banner"' in html
+        assert 'The car may start moving without warning. Watch it at all times.' in html

@@ -368,6 +368,26 @@ def _control(action: str) -> None:
         )
 
 
+# Lab apps that publish /drive. Mapping stops them: they cost CPU that
+# slam_toolbox needs, and the car is driven with the gamepad while mapping.
+# Stopping them is allowed by scripts/polkit/49-racecar-dashboards.rules.
+DRIVING_APPS = (
+    ('racecar-webteleop.service', 'Web teleop'),
+    ('racecar-linefollow.service', 'Line follow'),
+    ('racecar-wallfollow.service', 'Wall follow'),
+)
+
+
+def stop_driving_apps(out: Out) -> None:
+    for unit, name in DRIVING_APPS:
+        if unit_state(unit) not in ('active', 'activating'):
+            continue
+        if systemctl('stop', unit).returncode == 0:
+            out(f'Stopped {name}.')
+        else:
+            out(f'Could not stop {name}. Stop it from the apps page.')
+
+
 def require_teleop() -> None:
     if unit_state(TELEOP_UNIT) != 'active':
         raise MapError('teleop is not running. Start it with `racecar service start teleop`.')
@@ -514,8 +534,10 @@ def _change_mode(
     now: datetime,
     timeout: float,
 ) -> int:
-    make_plan()  # usage and map errors before anything stops
+    first = make_plan()  # usage and map errors before anything stops
     require_teleop()
+    if first.values['AUTONOMY_MODE'] == 'mapping':
+        stop_driving_apps(out)
     if unit_running():
         out('Stopping the current autonomy run.')
         _control('stop')

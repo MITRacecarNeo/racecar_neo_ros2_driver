@@ -129,12 +129,13 @@
   }
 
   const clock = (t) => new Date(t * 1000).toTimeString().slice(0, 5);
-  // Clock times every 30 min, for hour-scale charts in wall-clock seconds.
-  const clockTicks = Object.assign((t0, t1) => {
+  // Clock times every `step` s (30 min by default), for charts in wall-clock seconds.
+  const clockTicksEvery = (step) => Object.assign((t0, t1) => {
     const out = [];
-    for (let t = Math.ceil(t0 / 1800) * 1800; t <= t1; t += 1800) out.push([t, clock(t)]);
+    for (let t = Math.ceil(t0 / step) * step; t <= t1; t += step) out.push([t, clock(t)]);
     return out;
   }, { label: clock });
+  const clockTicks = clockTicksEvery(1800);
   // Seconds before `now`, every `step` s.
   const recentTicks = (now, step = 10) => Object.assign((t0, t1) => {
     const out = [];
@@ -142,5 +143,5 @@
     return out;
   }, { label: (t) => `${(t - now).toFixed(1)} s` });
 
-  window.RcnCharts = { timeChart, legendHtml, niceTicks, clockTicks, recentTicks, COLOR, DASH };
+  window.RcnCharts = { timeChart, legendHtml, niceTicks, clockTicks, clockTicksEvery, recentTicks, COLOR, DASH };
 })();

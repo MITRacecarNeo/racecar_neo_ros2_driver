@@ -36,3 +36,7 @@ mux_node:
     rc_link_hold_sec: 1.0
     rc_link_topic: "/rc/link"
     rc_channels_topic: "/rc/channels"
+
+    # Safety-controller override from the 8080 dashboard: it ends this long
+    # after the last session number on /mux/override.
+    override_timeout_sec: 1.0

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>RACECAR Neo map</title>
-<link rel="stylesheet" href="/ui/rcn.css?v=8">
+<link rel="stylesheet" href="/ui/rcn.css?v=9">
 <link rel="icon" href="/ui/brand/app-icon-32.png">
 <link rel="apple-touch-icon" href="/ui/brand/app-icon-180.png">
 <style>
@@ -59,7 +59,7 @@ main.maps-open #hint { left: calc(min(340px, 80%) + var(--rcn-space-3)); }
 </head>
 <body>
 <header class="rcn-header" id="head">
-  <img class="rcn-mark" src="/ui/brand/mark-white.png" alt="RACECAR Neo">
+  <img class="rcn-mark" src="/ui/brand/mark.png" alt="RACECAR Neo">
   <span class="rcn-title">Map</span>
   <span id="mode"></span>
   <span id="mapname"></span>
@@ -89,6 +89,13 @@ main.maps-open #hint { left: calc(min(340px, 80%) + var(--rcn-space-3)); }
   <div class="row"><input type="text" class="rcn-input" id="newname" placeholder="map name (letters, digits, - and _)"
     autocomplete="off" autocapitalize="off" spellcheck="false"></div>
   <div class="row"><button class="rcn-btn primary" id="startgo">Start</button><button class="rcn-btn quiet" id="startcancel">Cancel</button></div>
+</div></div>
+
+<div class="sheet" id="stopsheet"><div>
+  <h2 id="stoptitle">Save before stopping?</h2>
+  <div class="row"><button class="rcn-btn primary" id="stopsave">Save and stop</button>
+    <button class="rcn-btn danger" id="stopnosave">Stop without saving</button>
+    <button class="rcn-btn quiet" id="stopcancel">Cancel</button></div>
 </div></div>
 
 <div class="sheet" id="loadsheet"><div>
@@ -331,7 +338,7 @@ async function finishPose(x, y, yaw) {
       poseTool.start = poseTool.end = null; draw(); return;
     }
     poseTool = null; pending = null; preview = null; hint(''); view.fitted = false; gridVersion = -1;
-    await action({ action: 'start', name: req.name, source: req.source, pose: [x, y, yaw] });
+    await action({ action: 'start', name: req.name, source: req.source, pose: [x, y, yaw], replace: req.replace });
   }
   render(); draw();
 }
@@ -364,6 +371,7 @@ async function action(body) {
   const r = await post('/api/action', body);
   if (!r.ok) report(r);
   poll();
+  return r;
 }
 
 // -- controls --
@@ -385,7 +393,8 @@ function render() {
   if (mode === 'mapping') {
     f.append(button('Save', 'primary', () => action({ action: 'save' }), running, 'save'));
     f.append(button('Stop', 'danger', () => {
-      if (confirm('Stop mapping?')) action({ action: 'stop' });
+      $('stoptitle').textContent = `Save ${s.map || 'the map'} before stopping?`;
+      $('stopsheet').classList.add('show');
     }, running, 'stop'));
   } else if (mode === 'localization') {
     f.append(button('Set pose', '', () => startPoseTool('set'), running, 'map'));
@@ -411,19 +420,31 @@ function openStart(source) {
   setTimeout(() => $('newname').focus(), 50);
 }
 $('startcancel').onclick = () => $('startsheet').classList.remove('show');
+async function nameTaken(name) {
+  try {
+    const data = await (await fetch('/api/maps', { cache: 'no-store' })).json();
+    return data.maps.some((m) => m.name === name);
+  } catch (err) { return false; }
+}
 $('startgo').onclick = async () => {
   const name = $('newname').value.trim(), source = $('startsheet').dataset.source;
   if (!/^[A-Za-z0-9_-]+$/.test(name)) { alert('Map names use letters, digits, - and _.'); return; }
   $('startsheet').classList.remove('show');
+  // Extending in place keeps the name; any other existing name is replaced only on confirm.
+  let replace = false;
+  if (name !== source && await nameTaken(name)) {
+    if (!confirm(`"${name}" exists. Replace it?`)) return;
+    replace = true;
+  }
   if (source) {
     preview = await fetchGrid(`/api/saved?name=${encodeURIComponent(source)}`);
     if (!preview) { flash(`Cannot read ${source}`, 'bad'); return; }
-    fit(preview); pending = { name, source }; startPoseTool('extend'); draw();
+    fit(preview); pending = { name, source, replace }; startPoseTool('extend'); draw();
     return;
   }
-  if (!confirm(`Start mapping "${name}"?`)) return;
+  if (!replace && !confirm(`Start mapping "${name}"?`)) return;
   view.fitted = false; gridVersion = -1;
-  action({ action: 'start', name });
+  action({ action: 'start', name, replace });
 };
 
 function closeMaps() { mapsOpen = false; document.querySelector('main').classList.remove('maps-open'); render(); draw(); }
@@ -504,6 +525,24 @@ function showStatus() {
 // A success title stays JOB_HIDE_MS; a failure stays until the next command.
 const JOB_HIDE_MS = 4000;
 let jobDoneAt = null;
+// Save, then stop once the save has finished; a failed save stops nothing.
+async function waitForJob() {
+  for (;;) {
+    await new Promise((res) => setTimeout(res, 300));
+    try {
+      const j = (await (await fetch('/api/state', { cache: 'no-store' })).json()).job || {};
+      if (!j.running) return j.code === 0;
+    } catch (err) { /* keep waiting */ }
+  }
+}
+$('stopcancel').onclick = () => $('stopsheet').classList.remove('show');
+$('stopnosave').onclick = () => { $('stopsheet').classList.remove('show'); action({ action: 'stop' }); };
+$('stopsave').onclick = async () => {
+  $('stopsheet').classList.remove('show');
+  const r = await action({ action: 'save' });
+  if (r.ok && await waitForJob()) action({ action: 'stop' });
+};
+const unsaved = (j) => j.lines.some((l) => l.includes('never saved'));
 function jobTitle(j) {
   const [action, name] = j.argv;
   const extend = j.argv.includes('--from');
@@ -514,6 +553,7 @@ function jobTitle(j) {
     }[action] || 'Working...';
   }
   if (j.code !== 0) return `Failed: ${j.lines.length ? j.lines[j.lines.length - 1].replace(/^racecar map: /, '') : 'see output'}`;
+  if (action === 'stop' && unsaved(j)) return 'Stopped. Not saved. Use Keep in Maps to save it.';
   return {
     start: `Mapping ${name}`, save: 'Saved', stop: 'Stopped', load: `Localizing on ${name}`, recover: `Kept ${name}`,
   }[action] || 'Done';
@@ -521,7 +561,8 @@ function jobTitle(j) {
 function showJob() {
   const j = state.job || {};
   const el = $('job');
-  if (j.running || j.code !== 0) jobDoneAt = null;
+  // Failures and an unsaved stop stay up until the next command.
+  if (j.running || j.code !== 0 || (j.argv && j.argv[0] === 'stop' && unsaved(j))) jobDoneAt = null;
   else if (jobDoneAt === null) jobDoneAt = Date.now();
   if (!j.action || (jobDoneAt !== null && Date.now() - jobDoneAt > JOB_HIDE_MS)) { el.classList.remove('show'); return; }
   el.classList.add('show');

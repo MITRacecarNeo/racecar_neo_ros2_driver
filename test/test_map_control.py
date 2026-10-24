@@ -292,7 +292,8 @@ class FakeSystemd:
         self.calls.append(args)
         action, unit = args
         if action == 'is-active':
-            return subprocess.CompletedProcess(args, 0, self.states[unit] + '\n', '')
+            state = self.states.get(unit, 'inactive')
+            return subprocess.CompletedProcess(args, 0, state + '\n', '')
         if action == 'stop':
             self.on_stop()
             self.states[unit] = 'inactive'
@@ -320,6 +321,21 @@ class TestChangeMode:
         values = mc.read_mode_file()
         assert values['AUTONOMY_MODE'] == 'mapping' and values['AUTONOMY_MAP'] == 'room'
         assert values['AUTONOMY_SESSION'] and 'racecar map save' in lines[-1]
+
+    def test_mapping_stops_the_driving_apps(self, mc, root, systemd):
+        systemd.states['racecar-webteleop.service'] = 'active'
+        systemd.states['racecar-camlabel.service'] = 'active'
+        lines: list[str] = []
+        assert mc.start('room', out=lines.append) == 0
+        assert ('stop', 'racecar-webteleop.service') in systemd.calls
+        assert systemd.states['racecar-camlabel.service'] == 'active'
+        assert 'Stopped Web teleop.' in lines
+
+    def test_localizing_leaves_the_driving_apps_running(self, mc, root, systemd):
+        saved_map(root, 'room')
+        systemd.states['racecar-linefollow.service'] = 'active'
+        assert mc.load('room', out=lambda line: None) == 0
+        assert systemd.states['racecar-linefollow.service'] == 'active'
 
     def test_teleop_must_run(self, mc, root, systemd):
         systemd.states['racecar-teleop.service'] = 'inactive'

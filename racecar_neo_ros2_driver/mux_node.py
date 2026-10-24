@@ -9,6 +9,13 @@ default (rc_authority_enable): not every car has a transmitter, and the link
 predicate is the least-verified part of the path. Where it is enabled and a
 live transmitter is present, the mode channel selects idle, manual or
 autonomous and the bumpers are ignored; otherwise the bumpers govern.
+
+The safety-controller override forwards /drive with no gamepad and no RB.
+The web dashboard turns it on and must keep it alive: it publishes a nonzero
+session number on /mux/override several times a second, and the override
+lapses override_timeout_sec after the last one. LB still selects the gamepad;
+any other gamepad button ends the session, which stays ended until a new
+session number arrives. /mux/override_active (latched) reports the state.
 """
 
 from collections.abc import Sequence
@@ -21,7 +28,47 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import Joy
-from std_msgs.msg import Bool, Float32MultiArray
+from std_msgs.msg import Bool, Float32MultiArray, UInt32
+
+
+class SafetyOverride:
+    """
+    The dashboard's override session, kept alive by fresh session numbers.
+
+    Session 0 means off. A cancelled session stays off until a different
+    session number arrives, so a stale browser cannot re-arm it.
+    """
+
+    def __init__(self, timeout_sec: float) -> None:
+        self.timeout = timeout_sec
+        self.session = 0
+        self.stamp: float | None = None
+        self.cancelled = 0
+
+    def observe(self, session: int, now: float) -> None:
+        self.session = int(session)
+        self.stamp = now
+
+    def active(self, now: float) -> bool:
+        return (
+            self.session != 0
+            and self.session != self.cancelled
+            and self.stamp is not None
+            and now - self.stamp <= self.timeout
+        )
+
+    def cancel(self) -> None:
+        self.cancelled = self.session
+
+
+def pressed(previous: Sequence[int], buttons: Sequence[int], ignore: int) -> bool:
+    """Check whether a button other than `ignore` went down between two Joy frames."""
+    for i, b in enumerate(buttons):
+        if i == ignore or not b:
+            continue
+        if i >= len(previous) or not previous[i]:
+            return True
+    return False
 
 
 class MuxMode(Enum):
@@ -39,6 +86,13 @@ def select_mode(buttons: Sequence[int], gamepad_btn: int, auto_btn: int) -> MuxM
     if ao and not gp:
         return MuxMode.AUTONOMY
     return MuxMode.IDLE
+
+
+def shown_mode(joy_mode: MuxMode, override: bool) -> MuxMode:
+    """Show AUTO while the safety override forwards /drive; LB still shows the gamepad."""
+    if override and joy_mode != MuxMode.GAMEPAD:
+        return MuxMode.AUTONOMY
+    return joy_mode
 
 
 def select_rc_mode(channels: Sequence[float], channel: int, deadband: float) -> MuxMode:
@@ -197,6 +251,7 @@ class MuxNode(Node):
         self.declare_parameter('rc_link_hold_sec', 1.0)
         self.declare_parameter('rc_link_topic', '/rc/link')
         self.declare_parameter('rc_channels_topic', '/rc/channels')
+        self.declare_parameter('override_timeout_sec', 1.0)
 
         self._gamepad_btn = self.get_parameter('gamepad_enable_button').value
         self._auto_btn = self.get_parameter('autonomy_enable_button').value
@@ -220,6 +275,10 @@ class MuxNode(Node):
         self._rc_channels_stamp: float | None = None
         self._rc_held = False
 
+        self._override = SafetyOverride(float(self.get_parameter('override_timeout_sec').value))
+        self._override_was = False
+        self._prev_buttons: list[int] = []
+
         self._latest_joy: Joy | None = None
         self._joy_stamp = 0.0
         self._joy_connected = False
@@ -241,6 +300,14 @@ class MuxNode(Node):
             durability=QoSDurabilityPolicy.VOLATILE,
         )
         self._pub = self.create_publisher(AckermannDriveStamped, '/mux_out', qos)
+        latched = QoSProfile(
+            depth=1,
+            reliability=QoSReliabilityPolicy.RELIABLE,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self._override_pub = self.create_publisher(Bool, '/mux/override_active', latched)
+        self._override_pub.publish(Bool(data=False))
+        self.create_subscription(UInt32, '/mux/override', self._override_cb, 10)
 
         self.create_subscription(Joy, '/joy', self._joy_cb, qos)
         self.create_subscription(AckermannDriveStamped, '/gamepad_drive', self._gamepad_cb, qos)
@@ -267,7 +334,16 @@ class MuxNode(Node):
             f'rc_authority={"on" if self._rc_enable else "off"}'
         )
 
+    def _override_cb(self, msg: UInt32) -> None:
+        self._override.observe(msg.data, time.monotonic())
+
     def _joy_cb(self, msg: Joy) -> None:
+        if self._override.active(time.monotonic()) and pressed(
+            self._prev_buttons, msg.buttons, self._gamepad_btn
+        ):
+            self._override.cancel()
+            self.get_logger().warn('Safety override ended by a gamepad button')
+        self._prev_buttons = list(msg.buttons)
         self._latest_joy = msg
         self._joy_stamp = time.monotonic()
         if not self._joy_connected:
@@ -342,11 +418,33 @@ class MuxNode(Node):
 
         return select_mode(joy.buttons, self._gamepad_btn, self._auto_btn)
 
+    def _override_mode(self, now: float) -> MuxMode | None:
+        """
+        Pick the mode while the safety override is on, else None.
+
+        /drive is forwarded without a gamepad; LB held alone still selects it.
+        """
+        active = self._override.active(now)
+        if active != self._override_was:
+            self._override_was = active
+            self._override_pub.publish(Bool(data=active))
+            log = self.get_logger().warn if active else self.get_logger().info
+            log('Safety override on: /drive forwarded without RB' if active
+                else 'Safety override off')
+        if not active:
+            return None
+        if self._joy_mode(now) == MuxMode.GAMEPAD:
+            return MuxMode.GAMEPAD
+        return MuxMode.AUTONOMY
+
     def _publish(self) -> None:
         now = time.monotonic()
         out = AckermannDriveStamped()
 
-        if self._rc_has_authority(now):
+        override = self._override_mode(now)
+        if override is not None:
+            mode = override
+        elif self._rc_has_authority(now):
             mode = self._rc.gate(
                 select_rc_mode(self._rc_channels, self._rc_channel, self._rc_deadband)
             )

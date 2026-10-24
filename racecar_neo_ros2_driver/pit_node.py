@@ -45,7 +45,7 @@ from tf2_ros import TransformBroadcaster
 
 from . import pit_protocol as pit
 from .limits import clamp
-from .mux_node import MuxMode, select_mode
+from .mux_node import MuxMode, select_mode, shown_mode
 from .odometry import OdomIntegrator, OdomState, yaw_quaternion
 from .teensy_clock import TeensyClock
 
@@ -138,6 +138,16 @@ _MODE_BITS = {
     MuxMode.GAMEPAD: SYS_MODE_MANUAL,
     MuxMode.AUTONOMY: SYS_MODE_AUTO,
 }
+
+
+OVERRIDE_LED_RGB = (255, 110, 0)
+OVERRIDE_LED_HZ = 2.0
+
+
+def override_led_frame(now: float) -> bytes:
+    """Flash the whole strip amber while the safety override is on."""
+    lit = int(now * OVERRIDE_LED_HZ * 2) % 2 == 0
+    return bytes(OVERRIDE_LED_RGB if lit else (0, 0, 0)) * (LED_FRAME_LEN // 3)
 
 
 def remap_axes(
@@ -336,6 +346,16 @@ class PitNode(Node):
         self.create_subscription(UInt8MultiArray, self._dotmatrix_topic, self._dot_cb, qos)
         self.create_subscription(UInt8MultiArray, self._led_topic, self._led_cb, qos)
         self.create_subscription(Joy, '/joy', self._joy_cb, qos)
+        self.create_subscription(
+            Bool,
+            '/mux/override_active',
+            self._override_cb,
+            QoSProfile(
+                depth=1,
+                reliability=QoSReliabilityPolicy.RELIABLE,
+                durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+            ),
+        )
         self._setup_odometry(qos)
 
         self._latest_speed = 0.0
@@ -344,6 +364,7 @@ class PitNode(Node):
         self._dot_frame: bytes | None = None
         self._dot_stamp = 0.0
         self._led_frame: bytes | None = None
+        self._override = False
         self._led_stamp = 0.0
         self._joy_buttons: list[int] = []
         self._start_time = time.monotonic()
@@ -397,9 +418,14 @@ class PitNode(Node):
     def _joy_cb(self, msg: Joy) -> None:
         self._joy_buttons = list(msg.buttons)
 
+    def _override_cb(self, msg: Bool) -> None:
+        self._override = bool(msg.data)
+
     def _build_display(self, now: float) -> tuple[int, bytes | None, bytes | None]:
         """Build the SystemState byte + dot-matrix/LED payloads for this frame."""
-        mode = select_mode(self._joy_buttons, self._gamepad_btn, self._auto_btn)
+        mode = shown_mode(
+            select_mode(self._joy_buttons, self._gamepad_btn, self._auto_btn), self._override
+        )
         state = _MODE_BITS.get(mode, SYS_MODE_IDLE)
 
         dot = None
@@ -410,6 +436,9 @@ class PitNode(Node):
         led = None
         if self._led_frame is not None and (now - self._led_stamp) <= self._display_timeout:
             led = self._led_frame
+            state |= SYS_LED_ACTIVE
+        elif self._override:
+            led = override_led_frame(now)
             state |= SYS_LED_ACTIVE
 
         if (now - self._start_time) < self._led_startup:

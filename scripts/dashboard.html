@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RACECAR Neo</title>
-<link rel="stylesheet" href="/ui/rcn.css?v=8">
-<script src="/ui/charts.js?v=8"></script>
+<link rel="stylesheet" href="/ui/rcn.css?v=9">
+<script src="/ui/charts.js?v=9"></script>
 <link rel="icon" href="/ui/brand/app-icon-32.png">
 <link rel="apple-touch-icon" href="/ui/brand/app-icon-180.png">
 <style>
@@ -87,6 +87,12 @@
   th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--rcn-border); }
   th { color: var(--rcn-text-muted); font-weight: 600; }
   h3.sec { margin-top: var(--rcn-space-4); }
+  /* Safety override */
+  .override-banner { display: flex; align-items: center; gap: var(--rcn-space-3); flex-wrap: wrap; background: var(--rcn-crimson); color: var(--rcn-paper); border-radius: var(--rcn-radius-md); padding: var(--rcn-space-3) var(--rcn-space-4); margin-bottom: var(--rcn-space-4); font-weight: 700; }
+  .override-banner .rcn-icon { width: 24px; height: 24px; flex: none; }
+  .override-banner span { flex: 1; min-width: 180px; }
+  .override-banner .rcn-btn { background: var(--rcn-paper); border-color: var(--rcn-paper); color: var(--rcn-crimson-deep); }
+  #override[aria-pressed="true"] { border-color: var(--rcn-crimson); }
   .foot { display: flex; align-items: center; gap: var(--rcn-space-4); flex-wrap: wrap; margin-top: var(--rcn-space-8); }
 </style>
 </head>
@@ -100,6 +106,11 @@
 </header>
 
 <main>
+  <div class="override-banner" id="override-banner" role="alert" hidden>
+    <svg class="rcn-icon"><use href="/ui/icons.svg#alert"/></svg>
+    <span id="override-text">Safety override on. The car can move without warning.</span>
+    <button class="rcn-btn small" id="override-off">Turn off</button>
+  </div>
   <h2 class="apps-title">Apps</h2>
   <div class="bar-row group-row"><div class="rcn-eyebrow">Core</div></div>
   <div class="apps" id="apps-core"></div>
@@ -108,6 +119,10 @@
     <button class="rcn-btn quiet small" id="clear-apps"><svg class="rcn-icon"><use href="/ui/icons.svg#stop"/></svg>Clear apps</button>
   </div>
   <div class="apps" id="apps-utilities"></div>
+  <div class="bar-row group-row">
+    <div class="rcn-eyebrow">Safety</div>
+    <button class="rcn-btn quiet small" id="override" aria-pressed="false" data-tip="Drive without a controller. Press any controller button except LB to stop.">Override safety controller</button>
+  </div>
   <div class="rcn-small rcn-muted" id="msg"></div>
 
   <details id="overview">
@@ -257,6 +272,7 @@ const timeChart = (box, t0, t1, series, xTicks, gapSec) => drawChart(box, t0, t1
 
 // -- overview --
 let ov = null;       // /api/overview
+const BATTERY_VIEW_SEC = 30 * 60;
 let history = null;  // /api/history: battery and system, 2 h
 let frameTick = 0;
 const overviewOpen = () => $('overview').open;
@@ -309,8 +325,10 @@ function renderHistory() {
   if (!overviewOpen() || !history) return;
   const t0 = history.now - history.window_sec, t1 = history.now;
   const col = (rows, i) => rows.map((p) => [p[0], p[i]]);
-  seriesTile('ov-volts', 'Voltage', 'V', 2, 0.1, col(history.battery, 1), t0, t1, clockTicks, 60, 'ov-volts-now');
-  seriesTile('ov-amps', 'Current', 'A', 2, 0.2, col(history.battery, 2), t0, t1, clockTicks, 60, 'ov-amps-now');
+  // Battery charts show the last 30 minutes; temperature and RAM the full 2 hours.
+  const b0 = t1 - BATTERY_VIEW_SEC, bt = RcnCharts.clockTicksEvery(300);
+  seriesTile('ov-volts', 'Voltage', 'V', 2, 0.1, col(history.battery, 1), b0, t1, bt, 60, 'ov-volts-now');
+  seriesTile('ov-amps', 'Current', 'A', 2, 0.2, col(history.battery, 2), b0, t1, bt, 60, 'ov-amps-now');
   seriesTile('ov-temp', 'Temperature', 'C', 1, 2, col(history.system, 1), t0, t1, clockTicks, 60, 'ov-temp-now');
   seriesTile('ov-mem', 'In use', '%', 0, 5, col(history.system, 2), t0, t1, clockTicks, 60, 'ov-mem-now');
 }
@@ -456,7 +474,48 @@ $('view-basic').onclick = () => setView('basic');
 $('view-advanced').onclick = () => setView('advanced');
 setView(store.get('rcn-status-view', 'basic'));
 
+// Safety override: this tab keeps it alive once a second; the car ends it
+// two seconds after the last keepalive, so closing the tab ends it.
+let overrideOwner = false;
+let overrideTimer = null;
+let overrideEpoch = 0;  // Status replies sent before the last start or stop are ignored.
+function renderOverride(o) {
+  const on = !!(o && o.on);
+  $('override-banner').hidden = !on;
+  $('override').setAttribute('aria-pressed', on);
+  $('override-text').textContent = on && !o.confirmed
+    ? 'Safety override starting...'
+    : 'Safety override on. The car can move without warning.';
+  if (!on && overrideOwner) {
+    overrideOwner = false;
+    clearInterval(overrideTimer);
+    if (o && o.ended) $('msg').textContent = `Safety override off. ${o.ended}`;
+  }
+}
+async function sendOverride(action) {
+  try {
+    const r = await fetch('/api/override', { method: 'POST', body: JSON.stringify({ action }) });
+    renderOverride(await r.json());
+  } catch (err) { if (action !== 'keep') $('msg').textContent = 'Lost contact with the car.'; }
+}
+async function startOverride() {
+  if (!confirm('Override the safety controller?\n\nThe car may start moving without warning. Watch it at all times.')) return;
+  overrideOwner = true;
+  overrideEpoch += 1;
+  clearInterval(overrideTimer);
+  overrideTimer = setInterval(() => sendOverride('keep'), 1000);
+  $('msg').textContent = '';
+  await sendOverride('start');
+}
+function stopOverride() { overrideOwner = false; overrideEpoch += 1; clearInterval(overrideTimer); sendOverride('stop'); }
+$('override').onclick = () => ($('override').getAttribute('aria-pressed') === 'true' ? stopOverride() : startOverride());
+$('override-off').onclick = stopOverride;
+addEventListener('pagehide', () => {
+  if (overrideOwner) navigator.sendBeacon('/api/override', JSON.stringify({ action: 'stop' }));
+});
+
 function update(refresh) {
+  const epoch = overrideEpoch;
   return fetch(refresh ? '/api/status?refresh=1' : '/api/status')
     .then((r) => r.json())
     .then((data) => {
@@ -466,6 +525,7 @@ function update(refresh) {
       renderBasic(data);
       renderAdvanced(data);
       renderOverall(data);
+      if (epoch === overrideEpoch) renderOverride(data.override);
       $('timestamp').textContent = `Updated ${data.timestamp}`;
     })
     .catch(() => setOverall('err', 'No contact'));

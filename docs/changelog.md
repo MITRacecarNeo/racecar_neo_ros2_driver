@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Added
 
+- Safety-controller override on the 8080 dashboard: a toggle, with a
+  warning, that lets `/drive` through `mux_node` with no controller. The page
+  keeps it alive; it ends 2 s after the tab closes, on Turn off, or on any
+  controller button except LB (which still drives). `/mux/override` (session
+  number) and `/mux/override_active` (latched); `override_timeout_sec` in
+  `config/mux.yaml`. A red banner, the AUTO glyph, and an amber flashing LED
+  strip show it is on.
 - `racecar map` (`scripts/racecar_map.py`, logic in `scripts/map_control.py`):
   `start NAME [--from SAVED [--pose x,y,yaw]] [--force]`, `save`, `stop`,
   `load NAME [--pose x,y,yaw | --global] [--localizer]`, `recover`, `status`,
@@ -341,6 +348,9 @@ All notable changes to this project will be documented in this file. The format 
   depth reading in gray instead of black, so the D435i's stereo blind strip
   on the left edge no longer reads as an object; troubleshooting explains
   the strip ("Depth view gaps").
+- The map viewer can replace a map that already exists: Start or Extend
+  with a taken name asks `"{name}" exists. Replace it?` and runs `racecar
+  map start --force`, which moves the old map aside.
 - Line follow (8082), wall follow (8083), and camera label (8085) use the
   shared look and charts: dark only, the RACECAR Neo mark, plain-word
   tooltips and labels. Wall follow gains a Stop button and drops its theme

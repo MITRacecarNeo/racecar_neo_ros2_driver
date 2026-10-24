@@ -11,6 +11,7 @@ from racecar_neo_ros2_driver.dotmatrix_node import (
     mode_label,
     rendered_text_width,
     scroll_offset,
+    shown_mode,
 )
 from racecar_neo_ros2_driver.mux_node import MuxMode
 
@@ -155,3 +156,14 @@ class TestScrollOffset:
     def test_zero_or_negative_period_is_safe(self):
         assert scroll_offset(1.0, 64, 32, 0.0) == 0
         assert scroll_offset(1.0, 64, 32, -1.0) == 0
+
+
+class TestShownMode:
+    def test_without_override_follows_the_gamepad(self):
+        assert shown_mode(MuxMode.IDLE, False) == MuxMode.IDLE
+
+    def test_override_shows_auto(self):
+        assert shown_mode(MuxMode.IDLE, True) == MuxMode.AUTONOMY
+
+    def test_lb_still_shows_the_gamepad(self):
+        assert shown_mode(MuxMode.GAMEPAD, True) == MuxMode.GAMEPAD

@@ -151,6 +151,12 @@ class TestActions:
                 ['load', 'hall', '--global', '--localizer', 'amcl'],
             ),
             ({'action': 'recover', 'name': 'hall'}, ['recover', 'hall']),
+            ({'action': 'start', 'name': 'hall', 'replace': True}, ['start', 'hall', '--force']),
+            (
+                {'action': 'start', 'name': 'hall2', 'source': 'hall', 'pose': [0, 0, 0],
+                 'replace': True},
+                ['start', 'hall2', '--pose=0.000,0.000,0.0000', '--from', 'hall', '--force'],
+            ),
         ],
     )
     def test_action_argv(self, mv, req, argv):
@@ -165,6 +171,8 @@ class TestActions:
             {'action': 'load', 'name': 'a', 'pose': [0, 0, 0], 'search': True},
             {'action': 'load', 'name': 'a', 'localizer': 'other'},
             {'action': 'save', 'pose': [0, 0, 0]},
+            {'action': 'load', 'name': 'a', 'replace': True},
+            {'action': 'start', 'name': 'a', 'source': 'a', 'pose': [0, 0, 0], 'replace': True},
         ],
     )
     def test_action_argv_refuses(self, mv, req):

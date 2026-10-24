@@ -10,6 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import logging
 from pathlib import Path
+import secrets
 import signal
 import socket
 import subprocess
@@ -25,6 +26,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import BatteryState
+from std_msgs.msg import Bool, UInt32
 
 # Shared with scripts/diagnose.py. Both are run by path rather than imported
 # as a package, so the sibling has to be put on the path explicitly.
@@ -194,6 +196,76 @@ class History:
 _battery = History()
 _system = History()
 
+# The safety-controller override lets /drive through mux_node with no
+# gamepad. The page keeps it alive; it ends when the page stops asking.
+OVERRIDE_KEEPALIVE_SEC = 2.0
+OVERRIDE_CONFIRM_SEC = 3.0
+OVERRIDE_PUBLISH_SEC = 0.2
+
+
+class OverrideSession:
+    """
+    One override session, numbered so mux_node can tell a new one from a cancelled one.
+
+    The mux ends a session when a gamepad button other than LB is pressed;
+    mux_active() then turns this side off too, and a keepalive cannot revive it.
+    """
+
+    def __init__(self) -> None:
+        self.number = 0
+        self._kept = 0.0
+        self._started = 0.0
+        self._confirmed = False
+        self.ended = ''
+        self._lock = threading.Lock()
+
+    def start(self, now: float) -> None:
+        with self._lock:
+            self.number = secrets.randbelow(2**32 - 1) + 1
+            self._kept = self._started = now
+            self._confirmed = False
+            self.ended = ''
+
+    def keep(self, now: float) -> None:
+        with self._lock:
+            if self.number:
+                self._kept = now
+
+    def stop(self, reason: str = '') -> None:
+        with self._lock:
+            self.number = 0
+            self.ended = reason
+
+    def mux_active(self, active: bool, now: float) -> None:
+        with self._lock:
+            if not self.number:
+                return
+            if active:
+                self._confirmed = True
+            elif self._confirmed:
+                self.number = 0
+                self.ended = 'Ended by the controller.'
+
+    def session(self, now: float) -> int:
+        """Return the number to publish: the live session, or 0 once it lapses."""
+        with self._lock:
+            if self.number and now - self._kept > OVERRIDE_KEEPALIVE_SEC:
+                self.number = 0
+                self.ended = 'Ended. The page stopped responding.'
+            if (self.number and not self._confirmed
+                    and now - self._started > OVERRIDE_CONFIRM_SEC):
+                self.number = 0
+                self.ended = 'Teleop is not running.'
+            return self.number
+
+    def view(self, now: float) -> dict[str, Any]:
+        on = bool(self.session(now))
+        with self._lock:
+            return {'on': on, 'confirmed': on and self._confirmed, 'ended': self.ended}
+
+
+_override = OverrideSession()
+
 
 def battery_view(now: float) -> dict[str, Any] | None:
     """Return the current battery values for the status snapshot; stale after BATTERY_STALE_SEC."""
@@ -254,6 +326,17 @@ class _RateSampler(Node):
         self._battery_sub = self.create_subscription(
             BatteryState, '/battery/state', self._record_battery, 10
         )
+        self._override_pub = self.create_publisher(UInt32, '/mux/override', 10)
+        self._override_sub = self.create_subscription(
+            Bool, '/mux/override_active', self._record_override, latched
+        )
+        self.create_timer(OVERRIDE_PUBLISH_SEC, self._publish_override)
+
+    def _publish_override(self) -> None:
+        self._override_pub.publish(UInt32(data=_override.session(time.monotonic())))
+
+    def _record_override(self, msg: Bool) -> None:
+        _override.mux_active(bool(msg.data), time.monotonic())
 
     def _record(self, topic: str) -> None:
         now = time.monotonic()
@@ -790,7 +873,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 _refresh_apps()
             if query.get('refresh') == ['1']:
                 _refresh_apps()
-            self._send_json(200, get_status())
+            self._send_json(200, {**get_status(), 'override': _override.view(time.monotonic())})
         elif url.path == '/api/history':
             now = time.time()
             self._send_json(200, {
@@ -855,18 +938,39 @@ class DashboardHandler(BaseHTTPRequestHandler):
             ok, message = clear_watchdog_log()
             self._send_json(200 if ok else 400, {'ok': ok, 'message': message})
             return
-        if self.path != '/api/open':
+        if self.path not in ('/api/open', '/api/override'):
             self.send_error(404)
             return
         try:
             length = int(self.headers.get('Content-Length') or 0)
-            target = str(json.loads(self.rfile.read(length) or b'{}').get('app', ''))
+            body = json.loads(self.rfile.read(length) or b'{}')
+            target = str(body.get('app', ''))
+            action = str(body.get('action', ''))
         except (ValueError, AttributeError):
-            target = ''
+            target = action = ''
+        if self.path == '/api/override':
+            self._override(action)
+            return
         ok, message = open_app(target)
         _refresh_apps()
         log.info('open %s: %s', target, message)
         self._send_json(200 if ok else 400, {'ok': ok, 'message': message})
+
+    def _override(self, action: str) -> None:
+        now = time.monotonic()
+        if action == 'start':
+            _override.start(now)
+            log.warning('Safety override turned on from %s', self.client_address[0])
+        elif action == 'keep':
+            _override.keep(now)
+        elif action == 'stop':
+            if _override.number:
+                log.info('Safety override turned off')
+            _override.stop()
+        else:
+            self._send_json(400, {'ok': False, 'message': 'Unknown action.'})
+            return
+        self._send_json(200, {'ok': True, **_override.view(now)})
 
     def log_message(self, fmt: str, *args: Any) -> None:
         """Suppress default per-request logging."""

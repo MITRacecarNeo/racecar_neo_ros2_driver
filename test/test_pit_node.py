@@ -8,6 +8,8 @@ from racecar_neo_ros2_driver.pit_node import (
     _MODE_BITS,
     build_battery_state,
     build_odom,
+    override_led_frame,
+    OVERRIDE_LED_RGB,
     PitNode,
     POSE_UNESTIMATED,
     PowerAverage,
@@ -117,6 +119,7 @@ class _Pit:
         self._display_timeout = 0.5
         self._start_time = start
         self._led_startup = 10.0
+        self._override = False
 
 
 class TestBuildDisplay:
@@ -236,3 +239,27 @@ class TestBatteryState:
         assert msg.present
         assert msg.power_supply_status == msg.POWER_SUPPLY_STATUS_DISCHARGING
         assert np.isnan(msg.percentage)
+
+
+class TestOverrideDisplay:
+    def test_override_flashes_amber_and_shows_auto(self):
+        pit = _Pit()
+        pit._override = True
+        state, _, led = pit._build_display(100.0)
+        assert state == SYS_MODE_AUTO | SYS_LED_ACTIVE
+        assert led == bytes(OVERRIDE_LED_RGB) * 84
+
+    def test_flash_goes_dark_between_beats(self):
+        assert override_led_frame(100.25) == b'\x00' * 252
+
+    def test_program_frame_wins_over_the_flash(self):
+        pit = _Pit()
+        pit._override = True
+        pit._led_frame, pit._led_stamp = b'\x02' * 252, 99.9
+        assert pit._build_display(100.0)[2] == b'\x02' * 252
+
+    def test_lb_shows_manual_during_override(self):
+        pit = _Pit()
+        pit._override = True
+        pit._joy_buttons = [0, 0, 0, 0, 1, 0, 0, 0]
+        assert pit._build_display(100.0)[0] & SYS_MODE_MASK == SYS_MODE_MANUAL

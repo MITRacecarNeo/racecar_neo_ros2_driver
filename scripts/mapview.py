@@ -215,6 +215,13 @@ def action_argv(req: dict[str, Any]) -> list[str]:
         argv += ['--from', source]
     if action == 'start' and pose is not None and not req.get('source'):
         raise ValueError('a start pose needs a map to extend')
+    if req.get('replace'):
+        # The CLI moves the old map aside rather than deleting it.
+        if action != 'start':
+            raise ValueError('only start can replace a map')
+        if req.get('source') == argv[1]:
+            raise ValueError('a map cannot replace itself while extending it')
+        argv.append('--force')
     if action == 'load':
         if req.get('search'):
             if pose is not None:

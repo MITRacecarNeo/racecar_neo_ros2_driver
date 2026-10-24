@@ -399,10 +399,21 @@ does. A white border means the app is running.
 - Starting and stopping utilities from the page needs the permission rule
   that `scripts/setup_user_env.sh` installs.
 
+**Safety override.** Override safety controller lets programs and lab
+dashboards drive with no controller in hand. It asks first. While it is on:
+
+- A red banner shows on the page, the dot matrix shows AUTO, and the LED
+  strip flashes amber.
+- Holding LB drives from the controller.
+- Any other controller button turns it off.
+- Turn off, or closing the tab, turns it off within 2 s.
+
+The car may start moving without warning. Watch it at all times.
+
 **Overview.** Expand it to see the car live: color camera, depth camera,
 lidar (seen from above, forward up), IMU rotation rates and encoder speed over
-the last 30 s, and CPU temperature, battery voltage, battery current, and
-RAM in use over the last 2 hours. Hover or tap a chart to read a value.
+the last 30 s, battery voltage and current over the last 30 minutes, and CPU
+temperature and RAM in use over the last 2 hours. Hover or tap a chart to read a value.
 The camera tiles start paused; Show camera starts them. The lidar, IMU, and
 encoder feeds run only while the section is open.
 The 2-hour history starts over when the dashboard service restarts.
@@ -938,7 +949,8 @@ Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
   layout (`config/foxglove_layout.json`); a mapping steering cap, off by
   default; integrated odometry in `pit_node` (`odom -> base_link`,
   `/odom/integrated`); an apps page on 8080 with a live sensor overview
-  (camera label back) and the map viewer in one shared style; recordings kept on the NVMe; telemetry stamped with the Teensy
+  (camera label back) and the map viewer in one shared style; a
+  safety-controller override on 8080 to drive with no controller; recordings kept on the NVMe; telemetry stamped with the Teensy
   sample time;
   `racecar calibrate` (guided calibration, status, backup,
   `check` against the live sensors including a magnetometer turn test and

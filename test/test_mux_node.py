@@ -7,7 +7,9 @@ from racecar_neo_ros2_driver.mux_node import (
     joy_is_centered,
     MuxMode,
     MuxNode,
+    pressed,
     RcAuthority,
+    SafetyOverride,
     select_command,
     select_mode,
     select_rc_mode,
@@ -271,6 +273,7 @@ class _Mux:
 
     _joy_mode = MuxNode._joy_mode
     _rc_has_authority = MuxNode._rc_has_authority
+    _override_mode = MuxNode._override_mode
 
     def __init__(self, rc_enable=False) -> None:
         self._log = _Log()
@@ -292,6 +295,10 @@ class _Mux:
         self._rc_channels = []
         self._rc_channels_stamp = None
         self._rc_held = False
+        self._override = SafetyOverride(timeout_sec=1.0)
+        self._override_was = False
+        self._override_pub = SimpleNamespace(sent=[])
+        self._override_pub.publish = lambda m: self._override_pub.sent.append(m.data)
 
     def get_logger(self):
         return self._log
@@ -366,3 +373,77 @@ class TestRcHasAuthority:
             'RC transmitter holds the drive gate',
             'RC transmitter released the drive gate',
         ]
+
+
+class TestSafetyOverride:
+    def test_off_by_default(self):
+        assert not SafetyOverride(1.0).active(0.0)
+
+    def test_session_zero_is_off(self):
+        o = SafetyOverride(1.0)
+        o.observe(0, 1.0)
+        assert not o.active(1.0)
+
+    def test_fresh_session_is_on_and_lapses(self):
+        o = SafetyOverride(1.0)
+        o.observe(7, 1.0)
+        assert o.active(2.0)
+        assert not o.active(2.1)
+
+    def test_cancelled_session_stays_off_until_a_new_one(self):
+        o = SafetyOverride(1.0)
+        o.observe(7, 1.0)
+        o.cancel()
+        o.observe(7, 1.5)
+        assert not o.active(1.5)
+        o.observe(8, 2.0)
+        assert o.active(2.0)
+
+
+class TestPressed:
+    def test_new_press_counts(self):
+        assert pressed([0] * 8, [1] + [0] * 7, GAMEPAD)
+
+    def test_held_button_does_not_count(self):
+        assert not pressed([1] + [0] * 7, [1] + [0] * 7, GAMEPAD)
+
+    def test_ignored_button_does_not_count(self):
+        assert not pressed([0] * 8, _btns(gp=1), GAMEPAD)
+
+    def test_rb_counts(self):
+        assert pressed([0] * 8, _btns(ao=1), GAMEPAD)
+
+    def test_first_frame_counts_held_buttons(self):
+        assert pressed([], _btns(ao=1), GAMEPAD)
+
+
+class TestOverrideMode:
+    def test_off_defers_to_the_gamepad(self):
+        assert _Mux()._override_mode(5.0) is None
+
+    def test_on_forwards_drive_without_a_controller(self):
+        mux = _Mux()
+        mux._override.observe(3, 5.0)
+        assert mux._override_mode(5.0) == MuxMode.AUTONOMY
+        assert mux._override_pub.sent == [True]
+
+    def test_lb_takes_over(self):
+        mux = _Mux()
+        mux._override.observe(3, 5.0)
+        mux.joy(5.0, gp=1)
+        assert mux._override_mode(5.0) == MuxMode.GAMEPAD
+
+    def test_rb_alone_still_forwards_drive(self):
+        mux = _Mux()
+        mux._override.observe(3, 5.0)
+        mux.joy(5.0, ao=1)
+        assert mux._override_mode(5.0) == MuxMode.AUTONOMY
+
+    def test_lapse_is_published_once(self):
+        mux = _Mux()
+        mux._override.observe(3, 5.0)
+        mux._override_mode(5.0)
+        assert mux._override_mode(6.5) is None
+        assert mux._override_mode(6.6) is None
+        assert mux._override_pub.sent == [True, False]
+        assert 'Safety override off' in mux._log.lines

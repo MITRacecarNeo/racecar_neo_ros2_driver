@@ -161,6 +161,23 @@ publishes `/rc/link` from the raw widths, and `mux_node` gates on that plus
 freshness, a sustained hold, and the switch having been seen at middle. Granting
 is slow and revoking immediate: one bad frame hands the gate back.
 
+### Safety-controller override
+
+The 8080 dashboard can hold the gate with no controller. While its toggle is
+on, the page posts a keepalive each second (`/api/override`), and
+`OverrideSession` in `scripts/dashboard.py` publishes a random nonzero session
+number on `/mux/override` (`std_msgs/UInt32`) at 5 Hz; 0 means off. The
+session lapses 2 s after the last keepalive, so a closed tab ends it.
+`SafetyOverride` in `mux_node` forwards `/drive` while a session number is
+under `override_timeout_sec` old. LB held selects `/gamepad_drive`; a press of
+any other button cancels that session number, and only a new one turns the
+override back on. `mux_node` reports the state on `/mux/override_active`
+(latched). The dashboard ends its side when the mux reports off, and when the
+mux never confirms within 3 s. `dotmatrix_node` shows the AUTO glyph and
+`pit_node` sets the auto mode bits and flashes the LED strip amber at 2 Hz
+unless a program frame is fresh. Nothing is persisted; a teleop restart ends
+it. No extra speed cap applies.
+
 ### Lab dashboards
 
 Four dashboards in `scripts/dashboards/` run as `racecar-*` units, installed
@@ -247,6 +264,8 @@ patterns on `/dotmatrix/pixels`.
 | `/gamepad_drive` | `ackermann_msgs/AckermannDriveStamped` | `gamepad_node` | `mux_node` |
 | `/drive` | `ackermann_msgs/AckermannDriveStamped` | user code, lab dashboards | `mux_node` |
 | `/mux_out` | `ackermann_msgs/AckermannDriveStamped` | `mux_node` | `throttle_node` |
+| `/mux/override` | `std_msgs/UInt32` | `dashboard.py` | `mux_node` |
+| `/mux/override_active` | `std_msgs/Bool` (latched) | `mux_node` | `dashboard.py`, `dotmatrix_node`, `pit_node` |
 | `/motor` | `ackermann_msgs/AckermannDriveStamped` | `throttle_node` | `pit_node` |
 | `/imu/lsm9ds1`, `/imu/lsm9ds1/raw` | `sensor_msgs/Imu` | `pit_node` | `imu_fusion_node`, `calibrate_imu.py` |
 | `/mag`, `/mag/raw` | `sensor_msgs/MagneticField` | `pit_node` | `calibrate_mag.py` |
