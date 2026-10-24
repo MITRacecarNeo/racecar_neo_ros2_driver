@@ -27,21 +27,21 @@ class TestFailurePath:
         samples = _ellipsoid(mag.MIN_SAMPLES - 1, (0, 0, 0), (1, 1, 1))
         assert mag.fit_ellipsoid(samples) is None
 
-    def test_too_few_samples_writes_nothing(self, mag, tmp_path):
+    def test_too_few_samples_writes_nothing(self, mag, car_profile_dir):
         samples = _ellipsoid(mag.MIN_SAMPLES - 1, (1e-5, 0, 0), (1, 1, 1))
-        assert mag.fit_and_write(samples, [tmp_path]) is None
-        assert list(tmp_path.iterdir()) == []
+        assert mag.fit_and_write(samples) is None
+        assert not car_profile_dir.exists()
 
-    def test_degenerate_data_writes_nothing(self, mag, tmp_path):
+    def test_degenerate_data_writes_nothing(self, mag, car_profile_dir):
         samples = [[1e-5, 2e-5, 3e-5]] * (mag.MIN_SAMPLES * 2)
-        assert mag.fit_and_write(samples, [tmp_path]) is None
-        assert list(tmp_path.iterdir()) == []
+        assert mag.fit_and_write(samples) is None
+        assert not car_profile_dir.exists()
 
-    def test_planar_data_writes_nothing(self, mag, tmp_path):
+    def test_planar_data_writes_nothing(self, mag, car_profile_dir):
         # Yaw-only rotation leaves z unconstrained; that is not an ellipsoid.
         samples = [[5e-5 * np.cos(t), 5e-5 * np.sin(t), 0.0] for t in np.linspace(0, 6, 300)]
-        assert mag.fit_and_write(samples, [tmp_path]) is None
-        assert list(tmp_path.iterdir()) == []
+        assert mag.fit_and_write(samples) is None
+        assert not car_profile_dir.exists()
 
 
 class TestFit:
@@ -73,22 +73,17 @@ class TestFit:
 
 
 class TestLocalYaml:
-    def test_writes_local_yaml_in_every_dir(self, mag, tmp_path):
-        src, share = tmp_path / 'src', tmp_path / 'share'
-        src.mkdir()
-        share.mkdir()
-        result = mag.fit_and_write(_ellipsoid(500, (1e-5, 0, 0), (1, 1, 1)), [src, share])
+    def test_writes_the_profile(self, mag, car_profile_dir):
+        result = mag.fit_and_write(_ellipsoid(500, (1e-5, 0, 0), (1, 1, 1)))
         assert result is not None
         _, written = result
-        assert written == [
-            src / 'lsm9ds1_mag_cal.local.yaml',
-            share / 'lsm9ds1_mag_cal.local.yaml',
-        ]
-        assert all(p.is_file() for p in written)
+        assert written == [car_profile_dir / 'params' / 'lsm9ds1_mag_cal.yaml']
+        assert written[0].is_file()
 
-    def test_writes_only_keys_pit_node_declares(self, mag, tmp_path):
-        mag.fit_and_write(_ellipsoid(500, (1e-5, 0, 0), (1, 1, 1)), [tmp_path])
-        doc = yaml.safe_load((tmp_path / 'lsm9ds1_mag_cal.local.yaml').read_text())
+    def test_writes_only_keys_pit_node_declares(self, mag, car_profile_dir):
+        mag.fit_and_write(_ellipsoid(500, (1e-5, 0, 0), (1, 1, 1)))
+        path = car_profile_dir / 'params' / 'lsm9ds1_mag_cal.yaml'
+        doc = yaml.safe_load(path.read_text())
         tracked = yaml.safe_load((ROOT / 'config' / 'lsm9ds1_mag_cal.yaml').read_text())
         assert set(doc) == {'pit_node'}
         assert set(doc['pit_node']['ros__parameters']) == set(

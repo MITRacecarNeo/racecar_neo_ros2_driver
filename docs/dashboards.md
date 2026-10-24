@@ -43,11 +43,12 @@ signals back and calls `shutdown` off the serving thread.
 
 ## Tuning and logs
 
-Tuning loads `<name>.yaml`, then `<name>.local.yaml` on top when it exists.
-Save writes only `<name>.local.yaml` (seeded from the defaults on the first
-save) and rewrites its numbers in place so the comments survive. The local
-file is gitignored, like `config/*.local.yaml`, so a car's tuning never dirties
-the tree.
+Tuning loads the shipped `<name>.yaml`, then `dashboards/<name>.yaml` in the
+car profile (`~/.config/racecar`, `racecar_neo_ros2_driver/car_profile.py`) on
+top when it exists. Save writes only the profile file (seeded from the
+defaults on the first save) and rewrites its numbers in place so the comments
+survive. The file it replaces goes to the profile's `history/`. The shipped
+file stays unchanged, so a driver update keeps a car's tuning.
 
 CSV logs go to `~/data/dashboards/<name>/` and are listed and downloaded
 through the page.

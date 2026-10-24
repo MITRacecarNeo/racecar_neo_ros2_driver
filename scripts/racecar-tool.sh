@@ -1075,6 +1075,12 @@ __RC_CLEANUP_HELP__
             python3 "${RACECAR_CALIBRATE_SCRIPT:-$pkg_dir/scripts/calibration/calibrate.py}" "$@"
             ;;
 
+        profile)
+            # This car's settings outside the driver folder; see
+            # scripts/racecar_profile.py and racecar_neo_ros2_driver/car_profile.py.
+            python3 "${RACECAR_PROFILE_SCRIPT:-$pkg_dir/scripts/racecar_profile.py}" "$@"
+            ;;
+
         map)
             # SLAM mapping and localization through racecar-autonomy.service;
             # see scripts/racecar_map.py and scripts/map_control.py.
@@ -1214,6 +1220,14 @@ Commands:
                         To fully prepare a car for a project, run the
                         calibration step, then restart teleop, and finally
                         run the check command.
+    profile [action]    This car's settings, kept in ~/.config/racecar so a
+                        driver update or re-clone keeps the calibration.
+                          (none)        path, car name, files and dates
+                          path          the profile folder
+                          migrate       move config/*.local.yaml and dashboard
+                                        tuning out of the driver folder
+                          export FILE   write the profile to FILE (.tar.gz)
+                          import FILE   read a profile written by export
     map <action>        Build, save, and load maps (SLAM on top of teleop).
                         Teleop must be running; drive with the gamepad or RC
                         transmitter as usual. Maps are in ~/data/maps.
@@ -1226,6 +1240,7 @@ Commands:
                                                                 old one is kept)
                           save                save the map; waits for the files
                           stop                stop (a mapping run is autosaved)
+                          resume              start the last run again
                           load NAME           localize on NAME; starts from the
                                               car's last pose on it
                                                 --pose x,y,yaw  start pose
@@ -1278,7 +1293,7 @@ _racecar_complete() {
     local sub="${COMP_WORDS[1]:-}"
 
     if [[ $COMP_CWORD -eq 1 ]]; then
-        COMPREPLY=( $(compgen -W "build test source cd teleop launch lint udev watchdog service setup eth wifi desktop library log calibrate cleanup map status help" -- "$cur") )
+        COMPREPLY=( $(compgen -W "build test source cd teleop launch lint udev watchdog service setup eth wifi desktop library log calibrate profile cleanup map status help" -- "$cur") )
         return
     fi
 
@@ -1325,6 +1340,13 @@ _racecar_complete() {
             ;;
         status)
             COMPREPLY=( $(compgen -W "--quick --json --strict --section --window --help" -- "$cur") )
+            ;;
+        profile)
+            if [[ $COMP_CWORD -eq 2 ]]; then
+                COMPREPLY=( $(compgen -W "path migrate export import" -- "$cur") )
+            else
+                COMPREPLY=( $(compgen -f -- "$cur") )
+            fi
             ;;
         map)
             local maps_dir="${RACECAR_MAP_ROOT:-$HOME/data/maps}"

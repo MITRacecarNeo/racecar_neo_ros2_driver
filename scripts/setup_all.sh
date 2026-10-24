@@ -58,6 +58,16 @@ echo
 echo "==> [9/12] Workspace build"
 bash "$SCRIPT_DIR/setup_workspace.sh"
 
+# The car profile (~/.config/racecar) holds this car's settings; moving the
+# per-car files out of the driver folder needs the built package.
+echo "    Car profile"
+(
+    set +u
+    source /opt/ros/jazzy/setup.bash
+    source "$HOME/ros2_ws/install/setup.bash"
+    python3 "$SCRIPT_DIR/racecar_profile.py" migrate
+)
+
 echo
 echo "==> [10/12] JupyterLab + workspace"
 bash "$SCRIPT_DIR/setup_jupyter.sh"

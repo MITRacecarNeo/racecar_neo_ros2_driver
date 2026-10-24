@@ -31,6 +31,7 @@ import threading
 import time
 
 from ackermann_msgs.msg import AckermannDriveStamped
+from racecar_neo_ros2_driver import car_profile
 import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
@@ -45,9 +46,9 @@ BASE = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE.parents[1]))
 import webui  # noqa: E402
 # Shipped defaults stay untouched; saved tuning goes to the per-car file,
-# which loads on top of them (gitignored, like config/*.local.yaml).
+# which loads on top of them, in the car profile (dashboards/<name>.yaml).
 DEFAULTS_PATH = BASE / 'wallfollow.yaml'
-YAML_PATH = BASE / 'wallfollow.local.yaml'
+YAML_PATH = car_profile.dashboard_settings('wallfollow')
 LOG_DIR = Path.home() / 'data' / 'dashboards' / 'wallfollow'
 
 MAX_SPEED = 1.0      # hard throttle cap, same idea as drive_real.set_max_speed
@@ -122,7 +123,7 @@ def load_params():
 def save_params():
     """Rewrite the numeric values in place so the yaml comments survive."""
     if not YAML_PATH.exists():
-        YAML_PATH.write_text(DEFAULTS_PATH.read_text())
+        car_profile.write_text(YAML_PATH, DEFAULTS_PATH.read_text())
     text = YAML_PATH.read_text()
     with _lock:
         for k, v in _params.items():
@@ -132,7 +133,7 @@ def save_params():
                 text = re.sub(rf'(?m)^{k}:\s*[-\d.eE+]+', f'{k}: {v}', text)
             else:
                 text += f'{k}: {v}\n'
-    YAML_PATH.write_text(text)
+    car_profile.write_text(YAML_PATH, text)
 
 
 class WallFollowNode(Node):

@@ -3,7 +3,7 @@
 LSM9DS1 magnetometer hard- and soft-iron calibration for pit_node.
 
 Reads /mag/raw while the car is rotated about each axis, fits an ellipsoid,
-and writes config/lsm9ds1_mag_cal.local.yaml.
+and writes the car profile's params/lsm9ds1_mag_cal.yaml.
 
 --check verifies the stored calibration: with the car turned one full circle
 flat on the floor, pit_node's corrected /mag should trace a round circle
@@ -33,7 +33,6 @@ from calibrate_common import (  # noqa: E402, I100
     CalibratorNode,
     Criterion,
     finish_check,
-    output_dirs,
     read_line,
     run_sequence,
     spin_until_done,
@@ -220,14 +219,12 @@ def mag_params(fit: MagFit) -> dict[str, list[float]]:
     }
 
 
-def fit_and_write(
-    samples: list[list[float]], dirs: list[Path]
-) -> tuple[MagFit, list[Path]] | None:
-    """Fit and write the local YAML; write nothing and return None if the fit fails."""
+def fit_and_write(samples: list[list[float]]) -> tuple[MagFit, list[Path]] | None:
+    """Fit and write the profile override; write nothing and return None if the fit fails."""
     fit = fit_ellipsoid(samples)
     if fit is None:
         return None
-    return fit, write_local_yaml(CAL_NAME, NODE, mag_params(fit), dirs, TOOL)
+    return fit, write_local_yaml(CAL_NAME, NODE, mag_params(fit), TOOL)
 
 
 def plot_results(samples: list[list[float]], fit: MagFit) -> None:
@@ -287,11 +284,7 @@ class MagnetometerCalibrator(CalibratorNode):
         )
         self.samples = [sample for i in range(len(STEPS)) for sample in steps[i]]
 
-        dirs = output_dirs()
-        if not dirs:
-            log.error('No config directory found; nothing written.')
-            return 1
-        result = fit_and_write(self.samples, dirs)
+        result = fit_and_write(self.samples)
         if result is None:
             log.error(
                 f'Fit failed with {len(self.samples)} samples (need {MIN_SAMPLES}); nothing '

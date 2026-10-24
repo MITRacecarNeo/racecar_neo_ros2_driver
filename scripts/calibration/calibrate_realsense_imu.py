@@ -2,7 +2,7 @@
 """
 RealSense D435i IMU calibration for imu_fusion_node: accel bias and scale, gyro bias.
 
-Reads /imu/realsense and writes config/realsense_cal.local.yaml. --check
+Reads /imu/realsense and writes the car profile's params/realsense_cal.yaml. --check
 applies the stored calibration to the live sensor at rest.
 """
 

@@ -24,6 +24,7 @@ This package is the v2 successor to [`racecar-neo-ros2-backend`](https://github.
 - [Manual build](#manual-build)
 - [Launch](#launch)
 - [Sensor calibration](#sensor-calibration)
+- [Car profile](#car-profile)
 - [RTC backup cell](#rtc-backup-cell)
 - [Bootloader EEPROM](#bootloader-eeprom)
 - [ROS discovery scope](#ros-discovery-scope)
@@ -175,7 +176,7 @@ Twelve phases, all under `scripts/`:
 6. **`setup_dotmatrix.sh`**: `pip install --user luma.led_matrix`, the font source for the `dotmatrix_node` rasterizer
 7. **`setup_coral.sh`**: installs `libedgetpu1-std`, `tflite_runtime`, `pycoral` from vendored `depend/` artifacts; with the M.2 card present, also the gasket DKMS driver and the `coral-msi` overlay (reboot required)
 8. **`setup_realsense.sh`**: installs `realsense2_camera` (apt) + the Pi 5 IMU IIO permission fix (script, udev rule, boot service)
-9. **`setup_workspace.sh`**: clones `sllidar_ros2` and runs `colcon build --symlink-install`
+9. **`setup_workspace.sh`**: clones `sllidar_ros2` and runs `colcon build --symlink-install`; `setup_all.sh` then runs `racecar profile migrate` (see [Car profile](#car-profile))
 10. **`setup_jupyter.sh`**: `pip install --user jupyterlab`, creates `~/jupyter_ws/`
 11. **`setup_services.sh`**: installs and enables the four core systemd units (`racecar-{teleop,watchdog,dashboard,jupyter}.service`)
 12. **`setup_dashboards.sh`**: clones or fast-forwards the three lab-dashboard checkouts into `scripts/dashboards/`, installs a stopped, disabled `racecar-*` unit for each, and removes units left by retired dashboards (`RACECAR_DASHBOARDS=0` skips it)
@@ -222,6 +223,7 @@ racecar log start lap3              # record a bag; racecar log stop to finalize
 racecar log analyze                 # summarize the newest bag
 racecar map start room_1            # build a map; racecar map save, then racecar map stop
 racecar map load room_1             # localize on a saved map
+racecar profile                     # this car's settings in ~/.config/racecar
 racecar library --list              # student library folders under ~/jupyter_ws
 racecar help                        # full usage
 ```
@@ -502,8 +504,8 @@ zeroes the output when `/joy` or the active source goes stale. See
 [Autonomy gate](#autonomy-gate) for the case where a transmitter holds the
 gate.
 
-**Tuning.** Save in the page writes `<name>.local.yaml` beside the shipped
-`<name>.yaml` (gitignored); the shipped file keeps the defaults. Expect to
+**Tuning.** Save in the page writes `dashboards/<name>.yaml` in the
+[car profile](#car-profile); the shipped `<name>.yaml` keeps the defaults. Expect to
 retune `max_mps`, `kp`, `kd`, `lookahead` and the `linefollow` HSV thresholds
 per car. Logs go to `~/data/dashboards/<name>/`.
 
@@ -514,7 +516,7 @@ or both for idle. A FlySky transmitter can hold that gate instead, which is off
 by default because not every car has one:
 
 ```yaml
-# config/mux.local.yaml  (gitignored, loaded after mux.yaml)
+# ~/.config/racecar/params/mux.yaml  (car profile, loaded after config/mux.yaml)
 mux_node:
   ros__parameters:
     rc_authority_enable: true
@@ -711,11 +713,11 @@ For boot-time startup, see [scripts/](./scripts/) for systemd units and the `set
 Bias and scale are per-board, so each car needs its own calibration run. The
 committed `config/lsm9ds1_cal.yaml`, `config/lsm9ds1_mag_cal.yaml`,
 `config/realsense_cal.yaml` and `config/frames.yaml` hold the defaults; a car's
-own values go in a gitignored `config/<name>.local.yaml` beside each, which the
-launch files load after the committed file.
+own values go in `params/<name>.yaml` in the [car profile](#car-profile),
+which the launch files load after the committed file.
 
 ```sh
-racecar calibrate status      # what is calibrated, when, backup state, stored values
+racecar calibrate status      # profile path, what is calibrated, when, stored values
 racecar calibrate             # every step but dynamics, in order, one guided session
 racecar calibrate imu lidar   # chosen steps only
 racecar calibrate check       # verify each calibration against the live sensors
@@ -735,8 +737,8 @@ if any check failed. One line per prompt on stdin scripts the whole run.
 | `mag` | One full turn flat on the floor, 25 s, away from large metal | `/mag` traces a circle centered on the turning axis (within 10% of its radius) and round to 5%. Field strength outside 20 to 70 uT is a WARN: a uniform scale error leaves a compass heading unchanged (see docs/troubleshooting.md on `imu.mag_scale`). `/mag/raw` is fitted the same way for contrast |
 | `realsense` | Still and level, 3 s | the stored calibration applied to `/imu/realsense` gives gravity within 1%, gyro under 0.01 rad/s |
 | `lidar` | Driven forward and back about 1.3 m, parked 2 s before, between, and after | the lidar yaw from the direction of travel within 0.5 deg of `laser_yaw_deg` (warn to 1); each scan match under 30 mm RMS with at least 30% of points matched |
-| `odom` | Driven 2 circles and stopped anywhere near the start, then driven straight toward a wall and stopped anywhere short of it; parked 2 s before and after each run | `/odom/integrated` heading within 1% of the lidar's (warn to 3%); distance within 2% of the lidar's (warn to 5%); each scan match under 30 mm RMS with at least 30% of points matched; the scales `pit_node` runs with match `odom.local.yaml` |
-| `steering` | Driven straight at steering 0 about 2 m, parked 2 s before and after | heading drift within 1 deg/m (warn to 5, naming servo and linkage play); the trim `throttle_node` runs with matches `throttle.local.yaml` |
+| `odom` | Driven 2 circles and stopped anywhere near the start, then driven straight toward a wall and stopped anywhere short of it; parked 2 s before and after each run | `/odom/integrated` heading within 1% of the lidar's (warn to 3%); distance within 2% of the lidar's (warn to 5%); each scan match under 30 mm RMS with at least 30% of points matched; the scales `pit_node` runs with match `params/odom.yaml` |
+| `steering` | Driven straight at steering 0 about 2 m, parked 2 s before and after | heading drift within 1 deg/m (warn to 5, naming servo and linkage play); the trim `throttle_node` runs with matches `params/throttle.yaml` |
 
 `racecar calibrate` runs the tools in `scripts/calibration/` in this order:
 the hand-held steps first (`imu`, `mag`, `realsense`), then `lidar`, `odom`
@@ -748,10 +750,9 @@ step again) at its prompt. Within a tool, every run, pose, or axis offers `b`
 the same way to redo the previous one (after releasing RB too early, or
 hitting something), and a run that was stopped or failed its measurement is
 offered again. At the end it
-prints old and new values, copies the changed files to
-`~/.config/racecar/calibration/`, and offers to restart teleop so the nodes
-load them. Run on their own, the tools print the backup and restart commands
-instead. Teleop must be running, since the tools read its topics. The tools
+prints old and new values and offers to restart teleop so the nodes load
+them. Run on their own, the tools print the file written and the restart
+command instead. Teleop must be running, since the tools read its topics. The tools
 also run on their own:
 
 ```sh
@@ -767,17 +768,17 @@ racecar service restart teleop                            # nodes read the value
 
 | Utility | Reads | Writes | Consumed by |
 |---|---|---|---|
-| `calibrate_imu.py` | `/imu/lsm9ds1/raw` | `config/lsm9ds1_cal.local.yaml` | `pit_node` |
-| `calibrate_mag.py` | `/mag/raw` | `config/lsm9ds1_mag_cal.local.yaml` | `pit_node` |
-| `calibrate_realsense_imu.py` | `/imu/realsense` | `config/realsense_cal.local.yaml` | `imu_fusion_node` |
-| `calibrate_lidar.py` | `/scan`, `/odom/integrated`, `/motor` (recorded); `/joy` (RB) | `config/frames.local.yaml` (`laser_yaw_deg`) | `frames.launch.py` |
-| `calibrate_odom.py` | `/imu/lsm9ds1`, `/odom/integrated`, `/scan` | `config/odom.local.yaml` (`odometry.yaw_rate_scale`, `odometry.speed_scale`) | `pit_node` |
-| `calibrate_steering.py` | `/scan`, `/odom/integrated`, `/motor` (recorded); `/joy` (RB) | `config/throttle.local.yaml` (`steering_trim`) | `throttle_node` |
-| `calibrate_dynamics.py` | `/scan`, `/imu/lsm9ds1`, `/odom/integrated`, `/motor` (recorded); `/joy` (RB) | `config/dynamics.local.yaml` | the simulator (no node reads it) |
+| `calibrate_imu.py` | `/imu/lsm9ds1/raw` | `params/lsm9ds1_cal.yaml` | `pit_node` |
+| `calibrate_mag.py` | `/mag/raw` | `params/lsm9ds1_mag_cal.yaml` | `pit_node` |
+| `calibrate_realsense_imu.py` | `/imu/realsense` | `params/realsense_cal.yaml` | `imu_fusion_node` |
+| `calibrate_lidar.py` | `/scan`, `/odom/integrated`, `/motor` (recorded); `/joy` (RB) | `params/frames.yaml` (`laser_yaw_deg`) | `frames.launch.py` |
+| `calibrate_odom.py` | `/imu/lsm9ds1`, `/odom/integrated`, `/scan` | `params/odom.yaml` (`odometry.yaw_rate_scale`, `odometry.speed_scale`) | `pit_node` |
+| `calibrate_steering.py` | `/scan`, `/odom/integrated`, `/motor` (recorded); `/joy` (RB) | `params/throttle.yaml` (`steering_trim`) | `throttle_node` |
+| `calibrate_dynamics.py` | `/scan`, `/imu/lsm9ds1`, `/odom/integrated`, `/motor` (recorded); `/joy` (RB) | `params/dynamics.yaml` | the simulator (no node reads it) |
 
-Each utility writes the file to the source `config/` directory and, when it
-exists, the install share `config/` directory, so no rebuild is needed. It
-writes nothing and exits non-zero when the fit fails or it has too little
+Each utility writes the file to the car profile; launch reads it at start,
+so a teleop restart applies it with no rebuild. A replaced file is kept under
+`history/`. It writes nothing and exits non-zero when the fit fails or it has too little
 data.
 
 `calibrate_lidar.py` measures the lidar yaw from the direction the car
@@ -816,7 +817,7 @@ furniture 3 to 5 m away. Both steps compare `/odom/integrated` with the
 lidar too, and warn when the odometry disagrees with the gyro it integrates.
 The scene must stay still between the two scans, and a room works better
 than a long corridor. Each step keeps the other's value in
-`odom.local.yaml`.
+`params/odom.yaml`.
 
 `calibrate_steering.py` sets the steering trim, the offset `throttle_node`
 adds to every steering command so the car drives straight at steering 0. It
@@ -836,7 +837,7 @@ differential the encoder reads the mean of the rear and front axle speeds,
 k (1/cos delta - 1) too high, delta the bicycle steering angle. The step fits
 k (0.5 for a locked center shaft) against its own straight runs and prints
 it; it does not write it. With `odometry.turn_gain` set to k in
-`odom.local.yaml`, `pit_node` divides the encoder speed by
+`params/odom.yaml`, `pit_node` divides the encoder speed by
 1 + k (1/cos delta - 1), with delta from the gyro (atan(wheelbase x yaw
 rate / speed), `odometry.wheelbase_m`), above 0.1 m/s. The default 0 turns
 the correction off.
@@ -870,10 +871,9 @@ applies (raw - bias) * scale. A position held wrong shows as a scale outside
 all three axes and fits an ellipsoid, then plots raw against corrected samples
 so you can confirm the sphere closed up.
 
-The `.local.yaml` files are untracked, so a fresh clone or reimage loses them.
-`racecar calibrate` copies them to `~/.config/racecar/calibration/`; the
-individual utilities print a reminder instead, and `racecar calibrate status`
-shows which files have no backup.
+The values live in the car profile, so a driver update or re-clone keeps
+them. Before a fresh image or SD card swap, save them with
+`racecar profile export FILE`; see [Car profile](#car-profile).
 
 A car that has never been calibrated runs with zero bias, unit scales and an
 identity soft-iron matrix, and nothing is logged to say so. On every new car,
@@ -881,6 +881,40 @@ run the full `racecar calibrate`, restart teleop, then run
 `racecar calibrate check`. ROS ignores a parameter file whose top-level key
 names no running node, without warning; if a calibration appears to have no
 effect, check that the key matches the node the launch file starts.
+
+## Car profile
+
+The car profile holds this car's settings outside the driver folder, so a
+driver update, re-clone, or delete leaves them in place. It lives in
+`~/.config/racecar` (`RACECAR_CONFIG_DIR`, else `$XDG_CONFIG_HOME/racecar`).
+
+| File | Holds |
+|---|---|
+| `car.yaml` | car name, profile version |
+| `params/<name>.yaml` | ROS parameter overrides for `config/<name>.yaml`; calibration writes here |
+| `dashboards/<name>.yaml` | lab dashboard tuning |
+| `autonomy.conf`, `features.conf`, `networking.env` | autonomy mode, camera and detections choice, network settings |
+| `history/<stamp>/` | the previous copy of each file a write replaced |
+
+Launch reads `params/` at start, so a new value applies on the next
+`racecar service restart teleop` with no `racecar build`. Per-car YAML left in
+the driver folder (`config/*.local.yaml`) is not read; `racecar status` and
+the teleop log warn about it.
+
+```sh
+racecar profile               # path, car name, files and dates, unused driver-folder files
+racecar profile path          # the profile folder only
+racecar profile migrate       # move per-car files from the driver folder into the profile
+racecar profile export FILE   # write the profile to one .tar.gz
+racecar profile import FILE   # read it back; replaced files go to history/
+racecar profile check         # warn about each unused driver-folder file
+```
+
+`migrate` keeps the driver-folder copy when both exist and moves the profile
+copy to `history/`. A `calibration/` folder in the profile is reported where
+it differs and moved to `history/`. `setup_all.sh` runs it after the build. An existing car
+runs `racecar profile migrate` once after updating the driver. Use `export`
+and `import` for an SD card swap or a fresh image.
 
 ## RTC backup cell
 

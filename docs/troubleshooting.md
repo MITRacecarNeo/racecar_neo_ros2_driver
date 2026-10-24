@@ -270,11 +270,11 @@ placements, north within 10 deg of the nose). Steel and phones nearby bend
 the field: a reading whose dip is far from the local value (about 66 deg in
 Massachusetts) is disturbed.
 
-The calibration in `lsm9ds1_cal.local.yaml` and `lsm9ds1_mag_cal.local.yaml`
-applies after the remap, so its values are in body axes. A car calibrated
+The calibration in the car profile's `params/lsm9ds1_cal.yaml` and
+`params/lsm9ds1_mag_cal.yaml` applies after the remap, so its values are in body axes. A car calibrated
 before this mapping (values in the camera's optical axes for accel and gyro,
 chip axes for the magnetometer) needs `racecar calibrate imu mag` again.
-`realsense_cal.local.yaml` applies to `/imu/realsense` before the remap and
+`params/realsense_cal.yaml` applies to `/imu/realsense` before the remap and
 stays valid. Correlation also says nothing about scale: `imu.gyro_scale` and
 `imu.mag_scale` are unverified, and a deg/s versus rad/s mismatch on the gyro
 would be a factor of 57. Check both against the RealSense during a known
@@ -501,9 +501,8 @@ dashboards (`eps`, `pursuit`, `smartfollow`), so a car upgraded from v0.8.0
 does not keep a second `/drive` publisher installed. Their old
 checkouts under `scripts/dashboards/` are gitignored and left in place.
 
-Saved tuning lives in `<name>.local.yaml`, never in the shipped
-`<name>.yaml`, so updating the driver keeps a car's tuning and the tree stays
-clean.
+Saved tuning lives in the car profile's `dashboards/<name>.yaml`, never in
+the shipped `<name>.yaml`, so updating the driver keeps a car's tuning.
 
 ## WiFi persistence
 

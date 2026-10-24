@@ -22,6 +22,13 @@ def config(tmp_path):
     return d
 
 
+@pytest.fixture
+def params(car_profile_dir):
+    d = car_profile_dir / 'params'
+    d.mkdir(parents=True)
+    return d
+
+
 def _ros_yaml(path: Path, node: str, params: dict) -> None:
     path.write_text(yaml.safe_dump({node: {'ros__parameters': params}}))
 
@@ -53,55 +60,52 @@ class TestReadValues:
 
 
 class TestStatus:
-    def test_rows(self, cal, config, tmp_path):
-        backup = tmp_path / 'backup'
-        backup.mkdir()
-        _ros_yaml(config / 'lsm9ds1_cal.local.yaml', 'pit_node', {'gyroscope.bias': [0, 0, 0]})
-        (config / 'frames.local.yaml').write_text('laser_yaw_deg: 179.2\n')
-        (backup / 'frames.local.yaml').write_text('laser_yaw_deg: 179.2\n')
-        rows = {key: (state, detail) for key, state, detail in cal.status_rows(config, backup)}
-        assert rows['imu'][0] == 'calibrated' and 'no backup' in rows['imu'][1]
-        assert rows['lidar'][0] == 'calibrated' and 'backed up' in rows['lidar'][1]
+    def test_rows(self, cal, config, params):
+        _ros_yaml(params / 'lsm9ds1_cal.yaml', 'pit_node', {'gyroscope.bias': [0, 0, 0]})
+        (params / 'frames.yaml').write_text('laser_yaw_deg: 179.2\n')
+        rows = {key: (state, detail) for key, state, detail in cal.status_rows(config)}
+        assert rows['imu'][0] == 'calibrated'
+        assert rows['lidar'][0] == 'calibrated'
         assert rows['realsense'][0] == 'default'
         assert rows['odom'][0] == 'default'
 
-    def test_status_lists_stored_values_under_each_step(self, cal, config, tmp_path):
-        (config / 'frames.local.yaml').write_text('laser_yaw_deg: 179.16\n')
-        (config / 'dynamics.local.yaml').write_text('servo_lock_to_lock_s: 0.12\n')
-        lines = cal.status_lines(config, tmp_path)
+    def test_driver_folder_files_do_not_count(self, cal, config):
+        (config / 'frames.local.yaml').write_text('laser_yaw_deg: 179.2\n')
+        rows = {key: state for key, state, _ in cal.status_rows(config)}
+        assert rows['lidar'] == 'default'
+
+    def test_status_names_the_profile(self, cal, config, car_profile_dir):
+        assert cal.status_lines(config)[0] == f'Car profile: {car_profile_dir}'
+
+    def test_status_lists_stored_values_under_each_step(self, cal, config, params):
+        (params / 'frames.yaml').write_text('laser_yaw_deg: 179.16\n')
+        (params / 'dynamics.yaml').write_text('servo_lock_to_lock_s: 0.12\n')
+        lines = cal.status_lines(config)
         i = lines.index('lidar: Lidar yaw')
-        assert lines[i + 1].startswith('  calibrated') and 'no backup' in lines[i + 1]
+        assert lines[i + 1].startswith('  calibrated')
         assert lines[i + 2] == '  laser_yaw_deg  179.16'
         j = next(n for n, line in enumerate(lines) if line.startswith('dynamics:'))
         assert lines[j + 2] == '  servo_lock_to_lock_s  0.12'
         k = next(n for n, line in enumerate(lines) if line.startswith('realsense:'))
         assert lines[k + 1].startswith('  default') and lines[k + 2] == ''
 
-    def test_status_colors(self, cal, config, tmp_path):
-        backup = tmp_path / 'b'
-        backup.mkdir()
-        (config / 'frames.local.yaml').write_text('laser_yaw_deg: 179.16\n')
-        (backup / 'frames.local.yaml').write_text('laser_yaw_deg: 179.16\n')
-        text = '\n'.join(cal.status_lines(config, backup, color=True))
+    def test_status_colors(self, cal, config, params):
+        (params / 'frames.yaml').write_text('laser_yaw_deg: 179.16\n')
+        text = '\n'.join(cal.status_lines(config, color=True))
         green, yellow, red = '\033[1;32mcalibrated', '\033[1;33mdefault', '\033[1;31mdefault'
-        assert green in text  # lidar, backed up
+        assert green in text  # lidar
         assert red in text  # an IMU on committed defaults
         assert yellow in text  # dynamics not measured
-        assert '\033' not in '\n'.join(cal.status_lines(config, backup))
+        assert '\033' not in '\n'.join(cal.status_lines(config))
 
     def test_dynamics_has_no_check(self, cal):
         (step,) = [s for s in cal.STEPS if s.key == 'dynamics']
         assert step.check == '' and step.key == cal.STEP_KEYS[-1]
 
-    def test_changed_backup_is_flagged(self, cal, config, tmp_path):
-        (config / 'frames.local.yaml').write_text('laser_yaw_deg: 179.2\n')
-        (tmp_path / 'frames.local.yaml').write_text('laser_yaw_deg: 180.0\n')
-        assert cal.backup_state(config / 'frames.local.yaml', tmp_path) == 'backup differs'
-
 
 class TestRun:
     @pytest.fixture
-    def harness(self, cal, config, tmp_path, monkeypatch):
+    def harness(self, cal, params, monkeypatch):
         """Stub the tools and prompts; returns (answers list, commands run)."""
         ran = []
         answers = []
@@ -109,7 +113,7 @@ class TestRun:
         def fake_run(cmd, check=False, **_kw):
             ran.append(cmd)
             if str(cmd[-1]).endswith('calibrate_lidar.py'):
-                (config / 'frames.local.yaml').write_text('laser_yaw_deg: 179.5\n')
+                (params / 'frames.yaml').write_text('laser_yaw_deg: 179.5\n')
             return type('R', (), {'returncode': 0, 'stdout': 'active\n'})()
 
         monkeypatch.setattr(cal.subprocess, 'run', fake_run)
@@ -117,33 +121,31 @@ class TestRun:
         monkeypatch.setenv('RACECAR_SUDO', '')
         return answers, ran
 
-    def test_run_backs_up_and_reports(self, cal, config, tmp_path, harness, capsys):
+    def test_run_reports(self, cal, harness, capsys):
         answers, ran = harness
         answers += ['', 'n']  # run lidar; no restart
         lidar = [s for s in cal.STEPS if s.key == 'lidar']
-        backup = tmp_path / 'backup'
-        assert cal.run_steps(lidar, config, backup) == 0
+        assert cal.run_steps(lidar) == 0
         out = capsys.readouterr().out
         assert 'laser_yaw_deg: default -> 179.5' in out
-        assert (backup / 'frames.local.yaml').read_text() == 'laser_yaw_deg: 179.5\n'
         assert 'Apply later: systemctl restart racecar-teleop' in out
         assert len(ran) == 1
 
-    def test_skip_and_quit(self, cal, config, tmp_path, harness):
+    def test_skip_and_quit(self, cal, harness):
         answers, ran = harness
         answers += ['s', 'q']
         steps = list(cal.STEPS)
-        assert cal.run_steps(steps, config, tmp_path / 'b') == 0
+        assert cal.run_steps(steps) == 0
         assert ran == []
 
-    def test_restart_on_yes(self, cal, config, tmp_path, harness):
+    def test_restart_on_yes(self, cal, harness):
         answers, ran = harness
         answers += ['', 'y']
         lidar = [s for s in cal.STEPS if s.key == 'lidar']
-        cal.run_steps(lidar, config, tmp_path / 'b')
+        cal.run_steps(lidar)
         assert ran[-1] == ['systemctl', 'restart', 'racecar-teleop']
 
-    def test_tools_run_in_session_mode(self, cal, config, tmp_path, monkeypatch):
+    def test_tools_run_in_session_mode(self, cal, monkeypatch):
         envs = []
 
         def fake_run(cmd, check=False, env=None, **_kw):
@@ -153,23 +155,23 @@ class TestRun:
         monkeypatch.setattr(cal.subprocess, 'run', fake_run)
         answers = ['', 'n']
         monkeypatch.setattr(cal, 'ask', lambda _p='': answers.pop(0))
-        cal.run_steps([s for s in cal.STEPS if s.key == 'imu'], config, tmp_path / 'b')
+        cal.run_steps([s for s in cal.STEPS if s.key == 'imu'])
         assert envs[0][cal.SESSION_ENV] == '1'
 
 
 class TestBackupReminder:
-    def test_standalone_tool_says_how_to_back_up_and_apply(self, monkeypatch):
+    def test_standalone_tool_says_how_to_apply(self, monkeypatch):
         common = load_script('calibrate_common')
         monkeypatch.delenv(common.SESSION_ENV, raising=False)
-        text = common.backup_reminder([Path('/x/odom.local.yaml')])
-        assert 'Wrote /x/odom.local.yaml' in text
-        assert 'Back it up' in text and 'Apply it' in text
+        text = common.backup_reminder([Path('/x/params/odom.yaml')])
+        assert 'Wrote /x/params/odom.yaml' in text
+        assert 'Back it up' not in text and 'Apply it' in text
 
-    def test_session_leaves_backup_and_restart_to_calibrate(self, monkeypatch):
+    def test_session_leaves_the_restart_to_calibrate(self, monkeypatch):
         common = load_script('calibrate_common')
         monkeypatch.setenv(common.SESSION_ENV, '1')
-        text = common.backup_reminder([Path('/x/odom.local.yaml')])
-        assert text == 'Wrote /x/odom.local.yaml'
+        text = common.backup_reminder([Path('/x/params/odom.yaml')])
+        assert text == 'Wrote /x/params/odom.yaml'
 
 
 class TestSetupText:
@@ -418,7 +420,7 @@ class TestRunSequence:
 
 class TestSessionBack:
     def test_back_reruns_the_previous_step_with_its_first_values(
-        self, cal, config, tmp_path, monkeypatch
+        self, cal, params, monkeypatch
     ):
         answers = ['', 'b', '', '', 'n']  # imu, back, imu again, mag, no restart
         monkeypatch.setattr(cal, 'ask', lambda _p='': answers.pop(0))
@@ -427,13 +429,13 @@ class TestSessionBack:
         def fake_run(cmd, check=False, **_kw):
             ran.append(Path(cmd[-1]).name)
             values = {'gyroscope.bias': [len(ran), 0, 0]}
-            _ros_yaml(config / 'lsm9ds1_cal.local.yaml', 'pit_node', values)
+            _ros_yaml(params / 'lsm9ds1_cal.yaml', 'pit_node', values)
             return type('R', (), {'returncode': 0})()
 
         monkeypatch.setattr(cal.subprocess, 'run', fake_run)
         monkeypatch.setenv('RACECAR_SUDO', '')
         steps = [s for s in cal.STEPS if s.key in ('imu', 'mag')]
-        assert cal.run_steps(steps, config, tmp_path / 'b') == 0
+        assert cal.run_steps(steps) == 0
         assert ran == ['calibrate_imu.py', 'calibrate_imu.py', 'calibrate_mag.py']
 
     def test_prompt_offers_back_after_the_first_step(self, cal, monkeypatch):

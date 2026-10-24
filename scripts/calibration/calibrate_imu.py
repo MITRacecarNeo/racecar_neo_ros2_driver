@@ -2,7 +2,7 @@
 """
 LSM9DS1 accelerometer bias and scale, gyroscope bias calibration for pit_node.
 
-Reads /imu/lsm9ds1/raw and writes config/lsm9ds1_cal.local.yaml. --check
+Reads /imu/lsm9ds1/raw and writes the car profile's params/lsm9ds1_cal.yaml. --check
 reads pit_node's calibrated /imu/lsm9ds1 at rest.
 
 Author: Koneshka Dey

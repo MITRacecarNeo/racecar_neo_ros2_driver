@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Added
 
+- Car profile: this car's settings in `~/.config/racecar`, outside the
+  driver folder (`racecar_neo_ros2_driver/car_profile.py`). Calibration
+  writes `params/<name>.yaml`; launch reads it at launch, so a new value
+  applies on a teleop restart with no rebuild; lab dashboard tuning is in
+  `dashboards/<name>.yaml`; a replaced file is kept under `history/`.
+  `racecar profile` (show, `path`, `migrate`, `export FILE`, `import FILE`,
+  `check`); `setup_all.sh` runs `migrate`; teleop launch warns about unused
+  files; a `car profile` row in `racecar status`.
 - Features on the 8080 dashboard: Camera, Detections, and Autonomy tiles.
   The camera and detections are teleop subsystems; a change restarts teleop
   with the new set (`scripts/features.py`, `~/.config/racecar/features.conf`,
@@ -340,6 +348,11 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Changed
 
+- `config/*.local.yaml` and the dashboards' `.local.yaml` files in the
+  driver folder are no longer read; run `racecar profile migrate` once.
+  `racecar calibrate` no longer copies results to
+  `~/.config/racecar/calibration/`; `racecar calibrate status` shows the
+  profile path and no backup state.
 - Detections (EdgeTPU) are off at boot; turn them on in Features on the 8080
   dashboard. Teleop launches with `realsense_enable` and `edgetpu_enable`
   from the Features choice.

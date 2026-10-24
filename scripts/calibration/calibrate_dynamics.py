@@ -4,7 +4,7 @@ Vehicle dynamics for the simulator: steering angle, servo time, speed, stopping.
 
 The `dynamics` step of `racecar calibrate`. The car drives four fixed runs by
 itself while the operator holds RB; each is recorded as a bag and analyzed.
-Results go to config/dynamics.local.yaml, which no node reads: it records
+Results go to the car profile's params/dynamics.yaml, which no node reads: it records
 this car's measured values for the simulator. There is no --check.
 
 Runs (normalized commands, as on /drive; config/throttle.yaml gives m/s):
@@ -42,6 +42,7 @@ import time
 from typing import Any
 
 import numpy as np
+from racecar_neo_ros2_driver.car_profile import param_path
 import yaml
 
 HERE = Path(__file__).resolve().parent
@@ -52,7 +53,6 @@ from calibrate_common import (  # noqa: E402, I100
     backup_reminder,
     install_config_dir,
     node_params,
-    output_dirs,
     run_sequence,
     source_config_dir,
     update_local_values,
@@ -93,7 +93,7 @@ TITLES = {
 STRAIGHT_PLACE = 'Place the car at the start of the straight path, pointing along it.'
 CIRCLE_PLACE = 'Place the car at one end of the clear area, pointing along it.'
 # Wheelbase and track measured on a reference car, m.
-# Per car: odometry.wheelbase_m in odom.yaml / odom.local.yaml (measured).
+# Per car: odometry.wheelbase_m in odom.yaml / the profile's params/odom.yaml (measured).
 WHEELBASE_M = float(node_params('odom', 'pit_node').get('odometry.wheelbase_m', 0.230))
 TRACK_M = 0.178
 # Circle fits skip this long after each steering change.
@@ -366,7 +366,7 @@ def speed_tag(speed: float) -> str:
 
 
 def analyze_straight(bag: Bag) -> tuple[dict[str, float], list[str]]:
-    """Return (values for dynamics.local.yaml, report lines) for a straight run."""
+    """Return (values for params/dynamics.yaml, report lines) for a straight run."""
     edges = command_edges(bag)
     on = next(e for e in edges if e[1] != 0.0)
     off = next(e for e in edges if e[0] > on[0] and e[1] == 0.0)
@@ -400,7 +400,7 @@ def analyze_straight(bag: Bag) -> tuple[dict[str, float], list[str]]:
 
 
 def analyze_circle(bag: Bag) -> tuple[dict[str, float], list[str]]:
-    """Return (values for dynamics.local.yaml, report lines) for one circle run."""
+    """Return (values for params/dynamics.yaml, report lines) for one circle run."""
     edges = command_edges(bag)
     lead = next(e for e in edges if e[1] != 0.0)
     lock = next(e for e in edges if e[0] > lead[0] and e[2] != 0.0)
@@ -564,15 +564,11 @@ class Driver:
 
 
 def write_values(values: dict[str, float], log: Any) -> int:
-    dirs = output_dirs()
-    if not dirs:
-        log.error('No config directory found; nothing written.')
-        return 1
     # The two circle runs may come from different sessions.
-    local = dirs[0] / 'dynamics.local.yaml'
+    local = param_path('dynamics')
     stored = (yaml.safe_load(local.read_text()) or {}) if local.exists() else {}
     values = {**values, **lock_to_lock({**stored, **values})}
-    written = update_local_values('dynamics', values, dirs, TOOL)
+    written = update_local_values('dynamics', values, TOOL)
     for key, value in sorted(values.items()):
         log.info(f'{key}: {value}')
     log.info(backup_reminder(written))

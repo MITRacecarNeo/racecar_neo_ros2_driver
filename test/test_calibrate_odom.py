@@ -104,19 +104,19 @@ class TestCriteria:
 
 
 class TestMergeWrite:
-    def test_merge_keeps_the_other_step(self, common, tmp_path):
+    def test_merge_keeps_the_other_step(self, common):
         common.write_local_yaml(
-            'odom', 'pit_node', {'odometry.yaw_rate_scale': 0.98}, [tmp_path], 't', merge=True
+            'odom', 'pit_node', {'odometry.yaw_rate_scale': 0.98}, 't', merge=True
         )
         (path,) = common.write_local_yaml(
-            'odom', 'pit_node', {'odometry.speed_scale': 1.05}, [tmp_path], 't', merge=True
+            'odom', 'pit_node', {'odometry.speed_scale': 1.05}, 't', merge=True
         )
         params = yaml.safe_load(path.read_text())['pit_node']['ros__parameters']
         assert params == {'odometry.yaw_rate_scale': 0.98, 'odometry.speed_scale': 1.05}
 
-    def test_without_merge_the_file_is_replaced(self, common, tmp_path):
-        common.write_local_yaml('x', 'n', {'a': 1}, [tmp_path], 't')
-        (path,) = common.write_local_yaml('x', 'n', {'b': 2}, [tmp_path], 't')
+    def test_without_merge_the_file_is_replaced(self, common):
+        common.write_local_yaml('x', 'n', {'a': 1}, 't')
+        (path,) = common.write_local_yaml('x', 'n', {'b': 2}, 't')
         assert yaml.safe_load(path.read_text())['n']['ros__parameters'] == {'b': 2}
 
     def test_keys_match_what_pit_node_declares(self):

@@ -17,7 +17,7 @@ started); `global` (AMCL only) searches the whole map. `resume` continues a
 mapping run from an autosaved pose graph at `pose`; `extend` starts a mapping
 run from a saved pose graph, scan-matched from the rough `pose`, and saves
 under `map`. `foxglove:=true` adds foxglove_bridge. Each node's config loads
-its `.local.yaml` override last. A node that exits ends the launch.
+its car profile override last. A node that exits ends the launch.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ LOCALIZERS = ('amcl', 'slam_toolbox')
 
 
 def _files(config_dir: str, yaml: str) -> list[str]:
-    return [os.path.join(config_dir, yaml), *local_overrides(config_dir, [yaml])]
+    return [os.path.join(config_dir, yaml), *local_overrides([yaml])]
 
 
 def _lifecycle_manager(name: str, files: list[str]) -> dict[str, Any]:

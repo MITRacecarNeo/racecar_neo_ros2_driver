@@ -5,6 +5,8 @@ from pathlib import Path
 import sys
 from types import ModuleType
 
+import pytest
+
 SCRIPTS = Path(__file__).resolve().parent.parent / 'scripts'
 # Script folders searched by load_script, in order.
 SCRIPT_DIRS = (SCRIPTS, SCRIPTS / 'calibration', SCRIPTS / 'validation')
@@ -30,3 +32,11 @@ def load_script(name: str) -> ModuleType:
     sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
+
+
+@pytest.fixture(autouse=True)
+def car_profile_dir(tmp_path, monkeypatch):
+    """Point the car profile at a temporary folder, so no test touches the car's own."""
+    path = tmp_path / 'car_profile'
+    monkeypatch.setenv('RACECAR_CONFIG_DIR', str(path))
+    return path

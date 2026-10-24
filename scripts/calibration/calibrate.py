@@ -3,14 +3,14 @@
 Guided whole-car calibration behind `racecar calibrate`.
 
 Runs the calibrate_*.py tools in this folder in a fixed order, each with its
-own prompts, then shows old and new values, backs the results up to
-~/.config/racecar/calibration/, and offers to restart teleop so the nodes load
-them. `racecar calibrate status` lists each calibration's state without ROS.
+own prompts, then shows old and new values and offers to restart teleop so
+the nodes load them. `racecar calibrate status` lists each calibration's state without ROS.
 `racecar calibrate check` runs each tool's --check against the live sensors,
 the last step of car prep: calibrate, restart teleop, check.
 
-The tools write config/<name>.local.yaml in both the source and the installed
-config directory (calibrate_common.output_dirs), so no rebuild is needed.
+The tools write the car profile (params/<name>.yaml under ~/.config/racecar,
+racecar_neo_ros2_driver.car_profile), outside the driver folder; launch reads
+it, so no rebuild is needed.
 """
 
 from __future__ import annotations
@@ -22,19 +22,18 @@ import json
 import os
 from pathlib import Path
 import shlex
-import shutil
 import subprocess
 import sys
 import tempfile
 from typing import Any
 
+from racecar_neo_ros2_driver import car_profile
 import yaml
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from calibrate_common import (  # noqa: E402, I100
-    BACKUP_DIR,
     criteria_lines,
     Criterion,
     paint,
@@ -203,55 +202,46 @@ def read_values(path: Path) -> dict[str, Any]:
     return data
 
 
-def step_values(step: Step, config_dir: Path) -> dict[str, Any]:
-    values = read_values(config_dir / f'{step.local_name}.local.yaml')
+def step_values(step: Step) -> dict[str, Any]:
+    values = read_values(car_profile.param_path(step.local_name))
     return {k: values[k] for k in step.keys if k in values}
 
 
-def backup_state(local: Path, backup_dir: Path) -> str:
-    backup = backup_dir / local.name
-    if not backup.exists():
-        return 'no backup'
-    return 'backed up' if backup.read_bytes() == local.read_bytes() else 'backup differs'
-
-
-def status_verdict(step: Step, state: str, detail: str) -> str:
+def status_verdict(step: Step, state: str) -> str:
     """Return the color class of a status row: PASS, WARN, or FAIL."""
     if state == 'calibrated':
-        return 'PASS' if detail.endswith('backed up') else 'WARN'
+        return 'PASS'
     # Uncalibrated sensors run on zero bias and unit scale; dynamics is optional.
     return 'FAIL' if step.check else 'WARN'
 
 
-def status_lines(
-    config_dir: Path, backup_dir: Path = BACKUP_DIR, color: bool = False
-) -> list[str]:
+def status_lines(config_dir: Path, color: bool = False) -> list[str]:
     """Return `racecar calibrate status`: one block per step, blank lines between."""
-    lines: list[str] = []
-    for step, (key, state, detail) in zip(STEPS, status_rows(config_dir, backup_dir), strict=True):
+    lines: list[str] = [f'Car profile: {car_profile.profile_dir()}']
+    for step, (key, state, detail) in zip(STEPS, status_rows(config_dir), strict=True):
         if lines:
             lines.append('')
         header = f'{key}: {step.label}'
         lines.append(f'\033[1m{header}\033[0m' if color else header)
-        verdict = status_verdict(step, state, detail)
+        verdict = status_verdict(step, state)
         lines.append(
             f'  {paint(state, verdict, color, bold=True)}  {paint(detail, verdict, color)}'
         )
-        values = step_values(step, config_dir)
+        values = step_values(step)
         width = max((len(k) for k in values), default=0)
         lines += [f'  {k:<{width}}  {fmt(values[k], 7)}' for k in step.keys if k in values]
     return lines
 
 
-def status_rows(config_dir: Path, backup_dir: Path = BACKUP_DIR) -> list[tuple[str, str, str]]:
+def status_rows(config_dir: Path) -> list[tuple[str, str, str]]:
     """Return (step, state, detail) for each step."""
     rows = []
     for step in STEPS:
-        local = config_dir / f'{step.local_name}.local.yaml'
-        values = step_values(step, config_dir)
+        local = car_profile.param_path(step.local_name)
+        values = step_values(step)
         if values:
             stamp = datetime.fromtimestamp(local.stat().st_mtime).strftime('%Y-%m-%d %H:%M')
-            rows.append((step.key, 'calibrated', f'{stamp}, {backup_state(local, backup_dir)}'))
+            rows.append((step.key, 'calibrated', stamp))
         elif (config_dir / f'{step.local_name}.yaml').exists():
             rows.append((step.key, 'default', 'committed defaults; not calibrated on this car'))
         else:
@@ -309,7 +299,7 @@ def walk_steps(steps: list[Step], header: Any, run: Any) -> list[Any]:
     return [entries[k] for k in sorted(entries)]
 
 
-def run_steps(steps: list[Step], config_dir: Path, backup_dir: Path = BACKUP_DIR) -> int:
+def run_steps(steps: list[Step]) -> int:
     """Run the steps in order; return 0 when every attempted step succeeded."""
     # A step run again keeps its values from before its first run, for the summary.
     first_before: dict[int, dict[str, Any]] = {}
@@ -320,13 +310,13 @@ def run_steps(steps: list[Step], config_dir: Path, backup_dir: Path = BACKUP_DIR
 
     def run(i: int) -> tuple[Step, str, dict[str, Any], dict[str, Any]]:
         step = steps[i]
-        before = first_before.setdefault(i, step_values(step, config_dir))
+        before = first_before.setdefault(i, step_values(step))
         rc = subprocess.run(
             [sys.executable, str(HERE / step.tool)],
             check=False,
             env={**os.environ, SESSION_ENV: '1'},
         ).returncode
-        return step, 'done' if rc == 0 else 'failed', before, step_values(step, config_dir)
+        return step, 'done' if rc == 0 else 'failed', before, step_values(step)
 
     results = [e if len(e) == 4 else (*e, {}, {}) for e in walk_steps(steps, header, run)]
 
@@ -337,17 +327,7 @@ def run_steps(steps: list[Step], config_dir: Path, backup_dir: Path = BACKUP_DIR
             old = fmt(before[key]) if key in before else 'default'
             print(f'    {key}: {old} -> {fmt(after.get(key, "?"))}')
 
-    changed = {
-        config_dir / f'{step.local_name}.local.yaml'
-        for step, outcome, *_ in results
-        if outcome == 'done'
-    }
-    if changed:
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        for local in sorted(changed):
-            if local.exists():
-                shutil.copy2(local, backup_dir / local.name)
-                print(f'Backed up {local.name} to {backup_dir}/')
+    if any(outcome == 'done' for _, outcome, *_ in results):
         restart = [*shlex.split(os.environ.get('RACECAR_SUDO', 'sudo')), *systemctl()]
         restart += ['restart', TELEOP_UNIT]
         print('Restarting teleop uses sudo, which may ask for your password.')
@@ -467,7 +447,7 @@ def main(argv: list[str] | None = None) -> int:
             'then run racecar calibrate again.'
         )
         return 1
-    return run_checks(chosen) if checking else run_steps(chosen, config_dir)
+    return run_checks(chosen) if checking else run_steps(chosen)
 
 
 if __name__ == '__main__':

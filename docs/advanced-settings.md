@@ -160,18 +160,18 @@ ALFA dongle together.
 | | |
 |---|---|
 | Default | committed `config/*.yaml`; calibration files hold zeros |
-| Change | write `config/<name>.local.yaml`, or run a calibration utility; then `racecar build` and `racecar service restart teleop` |
-| Revert | delete the `.local.yaml`, `racecar build`, restart teleop |
+| Change | write `params/<name>.yaml` in the car profile (`~/.config/racecar`), or run a calibration utility; then `racecar service restart teleop` (no build) |
+| Revert | remove the file from `params/`, or restore the copy in `history/<stamp>/`; restart teleop |
 | Safe path | any |
 
-Each launch file loads `config/<name>.local.yaml` after the committed file of
-the same name, so its keys win. The files are gitignored and never dirty the
-tree. The calibration utilities (`calibrate_imu.py`, `calibrate_mag.py`,
-`calibrate_realsense_imu.py`, `calibrate_lidar.py`) write
-`lsm9ds1_cal.local.yaml`, `lsm9ds1_mag_cal.local.yaml`,
-`realsense_cal.local.yaml` and `frames.local.yaml`; see README
-"Sensor calibration". A reimage or fresh clone loses them, so keep a copy in
-`~/.config/racecar/calibration/`.
+Each launch file loads the profile's `params/<name>.yaml` after the committed
+`config/<name>.yaml`, so its keys win. Launch reads it at start, so a teleop
+restart applies a change. The calibration utilities (`calibrate_imu.py`,
+`calibrate_mag.py`, `calibrate_realsense_imu.py`, `calibrate_lidar.py`) write
+`lsm9ds1_cal.yaml`, `lsm9ds1_mag_cal.yaml`, `realsense_cal.yaml` and
+`frames.yaml` there; see README "Sensor calibration". The profile sits outside
+the driver folder, so a driver update or re-clone keeps it; `racecar profile
+export FILE` saves it for a fresh image. See README "Car profile".
 
 ## Foxglove bridge
 
@@ -188,7 +188,7 @@ Lichtblick (desktop app, works offline) or the Foxglove app (needs an
 account and internet). Camera streams are left out, since they can saturate
 the access point. A client may publish only `/initialpose`, for the pose
 estimate tool; it cannot drive the car. Settings: `config/foxglove.yaml`,
-with per-car overrides in `foxglove.local.yaml`.
+with per-car overrides in the car profile's `params/foxglove.yaml`.
 
 To connect from Lichtblick:
 
@@ -207,8 +207,8 @@ following the car, a table of `/autonomy/status`, and a plot of the pose.
 | | |
 |---|---|
 | Default | speed held at the firmware minimum while mapping; steering not limited |
-| Change | `mapping_speed_cap` and `mapping_steering_cap` in `config/throttle.local.yaml`; `racecar build`, restart teleop |
-| Revert | remove the keys, `racecar build`, restart teleop |
+| Change | `mapping_speed_cap` and `mapping_steering_cap` in the car profile's `params/throttle.yaml`; restart teleop |
+| Revert | remove the keys, restart teleop |
 | Safe path | any |
 
 `throttle_node` applies both while `/autonomy/status` reports mapping, to the
@@ -239,6 +239,7 @@ Saved client profiles hold credentials. An enterprise profile keeps an account
 name and its password in NetworkManager, and both clone onto every car built
 from the image, so delete them before capture.
 
-Per-car calibration lives in the gitignored `config/*.local.yaml` files (a
-backup copy in `~/.config/racecar/calibration/`). An image carries one car's
-values to every clone, so delete them before capture or recalibrate each car.
+Per-car calibration and tuning live in the car profile, `~/.config/racecar`.
+An image carries one car's values to every clone, so remove the profile's
+`params/`, `dashboards/` and `history/` before capture or recalibrate each car. `racecar profile export FILE` saves
+it first.

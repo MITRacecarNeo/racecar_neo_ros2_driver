@@ -83,6 +83,9 @@ if [ -f "$HOME/ros2_ws/install/setup.bash" ]; then
     source "$HOME/ros2_ws/install/setup.bash"
 fi
 
+# Per-car files left in the driver folder are ignored; say so in the log.
+python3 "$SCRIPT_DIR/racecar_profile.py" check || true
+
 # ---------------------------------------------------------------------------
 # Launch; `exec` so systemd tracks the ros2 launch PID, not this shell.
 # ---------------------------------------------------------------------------

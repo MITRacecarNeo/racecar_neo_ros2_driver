@@ -56,6 +56,7 @@ from ackermann_msgs.msg import AckermannDriveStamped
 import cv2
 from nav_msgs.msg import Odometry
 import numpy as np
+from racecar_neo_ros2_driver import car_profile
 import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
@@ -77,9 +78,9 @@ BASE = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE.parents[1]))
 import webui  # noqa: E402
 # Shipped defaults stay untouched; saved tuning goes to the per-car file,
-# which loads on top of them (gitignored, like config/*.local.yaml).
+# which loads on top of them, in the car profile (dashboards/<name>.yaml).
 DEFAULTS_PATH = BASE / 'teleop.yaml'
-YAML_PATH = BASE / 'teleop.local.yaml'
+YAML_PATH = car_profile.dashboard_settings('teleop')
 LOG_DIR = Path.home() / 'data' / 'dashboards' / 'teleop'
 
 MAX_SPEED = 1.0         # hard throttle cap either way, as drive_real.set_max_speed
@@ -202,7 +203,7 @@ def load_params():
 def save_params():
     """Rewrite the numeric values in place so the yaml comments survive."""
     if not YAML_PATH.exists():
-        YAML_PATH.write_text(DEFAULTS_PATH.read_text())
+        car_profile.write_text(YAML_PATH, DEFAULTS_PATH.read_text())
     scalar = re.compile(r'^([A-Za-z_]\w*):([ \t]*)[-\d.eE+]+(.*)$')
     out = []
     with _lock:
@@ -215,7 +216,7 @@ def save_params():
                     out.append(f'{key}:{gap}{v}{tail}\n')
                     continue
             out.append(raw)
-    YAML_PATH.write_text(''.join(out))
+    car_profile.write_text(YAML_PATH, ''.join(out))
 
 
 def update_params(data):

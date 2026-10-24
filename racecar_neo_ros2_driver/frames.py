@@ -1,5 +1,5 @@
 """
-Frame offsets: load config/frames.yaml with its per-car override, convert units.
+Frame offsets: load config/frames.yaml with the car profile's override, convert units.
 
 frames.yaml keys carry their unit (`_mm` or `_deg`). The URDF takes meters and
 radians, under the key name with the unit suffix removed.
@@ -13,8 +13,9 @@ from typing import Any
 
 import yaml
 
+from .car_profile import param_override
+
 FRAMES_YAML = 'frames.yaml'
-LOCAL_YAML = 'frames.local.yaml'
 _UNITS = {'_mm': 1e-3, '_deg': math.pi / 180.0}
 
 
@@ -32,15 +33,15 @@ def _read(path: Path) -> dict[str, float]:
 
 def load_frames(config_dir: str | Path) -> dict[str, float]:
     """
-    Return frames.yaml merged with frames.local.yaml, in file units.
+    Return frames.yaml merged with the profile's params/frames.yaml, in file units.
 
-    A local key absent from frames.yaml is an error, so a typo cannot pass
+    An override key absent from frames.yaml is an error, so a typo cannot pass
     silently as an unused override.
     """
     config_dir = Path(config_dir)
     values = _read(config_dir / FRAMES_YAML)
-    local = config_dir / LOCAL_YAML
-    if local.exists():
+    local = param_override('frames')
+    if local is not None:
         overrides = _read(local)
         unknown = sorted(set(overrides) - set(values))
         if unknown:

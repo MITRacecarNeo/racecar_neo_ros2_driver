@@ -5,6 +5,7 @@
     racecar map start NAME [--from SAVED [--pose x,y,yaw]] [--force]
     racecar map save
     racecar map stop
+    racecar map resume
     racecar map load NAME [--pose x,y,yaw | --global] [--localizer amcl|slam_toolbox]
     racecar map recover NAME
     racecar map status

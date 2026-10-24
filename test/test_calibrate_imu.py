@@ -1,6 +1,5 @@
 """Unit tests for the IMU bias calibrators and their shared local-YAML output."""
 
-from fnmatch import fnmatch
 import json
 from pathlib import Path
 
@@ -29,35 +28,24 @@ class TestLocalYamlOutput:
     def test_source_config_dir_is_the_repo_config(self, common):
         assert common.source_config_dir() == ROOT / 'config'
 
-    def test_written_path_is_name_dot_local_yaml(self, common, tmp_path):
+    def test_written_to_the_car_profile(self, common, car_profile_dir):
         written = common.write_local_yaml(
-            'lsm9ds1_cal', 'pit_node', {'gyroscope.bias': [0.0, 0.0, 0.0]}, [tmp_path], 'test'
+            'lsm9ds1_cal', 'pit_node', {'gyroscope.bias': [0.0, 0.0, 0.0]}, 'test'
         )
-        assert written == [tmp_path / 'lsm9ds1_cal.local.yaml']
+        assert written == [car_profile_dir / 'params' / 'lsm9ds1_cal.yaml']
 
-    def test_written_file_is_gitignored(self, common, tmp_path):
-        written = common.write_local_yaml('realsense_cal', 'imu_fusion_node', {}, [tmp_path], 't')
-        patterns = [
-            ln.strip()
-            for ln in (ROOT / '.gitignore').read_text().splitlines()
-            if ln.strip() and not ln.startswith('#')
-        ]
-        rel = f'config/{written[0].name}'
-        assert any(fnmatch(rel, p) for p in patterns), rel
-
-    def test_written_file_is_ros_parameter_yaml(self, common, tmp_path):
+    def test_written_file_is_ros_parameter_yaml(self, common):
         params = {'accelerometer.bias': [0.1, 0.2, 0.3]}
-        (path,) = common.write_local_yaml('lsm9ds1_cal', 'pit_node', params, [tmp_path], 'test')
+        (path,) = common.write_local_yaml('lsm9ds1_cal', 'pit_node', params, 'test')
         text = path.read_text()
         assert text.startswith('#')
         assert yaml.safe_load(text) == {'pit_node': {'ros__parameters': params}}
 
-    def test_every_dir_gets_a_copy(self, common, tmp_path):
-        dirs = [tmp_path / 'a', tmp_path / 'b']
-        for d in dirs:
-            d.mkdir()
-        written = common.write_local_yaml('x', 'n', {}, dirs, 'test')
-        assert [p.parent for p in written] == dirs
+    def test_a_rewrite_keeps_the_old_copy_in_history(self, common, car_profile_dir):
+        common.write_local_yaml('x', 'n', {'a': 1}, 'test')
+        common.write_local_yaml('x', 'n', {'a': 2}, 'test')
+        old = list((car_profile_dir / 'history').rglob('x.yaml'))
+        assert len(old) == 1 and 'a: 1' in old[0].read_text()
 
 
 class TestTargets:
@@ -178,13 +166,14 @@ class TestRestCheck:
 
 
 class TestNodeParams:
-    def test_local_overrides_base(self, common, tmp_path):
+    def test_profile_overrides_base(self, common, tmp_path):
         (tmp_path / 'x.yaml').write_text(
             yaml.safe_dump({'n': {'ros__parameters': {'a': [0, 0, 0], 'b': [1, 1, 1]}}})
         )
         (tmp_path / 'x.local.yaml').write_text(
-            yaml.safe_dump({'n': {'ros__parameters': {'a': [1, 2, 3]}}})
+            yaml.safe_dump({'n': {'ros__parameters': {'b': [9, 9, 9]}}})
         )
+        common.write_local_yaml('x', 'n', {'a': [1, 2, 3]}, 'test')
         assert common.node_params('x', 'n', tmp_path) == {'a': [1, 2, 3], 'b': [1, 1, 1]}
 
     def test_missing_files(self, common, tmp_path):

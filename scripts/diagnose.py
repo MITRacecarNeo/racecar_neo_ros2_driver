@@ -349,7 +349,23 @@ def check_system(cpu_interval: float = CPU_SAMPLE_SEC) -> list[Check]:
     else:
         out.append(Check(g, 'clock', WARN, f'not NTP synced, up {up_s}'))
 
+    out.append(check_profile())
     return out
+
+
+def check_profile() -> Check:
+    """Report the car profile: where it is, the car name, and per-car files the driver ignores."""
+    try:
+        from racecar_neo_ros2_driver import car_profile
+    except ImportError:
+        return Check('system', 'car profile', SKIP, 'driver not built')
+    here = Path(__file__).resolve().parent
+    left = car_profile.unmigrated(here.parent / 'config', here / 'dashboards')
+    detail = f'{car_profile.car_info()["name"]}, {car_profile.profile_dir()}'
+    if left:
+        return Check('system', 'car profile', WARN,
+                     f'{detail}; {len(left)} file(s) not used: racecar profile migrate')
+    return Check('system', 'car profile', OK, detail)
 
 
 def check_services() -> list[Check]:

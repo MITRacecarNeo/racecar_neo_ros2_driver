@@ -92,19 +92,19 @@ class TestMedianRanges:
 
 
 class TestUpdateLocalValues:
-    def test_keeps_other_keys(self, common, tmp_path):
-        (tmp_path / 'frames.local.yaml').write_text(
+    def test_keeps_other_keys(self, common, car_profile_dir):
+        (car_profile_dir / 'params').mkdir(parents=True)
+        (car_profile_dir / 'params' / 'frames.yaml').write_text(
             'camera_pitch_deg: 1.5\nlaser_yaw_deg: 180.0\n'
         )
-        (path,) = common.update_local_values(
-            'frames', {'laser_yaw_deg': 179.6}, [tmp_path], 'test'
-        )
+        (path,) = common.update_local_values('frames', {'laser_yaw_deg': 179.6}, 'test')
         text = path.read_text()
         assert text.startswith('#')
         assert yaml.safe_load(text) == {'camera_pitch_deg': 1.5, 'laser_yaw_deg': 179.6}
 
-    def test_creates_the_file(self, common, tmp_path):
-        (path,) = common.update_local_values('frames', {'laser_yaw_deg': 180.2}, [tmp_path], 't')
+    def test_creates_the_file(self, common, car_profile_dir):
+        (path,) = common.update_local_values('frames', {'laser_yaw_deg': 180.2}, 't')
+        assert path == car_profile_dir / 'params' / 'frames.yaml'
         assert yaml.safe_load(path.read_text()) == {'laser_yaw_deg': 180.2}
 
 

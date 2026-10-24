@@ -2,9 +2,10 @@
 """
 Shared plumbing for the calibrate_*.py tools.
 
-Results go to config/<name>.local.yaml (gitignored) in the source tree and in
-the installed share config dir when it exists. The launch files load them
-after the tracked zero-default YAMLs, so the local values win.
+Results go to the car profile (params/<name>.yaml under ~/.config/racecar,
+racecar_neo_ros2_driver.car_profile), outside the driver folder. Launch loads
+them after the tracked zero-default YAMLs, so the car's values win, and reads
+them at launch, so a teleop restart applies them.
 """
 
 from __future__ import annotations
@@ -21,15 +22,14 @@ import time
 from typing import Any
 
 import numpy as np
+from racecar_neo_ros2_driver import car_profile
 import rclpy
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Imu
-import yaml
 
 PACKAGE = 'racecar_neo_ros2_driver'
-BACKUP_DIR = Path.home() / '.config' / 'racecar' / 'calibration'
 # Operator-facing output: the message only, without the ROS severity, time and node.
 # rcutils reads this at rclpy.init(), which every tool calls after importing this.
 os.environ.setdefault('RCUTILS_CONSOLE_OUTPUT_FORMAT', '{message}')
@@ -70,102 +70,59 @@ def source_config_dir(script: Path | None = None) -> Path | None:
     return None
 
 
-def output_dirs() -> list[Path]:
-    """Return every config dir a calibration result is written to."""
-    dirs: list[Path] = []
-    for d in (source_config_dir(), install_config_dir()):
-        if d is not None and d.resolve() not in [x.resolve() for x in dirs]:
-            dirs.append(d)
-    return dirs
-
-
 def write_local_yaml(
     name: str,
     node: str,
     params: dict[str, Any],
-    dirs: list[Path],
     tool: str,
     merge: bool = False,
 ) -> list[Path]:
     """
-    Write `<name>.local.yaml` holding `params` for `node` into each dir.
+    Write `params` for `node` to the profile's params/<name>.yaml.
 
     With `merge`, parameters already in the file for `node` are kept unless
     `params` sets them, so a tool that calibrates in steps can write each step.
+    The file it replaces is kept under the profile's history/.
     """
     stamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    header = (
-        f'# Per-car calibration from {tool}, {stamp}. Not tracked in git;\n'
-        f'# keep a copy in {BACKUP_DIR}/.\n'
-    )
-    written = []
-    for d in dirs:
-        path = d / f'{name}.local.yaml'
-        merged = dict(params)
-        if merge and path.exists():
-            old = (yaml.safe_load(path.read_text()) or {}).get(node) or {}
-            merged = {**(old.get('ros__parameters') or {}), **params}
-        body = yaml.safe_dump({node: {'ros__parameters': merged}}, default_flow_style=None)
-        path.write_text(header + body)
-        written.append(path)
-    return written
+    header = f'# Per-car calibration from {tool}, {stamp}.\n'
+    return [car_profile.write_params(name, node, params, header, merge)]
 
 
-def update_local_values(
-    name: str, values: dict[str, float], dirs: list[Path], tool: str
-) -> list[Path]:
+def update_local_values(name: str, values: dict[str, float], tool: str) -> list[Path]:
     """
-    Set `values` in `<name>.local.yaml` in each dir, keeping its other keys.
+    Set `values` in the profile's params/<name>.yaml, keeping its other keys.
 
-    For plain key: value files such as frames.local.yaml, which several tools
-    write into (not ROS parameter files).
+    For plain key: value files such as frames.yaml, which several tools write
+    into (not ROS parameter files).
     """
     stamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    header = (
-        f'# Per-car values; last written by {tool}, {stamp}. Not tracked in git;\n'
-        f'# keep a copy in {BACKUP_DIR}/.\n'
-    )
-    written = []
-    for d in dirs:
-        path = d / f'{name}.local.yaml'
-        current = yaml.safe_load(path.read_text()) if path.exists() else None
-        merged = {**(current or {}), **values}
-        path.write_text(header + yaml.safe_dump(merged, sort_keys=True))
-        written.append(path)
-    return written
+    header = f'# Per-car values; last written by {tool}, {stamp}.\n'
+    return [car_profile.write_values(name, values, header)]
 
 
 def backup_reminder(paths: list[Path]) -> str:
     """
-    Return the post-write message: where the file went and how to back it up.
+    Return the post-write message: where the file went and how to apply it.
 
     Under `racecar calibrate` (SESSION_ENV set) only the paths: the session
-    backs the file up and offers the teleop restart itself.
+    offers the teleop restart itself.
     """
     lines = [f'Wrote {p}' for p in paths]
     if paths and not os.environ.get(SESSION_ENV):
-        lines.append(f'Back it up: mkdir -p {BACKUP_DIR} && cp {paths[0]} {BACKUP_DIR}/')
         lines.append('Apply it: racecar service restart teleop (no rebuild needed).')
     return '\n'.join(lines)
 
 
 def node_params(cal_name: str, node: str, config_dir: Path | None = None) -> dict[str, Any]:
     """
-    Return `node`'s parameters from `<cal_name>.yaml` with `<cal_name>.local.yaml` on top.
+    Return `node`'s parameters from `<cal_name>.yaml` with the profile override on top.
 
-    Reads the config the running stack loaded: the installed share directory,
-    else the source tree.
+    The defaults come from the config the running stack loaded: the installed
+    share directory, else the source tree.
     """
     config_dir = config_dir or install_config_dir() or source_config_dir()
-    params: dict[str, Any] = {}
-    if config_dir is None:
-        return params
-    for name in (f'{cal_name}.yaml', f'{cal_name}.local.yaml'):
-        path = config_dir / name
-        if path.exists():
-            data = yaml.safe_load(path.read_text()) or {}
-            params.update((data.get(node) or {}).get('ros__parameters') or {})
-    return params
+    return car_profile.node_params(cal_name, node, config_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -559,12 +516,8 @@ class ImuBiasCalibrator(CalibratorNode):
         if params is None:
             log.error('Missing samples for at least one step; nothing written.')
             return 1
-        dirs = output_dirs()
-        if not dirs:
-            log.error('No config directory found; nothing written.')
-            return 1
         written = write_local_yaml(
-            self.target.cal_name, self.target.node, params, dirs, self.target.tool
+            self.target.cal_name, self.target.node, params, self.target.tool
         )
         log.info(f'Gyroscope bias (rad/s): {params[self.target.gyro_key]}')
         log.info(f'Accelerometer bias (m/s^2): {params[self.target.accel_key]}')

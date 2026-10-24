@@ -10,7 +10,7 @@ went (the gyro heading along the path). The scan match gives the laser's
 motion in the laser's own frame, and the one laser yaw that lines the two up
 is the measurement. Each forward leg is one estimate; the reverse leg
 returns the car and is reported, not counted, since reversing with front
-steering wanders. The mean is written to config/frames.local.yaml
+steering wanders. The mean is written to the car profile's params/frames.yaml
 (laser_yaw_deg) when its standard error is at most MAX_YAW_SE_DEG; otherwise
 another placement is asked for.
 
@@ -47,7 +47,6 @@ from calibrate_common import (  # noqa: E402, I100
     Criterion,
     finish_check,
     install_config_dir,
-    output_dirs,
     read_line,
     source_config_dir,
     spin_until_done,
@@ -232,11 +231,7 @@ class LidarYawCalibrator(CalibratorNode):
                 'the wall, or the lidar mount differs from frames.yaml. Nothing written.'
             )
             return 1
-        dirs = output_dirs()
-        if not dirs:
-            log.error('No config directory found; nothing written.')
-            return 1
-        written = update_local_values('frames', {'laser_yaw_deg': round(new_yaw, 3)}, dirs, TOOL)
+        written = update_local_values('frames', {'laser_yaw_deg': round(new_yaw, 3)}, TOOL)
         log.info(backup_reminder(written))
         return 0
 
@@ -535,11 +530,7 @@ def write_yaw(estimates: list[float], configured: float, log: Any) -> int:
     if se > MAX_YAW_SE_DEG:
         log.error(f'The standard error is above {MAX_YAW_SE_DEG} deg. Nothing written.')
         return 1
-    dirs = output_dirs()
-    if not dirs:
-        log.error('No config directory found; nothing written.')
-        return 1
-    written = update_local_values('frames', {'laser_yaw_deg': round(mean, 3)}, dirs, TOOL)
+    written = update_local_values('frames', {'laser_yaw_deg': round(mean, 3)}, TOOL)
     log.info(f'laser_yaw_deg: {configured:.3f} -> {mean:.3f}')
     log.info(backup_reminder(written))
     return 0

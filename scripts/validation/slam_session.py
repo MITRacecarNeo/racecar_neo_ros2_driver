@@ -48,6 +48,7 @@ import time
 from typing import Any
 
 import numpy as np
+from racecar_neo_ros2_driver import car_profile
 import yaml
 
 HERE = Path(__file__).resolve().parent
@@ -454,7 +455,7 @@ class Session:
     def save_calibration(self) -> None:
         out = self.dir / 'calibration'
         out.mkdir(parents=True, exist_ok=True)
-        for f in sorted((REPO / 'config').glob('*.local.yaml')):
+        for f in sorted(car_profile.params_dir().glob('*.yaml')):
             shutil.copy2(f, out / f.name)
 
     def start_ros(self) -> None:

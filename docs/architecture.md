@@ -346,10 +346,11 @@ teleop.launch.py
 
 Per-node files build on `single_node_launch()` in
 `racecar_neo_ros2_driver/launch_common.py`, which declares a `<name>_config`
-launch argument for the node's YAML and appends `config/<name>.local.yaml`
-when it exists. Two load extra files: `pit.launch.py` adds
-`lsm9ds1_cal.yaml` and `lsm9ds1_mag_cal.yaml`, and `imu_fusion.launch.py` adds
-`realsense_cal.yaml`, each followed by its `.local.yaml` when present.
+launch argument for the node's YAML and appends the car profile's
+`params/<name>.yaml` when it exists (`local_overrides()`, read at launch time).
+Two load extra files: `pit.launch.py` adds `lsm9ds1_cal.yaml` and
+`lsm9ds1_mag_cal.yaml`, and `imu_fusion.launch.py` adds `realsense_cal.yaml`,
+each followed by its profile override when present.
 `realsense.launch.py` wraps the vendor launch and applies the topic remaps.
 `frames.launch.py` does not use `single_node_launch()`; see
 [Frame tree](#frame-tree).
@@ -475,7 +476,7 @@ inside `pit_node` because a separate node would deserialize messages
 `pit_node` already holds decoded.
 
 `urdf/racecar_neo.urdf.xacro` defines the tree. `launch/frames.launch.py` loads
-`config/frames.yaml` and `frames.local.yaml` through
+`config/frames.yaml` and the profile's `params/frames.yaml` through
 `racecar_neo_ros2_driver/frames.py`, converts millimeters and degrees to meters
 and radians, renders the xacro, and starts `robot_state_publisher` with
 `respawn` (2 s delay, 5 retries). The watchdog does not supervise it: the node
@@ -651,64 +652,74 @@ node's `<name>_config` launch argument.
 | `foxglove_layout.json` | Lichtblick, imported by hand (not a node file) | 3D view, status table, pose plot |
 | `frames.yaml` | `frames.launch.py` (not a node parameter file) | frame offsets in mm and deg, fleet base values; see [Frame tree](#frame-tree) |
 
-`config/*.local.yaml` is gitignored. Each launch file loads `<name>.local.yaml`
-after the committed file of the same name, so per-car values (calibration, an
-enabled RC gate) override the shipped defaults without dirtying the tree.
+Per-car values (calibration, an enabled RC gate) live in the car profile
+(`racecar_neo_ros2_driver/car_profile.py`), `~/.config/racecar` by default
+(`RACECAR_CONFIG_DIR`, else `$XDG_CONFIG_HOME/racecar`), outside the driver
+folder. Each launch file loads `params/<name>.yaml` from it after the committed
+file of the same name, at launch time, so a teleop restart applies a new value
+with no rebuild. The profile also holds `car.yaml` (car name, profile
+version), `dashboards/<name>.yaml` (lab dashboard tuning), `autonomy.conf`,
+`features.conf`, the network settings file, and `history/<stamp>/` (the
+previous copy of each file a write replaced). `config/*.local.yaml` in the
+driver folder is not read; `racecar profile check`, run by
+`launch_teleop.sh`, logs a warning per file, and `racecar profile migrate`
+moves them in.
 
 ## Calibration data flow
 
 The committed calibration files hold zero defaults. Each utility subscribes to
-a raw topic, fits, and writes the per-car result to the gitignored
-`.local.yaml` counterpart in the source `config/` directory, and in the install
-share `config/` directory when it exists. It writes only keys the node
-declares, and writes nothing (exit non-zero) when the fit fails or there is too
-little data.
+a raw topic, fits, and writes the per-car result to `params/<name>.yaml` in
+the car profile (`calibrate_common.write_local_yaml()`,
+`update_local_values()`); the file it replaces goes to `history/`. It writes
+only keys the node declares, and writes nothing (exit non-zero) when the fit
+fails or there is too little data.
 
 ```
-  /imu/lsm9ds1/raw ─▶ calibrate_imu.py ──────────▶ lsm9ds1_cal.local.yaml ──────┐
-  /mag/raw ────────▶ calibrate_mag.py ──────────▶ lsm9ds1_mag_cal.local.yaml ──┴─▶ pit_node
-  /imu/realsense ──▶ calibrate_realsense_imu.py ─▶ realsense_cal.local.yaml ─────▶ imu_fusion_node
-  /scan ───────────▶ calibrate_lidar.py ─────────▶ frames.local.yaml ────────────▶ frames.launch.py
-  /imu/lsm9ds1, ───▶ calibrate_odom.py ──────────▶ odom.local.yaml ──────────────▶ pit_node (odometry)
+  /imu/lsm9ds1/raw ─▶ calibrate_imu.py ──────────▶ params/lsm9ds1_cal.yaml ─────┐
+  /mag/raw ────────▶ calibrate_mag.py ───────────▶ params/lsm9ds1_mag_cal.yaml ─┴─▶ pit_node
+  /imu/realsense ──▶ calibrate_realsense_imu.py ─▶ params/realsense_cal.yaml ─────▶ imu_fusion_node
+  /scan ───────────▶ calibrate_lidar.py ─────────▶ params/frames.yaml ────────────▶ frames.launch.py
+  /imu/lsm9ds1, ───▶ calibrate_odom.py ──────────▶ params/odom.yaml ──────────────▶ pit_node (odometry)
   /odom/integrated
-  /scan, ──────────▶ calibrate_steering.py ─────▶ throttle.local.yaml ──────────▶ throttle_node
+  /scan, ──────────▶ calibrate_steering.py ──────▶ params/throttle.yaml ──────────▶ throttle_node
   /odom/integrated
-  /scan, ──────────▶ calibrate_dynamics.py ─────▶ dynamics.local.yaml ──────────▶ the simulator
+  /scan, ──────────▶ calibrate_dynamics.py ──────▶ params/dynamics.yaml ──────────▶ the simulator
   /odom/integrated
 ```
 
-`calibrate_lidar.py` writes a plain `frames.local.yaml` (no node key) and keeps
-any other keys already in it.
+`calibrate_lidar.py` writes a plain `params/frames.yaml` (no node key) and
+keeps any other keys already in it.
 
 The tools live in `scripts/calibration/`; `calibrate.py` (behind `racecar
 calibrate`) runs them in order (`dynamics` only when named), reports old and
-new values, backs the results up, and offers a teleop restart. The IMU tools fit accelerometer bias and
+new values, and offers a teleop restart. The IMU tools fit accelerometer bias and
 scale per axis from the six orientations, applied by `pit_node` and
 `imu_fusion_node` as (raw - bias) * scale (`accelerometer.scale`,
-`realsense_accel_scale`, unit by default). After a run, restart teleop; the
-tools also write the install share `config/`, so no rebuild is needed. Each
+`realsense_accel_scale`, unit by default). After a run, restart teleop; no
+rebuild is needed. Each
 tool's `--check` (run together by `racecar calibrate check`) verifies the
 stored calibration against the live sensor: the IMUs at rest, the
 magnetometer through one flat turn, and the lidar yaw, odometry, and steering
-against scan matching while the car drives. The
-`.local.yaml` files are not in git; keep a backup in
-`~/.config/racecar/calibration/`.
+against scan matching while the car drives. `racecar profile export FILE`
+saves the profile to one `.tar.gz` for a fresh image or SD card swap.
 
 ## Repository layout
 
 ```
 racecar_neo_ros2_driver/
 ├── racecar_neo_ros2_driver/   node implementations, launch_common, pit_protocol,
-│                              limits (shared clamp), frames (frames.yaml loader)
+│                              limits (shared clamp), frames (frames.yaml loader),
+│                              car_profile (per-car settings in ~/.config/racecar)
 ├── launch/                    one file per subsystem plus teleop composite
 ├── config/                    one YAML per node, keyed by node name;
-│                              frames.yaml (frame offsets);
-│                              *.local.yaml per-car overrides (gitignored)
+│                              frames.yaml (frame offsets); per-car
+│                              overrides live in the car profile
 ├── urdf/                      racecar_neo.urdf.xacro (frame tree)
 ├── scripts/                   setup phases, racecar-tool.sh, watchdog, dashboard,
 │                              diagnose, sysinfo, eth_monitor, wifi_scan,
 │                              racecar_log, analyze_odom, dmatrix_patterns,
 │                              racecar_map and map_control (`racecar map`),
+│                              racecar_profile (`racecar profile`),
 │                              autonomy unit launcher and stop step,
 │                              systemd units, udev, polkit and modprobe rules,
 │   │                          Coral overlay and gasket patch

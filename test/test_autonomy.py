@@ -111,14 +111,13 @@ class TestLaunch:
         with pytest.raises(ValueError):
             autonomy.slam_specs(*args, str(CONFIG))
 
-    def test_local_override_loads_last(self, autonomy, tmp_path):
-        for name in ('slam_mapping.yaml', 'slam_mapping.local.yaml'):
-            (tmp_path / name).write_text('slam_toolbox: {ros__parameters: {}}\n')
+    def test_local_override_loads_last(self, autonomy, tmp_path, car_profile_dir):
+        (tmp_path / 'slam_mapping.yaml').write_text('slam_toolbox: {ros__parameters: {}}\n')
+        (car_profile_dir / 'params').mkdir(parents=True)
+        override = car_profile_dir / 'params' / 'slam_mapping.yaml'
+        override.write_text('slam_toolbox: {ros__parameters: {}}\n')
         node, _ = autonomy.slam_specs('mapping', 'amcl', '', '', str(tmp_path))
-        assert [Path(p).name for p in node['parameters']] == [
-            'slam_mapping.yaml',
-            'slam_mapping.local.yaml',
-        ]
+        assert node['parameters'] == [str(tmp_path / 'slam_mapping.yaml'), str(override)]
 
     def test_launch_description_declares_the_arguments(self, autonomy):
         ld = autonomy.generate_launch_description()

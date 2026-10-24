@@ -17,7 +17,7 @@ distance.
 
 Both runs also compare /odom/integrated with the lidar, so a fault in
 pit_node's integration shows instead of hiding in a scale. Writes
-config/odom.local.yaml, keeping the other step's value. --check judges
+the car profile's params/odom.yaml, keeping the other step's value. --check judges
 /odom/integrated against the lidar with the scales in use.
 """
 
@@ -51,7 +51,6 @@ from calibrate_common import (  # noqa: E402, I100
     finish_check,
     install_config_dir,
     node_params,
-    output_dirs,
     read_line,
     run_sequence,
     source_config_dir,
@@ -181,7 +180,7 @@ def match_criterion(name: str, match: MatchResult) -> Criterion:
 def scales_criterion(
     file_scales: tuple[float, float], live: tuple[float, float] | None
 ) -> Criterion:
-    """Compare the scales in odom.local.yaml with the ones pit_node is running."""
+    """Compare the scales in params/odom.yaml with the ones pit_node is running."""
     yaw, speed = file_scales
     if live is None:
         return Criterion(
@@ -433,11 +432,7 @@ class OdomCalibrator(CalibratorNode):
         if not params:
             log.info('Nothing calibrated.')
             return 0
-        dirs = output_dirs()
-        if not dirs:
-            log.error('No config directory found; nothing written.')
-            return 1
-        written = write_local_yaml(CAL_NAME, NODE, params, dirs, TOOL, merge=True)
+        written = write_local_yaml(CAL_NAME, NODE, params, TOOL, merge=True)
         for key, value in params.items():
             log.info(f'{key}: {value}')
         log.info(backup_reminder(written))

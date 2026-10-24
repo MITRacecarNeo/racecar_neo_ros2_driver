@@ -1,8 +1,8 @@
 """
 Static frame tree: robot_state_publisher on urdf/racecar_neo.urdf.xacro.
 
-Offsets come from config/frames.yaml with config/frames.local.yaml on top
-(racecar_neo_ros2_driver.frames). Launch respawns the node, not the
+Offsets come from config/frames.yaml with the car profile's params/frames.yaml
+on top (racecar_neo_ros2_driver.frames). Launch respawns the node, not the
 watchdog: a single latched /tf_static would fail the watchdog's rate check.
 The retry cap stops a node that dies on start from looping.
 """

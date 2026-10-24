@@ -9,12 +9,12 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from racecar_neo_ros2_driver.car_profile import param_overrides
 
 
-def local_overrides(config_dir: str, yamls: Sequence[str]) -> list[str]:
-    """Return config_dir/<name>.local.yaml for each YAML in yamls that has one."""
-    paths = [os.path.join(config_dir, y.replace('.yaml', '.local.yaml')) for y in yamls]
-    return [p for p in paths if os.path.exists(p)]
+def local_overrides(yamls: Sequence[str]) -> list[str]:
+    """Return the car profile's override (params/<name>.yaml) for each YAML that has one."""
+    return param_overrides(yamls)
 
 
 def single_node_launch(
@@ -34,8 +34,9 @@ def single_node_launch(
     default_yaml: filename inside this package's share/config (e.g. 'throttle.yaml').
     extra_yamls: (arg_name, filename) pairs loaded after default_yaml, in order.
 
-    Per-car overrides (config/<name>.local.yaml, gitignored) load last, one per
-    YAML that has one, so their keys win.
+    Per-car overrides (params/<name>.yaml in the car profile,
+    racecar_neo_ros2_driver.car_profile) load last, one per YAML that has
+    one, so their keys win. They are read at launch, so no rebuild is needed.
     """
     pkg_dir = get_package_share_directory('racecar_neo_ros2_driver')
     config_dir = os.path.join(pkg_dir, 'config')
@@ -54,7 +55,7 @@ def single_node_launch(
         for name, yaml in files
     ]
     parameters: list[Any] = [LaunchConfiguration(name) for name, _ in files]
-    parameters += local_overrides(config_dir, [yaml for _, yaml in files])
+    parameters += local_overrides([yaml for _, yaml in files])
 
     node_kwargs: dict[str, Any] = {
         'package': package,

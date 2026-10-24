@@ -81,14 +81,21 @@ class TestLoadFrames:
     def test_repo_config_loads(self, values):
         assert values['laser_yaw_deg'] == 180.0
 
-    def test_local_keys_win(self, tmp_path):
+    def test_local_keys_win(self, tmp_path, car_profile_dir):
         (tmp_path / 'frames.yaml').write_text('laser_yaw_deg: 180.0\nlaser_x_mm: 1.0\n')
-        (tmp_path / 'frames.local.yaml').write_text('laser_yaw_deg: 179.4\n')
+        (car_profile_dir / 'params').mkdir(parents=True)
+        (car_profile_dir / 'params' / 'frames.yaml').write_text('laser_yaw_deg: 179.4\n')
         assert load_frames(tmp_path) == {'laser_yaw_deg': 179.4, 'laser_x_mm': 1.0}
 
-    def test_unknown_local_key_is_an_error(self, tmp_path):
+    def test_driver_folder_override_is_ignored(self, tmp_path):
         (tmp_path / 'frames.yaml').write_text('laser_yaw_deg: 180.0\n')
-        (tmp_path / 'frames.local.yaml').write_text('laser_yaw_dg: 179.4\n')
+        (tmp_path / 'frames.local.yaml').write_text('laser_yaw_deg: 179.4\n')
+        assert load_frames(tmp_path) == {'laser_yaw_deg': 180.0}
+
+    def test_unknown_local_key_is_an_error(self, tmp_path, car_profile_dir):
+        (tmp_path / 'frames.yaml').write_text('laser_yaw_deg: 180.0\n')
+        (car_profile_dir / 'params').mkdir(parents=True)
+        (car_profile_dir / 'params' / 'frames.yaml').write_text('laser_yaw_dg: 179.4\n')
         with pytest.raises(ValueError, match='laser_yaw_dg'):
             load_frames(tmp_path)
 

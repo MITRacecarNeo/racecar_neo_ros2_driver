@@ -14,7 +14,7 @@ The trim is the drift at command 0 divided by the slope near center (from
 differs by side). throttle_node adds steering_trim to every command, so the
 runs measure with the trim in use and the new trim is the old one plus that
 command. A change smaller than the servo resolves is not written. Written to
-config/throttle.local.yaml. The curved runs also report the encoder's
+the car profile's params/throttle.yaml. The curved runs also report the encoder's
 over-read in turns as a gain for odometry.turn_gain, which is not written.
 
 --check drives straight at command 0: heading drift within 1 deg/m passes; up
@@ -43,7 +43,6 @@ from calibrate_common import (  # noqa: E402, I100
     Criterion,
     finish_check,
     node_params,
-    output_dirs,
     run_sequence,
     write_local_yaml,
 )
@@ -409,12 +408,8 @@ class SteeringCalibrator:
                 'steering linkage. Nothing written.'
             )
             return 1
-        dirs = output_dirs()
-        if not dirs:
-            log.error('No config directory found; nothing written.')
-            return 1
         written = write_local_yaml(
-            CAL_NAME, NODE, {'steering_trim': round(new, 4)}, dirs, TOOL, merge=True
+            CAL_NAME, NODE, {'steering_trim': round(new, 4)}, TOOL, merge=True
         )
         log.info(f'steering_trim: {self.trim:+.4f} -> {new:+.4f}')
         log.info(backup_reminder(written))
