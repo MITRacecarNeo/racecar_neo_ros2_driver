@@ -4,7 +4,8 @@
    RcnCharts.timeChart(box, t0, t1, series, xTicks, opts) draws into `box`:
      series: [{name, style: 'a'|'b'|'c'|'d', axis: 'l'|'r', unit, digits, minSpan, pts: [[t, v], ...]}]
      xTicks(t0, t1) -> [[t, label], ...], with xTicks.label(t) for the readout
-     opts: {gapSec, fixed: {l: [lo, hi], r: [lo, hi]}, marks: [[t, label], ...]}
+     opts: {gapSec, fixed: {l: [lo, hi], r: [lo, hi]}, marks: [[t, label], ...],
+            bands: [[t, flag], ...] (a strip along the bottom, crimson where flag)}
    A right axis appears only when a series asks for it. Hover or tap shows a
    hairline and every series' value at the nearest sample. */
 (function () {
@@ -80,12 +81,19 @@
       el('text', { class: 'tick', x: w - pad.r + 6, y: y('r', v) + 4, 'text-anchor': 'start' }, svg).textContent = `${v}`;
     }
     for (const [t, label] of xTicks(t0, t1)) {
-      el('text', { class: 'tick', x: x(t), y: h - 3, 'text-anchor': 'middle' }, svg).textContent = label;
+      // Labels at the plot's edges align inward so the clip never cuts them.
+      const px = x(t), anchor = px > w - pad.r - 20 ? 'end' : (px < pad.l + 20 ? 'start' : 'middle');
+      el('text', { class: 'tick', x: px, y: h - 3, 'text-anchor': anchor }, svg).textContent = label;
     }
     for (const [t, label] of opts.marks || []) {
       if (t < t0 || t > t1) continue;
       el('line', { class: 'mark', x1: x(t), x2: x(t), y1: pad.t, y2: h - pad.b }, svg);
       el('text', { class: 'tick', x: x(t) + 4, y: pad.t + 10 }, svg).textContent = label;
+    }
+    const bands = (opts.bands || []).filter((b) => b[0] >= t0 && b[0] <= t1);
+    for (let i = 0; i < bands.length - 1; i++) {
+      el('rect', { class: bands[i][1] ? 'band on' : 'band', x: x(bands[i][0]), y: h - pad.b - 5,
+        width: Math.max(1, x(bands[i + 1][0]) - x(bands[i][0]) + 0.5), height: 5 }, svg);
     }
     for (const s of series) {
       if (!scale[s.axis]) continue;

@@ -6,7 +6,7 @@ Same pattern as the wallfollow, pursuit, and smartfollow dashboards (stdlib
 HTTP + rclpy) on port 8082. The controller is the one from the oneshot lab's
 hsv-p_tuner.py, with the same pipeline the student library uses:
 
-  frame -> resize to process_width -> HSV -> inRange(low, high) -> crop band
+  frame -> resize to process_width -> HSV -> inRange(low, high) -> crop area
         -> largest contour above min_area -> its center column
 
 The center's offset from the image center is the error, normalized to -1..1
@@ -14,7 +14,7 @@ across the frame. Steering is angle_kp * error + angle_kd * (change in error),
 throttle is speed reduced by speed_kp per unit of |error|. With no line in
 the band the last command is held, as the lab script does.
 
-The browser gets two views: the color frame with the crop band, the contour,
+The browser gets two views: the color frame with the crop area, the contour,
 and its center drawn in, and the black-and-white mask of the whole frame so
 the threshold can be judged on everything the camera sees. Every trackbar
 applies live while it is dragged.

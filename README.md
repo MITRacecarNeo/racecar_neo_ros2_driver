@@ -401,8 +401,8 @@ does. A white border means the app is running.
 
 **Overview.** Expand it to see the car live: color camera, depth camera,
 lidar (seen from above, forward up), IMU rotation rates and encoder speed over
-the last 30 s, and battery voltage, battery current, CPU temperature, and
-memory in use over the last 2 hours. Hover or tap a chart to read a value.
+the last 30 s, and CPU temperature, battery voltage, battery current, and
+RAM in use over the last 2 hours. Hover or tap a chart to read a value.
 The camera tiles start paused; Show camera starts them. The lidar, IMU, and
 encoder feeds run only while the section is open.
 The 2-hour history starts over when the dashboard service restarts.

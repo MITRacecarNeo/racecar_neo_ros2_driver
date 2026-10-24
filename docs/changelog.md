@@ -341,6 +341,14 @@ All notable changes to this project will be documented in this file. The format 
   depth reading in gray instead of black, so the D435i's stereo blind strip
   on the left edge no longer reads as an object; troubleshooting explains
   the strip ("Depth view gaps").
+- Line follow (8082), wall follow (8083), and camera label (8085) use the
+  shared look and charts: dark only, the RACECAR Neo mark, plain-word
+  tooltips and labels. Wall follow gains a Stop button and drops its theme
+  switch; camera label drops the old branding and serves the shared files.
+  Charts can mark spans (the line-lost strip) and keep edge labels inside
+  the plot. A lab dashboard whose service stops (for example when another
+  driving app opens) shows a closed screen with a button back to the apps
+  page (`scripts/web/lost.js`).
 - The web dashboard measures topic rates, nodes, and app states only while a
   page polls it, and stops 15 s after the last request: about 0.6% of a core
   with no page open, against about 41% before. The Overview's camera tiles

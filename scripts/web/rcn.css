@@ -70,6 +70,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { margin: 0; }
 body {
   background: var(--rcn-bg);
@@ -171,10 +172,17 @@ pre.rcn-code, .rcn-code {
 .rcn-chart .tick { fill: var(--rcn-text-muted); font: 500 12px var(--rcn-font-sans); font-variant-numeric: tabular-nums; }
 .rcn-chart .grid { stroke: var(--rcn-steel); stroke-width: 1; }
 .rcn-chart .mark { stroke: var(--rcn-mist); stroke-width: 1; stroke-dasharray: 4 4; opacity: 0.6; }
+.rcn-chart .band { fill: var(--rcn-steel); }
+.rcn-chart .band.on { fill: var(--rcn-led-red); }
 .rcn-chart .line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
 .rcn-chart .hair { stroke: var(--rcn-mist); stroke-width: 1; }
 .rcn-chart .tipbox { position: absolute; top: 0; pointer-events: none; padding: 4px 8px; border-radius: var(--rcn-radius-sm); background: var(--rcn-ink); border: 1px solid var(--rcn-steel); font: 600 13px/18px var(--rcn-font-sans); white-space: pre; z-index: 5; }
 .rcn-chart .empty { position: absolute; inset: 0; display: grid; place-items: center; }
 .rcn-legend { display: flex; gap: var(--rcn-space-4); flex-wrap: nowrap; overflow: hidden; white-space: nowrap; font: 600 13px/18px var(--rcn-font-sans); color: var(--rcn-text-muted); }
 .rcn-legend svg { width: 22px; height: 8px; vertical-align: middle; margin-right: 4px; }
+
+/* Closed-app screen from /ui/lost.js. */
+#rcn-lost { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; background: var(--rcn-bg); padding: var(--rcn-space-4); }
+#rcn-lost .box { max-width: 420px; text-align: center; display: grid; gap: var(--rcn-space-3); justify-items: center; }
+#rcn-lost .rcn-mark { height: 40px; width: auto; }
 

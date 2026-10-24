@@ -72,9 +72,21 @@ def test_pages_link_shared_files_with_the_asset_version(webui):
     pages = [
         scripts / 'dashboard.html', scripts / 'dashboard_launch.html', scripts / 'mapview.html',
         scripts / 'dashboards' / 'teleop_dashboard' / 'teleop.html',
+        scripts / 'dashboards' / 'linefollow_dashboard' / 'linefollow.html',
+        scripts / 'dashboards' / 'wallfollow_dashboard' / 'wallfollow.html',
+        scripts / 'dashboards' / 'camlabel_dashboard' / 'camlabel.html',
     ]
     for page in pages:
         text = page.read_text()
-        for name in ('rcn.css', 'charts.js'):
+        for name in ('rcn.css', 'charts.js', 'lost.js'):
             for link in re.findall(rf'"/ui/{re.escape(name)}[^"]*"', text):
                 assert link == f'"/ui/{name}?v={webui.ASSET_VERSION}"', (page.name, link)
+
+
+def test_lab_pages_show_a_closed_screen():
+    # A lab app stopped from the apps page leaves its tab open; lost.js covers it.
+    dashboards = Path(__file__).resolve().parent.parent / 'scripts' / 'dashboards'
+    for page in ('teleop_dashboard/teleop.html', 'linefollow_dashboard/linefollow.html',
+                 'wallfollow_dashboard/wallfollow.html', 'camlabel_dashboard/camlabel.html'):
+        text = (dashboards / page).read_text()
+        assert '/ui/lost.js?v=' in text and 'data-app="' in text, page

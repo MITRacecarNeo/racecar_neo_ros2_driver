@@ -1,118 +1,79 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-app="Line follow">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" type="image/png" href="data:image/png;base64,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">
-<title>Line Follow Dashboard</title>
+<title>Line follow - RACECAR Neo</title>
+<link rel="stylesheet" href="/ui/rcn.css?v=8">
+<link rel="icon" href="/ui/brand/app-icon-32.png">
+<script src="/ui/lost.js?v=8" defer></script>
+<script src="/ui/charts.js?v=8"></script>
 <style>
-  /* RACECAR Neo tokens, same scheme as the sibling dashboards.
-
-     The mark's gradient runs crimson to orange; orange now leads. The two
-     ends are near inverses in contrast, so neither can do the other's job:
-     crimson is 7.8:1 on white and 2.1:1 on tarmac, orange 2.5:1 on white
-     and 6.5:1 on tarmac. Each is therefore used only where it is legible.
-     Orange on the dark surfaces, ember (the same 26 deg hue held down to
-     L 0.36, 5.5:1 on white) on the light ones, and crimson kept back for
-     STOP and for the line being lost. */
-  :root { --white: #FFFFFF; --page: #FAF7F4; --halo: #F5F5F7; --steel: #E7E1DB; --carbon: #231F20; --tarmac: #231F20; --gold: #FFD700;
-          --rc-crimson: #A01936; --rc-orange: #EC8B48; --rc-ember: #A55312; --rc-ink: #231F20;
-          --accent: #A55312;          /* interactive, on the light surfaces */
-          --accent-dark: #EC8B48;     /* the same role on the dark ones */
-          --red: #A01936; }           /* stop and fault only */
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background: var(--page); color: var(--carbon); }
-  .topbar { background: var(--tarmac); color: var(--halo); padding: 0.8rem 1.5rem; display: flex; justify-content: space-between; align-items: center; }
-  .topbar button { background: transparent; border: 1px solid rgba(245, 245, 247, 0.5); color: var(--halo); font-family: inherit; padding: 0.4rem 1rem; border-radius: 6px; cursor: pointer; margin: 0 0 0 0.5rem; }
-  .topbar button:hover { background: rgba(245, 245, 247, 0.15); }
-  .topbar button.stop { border-color: var(--red); color: var(--red); font-weight: bold; }
-  .topbar button.stop:hover { background: var(--red); color: var(--white); }
-  /* Brand lockup: the R-mark beside the wordmark. */
-  .topbar .logo { height: 22px; vertical-align: -5px; margin-right: 0.45rem; }
-  .wordmark { font-family: 'Space Grotesk', 'Helvetica Neue', sans-serif; font-size: 1.05rem; font-weight: 700; letter-spacing: 0.02em; background: linear-gradient(100deg, var(--rc-orange), var(--rc-crimson)); -webkit-background-clip: text; background-clip: text; color: transparent; }
-  .wordmark i { font-style: normal; opacity: 0.85; margin-left: 0.28em; }
-  /* The mark's gradient as the rule under the bar. */
-  .topbar { border-bottom: 3px solid transparent; border-image: linear-gradient(100deg, var(--rc-orange), var(--rc-crimson)) 1; }
-  .topbar h1 { font-family: 'Space Grotesk', 'Helvetica Neue', sans-serif; font-size: 1.3rem; }
-  .meta { color: rgba(245, 245, 247, 0.72); font-size: 0.85rem; margin-top: 0.2rem; }
-  .meta b { color: var(--white); }
-  main { padding: 1rem 1.5rem; }
-  /* 592 = 560 + the card's 1rem padding either side, so a view inside one of
-     these columns lands at exactly 560 px, the width the sibling dashboards
-     cap their camera at. Row 1: color view, mask view, then the state box
-     and its offset trace over the rest of the width. Row 2 is the tune
-     panel, full width. */
-  .grid { display: grid; grid-template-columns: 592px 592px 1fr; gap: 1rem; }
-  @media (max-width: 1400px) { .grid { grid-template-columns: 1fr; } }
-  .card { background: var(--white); border: 1px solid var(--steel); border-radius: 12px; padding: 1rem; margin-bottom: 1rem; box-shadow: 0 6px 18px rgba(35, 31, 32, 0.08); }
-  .card h2 { font-family: 'Space Grotesk', 'Helvetica Neue', sans-serif; font-size: 1rem; color: var(--tarmac); margin-bottom: 0.5rem; padding-bottom: 0.35rem; border-bottom: 2px solid var(--accent-dark); }
-  .card h3 { font-family: 'Space Grotesk', 'Helvetica Neue', sans-serif; font-size: 0.85rem; color: var(--tarmac); margin-top: 0.9rem; padding-bottom: 0.2rem; border-bottom: 1px solid var(--steel); }
-  .view { background: var(--tarmac); border-radius: 6px; width: 100%; max-width: 560px; height: auto; display: block; aspect-ratio: 4 / 3; object-fit: contain; }
-  canvas { background: var(--tarmac); border-radius: 6px; width: 100%; height: auto; display: block; }
-  label { display: block; color: rgba(35, 31, 32, 0.6); font-size: 0.8rem; margin-top: 0.6rem; }
-  label b { color: var(--carbon); }
-  input[type=number] { width: 6rem; background: var(--white); border: 1px solid var(--steel); color: var(--carbon); font-family: inherit; padding: 0.3rem; border-radius: 6px; margin-left: 0.4rem; }
-  input[type=range] { width: 100%; accent-color: var(--accent); border: none; padding: 0; }
-  button, select { background: var(--white); border: 1px solid rgba(35, 31, 32, 0.28); color: var(--tarmac); font-family: inherit; padding: 0.35rem 0.8rem; border-radius: 6px; margin: 0.8rem 0.4rem 0 0; cursor: pointer; }
-  button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  button:hover { background: var(--steel); }
-  .readout { font-size: 0.85rem; margin-top: 0.5rem; white-space: pre-line; }
-  /* Whether the line is in the band, the one thing readable from across the room. */
-  .state { font-family: 'Space Grotesk', 'Helvetica Neue', sans-serif; font-size: 1.35rem;
-           color: var(--white); background: var(--tarmac); border-radius: 8px;
-           padding: 1.1rem 0.6rem; text-align: center; letter-spacing: 0.02em; }
-  .state.lost { background: var(--red); }
-  /* The four trackbar groups sit in a row so the full-width tune card stays
-     short; each group keeps its own order top to bottom. */
-  .tunecols { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0 1.5rem; }
+  .rcn-header .heading { display: flex; flex-direction: column; min-width: 0; }
+  .rcn-header .meta { font: 600 13px/18px var(--rcn-font-sans); color: var(--rcn-text-muted); }
+  .rcn-header .meta b { color: var(--rcn-text); font-variant-numeric: tabular-nums; }
+  main { max-width: 1500px; margin: 0 auto; padding: var(--rcn-space-4); display: grid; gap: var(--rcn-space-4); }
+  .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--rcn-space-4); }
+  @media (max-width: 1100px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--rcn-surface); border-radius: var(--rcn-radius-md); padding: var(--rcn-space-4); min-width: 0; }
+  .card h2 { font-size: 20px; line-height: 28px; margin-bottom: var(--rcn-space-3); }
+  .card h3 { font: 600 16px/24px var(--rcn-font-sans); margin: 0 0 var(--rcn-space-2); }
+  .view { background: var(--rcn-code-bg); border-radius: var(--rcn-radius-sm); width: 100%; display: block; aspect-ratio: 4 / 3; object-fit: contain; }
+  .caption { font: 600 13px/18px var(--rcn-font-sans); color: var(--rcn-text-muted); margin-top: var(--rcn-space-2); }
+  .state { font: 700 22px/28px var(--rcn-font-display); text-align: center; border-radius: var(--rcn-radius-md); padding: var(--rcn-space-4) var(--rcn-space-2); background: var(--rcn-bg); }
+  .state.lost { background: var(--rcn-crimson); color: var(--rcn-paper); }
+  .rcn-chart { height: 170px; margin-top: var(--rcn-space-3); }
+  .rcn-legend { margin-top: var(--rcn-space-2); }
+  .tunecols { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--rcn-space-4) var(--rcn-space-6); }
   @media (max-width: 1100px) { .tunecols { grid-template-columns: 1fr 1fr; } }
   @media (max-width: 600px) { .tunecols { grid-template-columns: 1fr; } }
-  /* A two-thumb range: two native sliders stacked on one track. The track
-     of each is invisible and ignores the pointer; only the thumbs catch it,
-     so both can be dragged wherever they sit. The fill between them is a
-     div underneath. */
-  .dual { position: relative; height: 28px; margin-top: 0.3rem; }
-  .dual .track { position: absolute; left: 0; right: 0; top: 11px; height: 6px; border-radius: 3px; background: var(--steel); }
+  label.slider { display: block; margin-top: var(--rcn-space-3); color: var(--rcn-text-muted); font-weight: 600; }
+  label.slider b { color: var(--rcn-text); font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; }
+  input[type=number].rcn-input { width: 6rem; margin-left: var(--rcn-space-2); padding: 4px 8px; }
+  .tools { display: flex; flex-wrap: wrap; gap: var(--rcn-space-2); align-items: center; margin-top: var(--rcn-space-4); }
+  select.rcn-input { max-width: 220px; }
+  /* A two-thumb range: two sliders on one track. Their tracks ignore the
+     pointer, so only the thumbs catch it; the fill between them sits under. */
+  .dual { position: relative; height: 28px; margin-top: var(--rcn-space-1); }
+  .dual .track { position: absolute; left: 0; right: 0; top: 11px; height: 6px; border-radius: 3px; background: var(--rcn-steel); }
   .dual .track.hue { background: linear-gradient(to right, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%); }
-  .dual .fill { position: absolute; top: 11px; height: 6px; background: var(--accent); border-radius: 3px; pointer-events: none; }
-  .dual .track.hue + .fill { background: rgba(35, 31, 32, 0.35); border: 1px solid var(--carbon); top: 10px; height: 8px; }
+  .dual .fill { position: absolute; top: 11px; height: 6px; background: var(--rcn-orange); border-radius: 3px; pointer-events: none; }
+  .dual .track.hue + .fill { background: rgba(35, 31, 32, 0.45); border: 1px solid var(--rcn-paper); top: 10px; height: 8px; }
   .dual input[type=range] { position: absolute; left: 0; right: 0; top: 0; width: 100%; height: 28px; margin: 0; background: transparent; -webkit-appearance: none; appearance: none; pointer-events: none; }
   .dual input[type=range]::-webkit-slider-runnable-track { background: transparent; height: 28px; }
   .dual input[type=range]::-moz-range-track { background: transparent; height: 28px; }
-  .dual input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; pointer-events: auto; width: 16px; height: 16px; margin-top: 6px; border-radius: 50%; background: var(--white); border: 2px solid var(--accent); cursor: pointer; }
-  .dual input[type=range]::-moz-range-thumb { pointer-events: auto; width: 12px; height: 12px; border-radius: 50%; background: var(--white); border: 2px solid var(--accent); cursor: pointer; }
+  .dual input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; pointer-events: auto; width: 16px; height: 16px; margin-top: 6px; border-radius: 50%; background: var(--rcn-paper); border: 2px solid var(--rcn-orange); cursor: pointer; }
+  .dual input[type=range]::-moz-range-thumb { pointer-events: auto; width: 12px; height: 12px; border-radius: 50%; background: var(--rcn-paper); border: 2px solid var(--rcn-orange); cursor: pointer; }
 </style>
 </head>
 <body>
+<header class="rcn-header">
+  <img class="rcn-mark" src="/ui/brand/mark.png" alt="RACECAR Neo">
+  <div class="heading">
+    <span class="rcn-title">Line follow</span>
+    <span class="meta">line <b id="mode">-</b> &middot; offset <b id="err">-</b> &middot; steer <b id="steer">-</b> &middot; throttle <b id="thr">-</b> &middot; encoder <b id="enc">-</b> m/s &middot; camera <b id="fps">-</b> fps &middot; processed <b id="pfps">-</b> fps &middot; frame <b id="res">-</b></span>
+  </div>
+  <span class="rcn-spacer"></span>
+  <button class="rcn-btn quiet small" onclick="reset()" title="Reload saved settings.">Reset</button>
+  <button class="rcn-btn danger small" onclick="stopCar()" title="Set speed to 0.">Stop</button>
+</header>
 
-<div class="topbar">
-<div>
-<img class="logo" src="data:image/png;base64,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" alt="RACECAR Neo"><span class="wordmark">RACECAR<i>Neo</i></span>
-<h1>Line Follow Dashboard</h1>
-<div class="meta">line: <b id="mode">?</b> &bull; offset: <b id="err">?</b> &bull; steer: <b id="steer">?</b>
-  &bull; throttle: <b id="thr">?</b> &bull; odom: <b id="enc">?</b> m/s
-  &bull; camera: <b id="fps">?</b> fps &bull; processed: <b id="pfps">?</b> fps &bull; frame: <b id="res">?</b></div>
-</div>
-<div>
-<button class="stop" onclick="stopCar()" title="Set speed to 0">STOP</button>
-<button onclick="reset()" title="Re-read linefollow.yaml">Reset</button>
-</div>
-</div>
 <main>
 <div class="grid">
   <div class="card">
     <h2>Camera</h2>
-    <img id="color" class="view" alt="color view" title="Gold box: crop band. Red: largest contour and its center. Grey: setpoint.">
+    <img id="color" class="view" alt="Camera" title="Gold: crop area. Red: largest contour. Gray: setpoint.">
   </div>
   <div class="card">
     <h2>Mask</h2>
-    <img id="mask" class="view" alt="mask view" title="White: inside the HSV range. Only the gold band is searched for the line.">
+    <img id="mask" class="view" alt="Mask" title="White: inside the HSV threshold.">
   </div>
   <div class="card">
     <h2>State</h2>
-    <div class="state" id="state"></div>
-    <h3>Line offset vs setpoint (live)</h3>
-    <canvas id="chart" width="420" height="160" title="-1 is the left edge of the frame, +1 the right. A flat trace at 0 is a stable follower; a growing zigzag is too much angle_kp or too little angle_kd."></canvas>
+    <div class="state" id="state">-</div>
+    <div class="rcn-chart" id="chart" title="Offset from the setpoint. -1: left edge. +1: right edge."></div>
+    <div class="rcn-legend" id="chartLegend"></div>
   </div>
 </div>
 
@@ -120,169 +81,150 @@
   <h2>Tune</h2>
   <div class="tunecols">
     <div>
-      <h3 title="Hue 0..179, saturation and value 0..255. Drag the two thumbs of each bar. A hue low above its high wraps through 0, which is how red is selected.">1. HSV threshold</h3>
+      <h3 title="Drag both thumbs of each bar.">1. HSV threshold</h3>
       <div id="hsvform"></div>
     </div>
     <div>
-      <h3 title="Constant throttle and the proportional steering gain.">2. Speed and angle</h3>
+      <h3 title="Throttle and proportional steering gain.">2. Speed and angle</h3>
       <div id="driveform"></div>
     </div>
     <div>
-      <h3 title="Fractions of the frame from the top. Move both edges together to look higher or lower; spread them to take in more floor.">3. Crop band</h3>
+      <h3 title="Crop area edges, from the top of the frame.">3. Crop area</h3>
       <div id="cropform"></div>
-      <label title="Smallest contour, in pixels, that counts as the line. Raise it to ignore specks.">min_area
-        <input id="in_min_area" type="number" step="1" min="1" onchange="post('/params', {min_area: parseInt(this.value)})"></label>
+      <label class="slider" title="Smallest contour that counts, in pixels.">min_area
+        <input id="in_min_area" class="rcn-input" type="number" step="1" min="1" onchange="post('/params', {min_area: parseInt(this.value)})"></label>
     </div>
     <div>
-      <h3 title="speed_kp slows the car as the line drifts from center; angle_kd damps the steering on the change in offset.">4. Proportional speed and derivative angle</h3>
+      <h3 title="Proportional speed gain and derivative steering gain.">4. Proportional speed and derivative angle</h3>
       <div id="pdform"></div>
     </div>
   </div>
-  <button onclick="post('/save')">Save</button>
-  <button onclick="reset()">Load</button>
+  <div class="tools">
+    <button class="rcn-btn primary small" onclick="post('/save')">Save</button>
+    <button class="rcn-btn quiet small" onclick="reset()">Load</button>
+  </div>
 </div>
 
 <div class="card">
   <h2>Logs</h2>
-  <button onclick="saveLog()">Save log</button>
-  <select id="logsel"></select>
-  <button onclick="loadLog()">Load log</button>
-  <span class="readout" id="loginfo"></span>
-  <canvas id="logchart" width="900" height="160"></canvas>
+  <div class="tools" style="margin-top: 0">
+    <button class="rcn-btn quiet small" onclick="saveLog()">Save log</button>
+    <select class="rcn-input" id="logsel" aria-label="Log file"></select>
+    <button class="rcn-btn quiet small" onclick="loadLog()">Load log</button>
+    <span class="caption" id="loginfo" style="margin-top: 0"></span>
+  </div>
+  <div class="rcn-chart" id="logChart" style="height: 200px"></div>
+  <div class="rcn-legend" id="logLegend"></div>
 </div>
+</main>
 
 <script>
-// Single-thumb trackbars, in the order each group shows them.
+'use strict';
+const $ = (id) => document.getElementById(id);
+const { timeChart, legendHtml, recentTicks, niceTicks } = RcnCharts;
+// Single-thumb sliders, in the order each group shows them.
 const SLIDERS = {
   driveform: [
-    { key: 'speed', label: 'speed', tip: '0 to 1 throttle', min: 0, max: 1, step: 0.01 },
-    { key: 'angle_kp', label: 'angle_kp', tip: 'steer per unit offset', min: 0, max: 4, step: 0.01 },
+    { key: 'speed', tip: 'Throttle, 0 to 1.', min: 0, max: 1, step: 0.01 },
+    { key: 'angle_kp', tip: 'Proportional steering gain.', min: 0, max: 4, step: 0.01 },
   ],
   cropform: [
-    { key: 'crop_top', label: 'crop_top', tip: 'top edge, 0 to 1 of the frame from the top', min: 0, max: 1, step: 0.01 },
-    { key: 'crop_bottom', label: 'crop_bottom', tip: 'bottom edge, 0 to 1 of the frame from the top', min: 0, max: 1, step: 0.01 },
+    { key: 'crop_top', tip: 'Top edge, 0 to 1.', min: 0, max: 1, step: 0.01 },
+    { key: 'crop_bottom', tip: 'Bottom edge, 0 to 1.', min: 0, max: 1, step: 0.01 },
   ],
   pdform: [
-    { key: 'speed_kp', label: 'speed_kp', tip: 'throttle drop per unit |offset|; 0 = constant speed', min: 0, max: 1, step: 0.01 },
-    { key: 'angle_kd', label: 'angle_kd', tip: 'damper on the change in offset', min: 0, max: 2, step: 0.01 },
+    { key: 'speed_kp', tip: 'Proportional speed gain. 0: constant speed.', min: 0, max: 1, step: 0.01 },
+    { key: 'angle_kd', tip: 'Derivative steering gain. Raise it if the car weaves.', min: 0, max: 2, step: 0.01 },
   ],
 };
-// Two-thumb bars: one per HSV channel.
+// Two-thumb bars: one per color channel.
 const DUALS = [
-  { lo: 'h_low', hi: 'h_high', label: 'hue', tip: '0 to 179; low above high wraps through 0 for red', max: 179, cls: 'hue' },
-  { lo: 's_low', hi: 's_high', label: 'saturation', tip: '0 to 255; raise the low to drop grey and white', max: 255, cls: '' },
-  { lo: 'v_low', hi: 'v_high', label: 'value', tip: '0 to 255; raise the low to drop shadow, lower the high to drop glare', max: 255, cls: '' },
+  { lo: 'h_low', hi: 'h_high', label: 'hue', tip: '0 to 179. Low above high wraps, for red.', max: 179, cls: 'hue' },
+  { lo: 's_low', hi: 's_high', label: 'saturation', tip: '0 to 255.', max: 255, cls: '' },
+  { lo: 'v_low', hi: 'v_high', label: 'value', tip: '0 to 255.', max: 255, cls: '' },
 ];
-
-let last = null;
 
 function post(path, body) {
   return fetch(path, { method: 'POST', body: body ? JSON.stringify(body) : null });
 }
 
-// A trackbar fires on every pixel of a drag. Send at most one update per
-// SEND_MS and always the newest value, so the car tracks the thumb without
-// flooding the service.
+// A slider fires on every pixel of a drag: send at most one update per
+// SEND_MS, always the newest value.
 const SEND_MS = 60;
 let pending = {}, sendTimer = null;
 function queue(key, value) {
   pending[key] = value;
   if (sendTimer) return;
-  sendTimer = setTimeout(() => {
-    const body = pending; pending = {}; sendTimer = null;
-    post('/params', body);
-  }, SEND_MS);
+  sendTimer = setTimeout(() => { const body = pending; pending = {}; sendTimer = null; post('/params', body); }, SEND_MS);
 }
-
-function reset() {
-  // Re-read the yaml and rebuild every trackbar.
-  post('/load').then(() => { document.getElementById('hsvform').dataset.built = ''; });
-}
-
-function stopCar() {
-  post('/params', { speed: 0 }).then(() => { document.getElementById('hsvform').dataset.built = ''; });
-}
-
-function showVal(key, v) {
-  const el = document.getElementById(`val_${key}`);
-  if (el) el.textContent = v;
-}
+function reset() { post('/load').then(() => { $('hsvform').dataset.built = ''; }); }
+function stopCar() { post('/params', { speed: 0 }).then(() => { $('hsvform').dataset.built = ''; }); }
+function showVal(key, v) { const el = $(`val_${key}`); if (el) el.textContent = v; }
 
 function setFill(d) {
-  const lo = parseInt(document.getElementById(`in_${d.lo}`).value);
-  const hi = parseInt(document.getElementById(`in_${d.hi}`).value);
-  const fill = document.getElementById(`fill_${d.lo}`);
+  const lo = parseInt($(`in_${d.lo}`).value), hi = parseInt($(`in_${d.hi}`).value);
+  const fill = $(`fill_${d.lo}`);
   if (lo <= hi) {
     fill.style.left = `${lo / d.max * 100}%`;
     fill.style.width = `${(hi - lo) / d.max * 100}%`;
     fill.style.background = '';
   } else {
-    // Wrapped: fill the outside of the two thumbs by drawing the gap as a
-    // hole. Shown as the full track with the excluded middle left grey.
+    // Wrapped: fill outside the two thumbs.
     fill.style.left = '0%'; fill.style.width = '100%';
     fill.style.background = `linear-gradient(to right, currentColor ${hi / d.max * 100}%, transparent ${hi / d.max * 100}%, transparent ${lo / d.max * 100}%, currentColor ${lo / d.max * 100}%)`;
   }
-  document.getElementById(`val_${d.lo}`).textContent = `${lo} to ${hi}${lo > hi ? ' (wraps)' : ''}`;
+  $(`val_${d.lo}`).textContent = `${lo} to ${hi}${lo > hi ? ' (wraps)' : ''}`;
 }
 
 function buildForm(p) {
-  // Rebuild only on Reset/Load/Stop so a drag is not interrupted by polling.
-  const anchor = document.getElementById('hsvform');
+  // Rebuild only on Reset, Load and Stop, so polling never interrupts a drag.
+  const anchor = $('hsvform');
   if (anchor.dataset.built) return;
   anchor.dataset.built = '1';
-  anchor.innerHTML = DUALS.map(d => `
-    <label title="${d.tip}">${d.label} <b id="val_${d.lo}"></b></label>
+  anchor.innerHTML = DUALS.map((d) => `
+    <label class="slider" title="${d.tip}">${d.label} <b id="val_${d.lo}"></b></label>
     <div class="dual" title="${d.tip}">
       <div class="track ${d.cls}"></div>
-      <div class="fill" id="fill_${d.lo}" style="color: var(--accent)"></div>
-      <input id="in_${d.lo}" type="range" min="0" max="${d.max}" step="1" value="${p[d.lo]}">
-      <input id="in_${d.hi}" type="range" min="0" max="${d.max}" step="1" value="${p[d.hi]}">
+      <div class="fill" id="fill_${d.lo}" style="color: var(--rcn-orange)"></div>
+      <input id="in_${d.lo}" type="range" min="0" max="${d.max}" step="1" value="${p[d.lo]}" aria-label="${d.label} low">
+      <input id="in_${d.hi}" type="range" min="0" max="${d.max}" step="1" value="${p[d.hi]}" aria-label="${d.label} high">
     </div>`).join('');
   for (const d of DUALS) {
-    for (const k of [d.lo, d.hi]) {
-      document.getElementById(`in_${k}`).oninput = e => { setFill(d); queue(k, parseInt(e.target.value)); };
-    }
+    for (const k of [d.lo, d.hi]) $(`in_${k}`).oninput = (e) => { setFill(d); queue(k, parseInt(e.target.value)); };
     setFill(d);
   }
   for (const [form, list] of Object.entries(SLIDERS)) {
-    document.getElementById(form).innerHTML = list.map(s => `
-      <label title="${s.tip}">${s.label} <b id="val_${s.key}">${p[s.key]}</b>
+    $(form).innerHTML = list.map((s) => `
+      <label class="slider" title="${s.tip}">${s.key} <b id="val_${s.key}">${p[s.key]}</b>
         <input id="in_${s.key}" type="range" min="${s.min}" max="${s.max}" step="${s.step}" value="${p[s.key]}"></label>`).join('');
-    for (const s of list) {
-      document.getElementById(`in_${s.key}`).oninput = e => {
-        showVal(s.key, e.target.value);
-        queue(s.key, parseFloat(e.target.value));
-      };
-    }
+    for (const s of list) $(`in_${s.key}`).oninput = (e) => { showVal(s.key, e.target.value); queue(s.key, parseFloat(e.target.value)); };
   }
-  document.getElementById('in_min_area').value = p.min_area;
+  $('in_min_area').value = p.min_area;
 }
 
-// The service clamps what it is sent (band order, ranges), so after a drag
-// the thumbs are pulled to what actually applied. Skipped for a thumb that
-// is being held, so the drag itself is never fought.
+// The service clamps what it is sent, so after a drag the thumbs move to
+// what applied; a thumb being held is left alone.
 function syncForm(p) {
   if (document.querySelector('input:active')) return;
   for (const list of Object.values(SLIDERS)) {
     for (const s of list) {
-      const el = document.getElementById(`in_${s.key}`);
+      const el = $(`in_${s.key}`);
       if (el && parseFloat(el.value) !== p[s.key]) { el.value = p[s.key]; showVal(s.key, p[s.key]); }
     }
   }
   for (const d of DUALS) {
     let moved = false;
     for (const k of [d.lo, d.hi]) {
-      const el = document.getElementById(`in_${k}`);
+      const el = $(`in_${k}`);
       if (el && parseInt(el.value) !== p[k]) { el.value = p[k]; moved = true; }
     }
     if (moved) setFill(d);
   }
 }
 
-// Pull frames one at a time so a congested link drops frame rate instead
-// of building a lag queue. Pauses when the tab is hidden.
+// One frame in flight per view; pauses while the tab is hidden.
 function liveLoop(id, path, period) {
-  const img = document.getElementById(id);
+  const img = $(id);
   (function tick() {
     if (document.hidden) { setTimeout(tick, 250); return; }
     const t = Date.now();
@@ -297,144 +239,81 @@ function liveLoop(id, path, period) {
 liveLoop('color', '/frame/color', 120);
 liveLoop('mask', '/frame/mask', 120);
 
-function drawSeries(canvasId, series, labels, marks, bands) {
-  // series: list of {pts: [[t, v]], color}. Each scaled to its own max.
-  // marks: [[t, label]] tuning changes, drawn as glowing yellow lines.
-  // bands: [[t, flag]] where the line was lost, a strip along the bottom.
-  const cv = document.getElementById(canvasId), x = cv.getContext('2d');
-  x.clearRect(0, 0, cv.width, cv.height);
-  if (bands && bands.length > 1) {
-    const b0 = bands[0][0], b1 = bands[bands.length - 1][0];
-    for (let i = 0; i < bands.length - 1; i++) {
-      const px = (bands[i][0] - b0) / (b1 - b0 || 1) * cv.width;
-      const pw = Math.max(1, (bands[i + 1][0] - bands[i][0]) / (b1 - b0 || 1) * cv.width + 0.5);
-      // Crimson lifted to 4.4:1 for the dark plot ground; the token value
-      // is 2.1:1 there and the lost band all but vanished.
-      x.fillStyle = bands[i][1] ? '#E4525A' : 'rgba(245, 245, 247, 0.22)';
-      x.fillRect(px, cv.height - 5, pw, 5);
-    }
-  }
-  x.strokeStyle = 'rgba(245, 245, 247, 0.48)'; x.setLineDash([4, 4]);
-  x.beginPath(); x.moveTo(0, cv.height / 2); x.lineTo(cv.width, cv.height / 2); x.stroke();
-  x.setLineDash([]);
-  for (const s of series) {
-    if (s.pts.length < 2) continue;
-    const t0 = s.pts[0][0], t1 = s.pts[s.pts.length - 1][0];
-    const max = s.fixed || Math.max(0.2, ...s.pts.map(p => Math.abs(p[1])));
-    x.strokeStyle = s.color; x.lineWidth = 1.5; x.beginPath();
-    for (let i = 0; i < s.pts.length; i++) {
-      const px = (s.pts[i][0] - t0) / (t1 - t0 || 1) * cv.width;
-      const py = cv.height / 2 - s.pts[i][1] / max * (cv.height / 2 - 8);
-      i ? x.lineTo(px, py) : x.moveTo(px, py);
-    }
-    x.stroke();
-    s.max = max;
-  }
-  const m0 = series[0];
-  if (marks && m0 && m0.pts.length > 1) {
-    const t0 = m0.pts[0][0], t1 = m0.pts[m0.pts.length - 1][0];
-    x.save();
-    for (const [t, label] of marks) {
-      if (t < t0 || t > t1) continue;
-      const px = (t - t0) / (t1 - t0 || 1) * cv.width;
-      x.strokeStyle = 'rgba(245, 245, 247, 0.55)'; x.lineWidth = 1;
-      x.setLineDash([6, 4]);
-      x.beginPath(); x.moveTo(px, 18); x.lineTo(px, cv.height); x.stroke();
-      x.setLineDash([]);
-      x.fillStyle = 'rgba(245, 245, 247, 0.8)'; x.font = '11px Helvetica';
-      x.fillText(label, Math.min(px + 4, cv.width - x.measureText(label).width - 4), 30);
-    }
-    x.restore();
-  }
-  // Axis values from the first series: y ticks at +max / 0 / -max, x in seconds.
-  const s0 = series[0];
-  if (s0 && s0.pts.length > 1) {
-    const t0 = s0.pts[0][0], t1 = s0.pts[s0.pts.length - 1][0];
-    x.fillStyle = 'rgba(245, 245, 247, 0.72)'; x.font = '11px Helvetica';
-    x.fillText(`+${s0.max.toFixed(2)}`, 4, 28);
-    x.fillText('0', 4, cv.height / 2 - 4);
-    x.fillText(`-${s0.max.toFixed(2)}`, 4, cv.height - 22);
-    x.fillText(`${t0.toFixed(1)} s`, 4, cv.height - 8);
-    const end = `${t1.toFixed(1)} s`;
-    x.fillText(end, cv.width - x.measureText(end).width - 4, cv.height - 8);
-  }
-  x.fillStyle = '#F5F5F7'; x.font = '12px Helvetica';
-  x.fillText(labels(series), 8, 14);
-}
+const shown = new Map();
+function setLegend(id, html) { if (shown.get(id) !== html) { shown.set(id, html); $(id).innerHTML = html; } }
+const LOST = '<span><svg viewBox="0 0 22 8"><rect x="1" y="1" width="20" height="6" fill="var(--rcn-led-red)"/></svg>Line lost</span>';
 
 let busy = false;
 function update() {
-  if (busy) return;  // do not stack requests if the network lags
+  if (busy) return;
   busy = true;
-  fetch('/state').then(r => r.json()).then(d => {
+  fetch('/state').then((r) => r.json()).then((d) => {
     busy = false;
-    last = d;
-    document.getElementById('mode').textContent = d.found ? 'found' : 'lost';
-    document.getElementById('err').textContent = d.error;
-    document.getElementById('steer').textContent = d.steer;
-    document.getElementById('thr').textContent = d.speed_cmd;
-    document.getElementById('enc').textContent = d.enc_speed;
-    document.getElementById('fps').textContent = d.cam_fps;
-    document.getElementById('pfps').textContent = d.proc_fps;
-    document.getElementById('res').textContent = d.res[0] ? `${d.res[0]}x${d.res[1]} -> ${d.proc_res[0]}x${d.proc_res[1]}` : 'none';
+    $('mode').textContent = d.found ? 'found' : 'lost';
+    $('err').textContent = d.error;
+    $('steer').textContent = d.steer;
+    $('thr').textContent = d.speed_cmd;
+    $('enc').textContent = d.enc_speed;
+    $('fps').textContent = d.cam_fps;
+    $('pfps').textContent = d.proc_fps;
+    $('res').textContent = d.res[0] ? `${d.res[0]}x${d.res[1]} -> ${d.proc_res[0]}x${d.proc_res[1]}` : 'none';
 
-    const box = document.getElementById('state');
+    const box = $('state');
     box.textContent = d.found ? 'LINE FOUND' : 'LINE LOST';
     box.className = 'state' + (d.found ? '' : ' lost');
-    // What the box would have said in words is on hover instead.
     box.title = d.found
-      ? `Center at column ${d.cx} of ${d.proc_res[0]}, row ${d.cy}; area ${d.area} px.`
-      : `No contour of at least ${d.params.min_area} px in the band for `
-        + `${d.lost_for === null ? 'the whole run' : d.lost_for + ' s'}; holding the last command.`;
+      ? `Contour center: column ${d.cx}, row ${d.cy}. Area: ${d.area} px.`
+      : `No contour for ${d.lost_for === null ? 'the whole run' : d.lost_for + ' s'}. Holding the last command.`;
 
     buildForm(d.params);
     syncForm(d.params);
-    // The offset is already -1..1, so the axis is fixed rather than fit to
-    // the data: a small wobble looks small.
-    drawSeries('chart', [{ pts: d.hist, color: '#EC8B48', fixed: 1 }],
-      () => `offset ${d.error} (orange) | setpoint 0 (dashed) | band: red = line lost`,
-      d.marks, d.hist.map(r => [r[0], r[2]]));
+    const hist = d.hist || [];
+    const now = hist.length ? hist[hist.length - 1][0] : 0;
+    // The offset is already -1 to 1, so the axis is fixed: a small wobble looks small.
+    timeChart($('chart'), now - 30, now,
+      [{ name: 'Offset', style: 'a', axis: 'l', unit: '', digits: 2, pts: hist.map((r) => [r[0], r[1]]) }],
+      recentTicks(now, 10), { gapSec: 0.5, fixed: { l: [-1, 1] }, marks: d.marks, bands: hist.map((r) => [r[0], r[2]]) });
+    setLegend('chartLegend', legendHtml([{ name: 'Offset vs setpoint 0 (-1 left edge, +1 right edge)', style: 'a' }]) + LOST);
   }).catch(() => { busy = false; });
 }
 
+// ---- logs ----
+const logTicks = (t0) => Object.assign((a, b) => {
+  const step = niceTicks(0, b - a, 5)[1] || 1, out = [];
+  for (let s = 0; s <= b - a + 1e-6; s += step) out.push([a + s, `${(a + s - t0).toFixed(0)} s`]);
+  return out;
+}, { label: (t) => `${(t - t0).toFixed(1)} s` });
 function loadLog() {
-  const f = document.getElementById('logsel').value;
+  const f = $('logsel').value;
   if (!f) return;
-  fetch('/logs/' + f).then(r => r.text()).then(txt => {
+  fetch('/logs/' + f).then((r) => r.text()).then((txt) => {
     const lines = txt.trim().split('\n');
-    const marks = lines.filter(l => l.startsWith('# mark'))
-      .map(l => { const p = l.split(','); return [parseFloat(p[1]), p.slice(2).join(',')]; });
-    const rows = lines.filter(l => !l.startsWith('#')).slice(1).map(l => l.split(',').map(Number));
-    const lostRows = rows.filter(r => r[5]).length;
-    document.getElementById('loginfo').textContent =
-      `${f}: ${rows.length} frames, ${marks.length} changes, ${lostRows} with the line lost`;
-    drawSeries('logchart', [
-      { pts: rows.map(r => [r[0], r[1]]), color: '#EC8B48', fixed: 1 },
-      { pts: rows.map(r => [r[0], r[2]]), color: '#FFFFFF', fixed: 1 },
-    ], () => 'offset (red) | steer (white) | both -1..1 | band: red = line lost',
-    marks, rows.map(r => [r[0], r[5]]));
+    const marks = lines.filter((l) => l.startsWith('# mark')).map((l) => { const p = l.split(','); return [parseFloat(p[1]), p.slice(2).join(',')]; });
+    const rows = lines.filter((l) => !l.startsWith('#')).slice(1).map((l) => l.split(',').map(Number));
+    const lostRows = rows.filter((r) => r[5]).length;
+    $('loginfo').textContent = `${f}: ${rows.length} frames, ${marks.length} changes, ${lostRows} with the line lost`;
+    if (!rows.length) return;
+    const t0 = rows[0][0], t1 = rows[rows.length - 1][0];
+    timeChart($('logChart'), t0, t1, [
+      { name: 'Offset', style: 'a', axis: 'l', unit: '', digits: 2, pts: rows.map((r) => [r[0], r[1]]) },
+      { name: 'Steer', style: 'b', axis: 'l', unit: '', digits: 2, pts: rows.map((r) => [r[0], r[2]]) },
+    ], logTicks(t0), { gapSec: 0.5, fixed: { l: [-1, 1] }, marks, bands: rows.map((r) => [r[0], r[5]]) });
+    setLegend('logLegend', legendHtml([{ name: 'Offset', style: 'a' }, { name: 'Steer', style: 'b' }]) + LOST);
   });
 }
-
-function saveLog() {
-  // Snapshot what is on the live chart to a csv, then show it right away.
-  post('/logs/save').then(() => refreshLogs(true));
-}
-
+function saveLog() { post('/logs/save').then(() => refreshLogs(true)); }
 function refreshLogs(loadLatest) {
-  fetch('/logs').then(r => r.json()).then(names => {
-    const sel = document.getElementById('logsel');
-    sel.innerHTML = names.map(n => `<option>${n}</option>`).join('');
-    sel.selectedIndex = names.length - 1;  // Load defaults to the latest save
+  fetch('/logs').then((r) => r.json()).then((names) => {
+    const sel = $('logsel');
+    sel.innerHTML = names.map((n) => `<option>${n}</option>`).join('');
+    sel.selectedIndex = names.length - 1;
     if (loadLatest && names.length) loadLog();
   });
 }
-
 refreshLogs(false);
 
 update();
-setInterval(update, 120);  // frames are processed at 20 Hz; poll a little faster
+setInterval(update, 120);
 </script>
-</main>
 </body>
 </html>

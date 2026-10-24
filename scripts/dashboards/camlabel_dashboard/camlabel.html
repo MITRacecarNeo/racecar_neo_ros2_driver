@@ -1,491 +1,87 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-app="Camera label">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Camera Label Dashboard</title>
+<title>Camera label - RACECAR Neo</title>
+<link rel="stylesheet" href="/ui/rcn.css?v=8">
+<link rel="icon" href="/ui/brand/app-icon-32.png">
+<script src="/ui/lost.js?v=8" defer></script>
 <style>
-  /* Neobotics official palette (nb-tokens.ts / neobotics.org/about/branding).
-     Light: Halo White dominates. Dark: Tarmac Blue dominates. Red stays a
-     hint in both: the header rule, the live dot, primary actions, focus. */
-  :root {
-    --nb-red: #FF0033;
-    --nb-red-bright: #FF1A4A;
-    --nb-blue: #1B2036;
-    --nb-blue-deep: #13172A;
-    --nb-white: #FFFFFF;
-    --heading-font: 'Kernel', 'Apotek Extended', 'Space Grotesk', sans-serif;
-    --body-font: 'Akzidenz-Grotesk BQ', 'Akzidenz-Grotesk', 'Helvetica Neue', Helvetica, Arial, sans-serif;
-    --mono-font: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
-    --radius: 12px;
-
-    /* Light mode: the docs beige carries the page, the cards sit on it and
-       are read by their border, and the header and plots stay Tarmac Blue. */
-    --page: #F5EDE4;
-    --card: #F5EDE4;
-    --header-bg: #1B2036;
-    --ink: #1B2036;
-    --ink-muted: rgba(27, 32, 54, 0.66);
-    --ink-dim: rgba(27, 32, 54, 0.42);
-    --line: #E1D9D0;
-    --field-bg: #EBE3DA;
-    --btn-border: rgba(27, 32, 54, 0.22);
-    --btn-hover: #EBE3DA;
-    --shadow-card: 0 4px 14px rgba(27, 32, 54, 0.08);
-    --shadow-card-lg: 0 12px 32px rgba(27, 32, 54, 0.14);
-    --wash-a: rgba(255, 0, 51, 0.05);
-    --wash-b: rgba(225, 217, 208, 0.55);
-  }
-
-  /* Dark mode: Tarmac Blue dominant. The cards carry the tarmac and the
-     page sits one step deeper, so the blue is the surface you actually
-     read on rather than only a backdrop. */
-  [data-theme="dark"] {
-    --page: #13172A;
-    --card: #1B2036;
-    --header-bg: #13172A;
-    --ink: #FFFFFF;
-    --ink-muted: rgba(255, 255, 255, 0.72);
-    --ink-dim: rgba(255, 255, 255, 0.48);
-    --line: rgba(255, 255, 255, 0.12);
-    --field-bg: rgba(255, 255, 255, 0.06);
-    --btn-border: rgba(255, 255, 255, 0.28);
-    --btn-hover: rgba(255, 255, 255, 0.10);
-    --shadow-card: 0 4px 14px rgba(0, 0, 0, 0.32);
-    --shadow-card-lg: 0 12px 32px rgba(0, 0, 0, 0.44);
-    --wash-a: rgba(255, 0, 51, 0.06);
-    --wash-b: rgba(255, 255, 255, 0.03);
-  }
-
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  html { -webkit-text-size-adjust: 100%; }
-  body {
-    font-family: var(--body-font);
-    background: var(--page);
-    color: var(--ink);
-    font-size: 16px;
-    line-height: 1.5;
-    min-height: 100dvh;
-    transition: background 180ms ease-out, color 180ms ease-out;
-  }
-  body::before {
-    content: "";
-    position: fixed;
-    inset: 0;
-    z-index: -1;
-    background:
-      radial-gradient(700px 480px at 90% 0%, var(--wash-a), transparent 65%),
-      radial-gradient(560px 420px at 0% 100%, var(--wash-b), transparent 60%);
-  }
-  .mono, .stat b, #detail, #loginfo, select { font-family: var(--mono-font); font-variant-numeric: tabular-nums; }
-
-  /* Header: tarmac in light, one step deeper in dark. Red rule in both. */
-  header {
-    background: var(--header-bg);
-    border-bottom: 2px solid var(--nb-red);
-    padding: 12px 22px;
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    flex-wrap: wrap;
-    position: sticky;
-    top: 0;
-    z-index: 20;
-  }
-  header img.logo { height: 42px; display: block; }
-  header .divider { width: 1px; height: 22px; background: rgba(255, 255, 255, 0.16); }
-  header h1 {
-    font-family: var(--heading-font);
-    font-size: 0.9rem;
-    font-weight: 700;
-    letter-spacing: 0.13em;
-    text-transform: uppercase;
-    color: var(--nb-white);
-  }
-  header h1 .thin { font-weight: 400; color: rgba(255, 255, 255, 0.72); }
-
-  .stats { margin-left: auto; display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
-  .stat { display: flex; flex-direction: column; line-height: 1.25; }
-  .stat i {
-    font-style: normal;
-    font-size: 0.6rem;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: rgba(255, 255, 255, 0.45);
-  }
-  .stat b { font-size: 0.9rem; font-weight: 600; color: var(--nb-white); }
-  .stat u { text-decoration: none; color: rgba(255, 255, 255, 0.45); font-size: 0.7rem; }
-
-  main { padding: 20px 22px 28px; max-width: 1680px; margin: 0 auto; }
-  .grid { display: grid; grid-template-columns: minmax(360px, 460px) 1fr 264px; gap: 16px; margin-bottom: 16px; align-items: start; }
-  @media (max-width: 1180px) { .grid { grid-template-columns: 1fr; } }
-
-  .card {
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    padding: 14px 16px;
-    box-shadow: var(--shadow-card);
-    transition: box-shadow 200ms ease-out, background 180ms ease-out, border-color 180ms ease-out;
-  }
-  .card:hover { box-shadow: var(--shadow-card-lg); }
-  @media (prefers-reduced-motion: reduce) { *, *::before { transition: none !important; } }
-  .card-title {
-    font-family: var(--heading-font);
-    font-size: 0.7rem;
-    font-weight: 700;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-    color: var(--ink);
-    margin-bottom: 10px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .live::before {
-    content: "";
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--nb-red);
-    display: inline-block;
-    box-shadow: 0 0 0 3px rgba(255, 0, 51, 0.16);
-  }
-  .card-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 10px; }
-  .card-head .card-title { margin-bottom: 0; }
-
-  /* The plot surface stays a dark instrument panel in both themes: the
-     script draws these light-on-dark. */
-  canvas { background: var(--nb-blue-deep); border-radius: 8px; width: 100%; display: block; }
-  [data-theme="dark"] canvas { border: 1px solid rgba(255, 255, 255, 0.07); }
-
-  #form label {
-    display: block;
-    margin-top: 11px;
-    font-size: 0.72rem;
-    letter-spacing: 0.02em;
-    color: var(--ink-dim);
-  }
-  #form label:first-child { margin-top: 0; }
-  #form input {
-    width: 100%;
-    margin-top: 4px;
-    background: var(--field-bg);
-    border: 1px solid var(--line);
-    border-radius: 7px;
-    color: var(--ink);
-    font-family: var(--mono-font);
-    font-size: 0.85rem;
-    padding: 5px 8px;
-  }
-  #form input:focus { outline: none; border-color: var(--nb-red); box-shadow: 0 0 0 3px rgba(255, 0, 51, 0.14); }
-  #form input[type=range] { accent-color: var(--nb-red); border: none; padding: 0; box-shadow: none; background: transparent; }
-  #form b { color: var(--nb-red); font-family: var(--mono-font); font-size: 0.8rem; }
-
-  .actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
-  .btn {
-    background: transparent;
-    border: 1px solid var(--btn-border);
-    color: var(--ink);
-    font-family: var(--body-font);
-    font-size: 0.78rem;
-    font-weight: 600;
-    padding: 6px 13px;
-    border-radius: 7px;
-    cursor: pointer;
-    transition: background 140ms ease-out, border-color 140ms ease-out;
-  }
-  .btn:hover { background: var(--btn-hover); }
-  .btn.primary { background: var(--nb-red); border-color: var(--nb-red); color: var(--nb-white); }
-  .btn.primary:hover { background: var(--nb-red-bright); border-color: var(--nb-red-bright); }
-  /* Reset is destructive, so it carries the brand red in both themes. */
-  .btn.danger, header .btn.danger { background: var(--nb-red); border-color: var(--nb-red); color: var(--nb-white); }
-  .btn.danger:hover, header .btn.danger:hover { background: var(--nb-red-bright); border-color: var(--nb-red-bright); }
-  header .btn { border-color: rgba(255, 255, 255, 0.28); color: var(--nb-white); }
-  header .btn:hover { background: rgba(255, 255, 255, 0.12); border-color: rgba(255, 255, 255, 0.5); }
-  /* One button, two labels. The word comes from CSS so it is correct on
-     first paint without waiting for script. */
-  .theme-btn::after { content: "Dark"; }
-  [data-theme="dark"] .theme-btn::after { content: "Light"; }
-  select {
-    background: var(--field-bg);
-    border: 1px solid var(--btn-border);
-    color: var(--ink);
-    font-size: 0.78rem;
-    padding: 6px 8px;
-    border-radius: 7px;
-    cursor: pointer;
-  }
-  .readout { font-size: 0.76rem; color: var(--ink-muted); margin-top: 10px; }
-  .card-head .readout { margin-top: 0; }
-  /* Camera Label specifics on top of the shared Neobotics theme. */
-  /* Collect and Label are peers, so the two boxes share a height rather
-     than each hugging its own content. */
-  .grid { grid-template-columns: 1fr 1fr; align-items: stretch; }
+  .rcn-header .heading { display: flex; flex-direction: column; min-width: 0; }
+  .rcn-header .meta { font: 600 13px/18px var(--rcn-font-sans); color: var(--rcn-text-muted); }
+  .rcn-header .meta b { color: var(--rcn-text); font-variant-numeric: tabular-nums; }
+  .rcn-header .meta abbr { text-decoration: underline dotted; cursor: help; }
+  main { max-width: 1500px; margin: 0 auto; padding: var(--rcn-space-4); display: grid; gap: var(--rcn-space-4); }
+  .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--rcn-space-4); }
   @media (max-width: 1000px) { .grid { grid-template-columns: 1fr; } }
-  main > .card + .card { margin-top: 16px; }
-  canvas { max-width: 460px; }
+  .card { background: var(--rcn-surface); border-radius: var(--rcn-radius-md); padding: var(--rcn-space-4); min-width: 0; }
+  .card h2 { font-size: 20px; line-height: 28px; margin-bottom: var(--rcn-space-2); }
+  .card h2.stepped { display: flex; align-items: center; gap: var(--rcn-space-2); }
+  .step { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--rcn-orange); color: var(--rcn-ink); font: 700 15px/1 var(--rcn-font-sans); }
+  .note { color: var(--rcn-text-muted); font-weight: 600; margin-bottom: var(--rcn-space-3); }
+  canvas { width: 100%; height: auto; display: block; background: var(--rcn-code-bg); border-radius: var(--rcn-radius-sm); aspect-ratio: 4 / 3; }
   #lab { cursor: crosshair; touch-action: none; }
-  #cls {
-    width: 100%;
-    margin-top: 4px;
-    background: var(--field-bg);
-    border: 1px solid var(--line);
-    border-radius: 7px;
-    color: var(--ink);
-    font-family: var(--mono-font);
-    font-size: 0.9rem;
-    padding: 6px 9px;
-  }
-  #cls:focus { outline: none; border-color: var(--nb-red); box-shadow: 0 0 0 3px rgba(255, 0, 51, 0.14); }
-  .field-label {
-    display: block;
-    font-size: 0.72rem;
-    letter-spacing: 0.02em;
-    color: var(--ink-dim);
-    margin-top: 12px;
-  }
-  .readout { white-space: pre-line; }
-  /* Thumbnail strips: the selected frame carries the brand red. */
-  .thumbs { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 4px; }
-  .thumbs img {
-    width: 118px;
-    border-radius: 6px;
-    cursor: pointer;
-    border: 2px solid transparent;
-    transition: border-color 140ms ease-out;
-  }
-  .thumbs img:hover { border-color: var(--btn-border); }
-  .thumbs img.sel { border-color: var(--nb-red); }
-
-  .lead-note {
-    font-size: 0.78rem;
-    color: var(--ink-muted);
-    margin: -4px 0 12px;
-  }
-
-  .step {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 19px;
-    height: 19px;
-    border-radius: 50%;
-    background: var(--nb-red);
-    color: var(--nb-white);
-    font-size: 0.68rem;
-    font-weight: 700;
-    margin-right: 2px;
-  }
-
-  /* ── Info circle ────────────────────────────────────────────────
-     Hover reads it; a tap pins it, which is what a touch screen needs. */
-  .info {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 14px;
-    height: 14px;
-    margin-left: 5px;
-    border: 1px solid currentColor;
-    border-radius: 50%;
-    font-family: var(--body-font);
-    font-size: 10px;
-    font-style: italic;
-    font-weight: 400;
-    line-height: 1;
-    letter-spacing: 0;
-    text-transform: none;
-    opacity: 0.75;
-    cursor: help;
-    user-select: none;
-    flex: none;
-  }
-  .info:hover, .info.open { opacity: 1; border-color: var(--nb-red); color: var(--nb-red); }
-  .info .tip {
-    display: none;
-    position: absolute;
-    top: 21px;
-    right: -6px;
-    width: 250px;
-    padding: 10px 12px;
-    background: var(--card);
-    color: var(--ink);
-    border: 1px solid var(--line);
-    border-top: 2px solid var(--nb-red);
-    border-radius: 9px;
-    box-shadow: var(--shadow-card-lg);
-    font-family: var(--body-font);
-    font-size: 0.75rem;
-    font-style: normal;
-    font-weight: 400;
-    line-height: 1.5;
-    letter-spacing: normal;
-    text-transform: none;
-    text-align: left;
-    white-space: normal;
-    z-index: 60;
-  }
-  .info:hover .tip, .info.open .tip { display: block; }
-
-  /* ── Toast: says what happened after Save or Load ─────────────── */
-  #toast {
-    position: fixed;
-    left: 50%;
-    bottom: 26px;
-    transform: translateX(-50%) translateY(14px);
-    background: var(--nb-blue);
-    color: var(--nb-white);
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    border-left: 3px solid var(--nb-red);
-    border-radius: 9px;
-    padding: 10px 16px;
-    font-family: var(--body-font);
-    font-size: 0.82rem;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 160ms ease-out, transform 160ms ease-out;
-    z-index: 90;
-  }
-  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-
-  /* A quiet note under a tune panel. */
-  .apply-note {
-    font-size: 0.72rem;
-    line-height: 1.45;
-    color: var(--ink-muted);
-    margin-top: 10px;
-    padding-left: 9px;
-    border-left: 2px solid var(--nb-red);
-  }
-
-  /* ── Phone and tablet ──────────────────────────────────────────── */
-  @media (max-width: 900px) {
-    header { padding: 10px 14px; gap: 10px; }
-    header img.logo { height: 32px; }
-    header h1 { font-size: 0.8rem; }
-    .stats { gap: 12px; width: 100%; margin-left: 0; }
-    .stat i { font-size: 0.56rem; }
-    .stat b { font-size: 0.82rem; }
-    main { padding: 14px 14px 24px; }
-    .grid { grid-template-columns: 1fr; gap: 12px; }
-    .card { padding: 12px 13px; }
-    canvas { max-width: 100%; }
-    .info .tip { width: min(250px, 74vw); }
-  }
-  @media (max-width: 560px) {
-    header h1 .thin { display: block; }
-    .btn { padding: 8px 13px; font-size: 0.8rem; }
-    .actions { gap: 7px; }
-    .info { width: 16px; height: 16px; font-size: 11px; }
-    .info .tip { right: auto; left: -8px; }
-  }
-  /* Touch pointers get bigger targets than a mouse needs. */
-  @media (pointer: coarse) {
-    .btn { min-height: 38px; }
-    select { min-height: 38px; }
-    #form input, #init input, #hp input { min-height: 36px; font-size: 16px; }
-  }
+  .tools { display: flex; flex-wrap: wrap; gap: var(--rcn-space-2); align-items: center; margin-top: var(--rcn-space-3); }
+  .readout { font: 600 14px/20px var(--rcn-font-sans); color: var(--rcn-text-muted); margin-top: var(--rcn-space-3); }
+  label.field { display: block; font-weight: 600; margin-top: var(--rcn-space-3); }
+  label.field .rcn-input { display: block; width: 100%; max-width: 320px; margin-top: var(--rcn-space-1); }
+  .thumbs { display: flex; flex-wrap: wrap; gap: var(--rcn-space-2); color: var(--rcn-text-muted); font-weight: 600; }
+  .thumbs img { width: 120px; aspect-ratio: 4 / 3; object-fit: cover; border-radius: var(--rcn-radius-sm); border: 3px solid transparent; cursor: pointer; background: var(--rcn-code-bg); }
+  .thumbs img:hover { border-color: var(--rcn-mist); }
+  .thumbs img.sel { border-color: var(--rcn-orange); }
+  #revcam { margin-top: var(--rcn-space-3); max-width: 640px; }
 </style>
-<script>
-  /* Applied before first paint, so a dark session never flashes white. */
-  (function () {
-    var saved = localStorage.getItem("wf-theme");
-    if (!saved) {
-      saved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-    }
-    document.documentElement.dataset.theme = saved;
-  })();
-  function toggleTheme() {
-    var el = document.documentElement;
-    el.dataset.theme = el.dataset.theme === "dark" ? "light" : "dark";
-    localStorage.setItem("wf-theme", el.dataset.theme);
-  }
-</script>
-
-<script>
-  /* Confirms Save and Load, so an unsaved tune is never a guess. */
-  function toast(msg) {
-    var t = document.getElementById('toast');
-    if (!t) {
-      t = document.createElement('div');
-      t.id = 'toast';
-      document.body.appendChild(t);
-    }
-    t.textContent = msg;
-    t.classList.add('show');
-    clearTimeout(window.__toastTimer);
-    window.__toastTimer = setTimeout(function () { t.classList.remove('show'); }, 2200);
-  }
-  /* One open tip at a time, and a tap outside closes it. */
-  document.addEventListener('click', function (e) {
-    var hit = e.target.closest ? e.target.closest('.info') : null;
-    document.querySelectorAll('.info.open').forEach(function (el) {
-      if (el !== hit) el.classList.remove('open');
-    });
-    if (hit) hit.classList.toggle('open');
-  });
-</script>
 </head>
 <body>
-
-<header>
-  <img class="logo" alt="Neobotics" src="data:image/webp;base64,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">
-  <div class="divider" aria-hidden="true"></div>
-  <h1>NeoRacer <span class="thin">Camera Label</span></h1>
-  <div class="stats">
-    <span class="stat"><i>unlabeled</i><b id="ucount">0</b></span>
-    <span class="stat"><i>labeled</i><b id="lcount">0</b></span>
-    <span class="stat"><i>camera<span class="info">i<span class="tip">The size of the frames the camera sends. Snap saves at this size, so this is the resolution your dataset ends up in.</span></span></i><b id="res">?</b></span>
-    <span class="stat"><i>preview<span class="info">i<span class="tip">The size of the live picture shown on this page. It is shrunk before being sent so the page keeps up over WiFi. Changing it does not change the saved images. Set it with preview_width in camlabel.yaml.</span></span></i><b id="pres">?</b></span>
-    <button class="btn theme-btn" onclick="toggleTheme()" title="Switch between light and dark"></button>
+<header class="rcn-header">
+  <img class="rcn-mark" src="/ui/brand/mark.png" alt="RACECAR Neo">
+  <div class="heading">
+    <span class="rcn-title">Camera label</span>
+    <span class="meta">unlabeled <b id="ucount">0</b> &middot; labeled <b id="lcount">0</b> &middot;
+      <abbr title="Snaps save at this resolution.">camera</abbr> <b id="res">-</b> &middot;
+      <abbr title="Live preview only.">preview</abbr> <b id="pres">-</b></span>
   </div>
 </header>
 
 <main>
 <div class="grid">
-  <section class="card">
-    <div class="card-title"><span class="step">1</span>Collect</div>
-    <div class="lead-note">Point the car at what you want to label, then press Snap.</div>
+  <div class="card">
+    <h2 class="stepped"><span class="step">1</span>Collect</h2>
+    <div class="note">Point the car at what you want to label, then press Snap.</div>
     <canvas id="cam" width="640" height="480"></canvas>
-    <div class="actions">
-      <button class="btn primary" onclick="snap()">Snap</button>
-    </div>
-    <div class="readout" id="snapinfo">Spacebar also snaps. Each snap saves a full-resolution frame.</div>
-  </section>
-  <section class="card">
-    <div class="card-title"><span class="step">2</span>Label</div>
-    <div class="lead-note">Type the class name first. Then click one corner, move, and click again to place the box.</div>
+    <div class="tools"><button class="rcn-btn primary small" onclick="snap()">Snap</button></div>
+    <div class="readout" id="snapinfo">Spacebar also snaps.</div>
+  </div>
+  <div class="card">
+    <h2 class="stepped"><span class="step">2</span>Label</h2>
+    <div class="note">Type the class name first. Then click one corner, move, and click again to place the box.</div>
     <canvas id="lab" width="640" height="480"></canvas>
-    <label class="field-label" for="cls">class (this name goes on every box you place)</label>
-    <input id="cls" type="text" placeholder="cone" value="">
-    <div class="actions">
-      <button class="btn" onclick="nav(-1)">Prev</button>
-      <button class="btn" onclick="nav(1)">Next</button>
-      <button class="btn primary" onclick="saveLabels()">Save labels</button>
-      <button class="btn" onclick="delImg()">Delete image</button>
-      <button class="btn" onclick="undo()">Undo box</button>
+    <label class="field" for="cls">Class name for new boxes
+      <input id="cls" class="rcn-input" type="text" placeholder="cone" value=""></label>
+    <div class="tools">
+      <button class="rcn-btn quiet small" onclick="nav(-1)">Prev</button>
+      <button class="rcn-btn quiet small" onclick="nav(1)">Next</button>
+      <button class="rcn-btn primary small" onclick="saveLabels()">Save labels</button>
+      <button class="rcn-btn quiet small" onclick="undo()">Undo box</button>
+      <button class="rcn-btn danger small" onclick="delImg()">Delete image</button>
     </div>
-    <div class="readout" id="boxlist">Click an unlabeled image below to start. Arrow keys move, Enter saves.</div>
-  </section>
+    <div class="readout" id="boxlist">Pick an unlabeled image below. Arrow keys move between images. Enter saves.</div>
+  </div>
 </div>
 
-<section class="card">
-  <div class="card-title">Unlabeled images (<span id="ucount2">0</span>)</div>
+<div class="card">
+  <h2>Unlabeled images (<span id="ucount2">0</span>)</h2>
   <div class="thumbs" id="uthumbs">None yet. Snap some frames above.</div>
-</section>
+</div>
 
-<section class="card">
-  <div class="card-title">Labeled images (<span id="lcount2">0</span>)</div>
+<div class="card">
+  <h2>Labeled images (<span id="lcount2">0</span>)</h2>
   <div class="thumbs" id="lthumbs">None yet.</div>
-  <canvas id="revcam" width="640" height="480" style="cursor:default; margin-top:12px; display:none"></canvas>
-  <span class="readout" id="revinfo"></span>
-  <div class="actions">
-    <button class="btn" id="delbtn" style="display:none" onclick="delLabeled()">Delete image</button>
-  </div>
-</section>
+  <canvas id="revcam" width="640" height="480" style="display: none"></canvas>
+  <div class="readout" id="revinfo"></div>
+  <div class="tools"><button class="rcn-btn danger small" id="delbtn" style="display: none" onclick="delLabeled()">Delete image</button></div>
+</div>
 </main>
 
 <script>
@@ -514,9 +110,9 @@ function snap() {
     document.getElementById('snapinfo').textContent = `Saved u${d.n}.jpg`;
     refresh();
   }).catch(err => {
-    document.getElementById('snapinfo').textContent =
-      `Snap failed (${err.message}). 503 means no camera frame yet; ` +
-      `404 means the service is running old code and needs a restart.`;
+    document.getElementById('snapinfo').textContent = err.message === 'HTTP 503'
+      ? 'Snap failed. No camera frame yet.'
+      : err.message === 'HTTP 404' ? 'Snap failed. Restart Camera label.' : 'Snap failed.';
   });
 }
 
@@ -531,12 +127,12 @@ function drawLab() {
   labx.clearRect(0, 0, lab.width, lab.height);
   if (current === null) return;
   labx.drawImage(uimg, 0, 0, lab.width, lab.height);
-  labx.font = '14px Helvetica'; labx.lineWidth = 2; labx.strokeStyle = '#FF0033';
+  labx.font = '600 14px Barlow, Arial, sans-serif'; labx.lineWidth = 2; labx.strokeStyle = '#f49a4b';
   for (const b of boxes) {
     labx.strokeRect(b.x, b.y, b.w, b.h);
-    labx.fillStyle = '#FF0033';
+    labx.fillStyle = '#f49a4b';
     labx.fillRect(b.x, b.y - 18, labx.measureText(b.cls).width + 10, 18);
-    labx.fillStyle = '#FFFFFF';
+    labx.fillStyle = '#231f20';
     labx.fillText(b.cls, b.x + 5, b.y - 5);
   }
   if (drag) {
@@ -544,9 +140,9 @@ function drawLab() {
     labx.strokeRect(drag.x, drag.y, drag.w, drag.h);
     labx.setLineDash([]);
     const size = `${Math.round(drag.w)} x ${Math.round(drag.h)}`;
-    labx.fillStyle = '#FF0033';
+    labx.fillStyle = '#f49a4b';
     labx.fillRect(drag.x, drag.y + drag.h, labx.measureText(size).width + 10, 18);
-    labx.fillStyle = '#FFFFFF';
+    labx.fillStyle = '#231f20';
     labx.fillText(size, drag.x + 5, drag.y + drag.h + 13);
   }
 }
@@ -629,10 +225,10 @@ document.addEventListener('keydown', e => {
 
 function list() {
   document.getElementById('boxlist').textContent = current === null
-    ? 'Click an unlabeled image below to start. Enter saves.'
+    ? 'Pick an unlabeled image below. Enter saves.'
     : boxes.length
       ? `u${current}: ` + boxes.map(b => b.cls).join(', ')
-      : `u${current}: click a corner, move, then click again. Save with no boxes for a negative.`;
+      : `u${current}: click a corner, move, and click again. Save with no boxes for a negative.`;
 }
 
 function nav(d) {
@@ -714,19 +310,19 @@ const rimg = new Image();
 let revBoxes = [], currentLabeled = null;
 rimg.onload = () => {
   rctx.drawImage(rimg, 0, 0, rc.width, rc.height);
-  rctx.font = '14px Helvetica'; rctx.lineWidth = 2; rctx.strokeStyle = '#FF0033';
+  rctx.font = '600 14px Barlow, Arial, sans-serif'; rctx.lineWidth = 2; rctx.strokeStyle = '#f49a4b';
   for (const b of revBoxes) {
     rctx.strokeRect(b.x, b.y, b.w, b.h);
-    rctx.fillStyle = '#FF0033';
+    rctx.fillStyle = '#f49a4b';
     rctx.fillRect(b.x, b.y - 18, rctx.measureText(b.cls).width + 10, 18);
-    rctx.fillStyle = '#FFFFFF';
+    rctx.fillStyle = '#231f20';
     rctx.fillText(b.cls, b.x + 5, b.y - 5);
   }
 };
 
 function showLabeled(n) {
   currentLabeled = n;
-  document.getElementById('delbtn').style.display = 'inline-block';
+  document.getElementById('delbtn').style.display = '';
   fetch('/label?n=' + n).then(r => r.json()).then(d => {
     revBoxes = d.boxes.map(b => ({ x: (b.cx - b.w / 2) * rc.width, y: (b.cy - b.h / 2) * rc.height,
                                    w: b.w * rc.width, h: b.h * rc.height, cls: b.cls }));

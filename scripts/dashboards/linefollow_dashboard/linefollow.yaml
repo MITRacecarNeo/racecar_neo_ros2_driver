@@ -1,4 +1,4 @@
-# RACECAR Neo line-follow parameters: an HSV color threshold, a crop band
+# RACECAR Neo line-follow parameters: an HSV color threshold, a crop area
 # across the floor, and the PD steering and proportional throttle that keep
 # the largest patch of that color under the car's nose.
 #
@@ -22,7 +22,7 @@ angle_kp: 1.0       # steer per unit of line offset. The offset runs -1 (line
                     # at the left edge) to +1 (right edge), so 1.0 reaches full
                     # lock at the edge and 2.0 at half way.
 
-# --- 3. crop band, as fractions of the image height measured from the top ---
+# --- 3. crop area, as fractions of the image height measured from the top ---
 crop_top: 0.6       # move both edges together to look nearer or farther;
 crop_bottom: 1.0    # spread them apart to see more of the floor at once
 

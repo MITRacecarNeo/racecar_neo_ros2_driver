@@ -55,7 +55,7 @@ PORT = 8080
 APPS: list[dict[str, Any]] = [
     {'id': 'terminator', 'name': 'Terminator', 'icon': 'terminal', 'port': None,
      'group': 'core', 'unit': None, 'exclusive': False, 'startable': False,
-     'desc': 'Terminals on the car, in the browser.'},
+     'desc': 'Open a terminal'},
     {'id': 'jupyter', 'name': 'JupyterLab', 'icon': 'notebook', 'port': 8888,
      'group': 'core', 'unit': 'racecar-jupyter', 'exclusive': False, 'startable': False,
      'desc': 'Notebooks and the student library.'},

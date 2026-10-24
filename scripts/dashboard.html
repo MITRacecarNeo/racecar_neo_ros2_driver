@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RACECAR Neo</title>
-<link rel="stylesheet" href="/ui/rcn.css?v=4">
-<script src="/ui/charts.js?v=4"></script>
+<link rel="stylesheet" href="/ui/rcn.css?v=8">
+<script src="/ui/charts.js?v=8"></script>
 <link rel="icon" href="/ui/brand/app-icon-32.png">
 <link rel="apple-touch-icon" href="/ui/brand/app-icon-180.png">
 <style>
@@ -116,12 +116,12 @@
       <div class="tile">
         <div class="head"><span class="title">Color camera</span><button class="rcn-btn quiet small cam-toggle" aria-pressed="false">Show camera</button></div>
         <div class="legend rcn-legend"></div>
-        <div class="frame"><img id="ov-color" alt="Color camera" hidden><div class="empty rcn-small rcn-muted cam-paused">Camera paused.</div></div>
+        <div class="frame"><img id="ov-color" alt="Color camera" hidden><div class="empty rcn-small rcn-muted cam-paused">camera paused</div></div>
       </div>
       <div class="tile">
         <div class="head"><span class="title">Depth camera</span><button class="rcn-btn quiet small cam-toggle" aria-pressed="false">Show camera</button></div>
         <div class="legend rcn-legend"></div>
-        <div class="frame"><img id="ov-depth" alt="Depth camera" hidden><div class="empty rcn-small rcn-muted cam-paused">Camera paused.</div></div>
+        <div class="frame"><img id="ov-depth" alt="Depth camera" hidden><div class="empty rcn-small rcn-muted cam-paused">camera paused</div></div>
       </div>
       <div class="tile">
         <div class="head"><span class="title">Lidar</span></div>
@@ -139,6 +139,11 @@
         <div class="chart rcn-chart" id="ov-speed"></div>
       </div>
       <div class="tile">
+        <div class="head"><span class="title">CPU temperature</span><span class="now" id="ov-temp-now"></span></div>
+        <div class="legend rcn-legend" id="ov-temp-legend"></div>
+        <div class="chart rcn-chart" id="ov-temp"></div>
+      </div>
+      <div class="tile">
         <div class="head"><span class="title">Battery voltage</span><span class="now" id="ov-volts-now"></span></div>
         <div class="legend rcn-legend" id="ov-volts-legend"></div>
         <div class="chart rcn-chart" id="ov-volts"></div>
@@ -149,12 +154,7 @@
         <div class="chart rcn-chart" id="ov-amps"></div>
       </div>
       <div class="tile">
-        <div class="head"><span class="title">CPU temperature</span><span class="now" id="ov-temp-now"></span></div>
-        <div class="legend rcn-legend" id="ov-temp-legend"></div>
-        <div class="chart rcn-chart" id="ov-temp"></div>
-      </div>
-      <div class="tile">
-        <div class="head"><span class="title">Memory</span><span class="now" id="ov-mem-now"></span></div>
+        <div class="head"><span class="title">RAM</span><span class="now" id="ov-mem-now"></span></div>
         <div class="legend rcn-legend" id="ov-mem-legend"></div>
         <div class="chart rcn-chart" id="ov-mem"></div>
       </div>

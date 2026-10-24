@@ -33,11 +33,11 @@ keeps the defaults. Internals: `docs/dashboards.md` in the driver.
 
 ## Dashboard
 
-- Lidar view: scan points, active windows or search arc, measured rays, scroll to zoom
-- Live error vs setpoint chart with values in cm and yellow markers at every parameter change
-- Tune panel: speed is a 0 to 1 drag slider that applies while dragging, other parameters apply on Apply
-- Save and Load write and read wallfollow.yaml on the car. Reset (top bar) re-reads the yaml
-- Save log snapshots what is on the live chart to LogN.csv. Load log defaults to the latest save, markers included
+- Lidar view: scan points, the averaging windows or search arc in gray, and the measured rays in orange. Scroll or use + and - to zoom.
+- Error chart: the last 30 s of error against the setpoint (cm in static mode, -1 to 1 in dynamic), with dashed lines at parameter changes.
+- Tune panel: speed is a 0 to 1 slider that applies while dragging; the other values apply on Apply.
+- Save and Load write and read wallfollow.yaml on the car. Reset (top bar) re-reads it. Stop (top bar) sets speed to 0.
+- Save log snapshots the error chart to LogN.csv. Load log draws a saved one with the error and the measured speed.
 
 ## Modes
 

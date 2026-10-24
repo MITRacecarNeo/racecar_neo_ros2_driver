@@ -117,7 +117,7 @@ Follow a colored line with the camera; HSV thresholds tuned in the page.
                                                                      │
                                        ┌─────────────────────────────┤
                                        ▼                             ▼
-                              crop to the band              mask preview JPEG
+                              crop to the crop area         mask preview JPEG
                                        │                             │
                         largest contour above min_area               ▼
                                        │                        GET /mask
@@ -137,8 +137,8 @@ Follow a colored line with the camera; HSV thresholds tuned in the page.
 /odom ─▶ _odom_cb ─▶ measured speed ─▶ _state ─▶ GET /state
 ```
 
-- With no line in the band the last command is held.
-- The mask preview shows the whole frame, not only the band: a threshold can
+- With no contour in the crop area the last command is held.
+- The mask preview shows the whole frame, not only the crop area: a threshold can
   only be judged against everything the camera sees.
 - The offset chart's axis is fixed at -1 to 1, so a small wobble looks small.
 

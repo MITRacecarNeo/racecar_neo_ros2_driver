@@ -20,6 +20,7 @@ import json
 from pathlib import Path
 import re
 import signal
+import sys
 import threading
 
 import cv2
@@ -33,6 +34,9 @@ import yaml
 
 PORT = 8085
 BASE = Path(__file__).resolve().parent
+# The shared styles, fonts and logos are served from scripts/web/ (webui.py).
+sys.path.insert(0, str(BASE.parents[1]))
+import webui  # noqa: E402
 # Dataset lives outside the code tree, so reinstalling or re-cloning camlabel
 # never touches collected frames or labels.
 DATASET = Path.home() / 'data' / 'camlabel'
@@ -150,6 +154,15 @@ class Handler(BaseHTTPRequestHandler):
         return int(self.path.split('n=')[1].split('&')[0])
 
     def do_GET(self):
+        asset = webui.static_file(self.path)
+        if asset is not None:
+            self.send_response(200)
+            self.send_header('Content-Type', asset[1])
+            self.send_header('Content-Length', str(len(asset[0])))
+            self.send_header('Cache-Control', webui.CACHE_CONTROL)
+            self.end_headers()
+            self.wfile.write(asset[0])
+            return
         if self.path == '/':
             self._send((BASE / 'camlabel.html').read_bytes(), 'text/html; charset=utf-8')
         elif self.path.startswith('/frame'):

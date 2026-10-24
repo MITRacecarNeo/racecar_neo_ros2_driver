@@ -55,7 +55,7 @@ car's ROS topics:
 - Camera: the color frame with the depth frame under it. The Detections
   switch overlays the object detector's boxes, each with its class and
   confidence; boxes older than 1.5 s are cleared. Depth: bright is near, dark
-  is `depth_max_m` away, gray is no reading (glass, a mirror, past the far
+  is `depth_max_m` away, gray is no return (glass, a mirror, past the far
   end, or the strip down the left edge that only one of the depth camera's
   two lenses sees).
 - Lidar: scan points around the car, nose up, rings every meter. Scroll or

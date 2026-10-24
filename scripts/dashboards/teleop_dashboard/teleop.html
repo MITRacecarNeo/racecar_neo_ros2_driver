@@ -1,12 +1,13 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-app="Web teleop">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Web teleop - RACECAR Neo</title>
-<link rel="stylesheet" href="/ui/rcn.css?v=4">
+<link rel="stylesheet" href="/ui/rcn.css?v=8">
 <link rel="icon" href="/ui/brand/app-icon-32.png">
-<script src="/ui/charts.js?v=4"></script>
+<script src="/ui/lost.js?v=8" defer></script>
+<script src="/ui/charts.js?v=8"></script>
 <style>
   .rcn-header .meta { font: 600 13px/18px var(--rcn-font-sans); color: var(--rcn-text-muted); }
   .rcn-header .meta b { color: var(--rcn-text); font-variant-numeric: tabular-nums; }
@@ -78,8 +79,8 @@
     <span class="meta">throttle <b id="thr">-</b> &middot; steer <b id="steer">-</b> &middot; encoder <b id="enc">-</b> m/s &middot; camera <b id="fps">-</b> fps &middot; depth <b id="dfps">-</b> fps &middot; frame <b id="res">-</b></span>
   </div>
   <span class="rcn-spacer"></span>
-  <button class="rcn-btn quiet small" onclick="reset()" title="Re-read teleop.yaml">Reset</button>
-  <button class="rcn-btn danger small" onclick="stopCar()" title="Release every button and set speed to 0">Stop</button>
+  <button class="rcn-btn quiet small" onclick="reset()" title="Reload saved settings.">Reset</button>
+  <button class="rcn-btn danger small" onclick="stopCar()" title="Set speed to 0.">Stop</button>
 </header>
 
 <main>
@@ -96,14 +97,14 @@
     </figure>
     <figure id="depthfig">
       <img id="depth" class="view" alt="Depth camera">
-      <figcaption>Depth: bright is near, dark is far, gray is no reading</figcaption>
+      <figcaption>Depth</figcaption>
     </figure>
   </div>
 
   <div class="card">
     <h2>Lidar</h2>
     <div class="lidarbox">
-      <canvas id="lidar" class="dark" width="560" height="560" title="Scan points around the car; the nose is up. Scroll or use + and - to zoom."></canvas>
+      <canvas id="lidar" class="dark" width="560" height="560" title="Nose up. Scroll to zoom."></canvas>
       <div class="zoom">
         <button class="rcn-btn quiet" onclick="zoom(1 / 1.25)" aria-label="Zoom in"><svg class="rcn-icon"><use href="/ui/icons.svg#plus"/></svg></button>
         <button class="rcn-btn quiet" onclick="zoom(1.25)" aria-label="Zoom out"><svg class="rcn-icon"><use href="/ui/icons.svg#minus"/></svg></button>
@@ -141,7 +142,7 @@
   <div class="card">
     <h2>Compass</h2>
     <div class="compass">
-      <canvas id="compass" class="dark" width="200" height="200" title="The car points up; the orange marker is magnetic north. Heading: 0 deg facing north, increasing counterclockwise."></canvas>
+      <canvas id="compass" class="dark" width="200" height="200" title="Car points up. Orange: magnetic north."></canvas>
       <div>
         <div class="rcn-chart" id="magChart"></div>
         <div class="rcn-legend" id="magLegend"></div>
@@ -154,7 +155,7 @@
     <div class="cardhead"><h2>Dot matrix</h2><button class="rcn-btn quiet small" onclick="release()">Stop sending</button></div>
     <div class="matrixrow">
       <div>
-        <div class="scroll"><div class="matrix" id="matrixEdit" title="Click or drag to toggle dots, then Send."></div></div>
+        <div class="scroll"><div class="matrix" id="matrixEdit" title="Click or drag dots, then Send."></div></div>
         <div class="tools">
           <button class="rcn-btn primary small" onclick="sendMatrix()">Send (set_matrix)</button>
           <button class="rcn-btn quiet small" onclick="editMatrix(() => 0)">Clear</button>
@@ -174,7 +175,7 @@
 
   <div class="card span3">
     <div class="cardhead"><h2>LED strip</h2><button class="rcn-btn quiet small" onclick="release()">Stop sending</button></div>
-    <div class="caption">Click LEDs to paint them, then Send (set_pixels). LED 0 is the front-left end; LED 83 the front-right end.</div>
+    <div class="caption">Click LEDs to paint them, then Send. LED 0: front left. LED 83: front right.</div>
     <div class="scroll" style="margin-top: var(--rcn-space-2)"><div class="ledbar" id="ledEdit"></div></div>
     <div class="tools">
       <input type="color" id="ledColor" value="#00a0ff" aria-label="LED color">
@@ -191,13 +192,13 @@
     <h2>Drive</h2>
     <div class="pad" id="pad">
       <div></div>
-      <button data-axis="fwd" data-val="1" title="Forward: W or the up arrow">&#9650;<span class="key">W</span></button>
+      <button data-axis="fwd" data-val="1" title="Forward (W)">&#9650;<span class="key">W</span></button>
       <div></div>
-      <button data-axis="turn" data-val="-1" title="Left: A or the left arrow">&#9664;<span class="key">A</span></button>
+      <button data-axis="turn" data-val="-1" title="Left (A)">&#9664;<span class="key">A</span></button>
       <div class="mid">WASD<br>or arrows</div>
-      <button data-axis="turn" data-val="1" title="Right: D or the right arrow">&#9654;<span class="key">D</span></button>
+      <button data-axis="turn" data-val="1" title="Right (D)">&#9654;<span class="key">D</span></button>
       <div></div>
-      <button data-axis="fwd" data-val="-1" title="Back: S or the down arrow">&#9660;<span class="key">S</span></button>
+      <button data-axis="fwd" data-val="-1" title="Back (S)">&#9660;<span class="key">S</span></button>
       <div></div>
     </div>
   </div>
@@ -230,8 +231,8 @@
 const $ = (id) => document.getElementById(id);
 const { timeChart, legendHtml, recentTicks } = RcnCharts;
 const SLIDERS = [
-  { key: 'speed', tip: '0 to 1 throttle while forward or back is held', min: 0, max: 1, step: 0.01 },
-  { key: 'angle', tip: '0 to 1 steering while left or right is held; 1 is full lock', min: 0, max: 1, step: 0.01 },
+  { key: 'speed', tip: 'Throttle, 0 to 1.', min: 0, max: 1, step: 0.01 },
+  { key: 'angle', tip: 'Steering, 0 to 1. 1 is full lock.', min: 0, max: 1, step: 0.01 },
 ];
 const KEYS = {
   KeyW: ['fwd', 1], ArrowUp: ['fwd', 1], KeyS: ['fwd', -1], ArrowDown: ['fwd', -1],
@@ -508,8 +509,8 @@ function update() {
     DET.boxes = d.dets || [];
     detToggle.disabled = !d.params.detections_topic;
     $('detswitch').title = !d.params.detections_topic
-      ? 'No detections_topic set in teleop.yaml.'
-      : !d.det_ok ? `Nothing on ${d.params.detections_topic}. Is the detector running?`
+      ? 'No detector set up.'
+      : !d.det_ok ? 'No detections. Is the detector running?'
         : `${d.dets.length} detection(s) at ${d.det_fps} Hz.`;
     drawOverlay();
     $('depthfig').hidden = !d.params.depth_topic;
@@ -518,8 +519,8 @@ function update() {
     const words = [WORDS[d.fwd], TURNS[d.turn]].filter(Boolean).join(' ');
     box.textContent = d.timed_out ? 'TIMED OUT' : (words || 'STOPPED');
     box.className = 'state' + (d.timed_out ? ' timeout' : (words ? ' moving' : ''));
-    box.title = d.timed_out ? `No command for ${d.params.cmd_timeout} s; driving zero.`
-      : d.params.speed === 0 ? 'Speed is 0: raise the speed slider to move.' : `Measured ${d.enc_speed} m/s.`;
+    box.title = d.timed_out ? `No command for ${d.params.cmd_timeout} s. Driving zero.`
+      : d.params.speed === 0 ? 'Speed is 0.' : `Measured ${d.enc_speed} m/s.`;
 
     buildForm(d.params);
     syncForm(d.params);
