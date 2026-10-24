@@ -35,12 +35,13 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import features  # noqa: E402, I100  sibling script, after the path insert
 import sysinfo  # noqa: E402
 
 OK, WARN, FAIL, SKIP = 'OK', 'WARN', 'FAIL', 'SKIP'
 SEVERITY = {OK: 0, SKIP: 1, WARN: 2, FAIL: 3}
 
-SECTIONS = ('devices', 'sensors', 'actuators', 'system', 'services', 'network')
+SECTIONS = ('devices', 'sensors', 'actuators', 'autonomy', 'system', 'services', 'network')
 
 # Shorter windows measure the PIT stream's clumping rather than its rate.
 # See docs/troubleshooting.md, "Diagnostic rate checks".
@@ -106,8 +107,8 @@ SENSOR_TOPICS = [
     TopicSpec('/mag', 'PIT magnetometer', 136.0, PIT_FLOOR_FRAC),
     TopicSpec('/imu/fused', 'Fused IMU', 100.0),
     TopicSpec('/encoder/speed', 'Encoder', 136.0, PIT_FLOOR_FRAC),
-    TopicSpec('/battery/voltage', 'Pack voltage', 136.0, PIT_FLOOR_FRAC),
-    TopicSpec('/battery/current', 'Pack current', 136.0, PIT_FLOOR_FRAC),
+    TopicSpec('/battery/voltage', 'Battery voltage', 136.0, PIT_FLOOR_FRAC),
+    TopicSpec('/battery/current', 'Battery current', 136.0, PIT_FLOOR_FRAC),
     TopicSpec('/rc/channels', 'FlySky RC', 136.0, PIT_FLOOR_FRAC),
     # Capped by edgetpu_node's inference_rate_hz, not by the camera.
     TopicSpec('/edgetpu/inference', 'Coral inference', 15.0),
@@ -139,7 +140,23 @@ USB_DEVICES = [
     ('045e:028e', 'Gamepad'),
 ]
 
-SERVICE_UNITS = ('racecar-teleop', 'racecar-watchdog', 'racecar-dashboard', 'racecar-jupyter')
+SERVICE_UNITS = (
+    'racecar-teleop',
+    'racecar-watchdog',
+    'racecar-dashboard',
+    'racecar-jupyter',
+    'racecar-mapview',
+)
+
+# Started by `racecar map` or the map viewer, never at boot, so it is not a
+# service row; the autonomy section samples these while it runs.
+AUTONOMY_UNIT = 'racecar-autonomy'
+AUTONOMY_TOPICS = [
+    TopicSpec('/autonomy/pose', 'pose rate', 20.0),
+    TopicSpec('/autonomy/status', 'status rate', 1.0, 0.5),
+]
+# localized drops under 0.5 and returns at 0.65 (config/autonomy.yaml).
+SCAN_FIT_WARN = 0.65
 
 
 def worst(*statuses: str) -> str:
@@ -333,7 +350,49 @@ def check_system(cpu_interval: float = CPU_SAMPLE_SEC) -> list[Check]:
     else:
         out.append(Check(g, 'clock', WARN, f'not NTP synced, up {up_s}'))
 
+    out.append(check_profile())
+    out.append(check_data_root())
     return out
+
+
+# The data root warns at this share used or below this much free.
+DATA_WARN_PCT = 80
+DATA_WARN_FREE_GB = 10
+
+
+def check_data_root(nvme_sys: Path = Path('/sys/class/nvme/nvme0')) -> Check:
+    """Report where the car's data goes, its free space, and a fallback to the SD card."""
+    try:
+        from racecar_neo_ros2_driver import data_root
+    except ImportError:
+        return Check('system', 'data root', SKIP, 'driver not built')
+    root, warning = data_root.current()
+    if not warning and not data_root.on_nvme(root):
+        warning = data_root.resolve()[1]
+    disk = sysinfo.read_disk(str(root)) if root.is_dir() else None
+    if disk is None:
+        return Check('system', 'data root', FAIL, f'{root} missing')
+    where = 'NVMe' if data_root.on_nvme(root) else 'SD card'
+    detail = f'{root} ({where}), {disk["free"]}G free ({disk["percent_used"]}% used)'
+    low = disk['percent_used'] >= DATA_WARN_PCT or disk['free'] < DATA_WARN_FREE_GB
+    if warning and nvme_sys.exists():
+        return Check('system', 'data root', WARN, f'{detail}; {warning}')
+    return Check('system', 'data root', WARN if low else OK, detail)
+
+
+def check_profile() -> Check:
+    """Report the car profile: where it is, the car name, and per-car files the driver ignores."""
+    try:
+        from racecar_neo_ros2_driver import car_profile
+    except ImportError:
+        return Check('system', 'car profile', SKIP, 'driver not built')
+    here = Path(__file__).resolve().parent
+    left = car_profile.unmigrated(here.parent / 'config', here / 'dashboards')
+    detail = f'{car_profile.car_info()["name"]}, {car_profile.profile_dir()}'
+    if left:
+        return Check('system', 'car profile', WARN,
+                     f'{detail}; {len(left)} file(s) not used: racecar profile migrate')
+    return Check('system', 'car profile', OK, detail)
 
 
 def check_services() -> list[Check]:
@@ -351,7 +410,39 @@ def check_services() -> list[Check]:
             out.append(
                 Check('services', unit, WARN, f'active={active or "?"} enabled={enabled or "?"}')
             )
+    out.append(watchdog_check(sysinfo.read_watchdog_state()))
     return out
+
+
+def watchdog_check(state: dict[str, Any] | None) -> Check:
+    """Summarize watchdog.py's per-node state file as one services row."""
+    name = 'watchdog nodes'
+    if state is None:
+        return Check('services', name, SKIP, 'no watchdog state file')
+    if state['stale']:
+        return Check('services', name, WARN, f'state not updated for {state["age_sec"]:.0f}s')
+    nodes: dict[str, dict[str, Any]] = state.get('nodes', {})
+    by_state: dict[str, list[str]] = {}
+    for node, info in sorted(nodes.items()):
+        by_state.setdefault(info.get('state', '?'), []).append(node)
+    data = ', '.join(f'{node}={info.get("state")}' for node, info in sorted(nodes.items()))
+    if 'gave_up' in by_state:
+        given_up = ', '.join(
+            f'{node} ({nodes[node].get("reason") or "down"})' for node in by_state['gave_up']
+        )
+        return Check('services', name, FAIL, f'gave up: {given_up}', data)
+    waiting = [
+        f'{label}: {", ".join(by_state[key])}'
+        for key, label in (('no_device', 'no device'), ('restarting', 'restarting'))
+        if key in by_state
+    ]
+    if waiting:
+        return Check('services', name, WARN, '; '.join(waiting), data)
+    parts = [f'{len(by_state.get("healthy", []))} healthy']
+    parts += [
+        f'{key}: {", ".join(by_state[key])}' for key in ('starting', 'disabled') if key in by_state
+    ]
+    return Check('services', name, OK, ', '.join(parts), data)
 
 
 def _iface_v4(iface: str) -> list[str]:
@@ -528,6 +619,17 @@ def read_drive(msg: Any) -> tuple[str, str]:
     return OK, f'speed {d.speed:+.2f} m/s, steer {d.steering_angle:+.2f} rad'
 
 
+def read_autonomy_pose(msg: Any) -> tuple[str, str]:
+    p, q = msg.pose.pose.position, msg.pose.pose.orientation
+    yaw = math.degrees(math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z)))
+    return OK, f'x {p.x:+.2f} m, y {p.y:+.2f} m, heading {yaw:+.0f} deg'
+
+
+def read_autonomy_status(msg: Any) -> tuple[str, str]:
+    values = {kv.key: kv.value for kv in msg.values}
+    return OK, f"{values.get('mode', '?')} {values.get('map', '')}".rstrip()
+
+
 SAMPLE_READERS: dict[str, Callable[[Any], tuple[str, str]]] = {
     '/camera/color': read_color,
     '/camera/depth': read_depth,
@@ -544,11 +646,13 @@ SAMPLE_READERS: dict[str, Callable[[Any], tuple[str, str]]] = {
     '/joy': read_joy,
     '/motor': read_drive,
     '/mux_out': read_drive,
+    '/autonomy/pose': read_autonomy_pose,
+    '/autonomy/status': read_autonomy_status,
 }
 
 
 def read_sample(topic: str, msg: Any) -> tuple[str, str]:
-    """Summarise one message; a payload of an unexpected shape warns."""
+    """Summarize one message; a payload of an unexpected shape warns."""
     reader = SAMPLE_READERS.get(topic)
     if reader is None:
         return OK, ''
@@ -782,6 +886,85 @@ def actuator_checks(ros: RosResult) -> list[Check]:
     return out
 
 
+# Rows of the teleop subsystems the Features tiles turn off (scripts/features.py).
+FEATURE_ROWS = {
+    'camera': ('RealSense color', 'RealSense depth', 'RealSense IMU'),
+    'detections': ('Coral inference',),
+}
+
+
+def note_turned_off(checks: list[Check], running: dict[str, bool] | None = None) -> list[Check]:
+    """Mark the rows of a subsystem teleop was started without as turned off, not failed."""
+    running = features.running() if running is None else running
+    off = {name for feature, names in FEATURE_ROWS.items()
+           if not running.get(feature, True) for name in names}
+    return [Check(c.group, c.name, SKIP, 'turned off (Features on 8080)') if c.name in off else c
+            for c in checks]
+
+
+def note_mapping_pause(checks: list[Check], ros: RosResult) -> list[Check]:
+    """While mapping, edgetpu_node drops its camera input (pause_while_mapping); say so."""
+    msg = ros.values.get('/autonomy/status')
+    mode = {kv.key: kv.value for kv in msg.values}.get('mode') if msg is not None else None
+    if mode != 'mapping':
+        return checks
+    return [
+        Check(c.group, c.name, OK, 'paused while mapping') if c.name == 'Coral inference' else c
+        for c in checks
+    ]
+
+
+def autonomy_checks(unit_state: str, ros: RosResult, sampled: bool) -> list[Check]:
+    """
+    Mode, localized, scan fit, spread, and saves from /autonomy/status, plus the pose rate.
+
+    `unit_state` is `systemctl is-active` for the autonomy unit; with `sampled`
+    false (--quick, or the unit stopped) only the unit row is reported.
+    """
+    g = 'autonomy'
+    if unit_state == 'failed':
+        return [Check(g, 'unit', WARN, f'{AUTONOMY_UNIT} failed; journalctl -u {AUTONOMY_UNIT}')]
+    if unit_state != 'active':
+        return [Check(g, 'unit', OK, 'stopped')]
+    out = [Check(g, 'unit', OK, 'active')]
+    if not sampled:
+        return out
+    out += [c for c in rate_checks(g, AUTONOMY_TOPICS, ros) if c.name == 'pose rate']
+    msg = ros.values.get('/autonomy/status')
+    if not ros.available:
+        return out
+    if msg is None:
+        out.append(Check(g, 'status', FAIL, 'no /autonomy/status; see racecar map status'))
+        return out
+    v = {kv.key: kv.value for kv in msg.values}
+    mode = v.get('mode', '')
+    where = f"{mode} on {v.get('map') or '(no map)'}"
+    if mode == 'localization' and v.get('localizer'):
+        where += f" with {v['localizer']}"
+    out.append(Check(g, 'mode', OK, where, f"session {v.get('session', '')}".rstrip()))
+    localized = v.get('localized') == 'true'
+    if localized:
+        out.append(Check(g, 'localized', OK, 'yes'))
+    elif mode == 'localization':
+        hint = 'drive slowly, or Set pose / Find me in the map viewer (port 8084)'
+        out.append(Check(g, 'localized', WARN, f'no; {hint}'))
+    else:
+        out.append(Check(g, 'localized', WARN, 'no; is the lidar running?'))
+    if mode == 'localization':
+        if v.get('scan_fit'):
+            fit = float(v['scan_fit'])
+            status = OK if fit >= SCAN_FIT_WARN else WARN
+            out.append(Check(g, 'scan fit', status, f'{fit:.0%} of points within 0.1 m of a wall'))
+        if v.get('pose_sd_m'):
+            spread = f"{float(v['pose_sd_m']):.2f} m, {float(v.get('pose_sd_deg') or 0):.1f} deg"
+            out.append(Check(g, 'pose spread', OK, spread))
+    if mode == 'mapping':
+        saved = v.get('last_save') or 'not saved yet'
+        autosave = v.get('last_autosave') or '-'
+        out.append(Check(g, 'saves', OK, f'saved {saved}; autosave {autosave}'))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Presentation
 # ---------------------------------------------------------------------------
@@ -811,7 +994,7 @@ def exit_code_for(checks: list[Check], strict: bool = False) -> int:
 
 
 def use_color() -> bool:
-    """Colour only an interactive terminal; NO_COLOR (no-color.org) opts out."""
+    """Color only an interactive terminal; NO_COLOR (no-color.org) opts out."""
     return (
         sys.stdout.isatty()
         and 'NO_COLOR' not in os.environ
@@ -906,6 +1089,11 @@ def main() -> int:
     if args.quick:
         requested = [s for s in requested if s not in ('sensors', 'actuators')]
 
+    autonomy_state = ''
+    if 'autonomy' in requested:
+        autonomy_state = _run(['systemctl', 'is-active', AUTONOMY_UNIT]).strip()
+    sample_autonomy = autonomy_state == 'active' and not args.quick
+
     started = time.monotonic()
 
     # Host checks do not need the graph, so they run while it is being
@@ -926,18 +1114,22 @@ def main() -> int:
     worker.start()
 
     ros = RosResult()
-    needs_ros = any(s in requested for s in ('sensors', 'actuators'))
+    needs_ros = any(s in requested for s in ('sensors', 'actuators')) or sample_autonomy
     if needs_ros:
-        ros = sample_ros(args.window, SENSOR_TOPICS + ACTUATOR_TOPICS)
+        specs = SENSOR_TOPICS + ACTUATOR_TOPICS + (AUTONOMY_TOPICS if sample_autonomy else [])
+        ros = sample_ros(args.window, specs)
 
     worker.join(timeout=30)
 
     checks: list[Check] = []
     checks.extend(host.get('devices', []))
     if 'sensors' in requested:
-        checks.extend(rate_checks('sensors', SENSOR_TOPICS, ros))
+        checks.extend(note_turned_off(
+            note_mapping_pause(rate_checks('sensors', SENSOR_TOPICS, ros), ros)))
     if 'actuators' in requested:
         checks.extend(actuator_checks(ros))
+    if 'autonomy' in requested:
+        checks.extend(autonomy_checks(autonomy_state, ros, sample_autonomy))
     checks.extend(host.get('system', []))
     checks.extend(host.get('services', []))
     checks.extend(host.get('network', []))

@@ -2,7 +2,7 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>racecar_neo_ros2_driver</name>
-  <version>0.8.3</version>
+  <version>0.9.0</version>
   <description>
     ROS2 driver for the MIT RACECAR Neo v2: sensor/actuator drivers, command
     arbitration, safety/uptime/recovery infrastructure (watchdog, systemd units,
@@ -12,12 +12,16 @@
   <license>GPL-3.0-or-later</license>
 
   <depend>rclpy</depend>
+  <depend>builtin_interfaces</depend>
   <depend>std_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>nav_msgs</depend>
   <depend>ackermann_msgs</depend>
   <depend>vision_msgs</depend>
   <depend>diagnostic_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>std_srvs</depend>
   <depend>joy</depend>
   <depend>realsense2_camera</depend>
 
@@ -26,8 +30,16 @@
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
   <exec_depend>python3-pil</exec_depend>
+  <exec_depend>python3-scipy</exec_depend>
   <exec_depend>python3-serial</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>slam_toolbox</exec_depend>
+  <exec_depend>nav2_amcl</exec_depend>
+  <exec_depend>nav2_map_server</exec_depend>
+  <exec_depend>nav2_lifecycle_manager</exec_depend>
   <exec_depend>sllidar_ros2</exec_depend>
+  <exec_depend>xacro</exec_depend>
   <!-- pycoral and luma.core have no rosdep keys; setup_coral.sh and
        setup_dotmatrix.sh install them. -->
 

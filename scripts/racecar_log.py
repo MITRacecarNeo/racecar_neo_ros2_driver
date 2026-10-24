@@ -7,10 +7,10 @@ session and records where it went; `status` reports on it without attaching to
 it; `stop` sends SIGINT, which is what lets rosbag2 finalize the bag rather
 than leaving it unindexed.
 
-Storage resolves at runtime rather than assuming a layout: a car imaged onto
-NVMe records to /data, one on an SD card falls back to ~/logs/bags. Recording
-the camera topics to an SD card outruns the card, so `start` says so instead of
-letting the bag quietly drop messages.
+Bags go to bags/ under the data root (racecar_neo_ros2_driver.data_root):
+/mnt/nvme/data on a car with the NVMe set up, else ~/data on the SD card.
+Recording the camera topics to an SD card outruns the card, so `start` says so
+instead of letting the bag quietly drop messages.
 """
 
 import argparse
@@ -30,9 +30,6 @@ CONFIG_DIR = Path.home() / '.config' / 'racecar'
 CONFIG_FILE = CONFIG_DIR / 'log.conf'
 STATE_FILE = CONFIG_DIR / 'log.state'
 
-# Preference order for the bag root. /data is where an NVMe car mounts its
-# scratch disk; the home fallback keeps an SD-card car working.
-ROOT_CANDIDATES = ('/data', str(Path.home() / 'logs' / 'bags'))
 
 TIMESTAMP_FMT = '%Y%m%d_%H%M%S'
 DEFAULT_STORAGE = 'mcap'
@@ -61,25 +58,22 @@ def build_bag_name(test_name: str | None, now: float, prefix_fmt: str = TIMESTAM
 
 def resolve_log_root(
     explicit: str | Path | None = None,
-    candidates: Sequence[str] = ROOT_CANDIDATES,
     environ: Mapping[str, str] | None = None,
 ) -> Path:
     """
     Pick where bags are written, most specific source first.
 
-    An explicit --dir wins, then RACECAR_LOG_DIR, then the first candidate that
-    already exists and is writable, then the last candidate, which gets created.
+    An explicit --dir wins, then RACECAR_LOG_DIR, then bags/ under the data
+    root, which gets created.
     """
     if explicit:
         return Path(explicit).expanduser()
     environ = os.environ if environ is None else environ
     if environ.get('RACECAR_LOG_DIR'):
         return Path(environ['RACECAR_LOG_DIR']).expanduser()
-    for cand in candidates:
-        p = Path(cand)
-        if p.is_dir() and os.access(p, os.W_OK):
-            return p
-    return Path(candidates[-1])
+    from racecar_neo_ros2_driver.data_root import data_dir
+
+    return data_dir('bags')
 
 
 def build_record_argv(
@@ -130,8 +124,8 @@ def unmounted_nvme(lsblk_output: str | None = None) -> str | None:
     """
     Name an NVMe disk that carries no mounted filesystem, or None.
 
-    The intended bag target is /data on NVMe. A raw NVMe means bags fall back
-    to the SD card, which is slower and smaller.
+    The intended data root is on the NVMe. A raw NVMe means bags fall back to
+    the SD card, which is slower and smaller.
     """
     if lsblk_output is None:
         try:
@@ -162,15 +156,17 @@ def unmounted_nvme(lsblk_output: str | None = None) -> str | None:
 
 
 def storage_hint(root: str | Path) -> str | None:
-    """Suggest making /data when the NVMe is present but unused."""
-    if str(root).startswith('/data'):
+    """Suggest `racecar disk setup` when the NVMe is present but unused."""
+    from racecar_neo_ros2_driver.data_root import NVME_MOUNT
+
+    if Path(root).resolve().is_relative_to(NVME_MOUNT):
         return None
     disk = unmounted_nvme()
     if not disk:
         return None
     return (
         f'/dev/{disk} is present but not mounted, so bags are going to {root} '
-        f'on the SD card. Partition and mount it at /data to use it.'
+        f'on the SD card. Run racecar disk setup to use it.'
     )
 
 
@@ -197,7 +193,7 @@ def bandwidth_warning(
     """
     Return a warning when the selection outruns the disk, else None.
 
-    Recording every topic pulls in the RealSense colour and depth streams,
+    Recording every topic pulls in the RealSense color and depth streams,
     which together outrun an SD card by roughly two to one. rosbag2 drops
     messages rather than blocking, so the bag looks healthy until it is read.
     """
@@ -332,6 +328,13 @@ def cmd_start(args: argparse.Namespace) -> int:
     topics = [t for t in topics if t]
     exclude = args.exclude or []
     storage = args.storage or cfg.get('STORAGE', DEFAULT_STORAGE)
+    if not (args.dir or cfg.get('DIR')):
+        from racecar_neo_ros2_driver.data_root import session_problem
+
+        problem = session_problem()
+        if problem:
+            print(problem, file=sys.stderr)
+            return 1
     root = resolve_log_root(args.dir or cfg.get('DIR'))
 
     try:
@@ -618,7 +621,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     start.add_argument('--topics', nargs='*', help='topics to record (default: all)')
     start.add_argument('--exclude', nargs='*', help='regex of topics to skip')
-    start.add_argument('--dir', help='bag root (default: /data, else ~/logs/bags)')
+    start.add_argument('--dir', help='bag root (default: bags/ under the data root)')
     start.add_argument('--name', help='full bag name, replacing timestamp_testname')
     start.add_argument('--storage', choices=('mcap', 'sqlite3'), help='storage plugin')
     start.add_argument(

@@ -21,6 +21,10 @@ edgetpu_node:
     # See docs/troubleshooting.md, "EdgeTPU inference rate and threshold".
     inference_rate_hz: 15.0
 
+    # Drop the camera subscription while /autonomy/status reports mapping, so
+    # slam_toolbox gets the CPU (about half a core); back on any other mode.
+    pause_while_mapping: true
+
     # Heartbeat + stale-input watchdog.
     diagnostics_period_sec: 1.0
     image_timeout_sec: 5.0

@@ -1,5 +1,7 @@
 [Unit]
 Description=RACECAR Neo Teleop (control + sensors + ML + display)
+Wants=racecar-data.service
+After=racecar-data.service
 After=network-online.target
 Wants=network-online.target
 # Wants= starts watchdog with teleop without requiring it; watchdog's
@@ -14,6 +16,8 @@ ExecStart=/home/racecar/ros2_ws/src/racecar_neo_ros2_driver/scripts/launch_teleo
 Restart=on-failure
 RestartSec=10
 Environment=HOME=/home/racecar
+# RACECAR_DATA_DIR, from racecar-data.service.
+EnvironmentFile=-/run/racecar/environment
 WorkingDirectory=/home/racecar/ros2_ws
 KillMode=control-group
 TimeoutStopSec=15

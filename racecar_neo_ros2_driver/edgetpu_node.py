@@ -9,6 +9,11 @@ diagnostic_msgs/DiagnosticArray on /diagnostics.
 Inference is capped at inference_rate_hz, independent of the camera; frames
 above the cap are dropped before decode.
 
+With pause_while_mapping, the node drops its camera subscription while
+/autonomy/status reports mode 'mapping' and subscribes again on any other
+mode: receiving 60 fps color frames costs about half a core even when
+inference skips them, which slam_toolbox needs while a map is built.
+
 Numpy-only image path; no cv_bridge or cv2 dependency.
 """
 
@@ -25,7 +30,12 @@ from pycoral.utils.edgetpu import list_edge_tpus, make_interpreter
 import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import (
+    qos_profile_sensor_data,
+    QoSDurabilityPolicy,
+    QoSProfile,
+    QoSReliabilityPolicy,
+)
 from rclpy.time import Time
 from sensor_msgs.msg import Image
 from vision_msgs.msg import (
@@ -37,6 +47,11 @@ from vision_msgs.msg import (
     Point2D,
     Pose2D,
 )
+
+
+def pauses_for(mode: str, enabled: bool) -> bool:
+    """Report whether inference pauses for an /autonomy/status mode."""
+    return enabled and mode == 'mapping'
 
 
 def load_labels(path: str) -> dict[int, str]:
@@ -162,6 +177,7 @@ class EdgeTPUNode(Node):
         self.declare_parameter('inference_rate_hz', 15.0)
         self.declare_parameter('diagnostics_period_sec', 1.0)
         self.declare_parameter('image_timeout_sec', 5.0)
+        self.declare_parameter('pause_while_mapping', True)
 
         model_path = self.get_parameter('model_path').value
         labels_path = self.get_parameter('labels_path').value
@@ -173,6 +189,7 @@ class EdgeTPUNode(Node):
         self._inference_period = 1.0 / rate_hz if rate_hz > 0 else 0.0
         diag_period = self.get_parameter('diagnostics_period_sec').value
         self._image_timeout = self.get_parameter('image_timeout_sec').value
+        self._pause_while_mapping = bool(self.get_parameter('pause_while_mapping').value)
 
         if not model_path:
             self.get_logger().fatal('model_path parameter is required')
@@ -229,10 +246,39 @@ class EdgeTPUNode(Node):
 
         self._det_pub = self.create_publisher(Detection2DArray, '/edgetpu/inference', 10)
         self._diag_pub = self.create_publisher(DiagnosticArray, '/diagnostics', 10)
-        self.create_subscription(Image, image_topic, self._image_cb, qos_profile_sensor_data)
+        self._image_topic = image_topic
+        self._image_sub: Any = None
+        self._paused = False
+        self._subscribe_images()
+        latched = QoSProfile(
+            depth=1,
+            reliability=QoSReliabilityPolicy.RELIABLE,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self.create_subscription(DiagnosticStatus, '/autonomy/status', self._status_cb, latched)
         self.create_timer(diag_period, self._publish_diagnostics)
 
         self.get_logger().info(f'Subscribed to {image_topic}, publishing /edgetpu/inference')
+
+    def _subscribe_images(self) -> None:
+        self._image_sub = self.create_subscription(
+            Image, self._image_topic, self._image_cb, qos_profile_sensor_data
+        )
+
+    def _status_cb(self, msg: DiagnosticStatus) -> None:
+        mode = next((kv.value for kv in msg.values if kv.key == 'mode'), '')
+        pause = pauses_for(mode, self._pause_while_mapping)
+        if pause == self._paused:
+            return
+        self._paused = pause
+        if pause:
+            self.destroy_subscription(self._image_sub)
+            self._image_sub = None
+            self.get_logger().info('Mapping: inference paused, camera unsubscribed.')
+        else:
+            self._last_image_time = None
+            self._subscribe_images()
+            self.get_logger().info('Mapping ended: inference resumed.')
 
     def _image_cb(self, msg: Image) -> None:
         # Stamped for every frame, before the rate gate: the stale-input
@@ -382,6 +428,9 @@ class EdgeTPUNode(Node):
         if not self._tpu_ok:
             status.level = DiagnosticStatus.ERROR
             status.message = 'EdgeTPU inference failed'
+        elif self._paused:
+            status.level = DiagnosticStatus.OK
+            status.message = 'Paused while mapping'
         elif self._last_image_time is None:
             status.level = DiagnosticStatus.WARN
             status.message = 'No images received yet'

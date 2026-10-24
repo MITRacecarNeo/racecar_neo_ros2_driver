@@ -13,5 +13,6 @@ def generate_launch_description() -> LaunchDescription:
         extra_yamls=(
             ('lsm9ds1_cal_config', 'lsm9ds1_cal.yaml'),
             ('lsm9ds1_mag_cal_config', 'lsm9ds1_mag_cal.yaml'),
+            ('odom_config', 'odom.yaml'),
         ),
     )

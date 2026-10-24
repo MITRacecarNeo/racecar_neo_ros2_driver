@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en" data-app="Wall follow">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wall follow - RACECAR Neo</title>
+<link rel="stylesheet" href="/ui/rcn.css?v=11">
+<link rel="icon" href="/ui/brand/app-icon-32.png">
+<script src="/ui/lost.js?v=11" defer></script>
+<script src="/ui/override.js?v=11" defer></script>
+<script src="/ui/charts.js?v=11"></script>
+<style>
+  .rcn-header .heading { display: flex; flex-direction: column; min-width: 0; }
+  .rcn-header .meta { font: 600 13px/18px var(--rcn-font-sans); color: var(--rcn-text-muted); }
+  .rcn-header .meta b { color: var(--rcn-text); font-variant-numeric: tabular-nums; }
+  main { max-width: 1500px; margin: 0 auto; padding: var(--rcn-space-4); display: grid; gap: var(--rcn-space-4); }
+  .grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) minmax(0, 1fr); gap: var(--rcn-space-4); }
+  @media (max-width: 1100px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--rcn-surface); border-radius: var(--rcn-radius-md); padding: var(--rcn-space-4); min-width: 0; }
+  .card h2 { font-size: 20px; line-height: 28px; margin-bottom: var(--rcn-space-3); }
+  .caption { font: 600 13px/18px var(--rcn-font-sans); color: var(--rcn-text-muted); margin-top: var(--rcn-space-2); }
+  canvas.dark { background: var(--rcn-code-bg); border-radius: var(--rcn-radius-sm); width: 100%; display: block; }
+  .lidarbox { position: relative; }
+  .zoom { position: absolute; right: var(--rcn-space-2); top: var(--rcn-space-2); display: flex; flex-direction: column; gap: var(--rcn-space-1); }
+  .zoom .rcn-btn { width: 36px; height: 36px; padding: 0; justify-content: center; background: var(--rcn-bg); }
+  .rcn-chart { height: 300px; }
+  .rcn-legend { margin-top: var(--rcn-space-2); }
+  .field { display: grid; grid-template-columns: 1fr auto; gap: var(--rcn-space-2); align-items: center; margin-top: var(--rcn-space-3); }
+  .field .name { font-weight: 600; }
+  .field .unit { font-size: 13px; color: var(--rcn-text-muted); }
+  .field input[type=number] { width: 7rem; padding: 4px 8px; }
+  label.slider { display: block; margin-top: var(--rcn-space-3); font-weight: 600; }
+  label.slider b { font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; }
+  .tools { display: flex; flex-wrap: wrap; gap: var(--rcn-space-2); align-items: center; margin-top: var(--rcn-space-4); }
+  .readout { font: 400 13px/20px var(--rcn-font-mono); color: var(--rcn-code-text); margin-top: var(--rcn-space-3); }
+  select.rcn-input { max-width: 220px; }
+  #toast { position: fixed; left: 50%; bottom: var(--rcn-space-6); transform: translateX(-50%); padding: var(--rcn-space-2) var(--rcn-space-4); border-radius: var(--rcn-radius-md); background: var(--rcn-ink); border: 1px solid var(--rcn-steel); font-weight: 600; opacity: 0; transition: opacity 0.2s; pointer-events: none; }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<header class="rcn-header">
+  <img class="rcn-mark" src="/ui/brand/mark.png" alt="RACECAR Neo">
+  <div class="heading">
+    <span class="rcn-title">Wall follow</span>
+    <span class="meta">mode <b id="mode">-</b> &middot; error <b id="err">-</b> &middot; steer <b id="steer">-</b> &middot; throttle <b id="thr">-</b> &middot; encoder <b id="enc">-</b> m/s</span>
+  </div>
+  <span class="rcn-spacer"></span>
+  <button class="rcn-btn quiet small" onclick="reset()" title="Reload saved settings.">Reset</button>
+  <button class="rcn-btn danger small" onclick="stopCar()" title="Set speed to 0.">Stop</button>
+</header>
+
+<main>
+<div class="grid">
+  <div class="card">
+    <h2>Lidar</h2>
+    <div class="lidarbox">
+      <canvas id="lidar" class="dark" width="560" height="560"></canvas>
+      <div class="zoom">
+        <button class="rcn-btn quiet" onclick="zoom(1 / 1.25)" aria-label="Zoom in"><svg class="rcn-icon"><use href="/ui/icons.svg#plus"/></svg></button>
+        <button class="rcn-btn quiet" onclick="zoom(1.25)" aria-label="Zoom out"><svg class="rcn-icon"><use href="/ui/icons.svg#minus"/></svg></button>
+      </div>
+    </div>
+    <div class="caption">Range <span id="lidarRange">4.0</span> m</div>
+  </div>
+
+  <div class="card">
+    <h2>Error</h2>
+    <div class="rcn-chart" id="chart"></div>
+    <div class="rcn-legend" id="chartLegend"></div>
+  </div>
+
+  <div class="card">
+    <h2>Tune</h2>
+    <div id="form"></div>
+    <div class="tools">
+      <button class="rcn-btn primary small" onclick="apply()">Apply</button>
+      <button class="rcn-btn quiet small" onclick="saveTune()">Save</button>
+      <button class="rcn-btn quiet small" onclick="loadTune()">Load</button>
+    </div>
+    <div class="caption">Press Apply before Save. Save keeps only applied values.</div>
+    <div class="readout" id="detail"></div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Logs</h2>
+  <div class="tools" style="margin-top: 0">
+    <button class="rcn-btn quiet small" onclick="saveLog()">Save log</button>
+    <select class="rcn-input" id="logsel" aria-label="Log file"></select>
+    <button class="rcn-btn quiet small" onclick="loadLog()">Load log</button>
+    <span class="caption" id="loginfo" style="margin-top: 0"></span>
+  </div>
+  <div class="rcn-chart" id="logChart" style="height: 200px; margin-top: var(--rcn-space-3)"></div>
+  <div class="rcn-legend" id="logLegend"></div>
+</div>
+</main>
+<div id="toast" role="status"></div>
+
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+const { timeChart, legendHtml, recentTicks, niceTicks } = RcnCharts;
+const FIELDS = { static: ['speed', 'kp', 'kd', 'speed_kp', 'speed_kd', 'window', 'lookahead'],
+                 dynamic: ['speed', 'kp', 'kd', 'speed_kp', 'speed_kd', 'window', 'lookahead', 'width', 'side_weight'] };
+const UNITS = { kp: 'steer per m of error', kd: 'damper gain', speed_kp: 'throttle per m/s of error',
+                speed_kd: 'speed error damper', window: 'deg', lookahead: 'm', width: 'deg',
+                side_weight: 'm per deg; + prefers right' };
+const STEPS = { kp: '0.01', kd: '0.01', speed_kp: '0.01', speed_kd: '0.01', side_weight: '0.01' };
+let mode = 'static';
+
+function post(path, body) { return fetch(path, { method: 'POST', body: body ? JSON.stringify(body) : null }); }
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(window.toastTimer);
+  window.toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+}
+function saveTune() { post('/save').then(() => toast('Saved.')); }
+function loadTune() { post('/load').then(() => { $('form').dataset.mode = ''; toast('Loaded.'); }); }
+function reset() { post('/load').then(() => { $('form').dataset.mode = ''; }); }
+function stopCar() { post('/params', { speed: 0 }).then(() => { $('form').dataset.mode = ''; }); }
+function apply() {
+  const out = {};
+  for (const f of FIELDS[mode]) out[f] = parseFloat($('in_' + f).value);
+  post('/params', out).then(() => toast('Applied.'));
+}
+
+function buildForm(params) {
+  // Rebuild only when the mode changes, so typing is not interrupted.
+  if ($('form').dataset.mode === mode) return;
+  $('form').dataset.mode = mode;
+  $('form').innerHTML = FIELDS[mode].map((f) => f === 'speed'
+    // Speed applies while dragging.
+    ? `<label class="slider">speed (0 to 1, times max_mps) <b id="speedval">${params.speed}</b>
+       <input id="in_speed" type="range" min="0" max="1" step="0.01" value="${params.speed}"></label>`
+    : `<div class="field"><div><div class="name">${f}</div><div class="unit">${UNITS[f]}</div></div>
+       <input id="in_${f}" class="rcn-input" type="number" step="${STEPS[f] || 'any'}" value="${params[f]}" aria-label="${f}"></div>`).join('');
+  $('in_speed').oninput = (e) => { $('speedval').textContent = e.target.value; post('/params', { speed: parseFloat(e.target.value) }); };
+}
+
+// ---- lidar ----
+let VIEW = 4.0;
+function zoom(f) { VIEW = Math.min(12, Math.max(1, VIEW * f)); }
+$('lidar').addEventListener('wheel', (e) => { e.preventDefault(); zoom(e.deltaY > 0 ? 1.2 : 1 / 1.2); });
+function drawLidar(scan, ov) {
+  const c = $('lidar'), x = c.getContext('2d');
+  const cx = c.width / 2, cy = c.height / 2, k = (cx - 10) / VIEW;
+  const L = ov.la ? Math.min(ov.la, VIEW) : VIEW;
+  x.clearRect(0, 0, c.width, c.height);
+  x.strokeStyle = 'rgba(227, 227, 235, 0.18)';
+  for (let r = 1; r <= VIEW; r++) { x.beginPath(); x.arc(cx, cy, r * k, 0, 2 * Math.PI); x.stroke(); }
+  // 0 deg is the nose (up); positive degrees are to the right.
+  x.fillStyle = '#e3e3eb';
+  for (const [deg, r] of scan) {
+    const a = deg * Math.PI / 180;
+    x.fillRect(cx + Math.sin(a) * r * k - 1.5, cy - Math.cos(a) * r * k - 1.5, 3, 3);
+  }
+  const ray = (deg, r, color, w) => {
+    const a = deg * Math.PI / 180;
+    x.strokeStyle = color; x.lineWidth = w; x.beginPath();
+    x.moveTo(cx, cy); x.lineTo(cx + Math.sin(a) * r * k, cy - Math.cos(a) * r * k); x.stroke();
+  };
+  if (ov.mode === 'static') {
+    for (const s of [1, -1]) {
+      ray(s * ov.look_angle - ov.window / 2, L, 'rgba(227, 227, 235, 0.45)', 1);
+      ray(s * ov.look_angle + ov.window / 2, L, 'rgba(227, 227, 235, 0.45)', 1);
+      ray(s * ov.look_angle, Math.min(s > 0 ? ov.right : ov.left, VIEW), '#f49a4b', 3);
+    }
+  } else if (ov.mode === 'dynamic') {
+    ray(-ov.width, L, 'rgba(227, 227, 235, 0.45)', 1);
+    ray(ov.width, L, 'rgba(227, 227, 235, 0.45)', 1);
+    ray(ov.target_deg, L, '#f49a4b', 3);
+  }
+  x.fillStyle = '#ffffff';
+  x.beginPath(); x.moveTo(cx, cy - 10); x.lineTo(cx - 7, cy + 8); x.lineTo(cx + 7, cy + 8); x.fill();
+  $('lidarRange').textContent = VIEW.toFixed(1);
+}
+
+const shown = new Map();
+function setLegend(id, html) { if (shown.get(id) !== html) { shown.set(id, html); $(id).innerHTML = html; } }
+
+let busy = false;
+function update() {
+  if (busy) return;
+  busy = true;
+  fetch('/state').then((r) => r.json()).then((d) => {
+    busy = false;
+    mode = (d.params.mode == 1 || d.params.mode === 'dynamic') ? 'dynamic' : 'static';
+    const ov = d.overlay || {};
+    $('mode').textContent = mode;
+    $('err').textContent = ov.error ?? '-';
+    $('steer').textContent = ov.steer ?? '-';
+    $('thr').textContent = ov.speed_cmd ?? '-';
+    $('enc').textContent = d.enc_speed;
+    buildForm(d.params);
+    $('detail').textContent = mode === 'static'
+      ? `left ${ov.left ?? '-'} m  right ${ov.right ?? '-'} m`
+      : `target ${ov.target_deg ?? '-'} deg`;
+    drawLidar(d.scan, ov);
+    $('lidar').title = mode === 'static' ? 'Orange: measured distances. Gray: averaging windows.' : 'Orange: target heading. Gray: search arc.';
+    // Static error is meters, shown in cm; dynamic error is -1 to 1.
+    const cm = mode === 'static', hist = d.hist || [];
+    const now = hist.length ? hist[hist.length - 1][0] : 0;
+    timeChart($('chart'), now - 30, now,
+      [{ name: 'Error', style: 'a', axis: 'l', unit: cm ? 'cm' : '', digits: cm ? 0 : 2, minSpan: cm ? 5 : 0.1,
+         pts: hist.map((r) => [r[0], cm ? r[1] * 100 : r[1]]) }],
+      recentTicks(now, 10), { gapSec: 0.5, marks: d.marks });
+    setLegend('chartLegend', legendHtml([{ name: cm ? 'Error (cm): right minus left, setpoint 0' : 'Error (-1 to 1), setpoint 0', style: 'a' }]));
+  }).catch(() => { busy = false; });
+}
+
+// ---- logs ----
+const logTicks = (t0) => Object.assign((a, b) => {
+  const step = niceTicks(0, b - a, 5)[1] || 1, out = [];
+  for (let s = 0; s <= b - a + 1e-6; s += step) out.push([a + s, `${(a + s - t0).toFixed(0)} s`]);
+  return out;
+}, { label: (t) => `${(t - t0).toFixed(1)} s` });
+function loadLog() {
+  const f = $('logsel').value;
+  if (!f) return;
+  fetch('/logs/' + f).then((r) => r.text()).then((txt) => {
+    const lines = txt.trim().split('\n');
+    const marks = lines.filter((l) => l.startsWith('# mark')).map((l) => { const p = l.split(','); return [parseFloat(p[1]), p.slice(2).join(',')]; });
+    const rows = lines.filter((l) => !l.startsWith('#')).slice(1).map((l) => l.split(',').map(Number));
+    $('loginfo').textContent = `${f}: ${rows.length} rows, ${marks.length} changes`;
+    if (!rows.length) return;
+    const t0 = rows[0][0], t1 = rows[rows.length - 1][0];
+    timeChart($('logChart'), t0, t1, [
+      { name: 'Error', style: 'a', axis: 'l', unit: '', digits: 3, minSpan: 0.1, pts: rows.map((r) => [r[0], r[1]]) },
+      { name: 'Encoder', style: 'b', axis: 'r', unit: 'm/s', digits: 2, minSpan: 0.2, pts: rows.map((r) => [r[0], r[4]]) },
+    ], logTicks(t0), { gapSec: 0.5, marks });
+    setLegend('logLegend', legendHtml([{ name: 'Error (left)', style: 'a' }, { name: 'Encoder (m/s, right)', style: 'b' }]));
+  });
+}
+function saveLog() { post('/logs/save').then(() => { refreshLogs(true); toast('Log saved.'); }); }
+function refreshLogs(loadLatest) {
+  fetch('/logs').then((r) => r.json()).then((names) => {
+    const sel = $('logsel');
+    sel.innerHTML = names.map((n) => `<option>${n}</option>`).join('');
+    sel.selectedIndex = names.length - 1;
+    if (loadLatest && names.length) loadLog();
+  });
+}
+refreshLogs(false);
+
+update();
+setInterval(update, 120);
+</script>
+</body>
+</html>

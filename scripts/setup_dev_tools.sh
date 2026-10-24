@@ -17,6 +17,21 @@ sudo apt-get install -y \
     gstreamer1.0-libav \
     libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
 
+# Pi platform tools and services the car relies on. The Ubuntu Desktop image
+# carries most of them already; listing them keeps a car set up from a
+# smaller image working.
+#   raspi-config, rpi-eeprom: UART, I2C, SPI, and the EEPROM power keys
+#     (setup_raspi_config.sh)
+#   libraspberrypi-bin: vcgencmd (throttling, under-voltage, RTC)
+#   network-manager: racecar wifi, racecar eth, eth_monitor.py
+#   avahi-daemon: racecar-neo.local on the network
+#   polkitd: the rules that let the dashboards and racecar map manage units
+#   python3-matplotlib: JupyterLab plots (setup_jupyter.sh keeps this version)
+sudo apt-get install -y \
+    raspi-config rpi-eeprom libraspberrypi-bin \
+    network-manager avahi-daemon polkitd \
+    python3-matplotlib
+
 # Linters, pinned so every car agrees with pyproject.toml. Per-user install
 # (PEP 668 blocks system-wide); binaries land in ~/.local/bin, which
 # setup_user_env.sh puts on PATH.

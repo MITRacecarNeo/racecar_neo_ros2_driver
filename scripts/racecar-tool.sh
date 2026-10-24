@@ -3,6 +3,17 @@
 # Not executed directly: it defines a `racecar` shell function so the build /
 # test / source / cd subcommands can mutate the current shell (PWD, env).
 
+# Where the car's data goes, for terminals that are not login shells (login
+# shells get it from /etc/profile.d/racecar-data.sh).
+if [ -z "${RACECAR_DATA_DIR:-}" ]; then
+    if [ -r /run/racecar/data_root ]; then
+        RACECAR_DATA_DIR="$(cat /run/racecar/data_root)"
+    else
+        RACECAR_DATA_DIR="$HOME/data"
+    fi
+    export RACECAR_DATA_DIR
+fi
+
 racecar() {
     local pkg="racecar_neo_ros2_driver"
     local ws="$HOME/ros2_ws"
@@ -98,21 +109,19 @@ racecar() {
             local action="${1:-status}"
             shift || true
             local -a core_units=("racecar-teleop" "racecar-watchdog"
-                                 "racecar-dashboard" "racecar-jupyter")
+                                 "racecar-dashboard" "racecar-jupyter"
+                                 "racecar-mapview")
             # Lab dashboards, installed by setup_dashboards.sh. All three
             # publish /drive; a second publisher fights the mux, so starting
             # one stops the others.
             local -a dash_units=("racecar-webteleop" "racecar-linefollow"
                                  "racecar-wallfollow")
+            # Dashboards that do not drive; they run alongside the above.
+            local -a app_units=("racecar-camlabel")
             case "$action" in
                 install)
                     bash "$pkg_dir/scripts/setup_services.sh"
-                    # Units only: the checkouts are cloned by
-                    # `racecar setup dashboards`, which needs the network.
-                    bash "$pkg_dir/scripts/setup_dashboards.sh" --units-only
-                    ;;
-                update)
-                    bash "$pkg_dir/scripts/setup_dashboards.sh" --update
+                    bash "$pkg_dir/scripts/setup_dashboards.sh"
                     ;;
                 start)
                     if [[ -n "$1" ]]; then
@@ -168,11 +177,22 @@ racecar() {
                     for u in "${core_units[@]}"; do
                         state=$(systemctl is-active "$u" 2>&1 || true)
                         enabled=$(systemctl is-enabled "$u" 2>&1 || true)
-                        printf "  %-22s  active=%-12s enabled=%s\n" \
-                            "$u" "$state" "$enabled"
+                        port=$(sed -n 's/.*(port \([0-9]*\)).*/\1/p' \
+                            "/etc/systemd/system/$u.service" 2>/dev/null | head -1)
+                        printf "  %-22s  active=%-12s enabled=%-10s %s\n" \
+                            "$u" "$state" "$enabled" \
+                            "${port:+http://$(hostname).local:$port}"
                     done
+                    echo "autonomy (started by racecar map):"
+                    u=racecar-autonomy
+                    if [[ ! -f "/etc/systemd/system/$u.service" ]]; then
+                        printf "  %-22s  not installed\n" "$u"
+                    else
+                        state=$(systemctl is-active "$u" 2>&1 || true)
+                        printf "  %-22s  active=%s\n" "$u" "$state"
+                    fi
                     echo "dashboards:"
-                    for u in "${dash_units[@]}"; do
+                    for u in "${dash_units[@]}" "${app_units[@]}"; do
                         if [[ ! -f "/etc/systemd/system/$u.service" ]]; then
                             printf "  %-22s  not installed\n" "$u"
                             continue
@@ -192,19 +212,19 @@ usage: racecar service <action> [unit]
 actions:
   install         Install and enable the core units; install the dashboard
                   units stopped and disabled
-  update          Fast-forward the dashboard checkouts and re-render their units
   start [name]    Start racecar-<name>; default = teleop (watchdog follows via BindsTo).
                   Starting a lab dashboard stops the other /drive publishers first.
   stop [name]     Stop racecar-<name>; default = teleop
   restart [name]  Restart racecar-<name>; default = teleop
-  enable [name]   Enable one unit, or with no name the four core units
-  disable [name]  Disable one unit, or with no name the four core units
+  enable [name]   Enable one unit, or with no name the five core units
+  disable [name]  Disable one unit, or with no name the five core units
   logs [name]     journalctl -u racecar-<name> -f; default = teleop
-  status          active/enabled snapshot, core and dashboards (default)
-core units: teleop, watchdog, dashboard, jupyter
-dashboards: webteleop(8081) linefollow(8082) wallfollow(8083)
-All three publish /drive, so only one runs at a time; starting one stops
-the others.
+  status          active/enabled snapshot, core, autonomy, and dashboards (default)
+core units: teleop, watchdog, dashboard(8080), jupyter(8888), mapview(8084)
+autonomy: started and stopped by `racecar map` or the map viewer, not at boot
+dashboards: webteleop(8081) linefollow(8082) wallfollow(8083) camlabel(8085)
+webteleop, linefollow and wallfollow publish /drive. Of those, only one runs at a time;
+starting one stops the others. camlabel runs alongside them.
 __RC_SVC_HELP__
                     ;;
                 *)
@@ -227,8 +247,8 @@ __RC_SVC_HELP__
                     bash "$pkg_dir/scripts/setup_all.sh" "$@"
                     ;;
                 dashboards)
-                    # Clones or fast-forwards the three lab-dashboard checkouts
-                    # and installs their units, stopped and disabled.
+                    # Installs the four lab dashboards' units, stopped and
+                    # disabled.
                     bash "$pkg_dir/scripts/setup_dashboards.sh" "$@"
                     ;;
                 realsense)
@@ -1061,6 +1081,33 @@ __RC_CLEANUP_HELP__
             python3 "${RACECAR_LOG_SCRIPT:-$pkg_dir/scripts/racecar_log.py}" "$@"
             ;;
 
+        calibrate)
+            # Guided calibration; see scripts/calibration/calibrate.py.
+            python3 "${RACECAR_CALIBRATE_SCRIPT:-$pkg_dir/scripts/calibration/calibrate.py}" "$@"
+            ;;
+
+        disk|data)
+            # The NVMe data drive and the data root; see scripts/racecar_disk.py
+            # and racecar_neo_ros2_driver/data_root.py.
+            if [[ "$cmd" == "data" ]]; then
+                python3 "${RACECAR_DISK_SCRIPT:-$pkg_dir/scripts/racecar_disk.py}" data "$@"
+            else
+                python3 "${RACECAR_DISK_SCRIPT:-$pkg_dir/scripts/racecar_disk.py}" "$@"
+            fi
+            ;;
+
+        profile)
+            # This car's settings outside the driver folder; see
+            # scripts/racecar_profile.py and racecar_neo_ros2_driver/car_profile.py.
+            python3 "${RACECAR_PROFILE_SCRIPT:-$pkg_dir/scripts/racecar_profile.py}" "$@"
+            ;;
+
+        map)
+            # SLAM mapping and localization through racecar-autonomy.service;
+            # see scripts/racecar_map.py and scripts/map_control.py.
+            python3 "${RACECAR_MAP_SCRIPT:-$pkg_dir/scripts/racecar_map.py}" "$@"
+            ;;
+
         status)
             # Whole-car diagnostic. Read-only: it observes topics and reads
             # sysfs, and never commands the hardware. Exits non-zero when a
@@ -1131,10 +1178,8 @@ Commands:
                                            --eth-mode=static|dynamic
                                            --show
                                            --reset (disable the wlan1 AP + clear saved ID)
-                          dashboards   clone or fast-forward the three lab dashboards
-                                         and install their units (stopped, disabled).
-                                         Flags: --update (pull, then re-render units)
-                                                --units-only (no network)
+                          dashboards   install the lab dashboards' units
+                                         (stopped, disabled).
                                          Skip with RACECAR_DASHBOARDS=0.
                           realsense    flash D435i firmware from the locally-staged
                                          image (offline; for airgapped units). Reads
@@ -1147,12 +1192,11 @@ Commands:
                           stop [name]          default: teleop
                           restart [name]       default: teleop
                           enable|disable [name] one unit, or the core units
-                          update               ff-only pull, then re-render dashboard units
                           logs [name]          journalctl -f for racecar-<name>
                           status               active/enabled summary (default)
                         Core units: teleop, watchdog, dashboard, jupyter
-                        Dashboards: webteleop, linefollow, wallfollow
-                        Starting a dashboard stops the other /drive publishers.
+                        Dashboards: webteleop, linefollow, wallfollow, camlabel
+                        Starting a driving dashboard stops the other /drive publishers.
                         Bare enable/disable covers the core units only.
     library <action>    Manage racecar_student.pth in user site-packages.
                           --select <folder>   point at ~/jupyter_ws/<folder>/library
@@ -1171,6 +1215,75 @@ Commands:
                           --section a,b       devices, sensors, actuators,
                                               system, services, network
                           --window SEC        ROS sample window (default 5.0)
+    calibrate [steps]   Calibrate the sensors on the car via a guided session.
+                        Sensors to calibrate include:
+                          imu         LSM9DS1 accel bias and scale, gyro bias
+                          mag         LSM9DS1 magnetometer
+                          realsense   RealSense accel bias and scale, gyro bias
+                          lidar       lidar yaw from the direction of travel;
+                                      the car drives itself while RB is held
+                          odom        gyro yaw scale (circles) and encoder
+                                      speed scale (straight drive), both
+                                      against the lidar
+                          steering    steering trim (straight at steering 0)
+                                      and curvature per command, against the
+                                      lidar; the car drives itself while RB
+                                      is held
+                          dynamics    steering angles, servo time, speeds
+                                      and stop distances for the simulator;
+                                      the car drives itself while RB is held;
+                                      no check
+                        No arguments: all but dynamics.
+                        `racecar calibrate status` lists what is calibrated
+                        on this car, when, and the stored values.
+                        `racecar calibrate check [steps]` verifies each
+                        calibration against the live sensors.
+                        To fully prepare a car for a project, run the
+                        calibration step, then restart teleop, and finally
+                        run the check command.
+    data [path]         Where the car's data goes (the data root): the NVMe at
+                        /mnt/nvme/data when set up, else ~/data. Programs read
+                        it from $RACECAR_DATA_DIR. `path` prints it alone.
+    disk [action]       The NVMe data drive. Actions:
+                          status    model, serial, size, mount, fstab, health
+                          setup     set up a blank drive, or move one from
+                                    /data, at /mnt/nvme; copy ~/data onto it
+                          format    erase a drive with data on it (asks for
+                                    its serial)
+                          check     unmount, e2fsck, mount again
+    profile [action]    This car's settings, kept in ~/.config/racecar so a
+                        driver update or re-clone keeps the calibration.
+                          (none)        path, car name, files and dates
+                          path          the profile folder
+                          migrate       move config/*.local.yaml and dashboard
+                                        tuning out of the driver folder
+                          export FILE   write the profile to FILE (.tar.gz)
+                          import FILE   read a profile written by export
+    map <action>        Build, save, and load maps (SLAM on top of teleop).
+                        Teleop must be running; drive with the gamepad as
+                        usual. Maps are in maps/ under the data root.
+                          start NAME          start mapping; speed held at the
+                                              firmware minimum while mapping
+                                                --from SAVED    extend SAVED
+                                                --pose x,y,yaw  with --from: the
+                                                                car's pose on SAVED
+                                                --force         replace NAME (the
+                                                                old one is kept)
+                          save                save the map; waits for the files
+                          stop                stop (a mapping run is autosaved)
+                          resume              start the last run again
+                          load NAME           localize on NAME; starts from the
+                                              car's last pose on it
+                                                --pose x,y,yaw  start pose
+                                                --global        search the map
+                                                --localizer amcl|slam_toolbox
+                          recover NAME        keep an autosave as the saved map
+                          status              mode, map, localized, pose
+                          list                maps; unsaved ones marked
+                          info NAME           size, dates, poses, frames
+                          foxglove on|off     foxglove_bridge (port 8765) at the
+                                              next start or load
+                        Poses are in the map frame: meters, meters, radians.
     log <action>        Record and analyze ROS 2 bags. Actions:
                           start [name]        record; bag is <timestamp>_<name>
                                                 --topics A B    default: all
@@ -1211,11 +1324,14 @@ _racecar_complete() {
     local sub="${COMP_WORDS[1]:-}"
 
     if [[ $COMP_CWORD -eq 1 ]]; then
-        COMPREPLY=( $(compgen -W "build test source cd teleop launch lint udev watchdog service setup eth wifi desktop library log cleanup status help" -- "$cur") )
+        COMPREPLY=( $(compgen -W "build test source cd teleop launch lint udev watchdog service setup eth wifi desktop library log calibrate profile disk data cleanup map status help" -- "$cur") )
         return
     fi
 
     case "$sub" in
+        calibrate)
+            COMPREPLY=( $(compgen -W "status check imu mag realsense lidar odom steering dynamics --help" -- "$cur") )
+            ;;
         launch)
             local launch_dir="$HOME/ros2_ws/src/racecar_neo_ros2_driver/launch"
             if [[ -d "$launch_dir" ]]; then
@@ -1255,6 +1371,52 @@ _racecar_complete() {
             ;;
         status)
             COMPREPLY=( $(compgen -W "--quick --json --strict --section --window --help" -- "$cur") )
+            ;;
+        disk)
+            COMPREPLY=( $(compgen -W "status setup format check" -- "$cur") )
+            ;;
+        data)
+            COMPREPLY=( $(compgen -W "path" -- "$cur") )
+            ;;
+        profile)
+            if [[ $COMP_CWORD -eq 2 ]]; then
+                COMPREPLY=( $(compgen -W "path migrate export import" -- "$cur") )
+            else
+                COMPREPLY=( $(compgen -f -- "$cur") )
+            fi
+            ;;
+        map)
+            local maps_dir="${RACECAR_MAP_ROOT:-$HOME/data/maps}"
+            local maps=""
+            if [[ -d "$maps_dir" ]]; then
+                maps=$(cd "$maps_dir" && ls -d */ 2>/dev/null | sed 's#/$##' | grep -vx replaced)
+            fi
+            if [[ $COMP_CWORD -eq 2 ]]; then
+                COMPREPLY=( $(compgen -W "start save stop resume load recover status list info foxglove" -- "$cur") )
+            elif [[ "$prev" == "--from" ]]; then
+                COMPREPLY=( $(compgen -W "$maps" -- "$cur") )
+            elif [[ "$prev" == "--localizer" ]]; then
+                COMPREPLY=( $(compgen -W "amcl slam_toolbox" -- "$cur") )
+            else
+                case "${COMP_WORDS[2]}" in
+                    start)
+                        COMPREPLY=( $(compgen -W "--from --pose --force" -- "$cur") )
+                        ;;
+                    load)
+                        if [[ $COMP_CWORD -eq 3 ]]; then
+                            COMPREPLY=( $(compgen -W "$maps" -- "$cur") )
+                        else
+                            COMPREPLY=( $(compgen -W "--pose --global --localizer" -- "$cur") )
+                        fi
+                        ;;
+                    recover|info)
+                        COMPREPLY=( $(compgen -W "$maps" -- "$cur") )
+                        ;;
+                    foxglove)
+                        COMPREPLY=( $(compgen -W "on off" -- "$cur") )
+                        ;;
+                esac
+            fi
             ;;
         log)
             if [[ $COMP_CWORD -eq 2 ]]; then
@@ -1308,19 +1470,19 @@ _racecar_complete() {
             elif [[ "${COMP_WORDS[2]}" == "networking" ]]; then
                 COMPREPLY=( $(compgen -W "--ssid= --psk= --channel= --ap-addr= --ap-iface= --eth-static= --eth-mode= --show --reset --help" -- "$cur") )
             elif [[ "${COMP_WORDS[2]}" == "dashboards" ]]; then
-                COMPREPLY=( $(compgen -W "--update --units-only --help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "--help" -- "$cur") )
             elif [[ "${COMP_WORDS[2]}" == "realsense" ]]; then
                 COMPREPLY=( $(compgen -W "--check --force --version --serial --fw-dir --help" -- "$cur") )
             fi
             ;;
         service)
             if [[ $COMP_CWORD -eq 2 ]]; then
-                COMPREPLY=( $(compgen -W "install update start stop restart enable disable logs status help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "install start stop restart enable disable logs status help" -- "$cur") )
             elif [[ $COMP_CWORD -eq 3 ]]; then
                 local action="${COMP_WORDS[2]}"
                 case "$action" in
                     start|stop|restart|logs|enable|disable)
-                        COMPREPLY=( $(compgen -W "teleop watchdog dashboard jupyter webteleop linefollow wallfollow" -- "$cur") )
+                        COMPREPLY=( $(compgen -W "teleop watchdog dashboard jupyter mapview autonomy webteleop linefollow wallfollow camlabel" -- "$cur") )
                         ;;
                 esac
             fi

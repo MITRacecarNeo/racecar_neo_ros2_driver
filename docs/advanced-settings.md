@@ -18,6 +18,8 @@ setting cuts your current connection.
 - [RTC trickle charging](#rtc-trickle-charging)
 - [Bootloader EEPROM](#bootloader-eeprom)
 - [Per-car parameters](#per-car-parameters)
+- [Foxglove bridge](#foxglove-bridge)
+- [Mapping limits](#mapping-limits)
 - [Golden image preparation](#golden-image-preparation)
 
 ## Ethernet addressing
@@ -158,17 +160,71 @@ ALFA dongle together.
 | | |
 |---|---|
 | Default | committed `config/*.yaml`; calibration files hold zeros |
-| Change | write `config/<name>.local.yaml`, or run a calibration utility; then `racecar build` and `racecar service restart teleop` |
-| Revert | delete the `.local.yaml`, `racecar build`, restart teleop |
+| Change | write `params/<name>.yaml` in the car profile (`~/.config/racecar`), or run a calibration utility; then `racecar service restart teleop` (no build) |
+| Revert | remove the file from `params/`, or restore the copy in `history/<stamp>/`; restart teleop |
 | Safe path | any |
 
-Each launch file loads `config/<name>.local.yaml` after the committed file of
-the same name, so its keys win. The files are gitignored and never dirty the
-tree. The calibration utilities (`calibrate_imu.py`, `calibrate_mag.py`,
-`calibrate_realsense_imu.py`) write `lsm9ds1_cal.local.yaml`,
-`lsm9ds1_mag_cal.local.yaml` and `realsense_cal.local.yaml`; see README
-"Sensor calibration". A reimage or fresh clone loses them, so keep a copy in
-`~/.config/racecar/calibration/`.
+Each launch file loads the profile's `params/<name>.yaml` after the committed
+`config/<name>.yaml`, so its keys win. Launch reads it at start, so a teleop
+restart applies a change. The calibration utilities (`calibrate_imu.py`,
+`calibrate_mag.py`, `calibrate_realsense_imu.py`, `calibrate_lidar.py`) write
+`lsm9ds1_cal.yaml`, `lsm9ds1_mag_cal.yaml`, `realsense_cal.yaml` and
+`frames.yaml` there; see README "Sensor calibration". The profile sits outside
+the driver folder, so a driver update or re-clone keeps it; `racecar profile
+export FILE` saves it for a fresh image. See README "Car profile".
+
+## Foxglove bridge
+
+| | |
+|---|---|
+| Default | off |
+| Change | `racecar map foxglove on`, then `racecar map start` or `load` |
+| Revert | `racecar map foxglove off`, then the next start or load |
+| Safe path | any |
+
+`foxglove_bridge` runs inside the autonomy service and serves the map, scan,
+frames, odometry, AMCL particles, and `/autonomy/*` on port 8765, for
+Lichtblick (desktop app, works offline) or the Foxglove app (needs an
+account and internet). Camera streams are left out, since they can saturate
+the access point. A client may publish only `/initialpose`, for the pose
+estimate tool; it cannot drive the car. Settings: `config/foxglove.yaml`,
+with per-car overrides in the car profile's `params/foxglove.yaml`.
+
+To connect from Lichtblick:
+
+1. Open Lichtblick on a laptop on the car's network.
+2. Choose "Open connection", then "Foxglove WebSocket".
+3. Enter `ws://<robot>:8765` and connect.
+4. Choose "Import layout from file" in the layout menu and pick
+   `config/foxglove_layout.json` from this repository (installed under
+   `install/racecar_neo_ros2_driver/share/racecar_neo_ros2_driver/config/`).
+
+The layout shows a top-down 3D view of the map, scan, particles, and pose
+following the car, a table of `/autonomy/status`, and a plot of the pose.
+
+## Mapping limits
+
+| | |
+|---|---|
+| Default | speed held at the firmware minimum while mapping; steering not limited |
+| Change | `mapping_speed_cap` and `mapping_steering_cap` in the car profile's `params/throttle.yaml`; restart teleop |
+| Revert | remove the keys, restart teleop |
+| Safe path | any |
+
+`throttle_node` applies both while `/autonomy/status` reports mapping, to the
+gamepad and the student library; an optional FlySky transmitter goes to the
+Teensy directly and is not limited (README, "FlySky transmitter"). `mapping_speed_cap` (0.02) makes every command
+drive at the firmware floor of 0.5 m/s. `mapping_steering_cap` (1.0, off)
+clips steering before the trim.
+
+The servo response is not linear. On the reference car a steering command of
+0.25 drives a curvature of 0.90 to 1.02 /m, 0.5 already 1.85 to 2.05 /m, and
+1.0 (full lock) 2.15 to 2.39 /m, so 0.5 limits almost nothing. 0.3 gives a
+turning radius of about 0.7 m and cut the turn rate at the 90th percentile
+from 65 to 47 deg/s; scans fit the finished map 97.9% within 0.1 m against
+94.7% without it, but the walls came out no thinner and a furnished room took
+many three-point turns. It suits a large open space. See
+docs/troubleshooting.md, "Map quality".
 
 ## Golden image preparation
 
@@ -183,6 +239,7 @@ Saved client profiles hold credentials. An enterprise profile keeps an account
 name and its password in NetworkManager, and both clone onto every car built
 from the image, so delete them before capture.
 
-Per-car calibration lives in the gitignored `config/*.local.yaml` files (a
-backup copy in `~/.config/racecar/calibration/`). An image carries one car's
-values to every clone, so delete them before capture or recalibrate each car.
+Per-car calibration and tuning live in the car profile, `~/.config/racecar`.
+An image carries one car's values to every clone, so remove the profile's
+`params/`, `dashboards/` and `history/` before capture or recalibrate each car. `racecar profile export FILE` saves
+it first.

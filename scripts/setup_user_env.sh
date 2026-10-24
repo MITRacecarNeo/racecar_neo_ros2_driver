@@ -22,7 +22,7 @@ for grp in dialout i2c spi gpio video; do
     if ! getent group "$grp" >/dev/null 2>&1; then
         continue
     fi
-    if id -nG "$USER_NAME" | grep -qw "$grp"; then
+    if id -nG "$USER_NAME" | grep -w "$grp" >/dev/null; then
         echo "  $USER_NAME already in $grp"
     else
         sudo usermod -aG "$grp" "$USER_NAME"
@@ -30,26 +30,33 @@ for grp in dialout i2c spi gpio video; do
     fi
 done
 
-# polkit rule: NetworkManager control from a terminal. Group membership covers
-# the hardware but not NetworkManager, which asks polkit instead.
-# See docs/troubleshooting.md, "NetworkManager authorization".
-POLKIT_SRC="${SCRIPT_DIR}/polkit/49-racecar-network.rules"
-POLKIT_DST="/etc/polkit-1/rules.d/49-racecar-network.rules"
-if [ ! -f "$POLKIT_SRC" ]; then
-    echo "Missing $POLKIT_SRC" >&2
-    exit 1
-fi
-if [ ! -d /etc/polkit-1/rules.d ]; then
-    # polkit < 0.106 reads .pkla files and has no rules.d.
-    echo "  WARNING: /etc/polkit-1/rules.d does not exist; skipping the" >&2
-    echo "           NetworkManager polkit rule. 'racecar wifi connect' will" >&2
-    echo "           need sudo on this system." >&2
-elif sudo cmp -s "$POLKIT_SRC" "$POLKIT_DST" 2>/dev/null; then
-    echo "  $POLKIT_DST already up to date"
-else
-    sudo install -m 0644 -o root -g root "$POLKIT_SRC" "$POLKIT_DST"
-    echo "  installed $POLKIT_DST"
-fi
+# polkit rules. 49-racecar-network: NetworkManager control from a terminal;
+# group membership covers the hardware but not NetworkManager, which asks
+# polkit instead (docs/troubleshooting.md, "NetworkManager authorization").
+# 49-racecar-autonomy: start, stop, and restart of racecar-autonomy.service
+# by the racecar user, for the map viewer and `racecar map`.
+# 49-racecar-dashboards: start and stop of the lab dashboards by the
+# racecar user, for the home page on port 8080.
+# 49-racecar-teleop: restart of racecar-teleop.service by the racecar user,
+# for the Features tiles on the home page.
+for rule in 49-racecar-network.rules 49-racecar-autonomy.rules 49-racecar-dashboards.rules 49-racecar-teleop.rules; do
+    POLKIT_SRC="${SCRIPT_DIR}/polkit/${rule}"
+    POLKIT_DST="/etc/polkit-1/rules.d/${rule}"
+    if [ ! -f "$POLKIT_SRC" ]; then
+        echo "Missing $POLKIT_SRC" >&2
+        exit 1
+    fi
+    if [ ! -d /etc/polkit-1/rules.d ]; then
+        # polkit < 0.106 reads .pkla files and has no rules.d.
+        echo "  WARNING: /etc/polkit-1/rules.d does not exist; skipping ${rule}." >&2
+        echo "           'racecar wifi connect' and 'racecar map' will need sudo." >&2
+    elif sudo cmp -s "$POLKIT_SRC" "$POLKIT_DST" 2>/dev/null; then
+        echo "  $POLKIT_DST already up to date"
+    else
+        sudo install -m 0644 -o root -g root "$POLKIT_SRC" "$POLKIT_DST"
+        echo "  installed $POLKIT_DST"
+    fi
+done
 
 BASHRC="$USER_HOME/.bashrc"
 

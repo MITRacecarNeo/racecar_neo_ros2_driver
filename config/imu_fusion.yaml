@@ -9,3 +9,7 @@ imu_fusion_node:
     publish_rate_hz: 100.0
     source_timeout_sec: 0.25
     frame_id: imu_link
+    # RealSense IMU (optical: x right, y down, z forward) -> REP-103 body axes,
+    # applied after realsense_cal: X=+RS_Z, Y=-RS_X, Z=-RS_Y.
+    realsense_axis_order: [2, 0, 1]
+    realsense_axis_sign: [1.0, -1.0, -1.0]

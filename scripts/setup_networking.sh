@@ -85,7 +85,7 @@ CHANGES_MADE=false
 if [ "${RACECAR_AP_RESET:-0}" = "1" ]; then
     echo "Disabling the WiFi AP on $AP_IFACE (reset)..."
     sudo nmcli connection down "$AP_CON_NAME" >/dev/null 2>&1 || true
-    if nmcli -t -f NAME con show 2>/dev/null | grep -qx "$AP_CON_NAME"; then
+    if nmcli -t -f NAME con show 2>/dev/null | grep -x "$AP_CON_NAME" >/dev/null; then
         sudo nmcli connection delete "$AP_CON_NAME" || true
         echo "  Deleted AP connection '$AP_CON_NAME'."
     else
@@ -172,7 +172,7 @@ fi
 
 # --- 2. Create or update the AP connection -----------------------------------
 echo "[2/4] Configuring AP connection '$AP_CON_NAME' on $AP_IFACE (SSID: $AP_SSID)..."
-if nmcli -t -f NAME con show | grep -qx "$AP_CON_NAME"; then
+if nmcli -t -f NAME con show | grep -x "$AP_CON_NAME" >/dev/null; then
     # Modify only when a field differs; `nmcli connection modify` returns 0 on
     # a no-op. --show-secrets exposes the PSK for comparison, and
     # connection.interface-name moves an AP still pinned to wlan0.

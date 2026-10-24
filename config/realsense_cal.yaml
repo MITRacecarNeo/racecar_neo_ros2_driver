@@ -1,8 +1,10 @@
-# RealSense IMU accel and gyro bias, consumed by imu_fusion_node via
-# imu_fusion.launch.py. Zeros are the uncalibrated defaults. Per-car values go
-# in realsense_cal.local.yaml (gitignored, loaded after this file), written by:
+# RealSense IMU accel bias and scale and gyro bias, consumed by imu_fusion_node
+# via imu_fusion.launch.py. Zero bias and unit scale are the uncalibrated
+# defaults. Per-car values go in realsense_cal.local.yaml (gitignored, loaded
+# after this file), written by:
 #   ros2 run racecar_neo_ros2_driver calibrate_realsense_imu.py
 imu_fusion_node:
   ros__parameters:
     realsense_accel_bias: [0.0, 0.0, 0.0]
+    realsense_accel_scale: [1.0, 1.0, 1.0]  # applied as (raw - bias) * scale
     realsense_gyro_bias: [0.0, 0.0, 0.0]

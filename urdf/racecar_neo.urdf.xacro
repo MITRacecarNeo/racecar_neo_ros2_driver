@@ -1,0 +1,93 @@
+<?xml version="1.0"?>
+<!--
+  RACECAR Neo frame tree (REP-103: x forward, y left, z up).
+
+  Every argument comes from config/frames.yaml (plus frames.local.yaml),
+  converted to meters and radians by launch/frames.launch.py and passed as
+  xacro mappings. None is declared with a default, so a missing key fails the
+  render with "Undefined substitution argument". All joints are fixed.
+
+  The tree stops at camera_link: the RealSense driver publishes its own
+  subtree below it (publish_tf in launch/realsense.launch.py).
+-->
+<robot name="racecar_neo" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+
+  <!--
+    D435 case geometry, from realsense2_description _d435.urdf.xacro. The
+    tripod screw sits on the case centerline, 14.9 mm behind the front face, on
+    the underside. camera_link (the depth origin) is 10.6 mm ahead of the
+    screw, 17.5 mm to its left, and half the case height above it.
+  -->
+  <xacro:property name="d435_screw_from_front" value="0.0149" />
+  <xacro:property name="d435_link_x" value="0.0106" />
+  <xacro:property name="d435_link_y" value="0.0175" />
+  <xacro:property name="d435_width" value="0.090" />
+  <xacro:property name="d435_height" value="0.025" />
+  <xacro:property name="d435_depth" value="0.02505" />
+
+  <xacro:property name="front" value="$(arg footprint_front_x)" />
+  <xacro:property name="rear" value="$(arg footprint_rear_x)" />
+  <xacro:property name="left" value="$(arg footprint_left_y)" />
+  <xacro:property name="right" value="$(arg footprint_right_y)" />
+  <xacro:property name="plate" value="0.005" />
+
+  <material name="chassis">
+    <color rgba="0.3 0.3 0.3 1.0" />
+  </material>
+  <material name="camera">
+    <color rgba="0.6 0.6 0.65 1.0" />
+  </material>
+
+  <!-- Footprint as a thin plate at ride height. -->
+  <link name="base_link">
+    <visual>
+      <origin xyz="${(front + rear) / 2} ${(left + right) / 2} ${$(arg ride_height) + plate / 2}" />
+      <geometry>
+        <box size="${front - rear} ${left - right} ${plate}" />
+      </geometry>
+      <material name="chassis" />
+    </visual>
+  </link>
+
+  <link name="laser" />
+  <joint name="laser_joint" type="fixed">
+    <parent link="base_link" />
+    <child link="laser" />
+    <origin xyz="$(arg laser_x) $(arg laser_y) $(arg laser_z)"
+            rpy="$(arg laser_roll) $(arg laser_pitch) $(arg laser_yaw)" />
+  </joint>
+
+  <link name="imu_link" />
+  <joint name="imu_joint" type="fixed">
+    <parent link="base_link" />
+    <child link="imu_link" />
+    <origin xyz="$(arg imu_x) $(arg imu_y) $(arg imu_z)"
+            rpy="$(arg imu_roll) $(arg imu_pitch) $(arg imu_yaw)" />
+  </joint>
+
+  <!-- Mount rotations act at the tripod screw, where the camera is fixed. -->
+  <link name="camera_bottom_screw_frame">
+    <visual>
+      <origin xyz="${d435_screw_from_front - d435_depth / 2} 0 ${d435_height / 2}" />
+      <geometry>
+        <box size="${d435_depth} ${d435_width} ${d435_height}" />
+      </geometry>
+      <material name="camera" />
+    </visual>
+  </link>
+  <joint name="camera_mount_joint" type="fixed">
+    <parent link="base_link" />
+    <child link="camera_bottom_screw_frame" />
+    <origin xyz="${$(arg camera_front_x) - d435_screw_from_front} $(arg camera_y) $(arg camera_bottom_z)"
+            rpy="$(arg camera_roll) $(arg camera_pitch) $(arg camera_yaw)" />
+  </joint>
+
+  <link name="camera_link" />
+  <joint name="camera_link_joint" type="fixed">
+    <parent link="camera_bottom_screw_frame" />
+    <child link="camera_link" />
+    <origin xyz="${d435_link_x} ${d435_link_y} ${d435_height / 2}" rpy="0 0 0" />
+  </joint>
+
+</robot>

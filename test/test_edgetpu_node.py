@@ -10,6 +10,7 @@ from racecar_neo_ros2_driver.edgetpu_node import (
     image_msg_to_rgb,
     load_labels,
     map_output_tensors,
+    pauses_for,
     resize_rgb,
     roles_from_names,
 )
@@ -262,3 +263,63 @@ class TestShippedModels:
         assert len(labels) == 90
         assert labels[0] == 'person'
         assert labels[2] == 'car'
+
+
+class _Pausable:
+    """The status handling of EdgeTPUNode without the TPU or rclpy."""
+
+    _status_cb = EdgeTPUNode._status_cb
+    _subscribe_images = EdgeTPUNode._subscribe_images
+
+    def __init__(self, enabled=True):
+        self._pause_while_mapping = enabled
+        self._paused = False
+        self._image_topic = '/camera/color'
+        self._image_cb = None
+        self._last_image_time = 'stale'
+        self._image_sub = 'sub-0'
+        self.created, self.destroyed = 0, []
+        self.log = []
+
+    def create_subscription(self, *_):
+        self.created += 1
+        return f'sub-{self.created}'
+
+    def destroy_subscription(self, sub):
+        self.destroyed.append(sub)
+
+    def get_logger(self):
+        return self
+
+    def info(self, text):
+        self.log.append(text)
+
+
+def _status(mode):
+    from diagnostic_msgs.msg import DiagnosticStatus, KeyValue
+
+    values = [KeyValue(key='map', value='m'), KeyValue(key='mode', value=mode)]
+    return DiagnosticStatus(values=values)
+
+
+class TestPauseWhileMapping:
+    def test_pauses_for_mapping_only(self):
+        assert pauses_for('mapping', True)
+        assert not pauses_for('localization', True)
+        assert not pauses_for('off', True)
+        assert not pauses_for('mapping', False)
+
+    def test_unsubscribes_while_mapping_and_resubscribes_after(self):
+        node = _Pausable()
+        node._status_cb(_status('mapping'))
+        assert node._paused and node.destroyed == ['sub-0'] and node._image_sub is None
+        node._status_cb(_status('mapping'))  # no change, nothing repeated
+        assert node.destroyed == ['sub-0'] and node.created == 0
+        node._status_cb(_status('off'))
+        assert not node._paused and node._image_sub == 'sub-1'
+        assert node._last_image_time is None  # the stale check restarts with the stream
+
+    def test_setting_off_keeps_inferring(self):
+        node = _Pausable(enabled=False)
+        node._status_cb(_status('mapping'))
+        assert not node._paused and node.destroyed == []

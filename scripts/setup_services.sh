@@ -6,10 +6,14 @@
 # only update files that changed.
 #
 # Services installed:
+#   racecar-data.service      oneshot: the data root (NVMe, else SD card)
 #   racecar-teleop.service    full stack via launch_teleop.sh
 #   racecar-watchdog.service  BindsTo=teleop, restart-on-failure supervisor
 #   racecar-dashboard.service web status page (port 8080)
 #   racecar-jupyter.service   JupyterLab (port 8888)
+#   racecar-mapview.service   web map viewer (port 8084)
+# Installed, not enabled (started on demand):
+#   racecar-autonomy.service  SLAM mapping or localization, BindsTo=teleop
 #
 # After install: `sudo systemctl start racecar-teleop` or reboot.
 set -eo pipefail
@@ -17,14 +21,20 @@ set -eo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 SERVICES=(
+    racecar-data.service
     racecar-teleop.service
     racecar-watchdog.service
     racecar-dashboard.service
     racecar-jupyter.service
+    racecar-mapview.service
+)
+# Mapping at boot would build an unsaved map and take CPU from every lab.
+INSTALL_ONLY=(
+    racecar-autonomy.service
 )
 
 changed=0
-for svc in "${SERVICES[@]}"; do
+for svc in "${SERVICES[@]}" "${INSTALL_ONLY[@]}"; do
     src="${SCRIPT_DIR}/${svc}"
     dst="/etc/systemd/system/${svc}"
     if [[ ! -f "$src" ]]; then
@@ -54,6 +64,16 @@ for svc in "${SERVICES[@]}"; do
         echo "  $svc: enabled"
     fi
 done
+
+# RACECAR_DATA_DIR for login shells (SSH) from the path racecar-data.service writes.
+PROFILE_SRC="${SCRIPT_DIR}/profile.d-racecar-data.sh"
+PROFILE_DST="/etc/profile.d/racecar-data.sh"
+if cmp -s "$PROFILE_SRC" "$PROFILE_DST" 2>/dev/null; then
+    echo "  $PROFILE_DST: already up to date"
+else
+    sudo install -m 0644 "$PROFILE_SRC" "$PROFILE_DST"
+    echo "  $PROFILE_DST: installed/updated"
+fi
 
 echo
 echo "Services installed and enabled. To start now:"

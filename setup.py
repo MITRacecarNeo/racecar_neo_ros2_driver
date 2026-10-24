@@ -6,22 +6,29 @@ package_name = 'racecar_neo_ros2_driver'
 
 setup(
     name=package_name,
-    version='0.8.3',
+    version='0.9.0',
     packages=find_packages(exclude=['test']),
     data_files=[
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', glob.glob('launch/*.launch.py')),
-        ('share/' + package_name + '/config', glob.glob('config/*.yaml')),
+        # *.local.yaml: per-car files from before the car profile; never read.
+        ('share/' + package_name + '/config',
+         [f for f in glob.glob('config/*.yaml') if not f.endswith('.local.yaml')]),
+        ('share/' + package_name + '/config', glob.glob('config/*.json')),
+        ('share/' + package_name + '/urdf', glob.glob('urdf/*.xacro')),
         (
             'share/' + package_name + '/scripts',
             glob.glob('scripts/*.sh') + glob.glob('scripts/*.py'),
         ),
-        ('lib/' + package_name, glob.glob('scripts/calibrate_*.py')),
+        ('lib/' + package_name, glob.glob('scripts/calibration/*.py')),
         ('share/' + package_name + '/services', glob.glob('scripts/*.service')),
         ('share/' + package_name + '/models', glob.glob('models/*')),
     ],
     install_requires=['setuptools'],
+    # colcon runs pytest only when it is declared here; without it `racecar test`
+    # falls back to unittest and finds no tests.
+    extras_require={'test': ['pytest']},
     zip_safe=True,
     maintainer='racecar',
     maintainer_email='chrisclai02@gmail.com',
@@ -29,6 +36,7 @@ setup(
     license='GPL-3.0-or-later',
     entry_points={
         'console_scripts': [
+            'autonomy_node = racecar_neo_ros2_driver.autonomy_node:main',
             'dotmatrix_node = racecar_neo_ros2_driver.dotmatrix_node:main',
             'edgetpu_node = racecar_neo_ros2_driver.edgetpu_node:main',
             'gamepad_node = racecar_neo_ros2_driver.gamepad_node:main',

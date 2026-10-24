@@ -204,18 +204,30 @@ class TestService:
             'racecar-watchdog',
             'racecar-dashboard',
             'racecar-jupyter',
+            'racecar-mapview',
+            'racecar-autonomy',
             'racecar-webteleop',
             'racecar-linefollow',
             'racecar-wallfollow',
+            'racecar-camlabel',
         ):
             assert unit in result.stdout, f'status missing {unit}'
 
-    def test_help_lists_the_dashboards_and_update(self):
+    def test_help_lists_the_dashboards(self):
         result = _run('service', 'help')
         assert result.returncode == 0
-        assert 'update' in result.stdout
-        for name, port in (('webteleop', '8081'), ('linefollow', '8082'), ('wallfollow', '8083')):
+        assert 'update' not in result.stdout
+        for name, port in (
+            ('webteleop', '8081'), ('linefollow', '8082'), ('wallfollow', '8083'),
+            ('camlabel', '8085'),
+        ):
             assert f'{name}({port})' in result.stdout
+
+    def test_help_lists_core_ports_and_autonomy(self):
+        result = _run('service', 'help')
+        for name, port in (('dashboard', '8080'), ('jupyter', '8888'), ('mapview', '8084')):
+            assert f'{name}({port})' in result.stdout
+        assert 'racecar map' in result.stdout
 
     def test_help_states_the_one_at_a_time_rule(self):
         result = _run('service', 'help')
@@ -237,21 +249,26 @@ class TestService:
         # All three steer, so none may run alongside another; one list serves
         # both the status view and the one-at-a-time rule.
         text = TOOL.read_text()
-        dash = text.split('local -a dash_units=')[1].split('case "$action"')[0]
+        dash = text.split('local -a dash_units=')[1].split('local -a app_units=')[0]
         for name in ('webteleop', 'linefollow', 'wallfollow'):
             assert f'racecar-{name}' in dash, f'{name} missing from dash_units'
         assert dash.count('racecar-') == 3
         assert 'drive_units' not in text
 
+    def test_camlabel_is_not_a_drive_dashboard(self):
+        text = TOOL.read_text()
+        apps = text.split('local -a app_units=')[1].split('\n')[0]
+        assert 'racecar-camlabel' in apps
+
     def test_no_retired_dashboard_is_named_anywhere(self):
         text = TOOL.read_text()
-        for gone in ('camlabel', 'pursuit', 'smartfollow', 'eps'):
+        for gone in ('pursuit', 'smartfollow', 'eps'):
             assert not re.search(rf'\b{gone}\b', text), f'{gone} is no longer shipped'
 
     def test_top_level_help_lists_three_dashboards(self):
         out = _run('help').stdout
-        assert 'Dashboards: webteleop, linefollow, wallfollow' in out
-        assert 'three lab dashboards' in out
+        assert 'Dashboards: webteleop, linefollow, wallfollow, camlabel' in out
+        assert "install the lab dashboards' units" in out
         assert 'seven' not in out
 
     def test_top_level_help_counts_the_setup_phases(self):
@@ -664,17 +681,20 @@ class TestCompletionInstalled:
     def test_top_level_offers_log(self):
         assert 'log' in self._complete('racecar', '')
 
-    def test_service_actions_include_update(self):
-        assert 'update' in self._complete('racecar', 'service', '')
+    def test_service_actions_drop_update(self):
+        assert 'update' not in self._complete('racecar', 'service', '')
 
     def test_service_units_include_dashboards(self):
         words = self._complete('racecar', 'service', 'start', '')
         for name in ('teleop', 'webteleop', 'linefollow', 'wallfollow'):
             assert name in words
 
+    def test_service_units_include_mapview(self):
+        assert 'mapview' in self._complete('racecar', 'service', 'start', '')
+
     def test_service_units_exclude_retired_dashboards(self):
         words = self._complete('racecar', 'service', 'start', '')
-        for gone in ('camlabel', 'pursuit', 'eps', 'smartfollow'):
+        for gone in ('pursuit', 'eps', 'smartfollow'):
             assert gone not in words
 
     def test_top_level_offers_lint_not_clear(self):
@@ -1202,3 +1222,29 @@ esac
 
     def test_listed_in_help(self):
         assert 'lint' in _run('help').stdout
+
+
+class TestCalibrateCommand:
+    """`racecar calibrate` dispatches to scripts/calibration/calibrate.py."""
+
+    def test_status_lists_every_step(self):
+        result = _run('calibrate', 'status')
+        assert result.returncode == 0, result.stderr
+        for step in ('imu', 'mag', 'realsense', 'lidar', 'odom', 'steering', 'dynamics'):
+            assert step in result.stdout
+
+    def test_unknown_step_is_a_usage_error(self):
+        assert _run('calibrate', 'gps').returncode == 2
+
+    def test_top_level_help_documents_calibrate(self):
+        assert 'calibrate [steps]' in _run('help').stdout
+
+    def test_completion(self):
+        script = (
+            f'set +u; source "{TOOL}"; COMP_WORDS=(racecar calibrate ""); COMP_CWORD=2; '
+            '_racecar_complete; printf "%s\\n" "${COMPREPLY[@]}"'
+        )
+        words = subprocess.run(
+            ['bash', '-c', script], capture_output=True, text=True
+        ).stdout.split()
+        assert {'status', 'check', 'imu', 'mag', 'realsense', 'lidar', 'odom'} <= set(words)

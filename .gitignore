@@ -41,6 +41,11 @@ COLCON_IGNORE
 
 # Local-only configuration overrides
 config/*.local.yaml
+# Per-car dashboard tuning saved from the browser
+scripts/dashboards/*/*.local.yaml
 
-# Upstream lab-dashboard checkouts (scripts/setup_dashboards.sh clones them)
-scripts/dashboards/
+# Dashboard checkouts that are not part of the driver
+scripts/dashboards/eps_dashboard/
+scripts/dashboards/pursuit_dashboard/
+scripts/dashboards/smartfollow_dashboard/
+scripts/dashboards/.migrated/

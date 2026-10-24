@@ -27,7 +27,7 @@ both of which read the camera's own `/diagnostics`.
 | Topic | Remapped from | Message type | Target rate | Content |
 |---|---|---|---|---|
 | `/camera/color` | `/camera/color/image_raw` | `sensor_msgs/msg/Image` | 60 Hz | Color image, 640x480 |
-| `/camera/depth` | `/camera/depth/image_rect_raw` | `sensor_msgs/msg/Image` | 30 Hz | Rectified depth, 640x480, 16UC1 in millimetres |
+| `/camera/depth` | `/camera/depth/image_rect_raw` | `sensor_msgs/msg/Image` | 30 Hz | Rectified depth, 640x480, 16UC1 in millimeters |
 | `/imu/realsense` | `/camera/imu` | `sensor_msgs/msg/Imu` | 200 Hz | Gyroscope plus accelerometer united at the gyro rate |
 
 `edgetpu_node`, `imu_fusion_node`, the student library and the lab dashboards

@@ -1,0 +1,45 @@
+# Frame offsets for urdf/racecar_neo.urdf.xacro, read by launch/frames.launch.py.
+#
+# Fleet base values. Per-car differences go in frames.local.yaml (gitignored),
+# whose keys win; calibrate_lidar.py writes laser_yaw_deg there.
+#
+# Units are in each key name: millimeters and degrees, converted to meters and
+# radians at launch. Positions are in base_link: the floor point under the
+# rear axle midpoint, x forward, y left, z up (REP-103). Angles follow the
+# same axes: roll about x, pitch about y (positive tips the front down), yaw
+# about z (positive turns left).
+#
+# Values are measured on a reference car unless marked "model" (CAD value).
+
+# Lidar (RPLIDAR): rotation axis and scan plane.
+laser_x_mm: 238.3        # model
+laser_y_mm: 0.0
+laser_z_mm: 195.0
+laser_roll_deg: 0.0
+laser_pitch_deg: 0.0
+laser_yaw_deg: 180.0     # motor end toward the rear, scan zero faces aft
+
+# IMU: LSM9DS1 breakout center. No rotation: config/pit.yaml and
+# config/imu_fusion.yaml remap both IMUs into base_link's axes (REP-103).
+imu_x_mm: 190.0
+imu_y_mm: 0.0
+imu_z_mm: 105.0
+imu_roll_deg: 0.0
+imu_pitch_deg: 0.0
+imu_yaw_deg: 0.0
+
+# RealSense D435i case. camera_link is derived from these in the URDF, using
+# the case geometry from realsense2_description.
+camera_front_x_mm: 277.9      # front aluminum face
+camera_y_mm: 0.0              # case center
+camera_bottom_z_mm: 100.0     # underside of the case
+camera_roll_deg: 0.0
+camera_pitch_deg: 0.0
+camera_yaw_deg: 0.0
+
+# Footprint, for the URDF visual.
+footprint_front_x_mm: 287.5
+footprint_rear_x_mm: -59.7
+footprint_left_y_mm: 104.5
+footprint_right_y_mm: -104.5  # excludes the battery connector
+ride_height_mm: 20.5          # model

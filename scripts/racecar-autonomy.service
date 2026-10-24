@@ -1,0 +1,36 @@
+[Unit]
+Description=RACECAR Neo Autonomy (SLAM mapping or localization)
+# Runs on top of teleop: stops with it (BindsTo) and restarts with it (PartOf);
+# a teleop restart then resumes a mapping run from its autosave.
+After=racecar-teleop.service
+BindsTo=racecar-teleop.service
+PartOf=racecar-teleop.service
+# A start that keeps failing (a bad mode file) gives up after three tries.
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+[Service]
+Type=exec
+User=racecar
+Group=racecar
+# RACECAR_DATA_DIR, from racecar-data.service.
+EnvironmentFile=-/run/racecar/environment
+# Written by `racecar map` and the map viewer; see scripts/autonomy_args.py.
+EnvironmentFile=-/home/racecar/.config/racecar/autonomy.conf
+ExecStart=/home/racecar/ros2_ws/src/racecar_neo_ros2_driver/scripts/launch_autonomy.sh
+# Autosave while slam_toolbox is still alive, before the stop signal.
+ExecStop=/bin/bash -c '\
+    source /opt/ros/jazzy/setup.bash && \
+    source /home/racecar/ros2_ws/install/setup.bash && \
+    ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST \
+    python3 /home/racecar/ros2_ws/src/racecar_neo_ros2_driver/scripts/autonomy_stop.py $MAINPID'
+# ros2 launch exits 0 when slam_toolbox dies, so on-failure would never
+# restart it; systemd does not restart after a requested stop.
+Restart=always
+RestartSec=5
+Environment=HOME=/home/racecar
+WorkingDirectory=/home/racecar/ros2_ws
+KillMode=control-group
+KillSignal=SIGINT
+# slam_toolbox can take 15 s to exit on SIGINT; the autosave runs first.
+TimeoutStopSec=30

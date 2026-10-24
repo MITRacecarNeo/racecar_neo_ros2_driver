@@ -18,13 +18,19 @@ comment in the source can point here instead of carrying the full account.
 - [EdgeTPU inference rate and threshold](#edgetpu-inference-rate-and-threshold)
 - [Coral M.2 interrupts](#coral-m2-interrupts)
 - [RealSense firmware flash privileges](#realsense-firmware-flash-privileges)
+- [Depth view gaps](#depth-view-gaps)
 - [raspi-config on Ubuntu](#raspi-config-on-ubuntu)
 - [Gamepad hid_nintendo blacklist](#gamepad-hid_nintendo-blacklist)
 - [Lidar /scan stalls](#lidar-scan-stalls)
-- [Lab dashboard checkouts](#lab-dashboard-checkouts)
+- [Map quality](#map-quality)
+- [Localization state](#localization-state)
+- [Localizer choice](#localizer-choice)
+- [Data drive missing at boot](#data-drive-missing-at-boot)
+- [Lab dashboards](#lab-dashboards)
 - [WiFi persistence](#wifi-persistence)
 - [Boot brownout with ethernet attached](#boot-brownout-with-ethernet-attached)
-  - [Not a flat pack](#not-a-flat-pack)
+  - [Not a flat battery](#not-a-flat-battery)
+  - [Root cause and repair](#root-cause-and-repair)
 
 ## Diagnostic rate checks
 
@@ -37,15 +43,15 @@ section report the tool's own overhead as a hardware fault.
 
 Two subscriptions dominated the cost:
 
-- The RealSense colour and depth streams, worth 40 percent of the PIT
+- The RealSense color and depth streams, worth 40 percent of the PIT
   telemetry rate. Measured A/B on hardware over interleaved trials: 133.6 Hz
   mean without them, 79.9 Hz with. They are now read from `/diagnostics`,
   where the camera node publishes its own per-stream frequency and where
   `scripts/dashboard.py` has read them since v0.7.3.
-- `/scan`, deserialised on arrival for its value check at 1080 ranges plus
+- `/scan`, deserialized on arrival for its value check at 1080 ranges plus
   1080 intensities a message, which put a 7.2 Hz lidar at 4.6. Every
   subscription is raw now, and the one buffer a value check needs is
-  deserialised after the window closes.
+  deserialized after the window closes.
 
 The window is 5 seconds because the PIT stream arrives in clumps and a short
 window samples the clumping rather than the rate. Twelve trials per length on
@@ -95,7 +101,9 @@ busy across all cores, 7 to 14 runnable threads, no I/O wait.
 The cause was the clock. `vcgencmd get_throttled` read 0x50005, and the
 firmware had capped the ARM at 1000 MHz of 2400 while cpufreq still reported
 2400. The same teleop stack then needs about 2.4 times the CPU share it uses
-at full clock. The top consumers at the time, in percent of one core:
+at full clock. The under-voltage came from a bad supply wire on this car,
+replaced 2026-10-03; see [Root cause and repair](#root-cause-and-repair). The
+top consumers at the time, in percent of one core:
 
 | process | CPU |
 | --- | --- |
@@ -237,25 +245,55 @@ module that needs the syntax; racecar-neo-library v1.2.0 mirrors that.
 `imu.mag_axis_order`, `imu.mag_axis_sign`; applied by
 `racecar_neo_ros2_driver/pit_node.py` `remap_axes`.
 
-`imu_fusion_node` averages the LSM9DS1 with the RealSense IMU, so both must
-report in the camera's body frame. The mapping was derived on the car on
-2026-07-07 from static gravity in about ten orientations and confirmed against
-the camera gyro (per-axis correlation +1.00):
+Every published IMU topic uses REP-103 body axes (x forward, y left, z up).
+`imu_fusion_node` averages the LSM9DS1 with the RealSense IMU, which it remaps
+from the camera's optical axes (`config/imu_fusion.yaml`,
+`realsense_axis_order` and `realsense_axis_sign`: X = +RS_Z, Y = -RS_X,
+Z = -RS_Y). The LSM9DS1 accel and gyro mapping was derived on the car on
+2026-07-07 against the camera (static gravity in about ten orientations,
+camera gyro correlation +1.00 per axis) as RS_X = -LSM_Y, RS_Y = +LSM_Z,
+RS_Z = +LSM_X. Composed with the camera-to-body remap:
 
 ```
-RS_X = -LSM_Y    RS_Y = +LSM_Z    RS_Z = +LSM_X
+X = +LSM_X    Y = +LSM_Y    Z = -LSM_Z          accel and gyro
+X = -M_X      Y = +M_Y      Z = -M_Z            magnetometer
 ```
 
-It is a reflection (determinant -1): the frame the firmware publishes for accel
-and gyro is left-handed relative to the camera, so a rotation-only solver
-cannot express it. Accel and gyro share the convention, so one order and sign
-serve both.
+The accel and gyro mapping is a reflection (determinant -1): the frame the
+firmware publishes for accel and gyro is left-handed, so a rotation-only
+solver cannot express it. Accel and gyro share the convention, so one order
+and sign serve both. The magnetometer has its own axes on the chip; its
+mapping is a rotation, set on the reference car on 2026-10-08: at rest the
+field points down (Z negative, as Earth's field does in the northern
+hemisphere), a left turn rotates it clockwise in the car's frame, and with
+the nose pointing north `/mag` x reads positive and y near zero (two
+placements, north within 10 deg of the nose). Steel and phones nearby bend
+the field: a reading whose dip is far from the local value (about 66 deg in
+Massachusetts) is disturbed.
 
-The magnetometer keeps the identity mapping, so `/mag` is not yet in the camera
-frame. Correlation also says nothing about scale: `imu.gyro_scale` and
+The calibration in the car profile's `params/lsm9ds1_cal.yaml` and
+`params/lsm9ds1_mag_cal.yaml` applies after the remap, so its values are in body axes. A car calibrated
+before this mapping (values in the camera's optical axes for accel and gyro,
+chip axes for the magnetometer) needs `racecar calibrate imu mag` again.
+`params/realsense_cal.yaml` applies to `/imu/realsense` before the remap and
+stays valid. Correlation also says nothing about scale: `imu.gyro_scale` and
 `imu.mag_scale` are unverified, and a deg/s versus rad/s mismatch on the gyro
 would be a factor of 57. Check both against the RealSense during a known
 rotation before trusting `/imu/fused` angular velocity or `/mag` heading.
+
+Magnetometer strength, measured 2026-10-04 with `racecar calibrate check mag`
+on the reference car: 101.3 uT calibrated (150.1 uT raw), about twice Earth's
+field (about 51 uT in Massachusetts). The firmware sets the LSM9DS1 to
++/-8 gauss (`cfg::LSM9DS1_IMU::mag_gain`), whose sensitivity is 0.29 mgauss per
+count against 0.14 at the chip's default +/-4 gauss: a ratio of 2.07, and
+101.3 / 2.07 = 49 uT. The likeliest cause is the chip staying at +/-4 gauss
+while the conversion assumes +/-8, which would make the field read about
+2.07x high. A uniform scale leaves the field's direction, and so a compass
+heading, unchanged, which is why the check warns rather than fails on field
+strength. To confirm: compare with a phone's magnetometer at the same spot,
+away from steel, or read back the chip's CTRL_REG2_M in firmware. If
+confirmed, the fix belongs in the firmware; until then `imu.mag_scale`
+(1e-6) could be set to about 0.483e-6 per car.
 
 ## EdgeTPU inference rate and threshold
 
@@ -267,7 +305,9 @@ than a dashboard redraws them. Frames above `inference_rate_hz` (15) are
 dropped before the image decode, where the cost is. `frames_dropped` in the
 node's `/diagnostics` entry counts them. On 2026-09-22 the node held 14.7 Hz at
 59 to 67 ms per inference with the Pi throttled for under-voltage, so there is
-little headroom above the cap on this car.
+little headroom above the cap on this car. That throttling came from a bad
+supply wire, since replaced; see
+[Root cause and repair](#root-cause-and-repair).
 
 `score_threshold` 0.4 is the Coral examples' default and the value the COCO
 model was evaluated at. At 0.5 an ordinary indoor scene reported no detections.
@@ -300,6 +340,26 @@ in-process calls.
 Only the flash itself needs root, because it writes the device and DFU
 re-enumerates as `8086:0adb`, which udev grants no user access. sudo strips
 `LD_*`, so the library path is passed explicitly there.
+
+## Depth view gaps
+
+The depth previews (web dashboard Overview, web teleop) draw pixels with no
+depth reading in flat gray. Two gaps are normal on the D435i:
+
+- A strip down the left edge, wider toward the bottom. The camera measures
+  depth by comparing its two infrared cameras, and the leftmost columns are
+  seen by only one of them. The strip is about 386 x 50 / Z pixels wide at
+  640 x 480, where Z is the distance in mm: 20 px at 1 m, 110 px at the
+  floor just ahead of the car.
+- The bottom rows, where the floor is closer than the camera's minimum range
+  of about 0.17 m, and shiny or plain floors with too little texture.
+
+Gray outlines on the left side of near objects are the same effect: the
+right camera cannot see behind the object's edge.
+
+The depth image is wider than the color image (about 79 against 55 degrees
+across), so a gap at the edge of the depth view can lie outside the color
+view. Neither gap is an object on the car.
 
 ## raspi-config on Ubuntu
 
@@ -340,28 +400,134 @@ the SDK swallows transient read errors. Two guards cover it. The udev rule sets
 restarts the lidar when `/scan` is older than `freshness_sec` (5 s), which
 catches a stall from any other cause.
 
-## Lab dashboard checkouts
+## Map quality
 
-`scripts/setup_dashboards.sh`.
+Walls in a saved map are usually two cells (about 10 cm) thick and ragged
+where furniture stands. The map is built by slam_toolbox during
+`racecar map start`; AMCL only uses the finished map and does not change it.
 
-The three dashboards are forks under MITRacecarNeo of Neobotics Foundation
-repositories built for the NeoRacer. The forks carry this platform's lidar
-convention, ports and branding, so unlike the four unforked dashboards that
-v0.8.0 shipped they can be corrected at the source.
+Causes, largest first:
 
-The unit is still rendered from the checkout's `.service.in` rather than
-copied. A fork synced from Neobotics upstream comes back carrying Humble and
-the neoracer names, and rendering is what keeps that car working instead of
-pointing a unit at a ROS that is not installed. `unit_name` strips either
-project's prefix so both land on the same `racecar-<name>.service`.
+- Turning during a lidar sweep. One sweep takes 146 ms, and neither
+  slam_toolbox nor AMCL corrects a scan for the car's motion within it. At
+  70 deg/s the car turns 10 deg per sweep, which moves a wall 3 m away by up
+  to 0.5 m between the start and end of one scan. On a room map, scans taken
+  turning faster than 80 deg/s fit the finished map 85 to 89% within 0.1 m,
+  against 96 to 97% driving straight. Forward motion adds about 7 cm per
+  sweep at the 0.5 m/s mapping speed, which is why `throttle_node` holds the
+  gamepad there while mapping (`mapping_speed_cap`).
+- Repeated passes. Each pass adds the wall again from a slightly different
+  pose, so a wall driven past many times becomes a band.
+- The 5 cm grid and the lidar's range noise of a few centimeters.
+- The room. The lidar sees a single plane about 20 cm above the floor: chair
+  and table legs, cables, bags, and baseboards at that height show as
+  speckle and ragged edges; anything lower is not seen. Glass, mirrors, and
+  dark gloss return few points. Doorways let the lidar see past the walls.
 
-Updates are `git pull --ff-only` and never `reset --hard`, so a car's tuned
-YAML survives.
+What helps: wide, gentle turns; each area driven once or twice; a loop back
+to the start at the end, which lets slam_toolbox close the loop; clutter at
+lidar height cleared first. Limiting the steering while mapping
+(`mapping_steering_cap` in `config/throttle.yaml`, off by default) lowers the
+turn rate but needs many three-point turns in a room, and in a test the walls
+came out no thinner; see docs/advanced-settings.md, "Mapping limits".
 
-The script also stops, disables and removes the units of the four retired
-dashboards (`camlabel`, `eps`, `pursuit`, `smartfollow`), so a car upgraded
-from v0.8.0 does not keep a second `/drive` publisher installed. Their
-checkouts under `scripts/dashboards/` are left in place; delete them by hand.
+Thick walls barely affect localization: AMCL scores each scan point by its
+distance to the nearest wall, and on these maps the median is 25 to 28 mm.
+
+## Localization state
+
+`autonomy_node` reports `localized` in `/autonomy/status`
+(`racecar_neo_ros2_driver/autonomy.py`, `is_localized`). In localization it
+needs all of:
+
+- a scan within 0.5 s (`scan_timeout_sec`), so a stopped lidar clears it;
+- the localizer's pose spread within 0.25 m and 20 deg, tighter (0.6 of
+  each) to become localized again;
+- the live scan to fit the map: twice a second, 180 lidar points placed at
+  the localizer's pose are checked against `/map`, and the share within 0.1 m
+  of a wall is averaged over 2 s (`scan_fit`). It drops under 0.5 and
+  returns at 0.65 (`config/autonomy.yaml`).
+
+The spread alone is not enough. A car carried to another spot keeps AMCL's
+particle cloud tight at the old pose, because AMCL updates only when the
+wheels move and its recovery settings are off; it reported `localized` at the
+wrong place for 40 s in a test. The scan fit falls from about 80% to 25 to
+30% as soon as the car is lifted, which clears `localized` within a few
+seconds. AMCL's own recovery (`recovery_alpha_slow`, `recovery_alpha_fast`)
+was tried and stays off: on normal drives it caused pose jumps of up to
+5.7 m and 90 deg and never found the carried car.
+
+Causes of `localized: false`, and what to do:
+
+| Cause | Sign | Remedy |
+|---|---|---|
+| Car moved since the last pose, or carried | `scan_fit` low, spread small | Set pose in the map viewer, `racecar map load NAME --pose x,y,yaw`, or Find me / `--global` and drive slowly |
+| Global search not converged | spread large | Drive slowly through a distinct part of the room; in identical corridors it can settle on the wrong one |
+| Furniture moved since mapping | `scan_fit` between 0.5 and 0.65 | `racecar map start NAME --from NAME` over the changed area |
+| Wheels spun or slipped hard | spread jumps | Stop, then Set pose or Find me and drive slowly |
+| Lidar stopped | `scan_age_ms` large | `racecar status`, "Lidar /scan stalls" |
+
+`racecar status` shows these fields in its autonomy section, and the map
+viewer shows the fit and spread in its status bar.
+
+## Localizer choice
+
+AMCL is the default localizer (`racecar map load NAME`); the slam_toolbox
+localizer is `--localizer slam_toolbox`. On the same 6 min drive both fit the
+map equally well (80.1% and 79.4% of points within 0.1 m).
+
+| | AMCL | slam_toolbox |
+|---|---|---|
+| Parked car after load | localizes | needs a short drive first |
+| Whole-map search (Find me, `--global`) | yes | no; needs a start pose |
+| Long drive (168 m) | held | lost the car, did not recover |
+| Wheel spin or slip | `localized` drops; set the pose or search | corrects it by scan matching |
+| Furniture moved within a session | degrades | tracks through it |
+| CPU | about 5% of a core | not measured; scan matches every scan |
+
+Use AMCL for rooms that stay as mapped. Use the slam_toolbox localizer for a
+space that changes while the car drives (a classroom with people and bags
+moving), and remap with `--from` when a space has changed for good.
+
+## Data drive missing at boot
+
+`scripts/racecar_disk.py` (`MOUNT_OPTIONS`, `DEVICE_TIMEOUT_SEC`),
+`racecar_neo_ros2_driver/data_root.py`, `scripts/racecar-data.service`.
+
+The fstab line for `/mnt/nvme` carries `nofail` and
+`x-systemd.device-timeout=45`. A dead or unplugged drive does not stop boot.
+systemd waits up to 45 s for the device, since a drive can take 30 s to answer
+its first read, then boots without it. `racecar-data.service` then sets the
+data root to `~/data` on the SD card. `racecar data`, `racecar status` (the
+`data root` row, WARN), and the 8080 Data indicator show the fallback.
+
+To check the drive:
+
+1. Run `racecar disk`. It lists the drive, its partitions and mount, the fstab
+   line, and health.
+2. If no drive is listed, power off the car and reseat the NVMe drive.
+3. If the drive is listed but not mounted, run `racecar disk check`.
+4. Reboot, then run `racecar data` to confirm the root is `/mnt/nvme/data`.
+
+Data written to `~/data` during the fallback stays there. A drive that drops
+out after boot leaves the root on `/mnt/nvme/data`; new `racecar log` and
+`racecar map` sessions refuse until a reboot.
+
+## Lab dashboards
+
+`scripts/setup_dashboards.sh`, `scripts/dashboards/`.
+
+Each unit is rendered from the dashboard's `.service.in`, substituting its
+directory and adding the discovery scope, rather than copied, so the unit
+always points at the tree it was installed from.
+
+The script also stops, disables and removes the units of the three retired
+dashboards (`eps`, `pursuit`, `smartfollow`), so a car upgraded from v0.8.0
+does not keep a second `/drive` publisher installed. Their old
+checkouts under `scripts/dashboards/` are gitignored and left in place.
+
+Saved tuning lives in the car profile's `dashboards/<name>.yaml`, never in
+the shipped `<name>.yaml`, so updating the driver keeps a car's tuning.
 
 ## WiFi persistence
 
@@ -392,14 +558,20 @@ When testing this by hand: `nmcli device disconnect` leaves the device in
 NetworkManager's user-requested disconnected state, and NM will not
 auto-activate out of it however the flags are set, until something activates a
 connection explicitly. That state does not survive a reboot, so a
-disconnect-then-wait test says nothing about boot behaviour. The profile flag
+disconnect-then-wait test says nothing about boot behavior. The profile flag
 is the part that persists.
 
 ## Boot brownout with ethernet attached
 
-Symptom, seen 2026-09-09: after the pack died, the car failed to boot three
+Symptom, seen 2026-09-09: after the battery died, the car failed to boot three
 times in a row with the ethernet cable attached, and booted normally once the
 cable was pulled.
+
+Known causes are an unseated BEC bulk capacitor and a bad contact in the
+supply harness; see [Not a flat battery](#not-a-flat-battery). One car was repaired
+on 2026-10-03 by replacing the buck to Pi 5 V wire; see
+[Root cause and repair](#root-cause-and-repair) for that fix and the check
+that confirms it.
 
 Not a network fault. The supply was out of spec and the ethernet PHY was the
 last straw.
@@ -418,7 +590,7 @@ Evidence:
   ALFA dongle starting to transmit is a current step, and the rail collapsed at
   that instant. The successful boot brought the same AP up at 19 seconds and
   held.
-- The pack's final boot before the cut logged 15 undervoltage events against
+- The battery's final boot before the cut logged 15 undervoltage events against
   one for every boot since.
 
 Read the ethernet cable as margin, not cause. The Pi 5 gigabit PHY draws a few
@@ -433,35 +605,107 @@ When the supply cannot hold 5 V it removes the last guard: the firmware permits
 a draw the supply cannot sustain. Do not lower it to mask a brownout; fix the
 supply.
 
-### Not a flat pack
+### Not a flat battery
 
 Measurement on 2026-09-10 rules out a depleted battery; do not start by
-charging the pack.
+charging the battery.
 
-- A fresh pack did not lift the rail. It read lower than the tired one had.
+- A fresh battery did not lift the rail. It read lower than the tired one had.
 - The BEC output measures 4.94 V on a multimeter while the Pi reads 4.49 V,
   and after recovery the drop from the same BEC is 36 to 68 mV under a
   four-core load step. A large steady drop and a small one cannot both be the
   harness.
-- Within a single boot, with no reboot and no pack change, `EXT5V` went 4.49 V
+- Within a single boot, with no reboot and no battery change, `EXT5V` went 4.49 V
   faulted, then 4.87 to 4.90 V with the live throttle bits clear, then 4.64 V
-  faulted again. A discharging pack does not recover and re-sag like that.
+  faulted again. A discharging battery does not recover and re-sag like that.
 - The recovery coincided with the top half of the chassis being removed.
 
 That profile is an intermittent connection rather than a depleted cell, and it
-is mechanical: it changes when the car is handled. This hardware has failed
-this way before, with a bulk capacitor on the BEC output unseated by the power
-wire resting against it. A missing output bulk capacitor also explains the
-apparent contradiction above, since a multimeter averages while the Pi's
-undervoltage detector trips on excursions below roughly 4.63 V; both readings
-can be true at once with no drop across the harness at all.
+is mechanical: it changes when the car is handled. Two known causes produce it:
 
-Confirming it needs a scope on the BEC output under load, or an inspection of
-whether that capacitor is seated and whether the power wire bears on it.
-Neither is visible from software: `EXT5V` is the furthest upstream the PMIC
-sees, and its ADC samples far too slowly to distinguish ripple from a low
-average.
+- A bulk capacitor on the BEC output unseated by the power wire resting
+  against it. This hardware has failed this way before. A missing output bulk
+  capacitor also explains the apparent contradiction above, since a multimeter
+  averages while the Pi's undervoltage detector trips on excursions below
+  roughly 4.63 V; both readings can be true at once with no drop across the
+  harness at all. Confirming it needs a scope on the BEC output under load, or
+  an inspection of whether that capacitor is seated and whether the power wire
+  bears on it.
+- A resistive or intermittent contact in the supply harness. This was the
+  cause on the car repaired 2026-10-03; see
+  [Root cause and repair](#root-cause-and-repair).
+
+Check both on a car showing this profile. Neither is visible from software:
+`EXT5V` is the furthest upstream the PMIC sees, and its ADC samples far too
+slowly to distinguish ripple from a low average.
 
 `racecar status` reports this condition already, under `throttling` and
 `under-voltage` in the SYSTEM section. Treat any measurement taken while those
 are set as suspect, since a throttled car also reads low on every topic rate.
+
+### Root cause and repair
+
+This section covers one car, repaired 2026-10-03. The fix there was
+replacing the buck to Pi GPIO 5 V wire. It does not rule out the BEC bulk
+capacitor in [Not a flat battery](#not-a-flat-battery) as the cause on another car.
+
+Supply chain, battery to Pi:
+
+```
+7.4 V battery -> switch -> INA226 shunt -> boost (Pololu U3V70F9, 9 V)
+           -> buck (Pololu D24V90F5, 5 V) -> Pi 5 GPIO header 5 V pins
+```
+
+The Pi is fed through the GPIO header, not USB-C. Two contacts in that chain
+were intermittent:
+
+- The switch to INA226 `I+` connection. Flexing that wire on 2026-09-27
+  reproduced the fault: 26 dips under 4.75 V, 11 kernel undervoltage events,
+  then a 4 s sag to 4.39 V and a brownout reset. With the top closed, the RC
+  receiver dongle pressed on that wire. While loose, `/battery/current` read
+  0.0 A.
+- The buck to Pi GPIO 5 V wire. Probing along it produced a step recovery
+  from about 4.65 V to 4.87 V, and touching the header end reset the Pi
+  with no sag first. A step in both directions is a contact making and
+  breaking, not heat or load.
+
+Ruled out: the battery (sag persisted on a full 8.2 V battery), the buck (4.95 V
+metered, within its 4.80 to 5.20 V tolerance), the boost (about 3 A load
+against a 6 A input rating), the BEC bulk capacitor (inspected and seated on
+this car), and the Pi and its peripherals (16 min on wall power at 5.01 to
+5.09 V, `0x0`, RealSense attached). An earlier fix that only secured both
+contacts held for about 1.5 h, then failed again under load the same day.
+
+Repair: replacing the buck to GPIO 5 V wire fixed it. The INA226 connection
+was repaired at the same time. Measured on 2026-10-03, teleop stack running:
+
+| Measure | 2026-09-27 18:48, faulty | 2026-10-03, repaired |
+| ------- | ------------------------ | -------------------- |
+| `EXT5V` mean | 4.713 V | 4.914 V |
+| `EXT5V` min | 4.544 V | 4.886 V |
+| Samples under 4.75 V | 82% | 0 of 10112 |
+| PMIC under-voltage alarm set | 48% of samples | 0 |
+| `get_throttled` | 0x50005 | 0x0, sticky bits clear |
+| Kernel undervoltage events | 5 to 9 per minute | 0 |
+| INA226 | 0.0 A while loose | 7.93 V, 2.21 A at 147 Hz |
+
+The rail held with no alarm while the harness was flexed and the car was shaken
+hard. A multimeter at the rail read 4.916 V against the PMIC's 4.914 V. Before
+the repair the PMIC read about 85 mV under the meter; that gap was drop across
+the old wire, not ADC offset.
+
+Margin: the buck sits near the low end of its tolerance, so the rail has about
+165 mV above the 4.75 V floor. A new harness fault eats that quickly.
+
+Check after any work on the power harness, and after a drive:
+
+```bash
+vcgencmd get_throttled                        # 0x0; bits 16 and 18 are sticky since boot
+vcgencmd pmic_read_adc EXT5V_V                # above 4.80 V under teleop load
+journalctl -b -k | grep -ci undervoltage      # 0
+last -x -n 6                                  # no "crash" on the previous boot
+```
+
+A nonzero sticky bit means the rail dipped at some point since boot, even if it
+reads clean now. A previous boot that ends in `crash` without a power cut is a
+brownout reset.

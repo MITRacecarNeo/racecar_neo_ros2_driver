@@ -6,9 +6,13 @@ import pytest
 from racecar_neo_ros2_driver.mux_node import MuxMode
 from racecar_neo_ros2_driver.pit_node import (
     _MODE_BITS,
+    build_battery_state,
     build_odom,
+    override_led_frame,
+    OVERRIDE_LED_RGB,
     PitNode,
     POSE_UNESTIMATED,
+    PowerAverage,
     remap_axes,
     SPEED_VARIANCE,
     SYS_DOTMATRIX_ACTIVE,
@@ -115,6 +119,7 @@ class _Pit:
         self._display_timeout = 0.5
         self._start_time = start
         self._led_startup = 10.0
+        self._override = False
 
 
 class TestBuildDisplay:
@@ -156,3 +161,105 @@ class TestBuildDisplay:
         assert state & SYS_MODE_MASK == SYS_MODE_MANUAL
         assert state & SYS_DOTMATRIX_ACTIVE
         assert state & SYS_DRIVER_STARTING
+
+
+class _Clock:
+    def __init__(self, ns):
+        self.ns = ns
+
+    def now(self):
+        from rclpy.time import Time
+
+        return Time(nanoseconds=self.ns)
+
+
+class _StampPit:
+    """PitNode._telemetry_stamp over plain attributes."""
+
+    _telemetry_stamp = PitNode._telemetry_stamp
+
+    def __init__(self, use_teensy, receive_ns):
+        from racecar_neo_ros2_driver.teensy_clock import TeensyClock
+
+        self._teensy_clock = TeensyClock() if use_teensy else None
+        self._clock = _Clock(receive_ns)
+        self.logged = []
+
+    def get_clock(self):
+        return self._clock
+
+    def get_logger(self):
+        pit = self
+
+        class _Log:
+            def info(self, msg):
+                pit.logged.append(msg)
+
+        return _Log()
+
+
+class TestTelemetryStamp:
+    def test_receive_time_when_disabled(self):
+        pit = _StampPit(False, 5_000_000_123)
+        stamp = pit._telemetry_stamp(1234)
+        assert (stamp.sec, stamp.nanosec) == (5, 123)
+
+    def test_teensy_spacing_survives_bursty_arrival(self):
+        # A prompt frame (1 ms transport delay) sets the floor; the next four,
+        # 6 ms apart at the Teensy, arrive in a burst 0.5 ms apart.
+        pit = _StampPit(True, 0)
+        stamps = []
+        for i, rx_ms in enumerate([1.0, 30.0, 30.5, 31.0, 31.5]):
+            pit._clock.ns = int(rx_ms * 1e6)
+            s = pit._telemetry_stamp(i * 6000)
+            stamps.append(s.sec * 10**9 + s.nanosec)
+        assert np.diff(stamps).tolist() == [6_000_000] * 4
+        assert stamps[-1] == 25_000_000  # sample time + the 1 ms floor
+
+    def test_restart_is_logged(self):
+        pit = _StampPit(True, 10**9)
+        pit._telemetry_stamp(1_000_000_000)
+        pit._clock.ns = 10**9 + 6_000_000
+        pit._telemetry_stamp(5)  # Teensy reset
+        assert any('restarted' in m for m in pit.logged)
+
+
+class TestBatteryState:
+    def test_average_closes_each_period(self):
+        avg = PowerAverage(period_sec=1.0)
+        assert avg.add(0.0, 8.0, 1.0) is None
+        assert avg.add(0.5, 8.2, 3.0) is None
+        assert avg.add(1.0, 8.4, 2.0) == pytest.approx((8.2, 2.0))
+        assert avg.add(1.5, 7.0, 1.0) is None
+        assert avg.add(2.0, 7.2, 1.0) == pytest.approx((7.1, 1.0))
+
+    def test_discharge_current_is_negative(self):
+        msg = build_battery_state(8.1, 2.5)
+        assert msg.voltage == pytest.approx(8.1) and msg.current == pytest.approx(-2.5)
+        assert msg.present
+        assert msg.power_supply_status == msg.POWER_SUPPLY_STATUS_DISCHARGING
+        assert np.isnan(msg.percentage)
+
+
+class TestOverrideDisplay:
+    def test_override_flashes_amber_and_shows_auto(self):
+        pit = _Pit()
+        pit._override = True
+        state, _, led = pit._build_display(100.0)
+        assert state == SYS_MODE_AUTO | SYS_LED_ACTIVE
+        assert led == bytes(OVERRIDE_LED_RGB) * 84
+
+    def test_flash_goes_dark_between_beats(self):
+        assert override_led_frame(100.25) == b'\x00' * 252
+
+    def test_program_frame_wins_over_the_flash(self):
+        pit = _Pit()
+        pit._override = True
+        pit._led_frame, pit._led_stamp = b'\x02' * 252, 99.9
+        assert pit._build_display(100.0)[2] == b'\x02' * 252
+
+    def test_lb_shows_manual_during_override(self):
+        pit = _Pit()
+        pit._override = True
+        pit._joy_buttons = [0, 0, 0, 0, 1, 0, 0, 0]
+        assert pit._build_display(100.0)[0] & SYS_MODE_MASK == SYS_MODE_MANUAL

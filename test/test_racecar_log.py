@@ -59,19 +59,9 @@ class TestResolveLogRoot:
         got = rl.resolve_log_root(None, environ={'RACECAR_LOG_DIR': str(tmp_path)})
         assert got == tmp_path
 
-    def test_first_writable_candidate_wins(self, tmp_path):
-        good = tmp_path / 'good'
-        good.mkdir()
-        got = rl.resolve_log_root(None, candidates=('/nonexistent', str(good)), environ={})
-        assert got == good
-
-    def test_falls_back_to_last_candidate(self):
-        got = rl.resolve_log_root(
-            None,
-            candidates=('/nonexistent-a', '/nonexistent-b'),
-            environ={},
-        )
-        assert str(got) == '/nonexistent-b'
+    def test_bags_under_the_data_root(self, data_root_dir):
+        got = rl.resolve_log_root(None, environ={})
+        assert got == data_root_dir / 'bags' and got.is_dir()
 
 
 class TestBandwidth:

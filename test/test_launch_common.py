@@ -27,14 +27,20 @@ def _args(ld):
 
 
 class TestLocalOverrides:
-    def test_only_existing_files_in_input_order(self, tmp_path):
-        (tmp_path / 'b.local.yaml').write_text('')
-        (tmp_path / 'a.local.yaml').write_text('')
-        got = local_overrides(str(tmp_path), ['a.yaml', 'missing.yaml', 'b.yaml'])
-        assert got == [str(tmp_path / 'a.local.yaml'), str(tmp_path / 'b.local.yaml')]
+    def test_only_existing_files_in_input_order(self, car_profile_dir):
+        params = car_profile_dir / 'params'
+        params.mkdir(parents=True)
+        (params / 'b.yaml').write_text('')
+        (params / 'a.yaml').write_text('')
+        got = local_overrides(['a.yaml', 'missing.yaml', 'b.yaml'])
+        assert got == [str(params / 'a.yaml'), str(params / 'b.yaml')]
 
-    def test_none_present(self, tmp_path):
-        assert local_overrides(str(tmp_path), ['a.yaml']) == []
+    def test_none_present(self):
+        assert local_overrides(['a.yaml']) == []
+
+    def test_the_driver_folder_is_never_read(self, share):
+        (share / 'a.local.yaml').write_text('')
+        assert local_overrides(['a.yaml']) == []
 
 
 class TestSingleNodeLaunch:
@@ -48,9 +54,11 @@ class TestSingleNodeLaunch:
         )
         assert _args(ld) == ['pit_config', 'cal_config']
 
-    def test_locals_load_after_all_shipped_files(self, share):
-        (share / 'pit.local.yaml').write_text('')
-        (share / 'cal.local.yaml').write_text('')
+    def test_locals_load_after_all_shipped_files(self, share, car_profile_dir):
+        overrides = car_profile_dir / 'params'
+        overrides.mkdir(parents=True)
+        (overrides / 'pit.yaml').write_text('')
+        (overrides / 'cal.yaml').write_text('')
         ld = single_node_launch(
             'pit_config',
             'pit.yaml',
@@ -61,7 +69,7 @@ class TestSingleNodeLaunch:
         params = _params(ld)
         assert len(params) == 4
         locals_ = [p.param_file[0].text for p in params[2:]]
-        assert locals_ == [str(share / 'pit.local.yaml'), str(share / 'cal.local.yaml')]
+        assert locals_ == [str(overrides / 'pit.yaml'), str(overrides / 'cal.yaml')]
 
     def test_no_locals_means_shipped_files_only(self, share):
         ld = single_node_launch('mux_config', 'mux.yaml', 'racecar_neo_ros2_driver', 'mux_node')
@@ -86,6 +94,7 @@ class TestShippedLaunchFiles:
             'pit_config',
             'lsm9ds1_cal_config',
             'lsm9ds1_mag_cal_config',
+            'odom_config',
         ]
 
     def test_imu_fusion_args(self, share):

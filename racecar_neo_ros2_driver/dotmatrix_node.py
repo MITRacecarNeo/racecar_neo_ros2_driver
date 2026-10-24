@@ -14,13 +14,13 @@ from typing import Any
 from luma.core.legacy import text
 from luma.core.legacy.font import proportional, TINY_FONT as _LUMA_TINY_FONT
 from PIL import Image, ImageDraw
-from racecar_neo_ros2_driver.mux_node import MuxMode, select_mode
+from racecar_neo_ros2_driver.mux_node import MuxMode, select_mode, shown_mode
 import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import Joy
-from std_msgs.msg import String, UInt8MultiArray
+from std_msgs.msg import Bool, String, UInt8MultiArray
 
 # Local copy of TINY_FONT with a more legible diagonal-stroke 'N' (luma's stock
 # glyph reads as a notched pillar on an 8-px-tall matrix), so "MAN" is clear.
@@ -191,6 +191,7 @@ class DotMatrixNode(Node):
         self._pixels_rows: list[str] = []
         self._pixels_stamp = 0.0
         self._mode = MuxMode.IDLE
+        self._override = False
         self._splash_start = time.monotonic()
         self._splash_done = not self._splash_message
 
@@ -206,6 +207,12 @@ class DotMatrixNode(Node):
         self.create_subscription(String, '/dotmatrix/text', self._text_cb, qos)
         self.create_subscription(UInt8MultiArray, '/dotmatrix/pixels', self._pixels_cb, qos)
         self.create_subscription(Joy, '/joy', self._joy_cb, qos)
+        latched = QoSProfile(
+            depth=1,
+            reliability=QoSReliabilityPolicy.RELIABLE,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self.create_subscription(Bool, '/mux/override_active', self._override_cb, latched)
         self.create_timer(1.0 / refresh_rate, self._render)
 
         self.get_logger().info(
@@ -232,6 +239,9 @@ class DotMatrixNode(Node):
 
     def _joy_cb(self, msg: Joy) -> None:
         self._mode = select_mode(msg.buttons, self._gamepad_btn, self._auto_btn)
+
+    def _override_cb(self, msg: Bool) -> None:
+        self._override = bool(msg.data)
 
     def _new_image(self) -> tuple[Image.Image, ImageDraw.ImageDraw]:
         img = Image.new('1', (self._width, self._height))
@@ -264,10 +274,11 @@ class DotMatrixNode(Node):
 
     def _glyph_label_frame(self) -> list[int]:
         img, draw = self._new_image()
-        draw_glyph(draw, mode_glyph(self._mode), 0, 0)
-        label_x = self._label_origin.get(self._mode, 8)
+        mode = shown_mode(self._mode, self._override)
+        draw_glyph(draw, mode_glyph(mode), 0, 0)
+        label_x = self._label_origin.get(mode, 8)
         if label_x < self._width:
-            text(draw, (label_x, 1), mode_label(self._mode), fill='white', font=self._font)
+            text(draw, (label_x, 1), mode_label(mode), fill='white', font=self._font)
         return self._to_frame(img)
 
     def _render(self) -> None:

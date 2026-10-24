@@ -10,7 +10,7 @@ JUPYTER_WS="$USER_HOME/jupyter_ws"
 # PEP 668 -> per-user install. jupyterlab pulls jupyter_server, ipykernel,
 # tornado, et al; ~100 MB total on disk.
 if ! command -v "$USER_HOME/.local/bin/jupyter" >/dev/null 2>&1; then
-    pip3 install --user --break-system-packages jupyterlab
+    pip3 install --user --break-system-packages jupyterlab==4.6.1
 fi
 
 # Student-library runtime deps for the v2 racecar-neo library / labs:
@@ -20,7 +20,7 @@ fi
 #     these images ship
 # nptyping is deliberately absent. Both pins and the omission are explained in
 # docs/troubleshooting.md, "Jupyter dependency pins".
-LIB_DEPS=(ipywidgets pandas 'matplotlib-inline<0.2')
+LIB_DEPS=(ipywidgets==8.1.8 pandas==3.0.3 'matplotlib-inline<0.2')
 MISSING_DEPS=()
 for dep in "${LIB_DEPS[@]}"; do
     # Strip any version specifier (e.g. 'matplotlib-inline<0.2' -> 'matplotlib-inline')
@@ -60,3 +60,24 @@ racecar driver are importable.
 EOF
     echo "Created $JUPYTER_WS"
 fi
+
+# The data root (racecar_neo_ros2_driver/data_root.py) and its saved maps,
+# linked into the JupyterLab file browser, which is rooted at ~/jupyter_ws.
+# `racecar disk setup` points the links again when the root moves.
+if [ -r /run/racecar/data_root ]; then
+    DATA_ROOT="$(cat /run/racecar/data_root)"
+else
+    DATA_ROOT="$USER_HOME/data"
+fi
+MAP_ROOT="$DATA_ROOT/maps"
+if [ ! -d "$MAP_ROOT" ]; then
+    sudo -u "$USER_NAME" mkdir -p "$MAP_ROOT"
+fi
+for link in data maps; do
+    target="$DATA_ROOT"
+    [ "$link" = maps ] && target="$MAP_ROOT"
+    if [ -L "$JUPYTER_WS/$link" ] || [ ! -e "$JUPYTER_WS/$link" ]; then
+        sudo -u "$USER_NAME" ln -sfn "$target" "$JUPYTER_WS/$link"
+        echo "Linked $JUPYTER_WS/$link -> $target"
+    fi
+done

@@ -1,5 +1,7 @@
 [Unit]
 Description=RACECAR Neo Web Dashboard (port 8080)
+Wants=racecar-data.service
+After=racecar-data.service
 After=racecar-teleop.service
 
 [Service]
@@ -13,6 +15,8 @@ ExecStart=/bin/bash -c '\
 Restart=on-failure
 RestartSec=5
 Environment=HOME=/home/racecar
+# RACECAR_DATA_DIR, from racecar-data.service.
+EnvironmentFile=-/run/racecar/environment
 Environment=ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
 WorkingDirectory=/home/racecar/ros2_ws
 

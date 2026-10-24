@@ -1,0 +1,20 @@
+// RACECAR Neo - start, stop, and restart racecar-autonomy.service without sudo.
+//
+// Installed to /etc/polkit-1/rules.d/ by scripts/setup_user_env.sh. The map
+// viewer and `racecar map` run as the racecar user and switch the autonomy
+// unit between mapping and localization. The grant covers that one unit, that
+// user, and those three verbs; enabling, masking, and every other unit still
+// ask for authentication.
+
+polkit.addRule(function (action, subject) {
+    if (action.id !== "org.freedesktop.systemd1.manage-units") {
+        return polkit.Result.NOT_HANDLED;
+    }
+    var verbs = ["start", "stop", "restart"];
+    if (action.lookup("unit") === "racecar-autonomy.service" &&
+        verbs.indexOf(action.lookup("verb")) !== -1 &&
+        subject.user === "racecar") {
+        return polkit.Result.YES;
+    }
+    return polkit.Result.NOT_HANDLED;
+});

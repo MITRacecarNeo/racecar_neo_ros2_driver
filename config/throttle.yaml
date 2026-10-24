@@ -4,6 +4,30 @@ throttle_node:
     # angle_pwm_* in the firmware config), so the Pi passes the full [-1, 1]
     # range through by default. Steering is a straight pass-through; lower
     # max_speed_forward/backward below 1.0 for finer speed control.
+    #
+    # Speed is normalized, not m/s. The firmware holds wheel speed closed
+    # loop: a command n (|n| > 0.01) becomes
+    #   v = sign(n) * (floor + (|n| - 0.01) / 0.99 * (ceiling - floor))  m/s
+    # with floor 0.5 m/s and ceiling 1.0 m/s in the current firmware (indoor
+    # testing): n = 0.25 is about 0.62 m/s, 0.5 about 0.75, 1.0 is 1.0. Field
+    # firmware raises the ceiling to 4.0 m/s, so the same n drives faster;
+    # anything tuned in m/s against n (simulator dynamics, lab gains) must
+    # say which ceiling it assumes.
     max_speed_forward: 1.0
     max_speed_backward: 1.0
     max_steering: 1.0
+    # While mapping (/autonomy/status mode mapping), speed is clipped to this:
+    # every command past the 0.01 deadband drives at the firmware floor.
+    mapping_speed_cap: 0.02
+    # While mapping, steering is clipped to this (before steering_trim); 1.0 is
+    # off. The servo response is not linear: 0.25 drives 0.90 to 1.02/m of
+    # curvature, 0.5 already 1.85 to 2.05/m of full lock's 2.15 to 2.39/m. At
+    # 0.3 (0.71 m tightest radius, yaw p90 47 deg/s against 65) scans fit the
+    # finished map 97.9% within 0.1 m against 94.7% uncapped, but walls came out
+    # no thinner and the room took many three-point turns; set it per car for
+    # large open spaces.
+    mapping_steering_cap: 1.0
+    # Added to every steering command after max_steering, so the car drives
+    # straight at steering 0. Per car, in throttle.local.yaml, written by
+    # calibrate_steering.py (racecar calibrate steering).
+    steering_trim: 0.0

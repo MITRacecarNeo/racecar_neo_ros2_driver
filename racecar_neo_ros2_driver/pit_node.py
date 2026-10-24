@@ -19,10 +19,13 @@ physics.py.
 """
 
 from collections.abc import Sequence
+import math
 import threading
 import time
 
 from ackermann_msgs.msg import AckermannDriveStamped
+from builtin_interfaces.msg import Time as TimeMsg
+from geometry_msgs.msg import TransformStamped
 from nav_msgs.msg import Odometry
 import numpy as np
 import rclpy
@@ -34,13 +37,17 @@ from rclpy.qos import (
     QoSProfile,
     QoSReliabilityPolicy,
 )
-from sensor_msgs.msg import Imu, Joy, MagneticField
+from rclpy.time import Time
+from sensor_msgs.msg import BatteryState, Imu, Joy, MagneticField
 import serial
 from std_msgs.msg import Bool, Float32, Float32MultiArray, UInt8MultiArray
+from tf2_ros import TransformBroadcaster
 
 from . import pit_protocol as pit
 from .limits import clamp
-from .mux_node import MuxMode, select_mode
+from .mux_node import MuxMode, select_mode, shown_mode
+from .odometry import OdomIntegrator, OdomState, yaw_quaternion
+from .teensy_clock import TeensyClock
 
 # RxPacket.SystemState bit layout; mirror of the firmware cfg::SYS_STATE.
 SYS_MODE_MASK = 0x03
@@ -57,6 +64,47 @@ SYS_DRIVER_STARTING = 0x10
 POSE_UNESTIMATED = -1.0
 TWIST_COMPONENT_UNKNOWN = 1e6
 SPEED_VARIANCE = 1e-2
+
+BATTERY_PERIOD_SEC = 1.0
+
+
+class PowerAverage:
+    """Mean pack voltage and current over each period of telemetry samples."""
+
+    def __init__(self, period_sec: float = BATTERY_PERIOD_SEC) -> None:
+        self.period = period_sec
+        self._start: float | None = None
+        self._sum_v = 0.0
+        self._sum_a = 0.0
+        self._n = 0
+
+    def add(self, now: float, volts: float, amps: float) -> tuple[float, float] | None:
+        """Add one sample; return (mean V, mean A) when a period has closed."""
+        if self._start is None:
+            self._start = now
+        self._sum_v += volts
+        self._sum_a += amps
+        self._n += 1
+        if now - self._start < self.period:
+            return None
+        means = (self._sum_v / self._n, self._sum_a / self._n)
+        self._start, self._sum_v, self._sum_a, self._n = now, 0.0, 0.0, 0
+        return means
+
+
+def build_battery_state(volts: float, amps: float) -> BatteryState:
+    """Build a BatteryState from pack means; ROS counts discharge current as negative."""
+    msg = BatteryState()
+    msg.voltage = float(volts)
+    msg.current = -float(amps)
+    msg.charge = msg.capacity = msg.design_capacity = msg.percentage = math.nan
+    msg.temperature = math.nan
+    msg.power_supply_status = (
+        BatteryState.POWER_SUPPLY_STATUS_DISCHARGING
+        if amps > 0.0 else BatteryState.POWER_SUPPLY_STATUS_UNKNOWN
+    )
+    msg.present = True
+    return msg
 
 
 def build_odom(speed_mps: float, frame_id: str, child_frame_id: str) -> Odometry:
@@ -92,12 +140,56 @@ _MODE_BITS = {
 }
 
 
+OVERRIDE_LED_RGB = (255, 110, 0)
+OVERRIDE_LED_HZ = 2.0
+
+
+def override_led_frame(now: float) -> bytes:
+    """Flash the whole strip amber while the safety override is on."""
+    lit = int(now * OVERRIDE_LED_HZ * 2) % 2 == 0
+    return bytes(OVERRIDE_LED_RGB if lit else (0, 0, 0)) * (LED_FRAME_LEN // 3)
+
+
 def remap_axes(
     vec: Sequence[float], order: Sequence[int], sign: Sequence[float], scale: float = 1.0
 ) -> np.ndarray:
     """Reorder, sign-flip and scale a 3-vector: out[i] = scale * sign[i] * vec[order[i]]."""
     v = np.asarray(vec, dtype=float)
     return np.array([sign[i] * v[order[i]] for i in range(3)]) * scale
+
+
+# Odometry: logged when the gyro bias estimate moves by more than this.
+ODOM_BIAS_LOG_STEP = math.radians(0.05)
+
+
+def build_integrated_odom(
+    state: OdomState, odom_frame: str, base_frame: str
+) -> tuple[TransformStamped, Odometry]:
+    """Return the odom -> base_link transform and its Odometry message for a pose."""
+    assert state.t is not None
+    stamp = Time(nanoseconds=round(state.t * 1e9)).to_msg()
+    qx, qy, qz, qw = yaw_quaternion(state.theta)
+
+    tf = TransformStamped()
+    tf.header.stamp = stamp
+    tf.header.frame_id = odom_frame
+    tf.child_frame_id = base_frame
+    tf.transform.translation.x = state.x
+    tf.transform.translation.y = state.y
+    tf.transform.rotation.x, tf.transform.rotation.y = qx, qy
+    tf.transform.rotation.z, tf.transform.rotation.w = qz, qw
+
+    odom = Odometry()
+    odom.header.stamp = stamp
+    odom.header.frame_id = odom_frame
+    odom.child_frame_id = base_frame
+    odom.pose.pose.position.x = state.x
+    odom.pose.pose.position.y = state.y
+    odom.pose.pose.orientation.x, odom.pose.pose.orientation.y = qx, qy
+    odom.pose.pose.orientation.z, odom.pose.pose.orientation.w = qz, qw
+    odom.twist.twist.linear.x = state.v
+    odom.twist.twist.angular.z = state.omega
+    return tf, odom
 
 
 class PitNode(Node):
@@ -117,6 +209,8 @@ class PitNode(Node):
         # the eight FlySky RC channels normalized to [-1, 1].
         self.declare_parameter('voltage_topic', '/battery/voltage')
         self.declare_parameter('current_topic', '/battery/current')
+        # 1 Hz means of the two above, for dashboards and logs.
+        self.declare_parameter('battery_state_topic', '/battery/state')
         self.declare_parameter('rc_topic', '/rc/channels')
         # Link state from raw pulse widths; see Telemetry.rc_link_up.
         self.declare_parameter('rc_link_topic', '/rc/link')
@@ -141,6 +235,26 @@ class PitNode(Node):
         self.declare_parameter('gamepad_enable_button', 4)
         self.declare_parameter('autonomy_enable_button', 5)
 
+        # Integrated odometry (odometry.py): TF odom -> base_link and
+        # odometry.topic, from each frame's encoder speed and gyro. Values in
+        # config/odom.yaml; per-car scales in odom.local.yaml.
+        self.declare_parameter('odometry.enable', True)
+        self.declare_parameter('odometry.topic', '/odom/integrated')
+        self.declare_parameter('odometry.yaw_rate_axis', 2)
+        self.declare_parameter('odometry.yaw_rate_sign', 1.0)
+        self.declare_parameter('odometry.speed_scale', 1.0)
+        self.declare_parameter('odometry.yaw_rate_scale', 1.0)
+        self.declare_parameter('odometry.publish_rate_hz', 50.0)
+        self.declare_parameter('odometry.stale_input_sec', 0.25)
+        self.declare_parameter('odometry.zero_hold_sec', 1.0)
+        self.declare_parameter('odometry.zero_max_rate_dps', 2.0)
+        self.declare_parameter('odometry.bias_tau_sec', 30.0)
+        self.declare_parameter('odometry.turn_gain', 0.0)
+        self.declare_parameter('odometry.wheelbase_m', 0.230)
+        self.declare_parameter('odometry.max_steer_deg', 30.0)
+        # Stamp telemetry with the Teensy's sample time (teensy_clock.py) in
+        # place of the Pi's bursty receive time; false falls back to receive time.
+        self.declare_parameter('use_teensy_stamps', True)
         self.declare_parameter('frame_id', 'imu_link')
         self.declare_parameter('publish_mag', True)
         self.declare_parameter('imu_topic', '/imu/lsm9ds1')
@@ -155,6 +269,7 @@ class PitNode(Node):
         self.declare_parameter('imu.mag_scale', 1.0e-6)  # firmware uT -> Tesla
         # Keys match config/lsm9ds1_cal.yaml and config/lsm9ds1_mag_cal.yaml.
         self.declare_parameter('accelerometer.bias', [0.0, 0.0, 0.0])
+        self.declare_parameter('accelerometer.scale', [1.0, 1.0, 1.0])
         self.declare_parameter('gyroscope.bias', [0.0, 0.0, 0.0])
         self.declare_parameter('magnetometer.hard_iron_bias', [0.0, 0.0, 0.0])
         self.declare_parameter(
@@ -169,6 +284,9 @@ class PitNode(Node):
         self._speed_sign = int(self.get_parameter('speed_sign').value)
         self._require_crc = bool(self.get_parameter('require_crc').value)
         self._frame = self.get_parameter('frame_id').value
+        self._teensy_clock = (
+            TeensyClock() if self.get_parameter('use_teensy_stamps').value else None
+        )
         self._publish_mag = bool(self.get_parameter('publish_mag').value)
         self._imu_topic = self.get_parameter('imu_topic').value
         self._mag_topic = self.get_parameter('mag_topic').value
@@ -179,6 +297,7 @@ class PitNode(Node):
         self._odom_child_frame = self.get_parameter('odom_child_frame_id').value
         self._voltage_topic = self.get_parameter('voltage_topic').value
         self._current_topic = self.get_parameter('current_topic').value
+        self._battery_state_topic = self.get_parameter('battery_state_topic').value
         self._rc_topic = self.get_parameter('rc_topic').value
         self._rc_link_topic = self.get_parameter('rc_link_topic').value
         self._dotmatrix_topic = self.get_parameter('dotmatrix_topic').value
@@ -196,6 +315,7 @@ class PitNode(Node):
         self._gyro_scale = float(self.get_parameter('imu.gyro_scale').value)
         self._mag_scale = float(self.get_parameter('imu.mag_scale').value)
         self._accel_bias = np.array(self.get_parameter('accelerometer.bias').value, float)
+        self._accel_cal_scale = np.array(self.get_parameter('accelerometer.scale').value, float)
         self._gyro_bias = np.array(self.get_parameter('gyroscope.bias').value, float)
         self._mag_hard = np.array(self.get_parameter('magnetometer.hard_iron_bias').value, float)
         self._mag_soft = np.array(
@@ -218,12 +338,25 @@ class PitNode(Node):
         )
         self._pub_voltage = self.create_publisher(Float32, self._voltage_topic, qos)
         self._pub_current = self.create_publisher(Float32, self._current_topic, qos)
+        self._pub_battery = self.create_publisher(BatteryState, self._battery_state_topic, 10)
+        self._power_avg = PowerAverage()
         self._pub_rc = self.create_publisher(Float32MultiArray, self._rc_topic, qos)
         self._pub_rc_link = self.create_publisher(Bool, self._rc_link_topic, qos)
         self.create_subscription(AckermannDriveStamped, '/motor', self._motor_cb, qos)
         self.create_subscription(UInt8MultiArray, self._dotmatrix_topic, self._dot_cb, qos)
         self.create_subscription(UInt8MultiArray, self._led_topic, self._led_cb, qos)
         self.create_subscription(Joy, '/joy', self._joy_cb, qos)
+        self.create_subscription(
+            Bool,
+            '/mux/override_active',
+            self._override_cb,
+            QoSProfile(
+                depth=1,
+                reliability=QoSReliabilityPolicy.RELIABLE,
+                durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+            ),
+        )
+        self._setup_odometry(qos)
 
         self._latest_speed = 0.0
         self._latest_steer = 0.0
@@ -231,6 +364,7 @@ class PitNode(Node):
         self._dot_frame: bytes | None = None
         self._dot_stamp = 0.0
         self._led_frame: bytes | None = None
+        self._override = False
         self._led_stamp = 0.0
         self._joy_buttons: list[int] = []
         self._start_time = time.monotonic()
@@ -284,9 +418,14 @@ class PitNode(Node):
     def _joy_cb(self, msg: Joy) -> None:
         self._joy_buttons = list(msg.buttons)
 
+    def _override_cb(self, msg: Bool) -> None:
+        self._override = bool(msg.data)
+
     def _build_display(self, now: float) -> tuple[int, bytes | None, bytes | None]:
         """Build the SystemState byte + dot-matrix/LED payloads for this frame."""
-        mode = select_mode(self._joy_buttons, self._gamepad_btn, self._auto_btn)
+        mode = shown_mode(
+            select_mode(self._joy_buttons, self._gamepad_btn, self._auto_btn), self._override
+        )
         state = _MODE_BITS.get(mode, SYS_MODE_IDLE)
 
         dot = None
@@ -297,6 +436,9 @@ class PitNode(Node):
         led = None
         if self._led_frame is not None and (now - self._led_stamp) <= self._display_timeout:
             led = self._led_frame
+            state |= SYS_LED_ACTIVE
+        elif self._override:
+            led = override_led_frame(now)
             state |= SYS_LED_ACTIVE
 
         if (now - self._start_time) < self._led_startup:
@@ -345,6 +487,87 @@ class PitNode(Node):
                 elif consumed == 0:
                     break
 
+    def _setup_odometry(self, qos: QoSProfile) -> None:
+        p = self.get_parameter
+        self._odometry: OdomIntegrator | None = None
+        if not p('odometry.enable').value:
+            return
+        axis = int(p('odometry.yaw_rate_axis').value)
+        if axis not in (0, 1, 2):
+            raise ValueError(f'odometry.yaw_rate_axis must be 0, 1 or 2, got {axis}')
+        self._yaw_axis = axis
+        self._yaw_gain = float(p('odometry.yaw_rate_sign').value) * float(
+            p('odometry.yaw_rate_scale').value
+        )
+        self._speed_scale = float(p('odometry.speed_scale').value)
+        self._odometry = OdomIntegrator(
+            zero_hold_sec=float(p('odometry.zero_hold_sec').value),
+            zero_max_rate=math.radians(float(p('odometry.zero_max_rate_dps').value)),
+            bias_tau_sec=float(p('odometry.bias_tau_sec').value),
+            stale_sec=float(p('odometry.stale_input_sec').value),
+            turn_gain=float(p('odometry.turn_gain').value),
+            wheelbase=float(p('odometry.wheelbase_m').value),
+            max_steer=math.radians(float(p('odometry.max_steer_deg').value)),
+        )
+        # Published from the serial reader thread, not a timer: each timer wake-up
+        # rebuilds the executor's wait set over every entity of this node, which
+        # costs several times the integration itself.
+        self._odom_period = 1.0 / float(p('odometry.publish_rate_hz').value)
+        self._odom_next_pub: float | None = None
+        self._odom_gaps_logged = 0
+        self._odom_bias_logged = 0.0
+        self._pub_odom_integrated = self.create_publisher(
+            Odometry, str(p('odometry.topic').value), qos
+        )
+        self._tf = TransformBroadcaster(self)
+
+    def _integrate_odometry(self, stamp_ns: int, speed: float, gyro: Sequence[float]) -> None:
+        assert self._odometry is not None
+        omega = float(gyro[self._yaw_axis]) * self._yaw_gain
+        t = stamp_ns * 1e-9
+        self._odometry.step(t, speed * self._speed_scale, omega)
+        # A running deadline holds the average at the configured rate; after a
+        # gap it restarts from now rather than publishing a burst.
+        due = self._odom_next_pub
+        if due is None or t >= due:
+            self._publish_odometry()
+            self._odom_next_pub = (
+                t + self._odom_period
+                if due is None or t - due > self._odom_period
+                else due + self._odom_period
+            )
+        gaps, bias = self._odometry.gaps, self._odometry.bias
+        if gaps != self._odom_gaps_logged:
+            self._odom_gaps_logged = gaps
+            self.get_logger().warn(
+                f'Odometry input gap over {self._odometry.stale_sec:g} s; pose held '
+                f'({gaps} so far)'
+            )
+        if abs(bias - self._odom_bias_logged) > ODOM_BIAS_LOG_STEP:
+            self._odom_bias_logged = bias
+            self.get_logger().info(f'Gyro bias estimate {math.degrees(bias):+.3f} deg/s')
+
+    def _publish_odometry(self) -> None:
+        assert self._odometry is not None
+        state = self._odometry.state
+        if state.t is None:
+            return
+        tf, odom = build_integrated_odom(state, self._odom_frame, self._odom_child_frame)
+        self._tf.sendTransform(tf)
+        self._pub_odom_integrated.publish(odom)
+
+    def _telemetry_stamp(self, timestamp_us: int) -> TimeMsg:
+        now = self.get_clock().now()
+        if self._teensy_clock is None:
+            return now.to_msg()
+        restarts = self._teensy_clock.restarts
+        stamp_ns = self._teensy_clock.stamp(timestamp_us, now.nanoseconds)
+        if self._teensy_clock.restarts != restarts:
+            self.get_logger().info(
+                'Teensy clock mapping restarted (Teensy reset, reconnect, or Pi clock step)'
+            )
+        return Time(nanoseconds=stamp_ns).to_msg()
+
     def _publish_telemetry(self, telem: pit.Telemetry) -> None:
         if self._require_crc and not telem.crc_ok:
             self._crc_fail_count += 1
@@ -354,10 +577,10 @@ class PitNode(Node):
                 )
             return
 
-        stamp = self.get_clock().now().to_msg()
+        stamp = self._telemetry_stamp(telem.timestamp_us)
         raw_accel = remap_axes(telem.accel, self._ag_order, self._ag_sign, self._accel_scale)
         raw_gyro = remap_axes(telem.gyro, self._ag_order, self._ag_sign, self._gyro_scale)
-        accel = raw_accel - self._accel_bias
+        accel = (raw_accel - self._accel_bias) * self._accel_cal_scale
         gyro = raw_gyro - self._gyro_bias
 
         imu = Imu()
@@ -382,6 +605,10 @@ class PitNode(Node):
         imu_raw.angular_velocity.z = float(raw_gyro[2])
         self._pub_imu_raw.publish(imu_raw)
 
+        if self._odometry is not None:
+            stamp_ns = stamp.sec * 10**9 + stamp.nanosec
+            self._integrate_odometry(stamp_ns, float(telem.encoder), gyro)
+
         # Encoder telemetry is vehicle speed in m/s (firmware getCurrentSpeed()).
         enc = Float32()
         enc.data = float(telem.encoder)
@@ -398,6 +625,11 @@ class PitNode(Node):
         curr = Float32()
         curr.data = float(telem.current_a)
         self._pub_current.publish(curr)
+        means = self._power_avg.add(time.monotonic(), telem.voltage_v, telem.current_a)
+        if means is not None:
+            battery = build_battery_state(*means)
+            battery.header.stamp = stamp
+            self._pub_battery.publish(battery)
         rc = Float32MultiArray()
         rc.data = [float(c) for c in telem.rc_normalized]
         self._pub_rc.publish(rc)

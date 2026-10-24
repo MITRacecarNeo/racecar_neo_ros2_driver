@@ -1,0 +1,20 @@
+[Unit]
+Description=RACECAR Neo data root (NVMe, else SD card), worked out once per boot
+# The NVMe mount is nofail, so local-fs.target does not wait for it; ordering
+# after the mount unit does, whether it mounts or times out.
+After=local-fs.target mnt-nvme.mount
+Before=racecar-teleop.service racecar-dashboard.service racecar-jupyter.service racecar-mapview.service racecar-autonomy.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=racecar
+Group=racecar
+Environment=HOME=/home/racecar
+# /run/racecar holds data_root and environment until the next boot.
+RuntimeDirectory=racecar
+RuntimeDirectoryPreserve=yes
+ExecStart=/usr/bin/python3 /home/racecar/ros2_ws/src/racecar_neo_ros2_driver/racecar_neo_ros2_driver/data_root.py write
+
+[Install]
+WantedBy=multi-user.target
