@@ -368,14 +368,20 @@ def _control(action: str) -> None:
         )
 
 
-# Lab apps that publish /drive. Mapping stops them: they cost CPU that
-# slam_toolbox needs, and the car is driven with the gamepad while mapping.
-# Stopping them is allowed by scripts/polkit/49-racecar-dashboards.rules.
+# Lab apps that publish /drive. Autonomy and these run one at a time, as the
+# apps page keeps them: together they leave no CPU for the localizer or
+# slam_toolbox. Starting mapping or localization stops them; the map viewer
+# and the apps page ask first. Stopping them is allowed by
+# scripts/polkit/49-racecar-dashboards.rules.
 DRIVING_APPS = (
-    ('racecar-webteleop.service', 'Web teleop'),
-    ('racecar-linefollow.service', 'Line follow'),
-    ('racecar-wallfollow.service', 'Wall follow'),
+    ('racecar-webteleop.service', 'Web Teleop'),
+    ('racecar-linefollow.service', 'Line Follow'),
+    ('racecar-wallfollow.service', 'Wall Follow'),
 )
+
+
+def running_driving_apps() -> list[str]:
+    return [name for unit, name in DRIVING_APPS if unit_state(unit) in ('active', 'activating')]
 
 
 def stop_driving_apps(out: Out) -> None:
@@ -534,10 +540,9 @@ def _change_mode(
     now: datetime,
     timeout: float,
 ) -> int:
-    first = make_plan()  # usage and map errors before anything stops
+    make_plan()  # usage and map errors before anything stops
     require_teleop()
-    if first.values['AUTONOMY_MODE'] == 'mapping':
-        stop_driving_apps(out)
+    stop_driving_apps(out)
     if unit_running():
         out('Stopping the current autonomy run.')
         _control('stop')
@@ -596,6 +601,32 @@ def load(
         now,
         timeout,
     )
+
+
+def resume(out: Out = print, timeout: float = READY_TIMEOUT_SEC) -> int:
+    """
+    Start the last run again: mapping continues its own autosave; localization loads the map.
+
+    Localization goes through load() so it starts from the last pose rather
+    than the one the run began with.
+    """
+    if unit_running():
+        out('Autonomy is already running.')
+        return 0
+    values = read_mode_file()
+    mode, name = values.get('AUTONOMY_MODE'), values.get('AUTONOMY_MAP', '')
+    if mode not in ('mapping', 'localization') or not valid_name(name):
+        raise MapError('no earlier run to resume. Start mapping or load a map in the map viewer.')
+    if mode == 'localization':
+        return load(name, localizer=values.get('AUTONOMY_LOCALIZER') or 'amcl', out=out,
+                    timeout=timeout)
+    require_teleop()
+    stop_driving_apps(out)
+    _control('start')
+    code = _wait_ready(values, out, timeout)
+    if code == 0:
+        out(f'Mapping {name} again from its last autosave.')
+    return code
 
 
 def stop(out: Out = print) -> int:

@@ -196,6 +196,10 @@ class FakeViewer:
     def __init__(self):
         self.touched = 0
         self.poses = []
+        self.cleared = 0
+
+    def clear_trail(self):
+        self.cleared += 1
 
     def touch(self):
         self.touched += 1
@@ -287,6 +291,15 @@ class TestHttp:
         assert res.status == 400
         res, data = request(server, 'POST', '/api/find', {})
         assert json.loads(data)['ok'] is True
+
+    def test_driving_apps(self, mv, server, monkeypatch):
+        monkeypatch.setattr(mv.mc, 'running_driving_apps', lambda: ['Web Teleop'])
+        res, data = request(server, 'GET', '/api/driving')
+        assert json.loads(data) == {'apps': ['Web Teleop']}
+
+    def test_clear_trail(self, mv, server):
+        res, _ = request(server, 'POST', '/api/trail/clear', {})
+        assert res.status == 200 and mv.Handler.viewer.cleared == 1
 
     def test_unknown_path(self, server):
         assert request(server, 'GET', '/nope')[0].status == 404

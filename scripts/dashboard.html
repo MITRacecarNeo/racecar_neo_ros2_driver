@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RACECAR Neo</title>
-<link rel="stylesheet" href="/ui/rcn.css?v=10">
-<script src="/ui/charts.js?v=10"></script>
+<link rel="stylesheet" href="/ui/rcn.css?v=11">
+<script src="/ui/charts.js?v=11"></script>
 <link rel="icon" href="/ui/brand/app-icon-32.png">
 <link rel="apple-touch-icon" href="/ui/brand/app-icon-180.png">
 <style>
@@ -45,6 +45,10 @@
   #override[aria-pressed="true"] .glyph { border-color: var(--rcn-crimson); background: var(--rcn-crimson-deep); color: var(--rcn-paper); }
   .app.unavailable .glyph { border-style: dashed; color: var(--rcn-mist); }
   .app.unavailable:hover .glyph { border-color: var(--rcn-steel); background: var(--rcn-surface); }
+  #autosheet { background: var(--rcn-surface); color: var(--rcn-text); border: 1px solid var(--rcn-steel); border-radius: var(--rcn-radius-md); padding: var(--rcn-space-4); max-width: 420px; }
+  #autosheet::backdrop { background: rgba(0, 0, 0, 0.55); }
+  #autosheet h2 { font-size: 18px; line-height: 24px; margin: 0 0 var(--rcn-space-2); }
+  #autosheet .row { display: flex; flex-wrap: wrap; gap: var(--rcn-space-2); margin-top: var(--rcn-space-4); }
   #msg { min-height: 20px; margin-top: var(--rcn-space-3); }
   details { margin-top: var(--rcn-space-8); border-top: 1px solid var(--rcn-border); padding-top: var(--rcn-space-4); }
   summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: var(--rcn-space-2); font: 700 20px/28px var(--rcn-font-display); }
@@ -109,19 +113,33 @@
   </div>
   <h2 class="apps-title">Apps</h2>
   <div class="bar-row group-row"><div class="rcn-eyebrow">Core</div></div>
-  <div class="apps" id="apps-core"></div>
+  <div class="apps">
+    <!-- display: contents keeps the override tile in the same grid as the core apps. -->
+    <div id="apps-core" style="display: contents"></div>
+    <button class="app" id="override" aria-pressed="false" data-tip="Drive without a controller. Press any controller button except LB to stop.">
+      <span class="glyph"><svg class="rcn-icon"><use href="/ui/icons.svg#alert"/></svg></span>
+      <span class="name">Safety Override</span></button>
+  </div>
   <div class="bar-row group-row">
     <div class="rcn-eyebrow">Utilities</div>
     <button class="rcn-btn quiet small" id="clear-apps"><svg class="rcn-icon"><use href="/ui/icons.svg#stop"/></svg>Clear apps</button>
   </div>
   <div class="apps" id="apps-utilities"></div>
-  <div class="bar-row group-row"><div class="rcn-eyebrow">Safety</div></div>
-  <div class="apps">
-    <button class="app" id="override" aria-pressed="false" data-tip="Drive without a controller. Press any controller button except LB to stop.">
-      <span class="glyph"><svg class="rcn-icon"><use href="/ui/icons.svg#alert"/></svg></span>
-      <span class="name">Safety override</span></button>
-  </div>
   <div class="rcn-small rcn-muted" id="msg"></div>
+
+  <details id="features-section">
+    <summary>Features <svg class="rcn-icon"><use href="/ui/icons.svg#chevron-down"/></svg></summary>
+    <div class="apps" id="features"></div>
+  </details>
+
+  <dialog id="autosheet">
+    <h2 id="autosheet-title">Save the map before stopping?</h2>
+    <div class="row">
+      <button class="rcn-btn primary small" data-act="save-stop">Save and stop</button>
+      <button class="rcn-btn quiet small" data-act="stop">Stop without saving</button>
+      <button class="rcn-btn quiet small" data-act="">Cancel</button>
+    </div>
+  </dialog>
 
   <details id="overview">
     <summary>Overview <svg class="rcn-icon"><use href="/ui/icons.svg#chevron-down"/></svg></summary>
@@ -243,17 +261,95 @@ function renderApps() {
       <span class="name">${esc(a.name)}</span></button>`;
   }).join(''));
 }
+const live = (a) => a.state === 'active' || a.state === 'activating';
 document.querySelector('main').addEventListener('click', (e) => {
   const el = e.target.closest('.app');
   if (!el || !el.dataset.id) return;
   const app = apps.find((a) => a.id === el.dataset.id);
   if (!app || app.state === 'unavailable') return;
-  const live = (a) => a.state === 'active' || a.state === 'activating';
   const other = apps.find((a) => a.exclusive && a.id !== app.id && live(a));
   if (app.exclusive && other && !live(app)
       && !confirm(`${other.name} is open. Close it and open ${app.name}?`)) return;
+  const auto = features.find((f) => f.id === 'autonomy');
+  if (app.exclusive && !live(app) && auto && live(auto)) {
+    const last = auto.last || {};
+    const ask = last.mode === 'mapping'
+      ? `Mapping ${last.map} is running. Save it, stop it, and open ${app.name}?`
+      : `Localizing on ${last.map || 'a map'}. Stop it and open ${app.name}?`;
+    if (!confirm(ask)) return;
+  }
+  const needsCamera = app.needs === 'camera' && !live(app) && featureState('camera') === 'inactive';
+  if (needsCamera && !confirm(`${app.name} needs the camera. Turn it on?\n\n${RESTART}`)) return;
   // Opened from the click so the browser allows the new tab.
   window.open(`/launch?app=${encodeURIComponent(app.id)}`, '_blank');
+  if (needsCamera) setFeature({ feature: 'camera', on: true });
+});
+
+// -- features: camera and detections restart teleop; autonomy is its own service --
+const RESTART = 'Teleop restarts. The car stops for about 15 seconds.';
+let features = [];
+let featureMessage = '';
+function featureState(id) { return (features.find((f) => f.id === id) || {}).state; }
+function renderFeatures(view) {
+  if (!view) return;
+  features = view.items;
+  setHtml('features', features.map((f) => {
+    const [cls, badge, word] = APP_STATE[f.state] || ['', '', 'Off'];
+    const status = f.state === 'active' ? 'On' : word;
+    return `<button class="app ${cls}" data-feature="${f.id}" data-tip="${esc(f.desc)}"
+        aria-label="${esc(`${f.name}, ${status.toLowerCase()}. ${f.desc}`)}">
+      <span class="glyph">${icon(f.icon)}${badge ? `<span class="badge">${icon(badge)}</span>` : ''}</span>
+      <span class="name">${esc(f.name)}</span></button>`;
+  }).join(''));
+  const job = view.job || {};
+  if (job.message && job.message !== featureMessage) $('msg').textContent = job.message;
+  featureMessage = job.message || '';
+}
+async function setFeature(body) {
+  try {
+    const r = await (await fetch('/api/feature', { method: 'POST', body: JSON.stringify(body) })).json();
+    $('msg').textContent = r.message;
+    featureMessage = r.message;
+  } catch (err) { $('msg').textContent = 'Lost contact with the car.'; }
+  update(false);
+}
+function autonomyClick(f) {
+  const last = f.last || {};
+  if (!live(f)) {
+    if (!last.map) { window.open(`${location.protocol}//${location.hostname}:8084/`, '_blank'); return; }
+    let ask = last.mode === 'mapping' ? `Continue mapping ${last.map}?` : `Localize on ${last.map} again?`;
+    const driving = apps.filter((a) => a.exclusive && live(a)).map((a) => a.name);
+    if (driving.length) ask += ` ${driving.join(' and ')} will close.`;
+    if (confirm(ask)) setFeature({ feature: 'autonomy', action: 'resume' });
+    return;
+  }
+  if (last.mode === 'mapping') {
+    $('autosheet-title').textContent = `Save ${last.map} before stopping?`;
+    $('autosheet').showModal();
+  } else if (confirm(`Stop localizing on ${last.map || 'the map'}?`)) {
+    setFeature({ feature: 'autonomy', action: 'stop' });
+  }
+}
+$('autosheet').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  $('autosheet').close();
+  if (b.dataset.act) setFeature({ feature: 'autonomy', action: b.dataset.act });
+});
+$('features').addEventListener('click', (e) => {
+  const el = e.target.closest('[data-feature]');
+  const f = el && features.find((x) => x.id === el.dataset.feature);
+  if (!f || f.state === 'activating') return;
+  if (f.id === 'autonomy') { autonomyClick(f); return; }
+  const on = f.state !== 'active';
+  let ask = `Turn ${on ? 'on' : 'off'} ${f.name.toLowerCase()}?`;
+  if (on && f.id === 'detections' && featureState('camera') !== 'active') ask = 'Turn on detections and the camera?';
+  if (!on && f.id === 'camera') {
+    if (featureState('detections') === 'active') ask = 'Turn off the camera and detections?';
+    const users = apps.filter((a) => a.needs === 'camera' && live(a)).map((a) => a.name);
+    if (users.length) ask += ` ${users.join(' and ')} will have no camera.`;
+  }
+  if (confirm(`${ask}\n\n${RESTART}`)) setFeature({ feature: f.id, on });
 });
 
 // -- charts (shared: /ui/charts.js) --
@@ -364,6 +460,10 @@ $('overview').addEventListener('toggle', () => {
 });
 new ResizeObserver(renderOverview).observe($('overview'));
 if (store.get('rcn-overview-open', '0') === '1') $('overview').open = true;
+$('features-section').addEventListener('toggle', () => {
+  store.set('rcn-features-open', $('features-section').open ? '1' : '0');
+});
+if (store.get('rcn-features-open', '0') === '1') $('features-section').open = true;
 
 // -- system status --
 // [kind, key, icon, word, group]; kind picks where the status comes from.
@@ -511,6 +611,7 @@ function update(refresh) {
       apps = data.apps || [];
       $('host').textContent = data.host || '';
       renderApps();
+      renderFeatures(data.features);
       renderBasic(data);
       renderAdvanced(data);
       renderOverall(data);

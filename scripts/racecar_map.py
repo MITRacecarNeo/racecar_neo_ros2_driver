@@ -58,6 +58,7 @@ def parser() -> argparse.ArgumentParser:
 
     sub.add_parser('save', help='save the map being built; returns when the files are written')
     sub.add_parser('stop', help='stop mapping or localization (a mapping run is autosaved)')
+    sub.add_parser('resume', help='start the last mapping or localization run again')
 
     ld = sub.add_parser('load', help='localize on the saved map NAME')
     ld.add_argument('name')
@@ -91,7 +92,10 @@ def run(args: argparse.Namespace) -> int:
         return mc.info(args.name)
     if action == 'foxglove':
         return mc.set_foxglove(args.state == 'on')
-    simple = {'save': mc.save, 'stop': mc.stop, 'status': mc.status, 'list': mc.list_maps}
+    simple = {
+        'save': mc.save, 'stop': mc.stop, 'resume': mc.resume,
+        'status': mc.status, 'list': mc.list_maps,
+    }
     return simple[action]()
 
 

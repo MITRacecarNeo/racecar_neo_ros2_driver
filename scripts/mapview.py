@@ -482,6 +482,10 @@ class Viewer:
             raise RuntimeError('viewer not connected')
         publisher.publish(msg)
 
+    def clear_trail(self) -> None:
+        with self._lock:
+            self.trail.restart()
+
     def find_me(self) -> tuple[bool, str]:
         from std_srvs.srv import Trigger
 
@@ -561,6 +565,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(204, b'', 'application/octet-stream')
             else:
                 self._grid(*payload)
+        elif url.path == '/api/driving':
+            self._json({'apps': mc.running_driving_apps()})
         elif url.path == '/api/maps':
             self._json({'root': str(map_root()), 'maps': mc.map_rows(map_root())})
         elif url.path == '/api/saved':
@@ -610,6 +616,9 @@ class Handler(BaseHTTPRequestHandler):
                 x, y, yaw = (float(body[k]) for k in ('x', 'y', 'yaw'))
                 self.viewer.set_pose(x, y, yaw)
                 self._json({'ok': True, 'message': 'pose sent'})
+            elif path == '/api/trail/clear':
+                self.viewer.clear_trail()
+                self._json({'ok': True})
             elif path == '/api/find':
                 self.viewer.touch()
                 ok, message = self.viewer.find_me()

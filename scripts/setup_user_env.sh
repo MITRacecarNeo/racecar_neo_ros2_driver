@@ -37,7 +37,9 @@ done
 # by the racecar user, for the map viewer and `racecar map`.
 # 49-racecar-dashboards: start and stop of the lab dashboards by the
 # racecar user, for the home page on port 8080.
-for rule in 49-racecar-network.rules 49-racecar-autonomy.rules 49-racecar-dashboards.rules; do
+# 49-racecar-teleop: restart of racecar-teleop.service by the racecar user,
+# for the Features tiles on the home page.
+for rule in 49-racecar-network.rules 49-racecar-autonomy.rules 49-racecar-dashboards.rules 49-racecar-teleop.rules; do
     POLKIT_SRC="${SCRIPT_DIR}/polkit/${rule}"
     POLKIT_DST="/etc/polkit-1/rules.d/${rule}"
     if [ ! -f "$POLKIT_SRC" ]; then

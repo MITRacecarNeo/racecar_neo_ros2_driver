@@ -181,6 +181,22 @@ mux never confirms within 3 s. `dotmatrix_node` shows the AUTO glyph and
 unless a program frame is fresh. Nothing is persisted; a teleop restart ends
 it. No extra speed cap applies.
 
+### Features
+
+`scripts/features.py` holds the choice of teleop subsystems the 8080 Features
+tiles control: camera (`realsense`) and detections (`edgetpu`, which needs the
+camera). It is written to `~/.config/racecar/features.conf` with the boot id,
+and ignored after a reboot, so each boot starts with the camera on and
+detections off. `scripts/launch_teleop.sh` appends the matching
+`<subsystem>_enable` arguments unless they were given, and records them in
+`launch_args`, so the watchdog and the status cards treat an off subsystem as
+turned off. A change on the page (`apply_features` in `scripts/dashboard.py`)
+stops a running autonomy run, restarts teleop (allowed by
+`scripts/polkit/49-racecar-teleop.rules`), waits for the sensors, and runs
+`racecar map resume`. Resume continues a mapping run from its autosave and
+loads a localization map from the last pose. The autonomy tile runs the same
+`racecar map` commands: resume, stop, and save then stop.
+
 ### Lab dashboards
 
 Four dashboards in `scripts/dashboards/` run as `racecar-*` units, installed
@@ -189,7 +205,11 @@ by `scripts/setup_dashboards.sh`: `webteleop` on 8081, `linefollow` on 8082,
 on 8080 and the map viewer on 8084. The first three publish `/drive` and so
 are mutually exclusive; a second publisher fights the mux, and both
 `racecar service start` and the 8080 apps page (`open_app` in
-`scripts/dashboard.py`) keep one at a time. `camlabel` only reads the camera.
+`scripts/dashboard.py`) keep one at a time. Autonomy is exclusive with them
+too, since a driving app beside the localizer or slam_toolbox leaves no CPU:
+opening one stops autonomy (saving a mapping run first), and every
+`racecar map` start, load, or resume stops them (`DRIVING_APPS` in
+`scripts/map_control.py`). The pages ask before either. `camlabel` only reads the camera.
 The apps page starts a stopped app through systemd and opens it once its port
 answers (`/launch`, `/api/ready`); Clear apps stops them all. Both are allowed
 for these four units by `scripts/polkit/49-racecar-dashboards.rules`. The map

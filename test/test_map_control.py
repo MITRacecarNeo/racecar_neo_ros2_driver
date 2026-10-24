@@ -329,13 +329,45 @@ class TestChangeMode:
         assert mc.start('room', out=lines.append) == 0
         assert ('stop', 'racecar-webteleop.service') in systemd.calls
         assert systemd.states['racecar-camlabel.service'] == 'active'
-        assert 'Stopped Web teleop.' in lines
+        assert 'Stopped Web Teleop.' in lines
 
-    def test_localizing_leaves_the_driving_apps_running(self, mc, root, systemd):
+    def test_localizing_stops_the_driving_apps(self, mc, root, systemd):
         saved_map(root, 'room')
         systemd.states['racecar-linefollow.service'] = 'active'
+        assert mc.running_driving_apps() == ['Line Follow']
         assert mc.load('room', out=lambda line: None) == 0
-        assert systemd.states['racecar-linefollow.service'] == 'active'
+        assert systemd.states['racecar-linefollow.service'] == 'inactive'
+        assert mc.running_driving_apps() == []
+
+    def test_resume_mapping_restarts_the_same_session(self, mc, root, systemd):
+        assert mc.start('room', out=lambda line: None) == 0
+        session = mc.read_mode_file()['AUTONOMY_SESSION']
+        mc.stop(out=lambda line: None)
+        lines: list[str] = []
+        assert mc.resume(out=lines.append) == 0
+        assert mc.read_mode_file()['AUTONOMY_SESSION'] == session
+        assert systemd.states['racecar-autonomy.service'] == 'active'
+        assert lines[-1] == 'Mapping room again from its last autosave.'
+
+    def test_resume_localization_loads_the_map_again(self, mc, root, systemd):
+        saved_map(root, 'room')
+        assert mc.load('room', localizer='slam_toolbox', out=lambda line: None) == 0
+        mc.stop(out=lambda line: None)
+        assert mc.resume(out=lambda line: None) == 0
+        values = mc.read_mode_file()
+        assert values['AUTONOMY_MAP'] == 'room' and values['AUTONOMY_LOCALIZER'] == 'slam_toolbox'
+        assert values['AUTONOMY_MODE'] == 'localization'
+
+    def test_resume_needs_an_earlier_run(self, mc, root, systemd):
+        with pytest.raises(mc.MapError) as err:
+            mc.resume()
+        assert 'no earlier run' in str(err.value)
+
+    def test_resume_while_running_does_nothing(self, mc, root, systemd):
+        systemd.states['racecar-autonomy.service'] = 'active'
+        lines: list[str] = []
+        assert mc.resume(out=lines.append) == 0
+        assert lines == ['Autonomy is already running.'] and systemd.actions() == []
 
     def test_teleop_must_run(self, mc, root, systemd):
         systemd.states['racecar-teleop.service'] = 'inactive'
@@ -562,7 +594,7 @@ class TestCli:
 def test_tool_dispatch_and_completion():
     tool = (Path(__file__).resolve().parent.parent / 'scripts' / 'racecar-tool.sh').read_text()
     assert '"${RACECAR_MAP_SCRIPT:-$pkg_dir/scripts/racecar_map.py}"' in tool
-    assert 'start save stop load recover status list info foxglove' in tool
+    assert 'start save stop resume load recover status list info foxglove' in tool
     assert '    map <action>' in tool
 
 

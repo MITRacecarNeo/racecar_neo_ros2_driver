@@ -1333,7 +1333,7 @@ _racecar_complete() {
                 maps=$(cd "$maps_dir" && ls -d */ 2>/dev/null | sed 's#/$##' | grep -vx replaced)
             fi
             if [[ $COMP_CWORD -eq 2 ]]; then
-                COMPREPLY=( $(compgen -W "start save stop load recover status list info foxglove" -- "$cur") )
+                COMPREPLY=( $(compgen -W "start save stop resume load recover status list info foxglove" -- "$cur") )
             elif [[ "$prev" == "--from" ]]; then
                 COMPREPLY=( $(compgen -W "$maps" -- "$cur") )
             elif [[ "$prev" == "--localizer" ]]; then

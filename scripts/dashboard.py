@@ -32,6 +32,7 @@ from std_msgs.msg import Bool, UInt32
 # as a package, so the sibling has to be put on the path explicitly.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import features  # noqa: E402, I100  sibling script, after the path insert
 from sysinfo import (  # noqa: E402
     classify_rtc as _classify_rtc,
     read_diagnostic_rates,
@@ -60,23 +61,42 @@ APPS: list[dict[str, Any]] = [
      'desc': 'Open a terminal'},
     {'id': 'jupyter', 'name': 'JupyterLab', 'icon': 'notebook', 'port': 8888,
      'group': 'core', 'unit': 'racecar-jupyter', 'exclusive': False, 'startable': False,
-     'desc': 'Notebooks and the student library.'},
-    {'id': 'mapview', 'name': 'Map viewer', 'icon': 'map', 'port': 8084,
+     'desc': 'Notebooks and code'},
+    {'id': 'mapview', 'name': 'Map Viewer', 'icon': 'map', 'port': 8084,
      'group': 'core', 'unit': 'racecar-mapview', 'exclusive': False, 'startable': False,
-     'desc': 'Build and load maps; see the car on them.'},
-    {'id': 'webteleop', 'name': 'Web teleop', 'icon': 'gamepad', 'port': 8081,
+     'desc': 'Build and load maps'},
+    {'id': 'webteleop', 'name': 'Web Teleop', 'icon': 'gamepad', 'port': 8081,
      'group': 'utilities', 'unit': 'racecar-webteleop', 'exclusive': True, 'startable': True,
      'desc': 'Drive from the browser with camera and lidar.'},
-    {'id': 'linefollow', 'name': 'Line follow', 'icon': 'line', 'port': 8082,
+    {'id': 'linefollow', 'name': 'Line Follow', 'icon': 'line', 'port': 8082,
      'group': 'utilities', 'unit': 'racecar-linefollow', 'exclusive': True, 'startable': True,
-     'desc': 'Follow a colored line with the camera.'},
-    {'id': 'wallfollow', 'name': 'Wall follow', 'icon': 'wall', 'port': 8083,
+     'desc': 'Follow a colored line with the camera.', 'needs': 'camera'},
+    {'id': 'wallfollow', 'name': 'Wall Follow', 'icon': 'wall', 'port': 8083,
      'group': 'utilities', 'unit': 'racecar-wallfollow', 'exclusive': True, 'startable': True,
      'desc': 'Follow walls with the lidar.'},
-    {'id': 'camlabel', 'name': 'Camera label', 'icon': 'tag', 'port': 8085,
+    {'id': 'camlabel', 'name': 'Camera Label', 'icon': 'tag', 'port': 8085,
      'group': 'utilities', 'unit': 'racecar-camlabel', 'exclusive': False, 'startable': True,
-     'desc': 'Capture camera frames and label them for training.'},
+     'desc': 'Capture camera frames and label them for training.', 'needs': 'camera'},
 ]
+
+# Features: parts of the car that cost CPU and can be turned off. The camera
+# and detections are teleop subsystems (scripts/features.py); changing one
+# restarts teleop. Autonomy is its own unit, started from the map viewer.
+FEATURES: list[dict[str, Any]] = [
+    {'id': 'camera', 'name': 'Camera', 'icon': 'camera',
+     'desc': 'Turn on/off the color and depth camera'},
+    {'id': 'detections', 'name': 'Detections', 'icon': 'target',
+     'desc': 'Turn on/off the detection node'},
+    {'id': 'autonomy', 'name': 'Autonomy', 'icon': 'radar',
+     'desc': 'Mapping or localization.'},
+]
+TELEOP_UNIT = 'racecar-teleop.service'
+AUTONOMY_UNIT = 'racecar-autonomy.service'
+AUTONOMY_MODE_FILE = Path.home() / '.config' / 'racecar' / 'autonomy.conf'
+MAP_TOOL = [sys.executable, str(Path(__file__).resolve().parent / 'racecar_map.py')]
+MAP_TOOL_TIMEOUT_SEC = 180.0
+# Time for the sensors to come up after a teleop restart before autonomy resumes.
+TELEOP_SETTLE_SEC = 10.0
 READY_TIMEOUT_SEC = 1.0
 SYSTEMCTL_TIMEOUT_SEC = 30.0
 RATE_WINDOW_SEC = 3.0
@@ -555,7 +575,7 @@ WATCHDOG_VIEW = {
     'gave_up': ('dead', 'watchdog gave up; replug the device or restart teleop'),
     'no_device': ('stale', 'device not connected'),
     'restarting': ('stale', 'watchdog restarting'),
-    'disabled': ('unsupervised', 'disabled at launch'),
+    'disabled': ('unsupervised', 'turned off'),
 }
 
 
@@ -636,8 +656,9 @@ def open_app(target: str, run: Callable[..., Any] = subprocess.run) -> tuple[boo
     """
     Start `target` if it is not running.
 
-    An exclusive app first stops the other exclusive one; the page asks the
-    user before calling this.
+    An exclusive app first stops the other exclusive one and a running
+    autonomy run (a mapping run is saved first); the page asks the user before
+    calling this.
     """
     app = next((a for a in APPS if a['id'] == target), None)
     if app is None:
@@ -645,6 +666,13 @@ def open_app(target: str, run: Callable[..., Any] = subprocess.run) -> tuple[boo
     if app['unit'] is None:
         return False, f'{app["name"]} is not available.'
     if app['exclusive']:
+        live = ('active', 'activating')
+        if (unit_states([app['unit']], run)[app['unit']] not in live
+                and unit_states([AUTONOMY_UNIT], run)[AUTONOMY_UNIT] in live):
+            mapping = last_run().get('mode') == 'mapping'
+            message = autonomy_action('save-stop' if mapping else 'stop', run)
+            if unit_states([AUTONOMY_UNIT], run)[AUTONOMY_UNIT] in live:
+                return False, f'Autonomy is still running. {message}'
         return activate(target, run)
     if unit_states([app['unit']], run)[app['unit']] in ('active', 'activating'):
         return True, f'{app["name"]} is running.'
@@ -722,6 +750,167 @@ def activate(target: str, run: Callable[..., Any] = subprocess.run) -> tuple[boo
             return False, error
     name = next(a['name'] for a in APPS if a['id'] == target)
     return True, f'{name} active.'
+
+
+def last_run(path: Path | None = None) -> dict[str, str]:
+    """Return the mode and map of the last autonomy run from its mode file, or {}."""
+    try:
+        lines = (path or AUTONOMY_MODE_FILE).read_text().splitlines()
+    except OSError:
+        return {}
+    values = dict(line.split('=', 1) for line in lines if '=' in line)
+    mode, name = values.get('AUTONOMY_MODE', ''), values.get('AUTONOMY_MAP', '')
+    if mode not in ('mapping', 'localization') or not name:
+        return {}
+    return {'mode': mode, 'map': name}
+
+
+def feature_list(
+    states: dict[str, str],
+    wanted: dict[str, bool],
+    running: dict[str, bool],
+    busy: bool,
+    last: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Return one tile per feature with its state: active, activating, or inactive."""
+    teleop = states.get(TELEOP_UNIT, 'unknown')
+    out = []
+    for item in FEATURES:
+        if item['id'] == 'autonomy':
+            state = states.get(AUTONOMY_UNIT, 'unknown')
+            out.append({**item, 'state': state, 'last': last})
+            continue
+        on = teleop == 'active' and running[item['id']]
+        pending = busy or teleop in ('activating', 'reloading') or (
+            teleop == 'active' and running[item['id']] != wanted[item['id']]
+        )
+        state = 'activating' if pending else ('active' if on else 'inactive')
+        out.append({**item, 'state': state, 'wanted': wanted[item['id']]})
+    return out
+
+
+def map_tool(*argv: str, run: Callable[..., Any] = subprocess.run) -> tuple[int, str]:
+    """Run `racecar map ARGV`; return its exit code and last output line."""
+    try:
+        r = run(
+            [*MAP_TOOL, *argv],
+            capture_output=True, text=True, timeout=MAP_TOOL_TIMEOUT_SEC,
+            stdin=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return 1, str(exc)
+    lines = [line for line in (r.stdout + r.stderr).splitlines() if line.strip()]
+    return r.returncode, lines[-1] if lines else ''
+
+
+def describe(values: dict[str, bool]) -> str:
+    names = {f['id']: f['name'] for f in FEATURES}
+    return ' '.join(f'{names[k]} {"on" if v else "off"}.' for k, v in values.items())
+
+
+def apply_features(
+    values: dict[str, bool],
+    run: Callable[..., Any] = subprocess.run,
+    sleep: Callable[[float], None] = time.sleep,
+) -> str:
+    """
+    Restart teleop with `values`; a running autonomy run is stopped first and resumed after.
+
+    Stopping it first lets a localization run start again from the car's last
+    pose rather than from where that run began.
+    """
+    features.write(values)
+    resume = unit_states([AUTONOMY_UNIT], run)[AUTONOMY_UNIT] in ('active', 'activating')
+    if resume:
+        code, line = map_tool('stop', run=run)
+        if code != 0:
+            return f'Could not stop autonomy: {line}'
+    error = _systemctl('restart', TELEOP_UNIT, run)
+    if error:
+        return error
+    message = describe(values)
+    if resume:
+        sleep(TELEOP_SETTLE_SEC)
+        code, line = map_tool('resume', run=run)
+        message += f' {line}' if code == 0 else f' Autonomy did not resume: {line}'
+    return message
+
+
+def autonomy_action(action: str, run: Callable[..., Any] = subprocess.run) -> str:
+    if action == 'resume':
+        return map_tool('resume', run=run)[1]
+    if action == 'save-stop':
+        code, line = map_tool('save', run=run)
+        if code != 0:
+            return f'Not stopped. {line}'
+    if action in ('stop', 'save-stop'):
+        return map_tool('stop', run=run)[1]
+    raise ValueError(f'unknown autonomy action {action!r}')
+
+
+class FeatureJob:
+    """One feature change at a time, in a thread; its message is shown on the page."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.busy = False
+        self.message = ''
+
+    def start(self, label: str, work: Callable[[], str]) -> bool:
+        with self._lock:
+            if self.busy:
+                return False
+            self.busy, self.message = True, label
+        threading.Thread(target=self._run, args=(work,), daemon=True).start()
+        return True
+
+    def _run(self, work: Callable[[], str]) -> None:
+        try:
+            message = work()
+        except Exception as exc:  # noqa: BLE001  shown to the user, not raised in a thread
+            log.exception('feature change failed')
+            message = f'Failed: {exc}'
+        log.info('features: %s', message)
+        with self._lock:
+            self.busy, self.message = False, message
+
+    def state(self) -> dict[str, Any]:
+        with self._lock:
+            return {'busy': self.busy, 'message': self.message}
+
+
+_features_job = FeatureJob()
+
+
+def features_view() -> dict[str, Any]:
+    job = _features_job.state()
+    items = feature_list(
+        unit_states([TELEOP_UNIT, AUTONOMY_UNIT]),
+        features.read(),
+        features.running(),
+        job['busy'],
+        last_run(),
+    )
+    return {'items': items, 'job': job}
+
+
+def change_feature(name: str, on: bool, action: str = '') -> tuple[bool, str]:
+    """Start a feature change in the background; return whether it started."""
+    if name == 'autonomy':
+        if action not in ('resume', 'stop', 'save-stop'):
+            return False, 'Unknown action.'
+        label = 'Starting autonomy...' if action == 'resume' else 'Stopping autonomy...'
+        work: Callable[[], str] = lambda: autonomy_action(action)  # noqa: E731
+    else:
+        try:
+            values = features.change(features.read(), name, on)
+        except ValueError as exc:
+            return False, str(exc)
+        label = 'Restarting teleop...'
+        work = lambda: apply_features(values)  # noqa: E731
+    if not _features_job.start(label, work):
+        return False, 'Another change is running.'
+    return True, label
 
 
 def _refresh_apps() -> None:
@@ -889,7 +1078,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 _refresh_apps()
             if query.get('refresh') == ['1']:
                 _refresh_apps()
-            self._send_json(200, {**get_status(), 'override': _override.view(time.monotonic())})
+            self._send_json(200, {
+                **get_status(),
+                'override': _override.view(time.monotonic()),
+                'features': features_view(),
+            })
         elif url.path == '/api/history':
             now = time.time()
             self._send_json(200, {
@@ -956,7 +1149,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             ok, message = clear_watchdog_log()
             self._send_json(200 if ok else 400, {'ok': ok, 'message': message})
             return
-        if self.path not in ('/api/open', '/api/override'):
+        if self.path not in ('/api/open', '/api/override', '/api/feature'):
             self.send_error(404)
             return
         try:
@@ -964,8 +1157,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(length) or b'{}')
             target = str(body.get('app', ''))
             action = str(body.get('action', ''))
+            feature, on = str(body.get('feature', '')), bool(body.get('on'))
         except (ValueError, AttributeError):
-            target = action = ''
+            target = action = feature = ''
+            on = False
+        if self.path == '/api/feature':
+            ok, message = change_feature(feature, on, action)
+            self._send_json(200 if ok else 400, {'ok': ok, 'message': message})
+            return
         if self.path == '/api/override':
             self._override(action)
             return

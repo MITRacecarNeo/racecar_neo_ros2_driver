@@ -55,6 +55,12 @@ for el in /dev/shm/fastrtps_port*_el; do
     fi
 done
 
+# Features chosen on the 8080 dashboard (scripts/features.py): the camera and
+# detections. Arguments given to this script win.
+SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
+mapfile -t FEATURE_ARGS < <(python3 "$SCRIPT_DIR/features.py" args "$@" || true)
+set -- "$@" "${FEATURE_ARGS[@]}"
+
 # Launch arguments, one per line, so the watchdog leaves disabled subsystems
 # (<name>_enable:=false) alone.
 printf '%s\n' "$@" > "$LOG_DIR/launch_args"

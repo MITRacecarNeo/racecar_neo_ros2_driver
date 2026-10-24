@@ -6,6 +6,19 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Added
 
+- Features on the 8080 dashboard: Camera, Detections, and Autonomy tiles.
+  The camera and detections are teleop subsystems; a change restarts teleop
+  with the new set (`scripts/features.py`, `~/.config/racecar/features.conf`,
+  reset each boot; `scripts/polkit/49-racecar-teleop.rules`). Autonomy stops
+  (mapping asks to save first) or resumes the last run. Opening Line follow
+  or Camera label with the camera off asks to turn it on.
+- `racecar map resume`: start the last mapping or localization run again.
+- Map viewer Clear trail button (`POST /api/trail/clear`).
+- Autonomy and the driving apps (Web Teleop, Line Follow, Wall Follow) run
+  one at a time. Opening a driving app on 8080 stops autonomy, saving a
+  mapping run first; starting mapping or localization (map viewer, Autonomy
+  tile, `racecar map start`, `load`, `resume`) closes the driving apps. Each
+  page asks first (`GET /api/driving` on the map viewer).
 - Safety-controller override on the 8080 dashboard: a toggle, with a
   warning, that lets `/drive` through `mux_node` with no controller. The 8080
   page and the web teleop, line follow, and wall follow pages
@@ -327,6 +340,13 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Changed
 
+- Detections (EdgeTPU) are off at boot; turn them on in Features on the 8080
+  dashboard. Teleop launches with `realsense_enable` and `edgetpu_enable`
+  from the Features choice.
+- Web teleop: the Drive and Tune cards sit under the sensor row, above
+  Battery and Compass.
+- 8080 tile labels capitalized (Map Viewer, Web Teleop, Line Follow, Wall
+  Follow, Camera Label, Safety Override); shorter tooltips.
 - The web dashboard (8080) is an apps page: one tile per app (icon and name,
   description on hover; a white border while running, gold and an alert
   mark while starting, crimson and a cross when failed; orange on hover).

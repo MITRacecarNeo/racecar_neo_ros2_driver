@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Web teleop - RACECAR Neo</title>
-<link rel="stylesheet" href="/ui/rcn.css?v=10">
+<link rel="stylesheet" href="/ui/rcn.css?v=11">
 <link rel="icon" href="/ui/brand/app-icon-32.png">
-<script src="/ui/lost.js?v=10" defer></script>
-<script src="/ui/override.js?v=10" defer></script>
-<script src="/ui/charts.js?v=10"></script>
+<script src="/ui/lost.js?v=11" defer></script>
+<script src="/ui/override.js?v=11" defer></script>
+<script src="/ui/charts.js?v=11"></script>
 <style>
   .rcn-header .meta { font: 600 13px/18px var(--rcn-font-sans); color: var(--rcn-text-muted); }
   .rcn-header .meta b { color: var(--rcn-text); font-variant-numeric: tabular-nums; }
@@ -132,6 +132,30 @@
   </div>
 
   <div class="card span2">
+    <h2>Drive</h2>
+    <div class="pad" id="pad">
+      <div></div>
+      <button data-axis="fwd" data-val="1" title="Forward (W)">&#9650;<span class="key">W</span></button>
+      <div></div>
+      <button data-axis="turn" data-val="-1" title="Left (A)">&#9664;<span class="key">A</span></button>
+      <div class="mid">WASD<br>or arrows</div>
+      <button data-axis="turn" data-val="1" title="Right (D)">&#9654;<span class="key">D</span></button>
+      <div></div>
+      <button data-axis="fwd" data-val="-1" title="Back (S)">&#9660;<span class="key">S</span></button>
+      <div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Tune</h2>
+    <div id="tuneform"></div>
+    <div class="tools">
+      <button class="rcn-btn primary small" onclick="post('/save')">Save</button>
+      <button class="rcn-btn quiet small" onclick="reset()">Load</button>
+    </div>
+  </div>
+
+  <div class="card span2">
     <h2>Battery</h2>
     <div class="state" id="battery">- V &middot; - A</div>
     <div class="pair">
@@ -187,30 +211,6 @@
     </div>
     <div class="caption" style="margin-top: var(--rcn-space-4)">Showing now</div>
     <div class="scroll"><div class="ledbar small" id="ledState"></div></div>
-  </div>
-
-  <div class="card span2">
-    <h2>Drive</h2>
-    <div class="pad" id="pad">
-      <div></div>
-      <button data-axis="fwd" data-val="1" title="Forward (W)">&#9650;<span class="key">W</span></button>
-      <div></div>
-      <button data-axis="turn" data-val="-1" title="Left (A)">&#9664;<span class="key">A</span></button>
-      <div class="mid">WASD<br>or arrows</div>
-      <button data-axis="turn" data-val="1" title="Right (D)">&#9654;<span class="key">D</span></button>
-      <div></div>
-      <button data-axis="fwd" data-val="-1" title="Back (S)">&#9660;<span class="key">S</span></button>
-      <div></div>
-    </div>
-  </div>
-
-  <div class="card">
-    <h2>Tune</h2>
-    <div id="tuneform"></div>
-    <div class="tools">
-      <button class="rcn-btn primary small" onclick="post('/save')">Save</button>
-      <button class="rcn-btn quiet small" onclick="reset()">Load</button>
-    </div>
   </div>
 
   <div class="card span3">

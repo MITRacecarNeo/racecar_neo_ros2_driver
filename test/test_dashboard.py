@@ -311,7 +311,7 @@ class TestHome:
     def test_open_camlabel_leaves_the_driving_app_running(self, dashboard):
         run = FakeRun({'racecar-webteleop': 'active'})
         ok, message = dashboard.open_app('camlabel', run)
-        assert ok and message == 'Camera label started.'
+        assert ok and message == 'Camera Label started.'
         assert run.states['racecar-webteleop'] == 'active'
         assert run.states['racecar-camlabel'] == 'active'
 
@@ -391,7 +391,7 @@ class TestHome:
     def test_activate_stops_the_running_lab_first(self, dashboard):
         run = FakeRun({'racecar-webteleop': 'active', 'racecar-mapview': 'active'})
         ok, message = dashboard.activate('wallfollow', run)
-        assert ok and message == 'Wall follow active.'
+        assert ok and message == 'Wall Follow active.'
         verbs = [(c[-2], c[-1]) for c in run.calls if c[1] == '--no-ask-password']
         assert verbs == [('stop', 'racecar-webteleop'), ('start', 'racecar-wallfollow')]
         assert run.states['racecar-mapview'] == 'active'  # core services untouched
@@ -428,6 +428,16 @@ class TestHome:
             assert core not in text
         assert 'enable' not in text.split('polkit.addRule')[1]
         assert '49-racecar-dashboards.rules' in (scripts / 'setup_user_env.sh').read_text()
+
+    def test_teleop_rule_allows_restart_only(self):
+        scripts = Path(__file__).resolve().parent.parent / 'scripts'
+        rule = (scripts / 'polkit' / '49-racecar-teleop.rules').read_text()
+        body = rule.split('polkit.addRule')[1]
+        assert '"racecar-teleop.service"' in body and 'action.lookup("verb") === "restart"' in body
+        assert 'subject.user === "racecar"' in body
+        for other in ('"start"', '"stop"', 'enable', 'racecar-autonomy'):
+            assert other not in body
+        assert '49-racecar-teleop.rules' in (scripts / 'setup_user_env.sh').read_text()
 
     def test_page_uses_the_shared_assets(self, dashboard):
         html = dashboard._load_dashboard_html()
@@ -630,3 +640,154 @@ class TestOverrideOrigin:
     ])
     def test_only_driving_lab_pages_on_this_host(self, dashboard, origin, host, allowed):
         assert (dashboard.override_origin(origin, host) is not None) is allowed
+
+
+TELEOP, AUTONOMY = 'racecar-teleop.service', 'racecar-autonomy.service'
+
+
+class TestFeatures:
+    def test_tiles(self, dashboard):
+        assert [f['id'] for f in dashboard.FEATURES] == ['camera', 'detections', 'autonomy']
+        needs = [a['id'] for a in dashboard.APPS if a.get('needs') == 'camera']
+        assert needs == ['linefollow', 'camlabel']
+
+    def test_states(self, dashboard):
+        wanted = {'camera': True, 'detections': False}
+        items = dashboard.feature_list(
+            {TELEOP: 'active', AUTONOMY: 'inactive'}, wanted, wanted, False, {})
+        assert [i['state'] for i in items] == ['active', 'inactive', 'inactive']
+
+    def test_pending_restart_shows_starting(self, dashboard):
+        items = dashboard.feature_list(
+            {TELEOP: 'active'}, {'camera': True, 'detections': True},
+            {'camera': True, 'detections': False}, False, {})
+        assert items[1]['state'] == 'activating'
+        items = dashboard.feature_list(
+            {TELEOP: 'active'}, dashboard.features.DEFAULTS, dashboard.features.DEFAULTS, True, {})
+        assert items[0]['state'] == items[1]['state'] == 'activating'
+
+    def test_teleop_down_reads_off(self, dashboard):
+        items = dashboard.feature_list(
+            {TELEOP: 'inactive'}, dashboard.features.DEFAULTS, dashboard.features.DEFAULTS,
+            False, {})
+        assert items[0]['state'] == 'inactive'
+
+    def test_last_run(self, dashboard, tmp_path):
+        path = tmp_path / 'autonomy.conf'
+        assert dashboard.last_run(path) == {}
+        path.write_text('AUTONOMY_MODE=localization\nAUTONOMY_MAP=hall\n')
+        assert dashboard.last_run(path) == {'mode': 'localization', 'map': 'hall'}
+        path.write_text('AUTONOMY_MODE=off\nAUTONOMY_MAP=hall\n')
+        assert dashboard.last_run(path) == {}
+
+
+class _ToolRun(FakeRun):
+    """FakeRun that also answers `racecar map` calls."""
+
+    def __init__(self, states, codes=None):
+        super().__init__(states)
+        self.codes = codes or {}
+        self.tool = []
+
+    def __call__(self, argv, **kw):
+        if argv[:2] == list(self.__dashboard.MAP_TOOL):
+            action = argv[2]
+            self.tool.append(action)
+            if action == 'stop':
+                self.states[AUTONOMY] = 'inactive'
+            if action == 'resume':
+                self.states[AUTONOMY] = 'active'
+            code = self.codes.get(action, 0)
+            return SimpleNamespace(stdout=f'{action} done\n', stderr='', returncode=code)
+        return super().__call__(argv, **kw)
+
+
+class TestApplyFeatures:
+    @pytest.fixture
+    def tool(self, dashboard, monkeypatch, tmp_path):
+        _ToolRun._ToolRun__dashboard = dashboard
+        monkeypatch.setattr(dashboard.features, 'state_file', lambda: tmp_path / 'f.conf')
+        monkeypatch.setattr(dashboard.features, 'boot_id', lambda: 'b')
+        return _ToolRun
+
+    def test_restarts_teleop_and_writes_the_choice(self, dashboard, tool):
+        run = tool({TELEOP: 'active'})
+        message = dashboard.apply_features({'camera': False, 'detections': False}, run)
+        assert ['systemctl', '--no-ask-password', 'restart', TELEOP] in run.calls
+        assert run.tool == [] and message == 'Camera off. Detections off.'
+        assert dashboard.features.read() == {'camera': False, 'detections': False}
+
+    def test_autonomy_is_stopped_first_and_resumed(self, dashboard, tool):
+        run = tool({TELEOP: 'active', AUTONOMY: 'active'})
+        message = dashboard.apply_features(
+            {'camera': True, 'detections': True}, run, sleep=lambda s: None)
+        restart = run.calls.index(['systemctl', '--no-ask-password', 'restart', TELEOP])
+        assert run.tool == ['stop', 'resume'] and restart > 0
+        assert message.endswith('resume done')
+
+    def test_a_failed_stop_leaves_teleop_alone(self, dashboard, tool):
+        run = tool({TELEOP: 'active', AUTONOMY: 'active'}, codes={'stop': 1})
+        message = dashboard.apply_features(dashboard.features.DEFAULTS, run)
+        assert message.startswith('Could not stop autonomy')
+        assert not [c for c in run.calls if 'restart' in c]
+
+    def test_autonomy_actions(self, dashboard, tool):
+        run = tool({AUTONOMY: 'active'})
+        assert dashboard.autonomy_action('save-stop', run) == 'stop done'
+        assert run.tool == ['save', 'stop']
+        run = tool({AUTONOMY: 'active'}, codes={'save': 1})
+        assert dashboard.autonomy_action('save-stop', run).startswith('Not stopped.')
+        assert run.tool == ['save']
+        assert dashboard.autonomy_action('resume', tool({})) == 'resume done'
+        with pytest.raises(ValueError):
+            dashboard.autonomy_action('rm', run)
+
+
+class TestFeatureEndpoint:
+    def test_rejects_unknown_and_busy(self, dashboard, monkeypatch):
+        job = dashboard.FeatureJob()
+        monkeypatch.setattr(dashboard, '_features_job', job)
+        assert dashboard.change_feature('lidar', False) == (False, "unknown feature 'lidar'")
+        assert dashboard.change_feature('autonomy', True, 'go')[0] is False
+        assert job.start('busy', lambda: 'x' if __import__('time').sleep(0.3) is None else '')
+        assert dashboard.change_feature('autonomy', True, 'resume') == (
+            False, 'Another change is running.')
+
+    def test_page_has_features(self, dashboard):
+        html = dashboard._load_dashboard_html()
+        assert 'id="features"' in html and 'id="autosheet"' in html
+        assert 'needs the camera. Turn it on?' in html
+
+
+class TestDrivingAppsAndAutonomy:
+    @pytest.fixture
+    def tool(self, dashboard):
+        _ToolRun._ToolRun__dashboard = dashboard
+        return _ToolRun
+
+    def test_opening_a_driving_app_saves_and_stops_mapping(self, dashboard, tool, monkeypatch):
+        monkeypatch.setattr(dashboard, 'last_run', lambda: {'mode': 'mapping', 'map': 'hall'})
+        run = tool({AUTONOMY: 'active'})
+        ok, _ = dashboard.open_app('webteleop', run)
+        assert ok and run.tool == ['save', 'stop']
+        assert run.states['racecar-webteleop'] == 'active'
+
+    def test_opening_a_driving_app_stops_localization(self, dashboard, tool, monkeypatch):
+        monkeypatch.setattr(dashboard, 'last_run', lambda: {'mode': 'localization', 'map': 'hall'})
+        run = tool({AUTONOMY: 'active'})
+        assert dashboard.open_app('linefollow', run)[0] and run.tool == ['stop']
+
+    def test_a_failed_save_keeps_mapping_and_the_app_closed(self, dashboard, tool, monkeypatch):
+        monkeypatch.setattr(dashboard, 'last_run', lambda: {'mode': 'mapping', 'map': 'hall'})
+        run = tool({AUTONOMY: 'active'}, codes={'save': 1})
+        ok, message = dashboard.open_app('wallfollow', run)
+        assert not ok and message.startswith('Autonomy is still running.')
+        assert run.states.get('racecar-wallfollow', 'inactive') == 'inactive'
+
+    def test_camera_label_leaves_autonomy_running(self, dashboard, tool):
+        run = tool({AUTONOMY: 'active'})
+        assert dashboard.open_app('camlabel', run)[0] and run.tool == []
+
+    def test_page_asks_before_stopping_autonomy(self, dashboard):
+        html = dashboard._load_dashboard_html()
+        assert 'Save it, stop it, and open' in html and 'will close.' in html

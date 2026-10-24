@@ -388,16 +388,37 @@ Once `racecar-teleop.service` is running, browse to `http://<robot>:8080`.
 **Apps.** One tile per app, in two groups. Hover over a tile for what it
 does. A white border means the app is running.
 
-- Core: map viewer and JupyterLab, which start at boot.
+- Core: map viewer and JupyterLab, which start at boot, and the safety
+  override (below).
 - Utilities: web teleop, line follow, wall follow, and camera label.
 - Tap a tile to open the app in a new tab. A stopped utility is started
   first, and the tab shows a loading bar until the app is ready. Cancel
   closes that tab without opening the app.
-- Web teleop, line follow, and wall follow drive the car, so only one runs at
-  a time. Opening one while another runs asks before closing the other.
+- Web teleop, line follow, wall follow, and autonomy (mapping or
+  localization) drive the car, so only one runs at a time. Opening one while
+  another runs asks before closing the other; a map being built is saved
+  first. The map viewer and the Autonomy tile ask the same way, and
+  `racecar map start`, `load`, and `resume` close the driving apps.
 - Clear apps stops every utility to free the CPU. Core apps keep running.
 - Starting and stopping utilities from the page needs the permission rule
   that `scripts/setup_user_env.sh` installs.
+
+**Features.** Expand it below the apps. Parts of the car that use the most
+CPU; turn off what a lab does not need. A white border means on.
+
+- Camera: color and depth. Line follow and Camera label need it; opening
+  either with the camera off asks to turn it on.
+- Detections: object detection on the camera image. Turning it on also
+  turns on the camera.
+- Autonomy: mapping or localization. Off stops it (mapping asks to save
+  first). On starts the last run again, or opens the map viewer if there
+  is none.
+
+Turning the camera or detections on or off asks first, then restarts
+teleop. The car stops for about 15 seconds. A running map or localization
+stops first and starts again after. Every boot starts with the camera on
+and detections off. Needs the permission rule that
+`scripts/setup_user_env.sh` installs.
 
 **Safety override.** The Safety override tile lets programs and lab
 dashboards drive with no controller in hand. It asks first. While it is on,
@@ -567,6 +588,7 @@ racecar map start room_1                    # begin mapping
 racecar map status                          # mode, map, localized, pose
 racecar map save                            # returns when the files are written
 racecar map stop
+racecar map resume                          # start the last run again
 racecar map list                            # maps; unsaved ones marked
 racecar map info room_1                     # size, dates, poses
 racecar map load room_1                     # localize; starts from the last pose on it
@@ -641,6 +663,7 @@ page shows their output:
 | Extend | Shows the saved map; drag from the car's position toward the way it faces, then `racecar map start NEW --from NAME --pose ...` |
 | Set pose | Drag on the map from where the car is toward the way it faces |
 | Find me | Searches the whole map (AMCL only); drive slowly until `localized` |
+| Clear trail | Clears the car's path on every open map page |
 
 The page never drives the car. Start, stop, and load restart the autonomy
 service and ask first. With no browser open it holds no ROS subscriptions
@@ -953,7 +976,9 @@ Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
   default; integrated odometry in `pit_node` (`odom -> base_link`,
   `/odom/integrated`); an apps page on 8080 with a live sensor overview
   (camera label back) and the map viewer in one shared style; a
-  safety-controller override on 8080 to drive with no controller; recordings kept on the NVMe; telemetry stamped with the Teensy
+  safety-controller override on 8080 to drive with no controller;
+  Features on 8080 to turn the camera, detections (off at boot), and
+  autonomy on and off; recordings kept on the NVMe; telemetry stamped with the Teensy
   sample time;
   `racecar calibrate` (guided calibration, status, backup,
   `check` against the live sensors including a magnetometer turn test and

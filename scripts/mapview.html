@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>RACECAR Neo map</title>
-<link rel="stylesheet" href="/ui/rcn.css?v=10">
+<link rel="stylesheet" href="/ui/rcn.css?v=11">
 <link rel="icon" href="/ui/brand/app-icon-32.png">
 <link rel="apple-touch-icon" href="/ui/brand/app-icon-180.png">
 <style>
@@ -77,6 +77,7 @@ main.maps-open #hint { left: calc(min(340px, 80%) + var(--rcn-space-3)); }
     <button class="rcn-btn quiet" id="zin" title="Zoom in" aria-label="Zoom in"><svg class="rcn-icon"><use href="/ui/icons.svg#plus"/></svg></button>
     <button class="rcn-btn quiet" id="zout" title="Zoom out" aria-label="Zoom out"><svg class="rcn-icon"><use href="/ui/icons.svg#minus"/></svg></button>
     <button class="rcn-btn quiet" id="center" title="Center on the car" aria-label="Center on the car"><svg class="rcn-icon"><use href="/ui/icons.svg#target"/></svg></button>
+    <button class="rcn-btn quiet" id="cleartrail" title="Clear trail" aria-label="Clear trail"><svg class="rcn-icon"><use href="/ui/icons.svg#eraser"/></svg></button>
   </div>
 </main>
 <div id="job"><span id="jobtitle"></span><button class="rcn-btn quiet small" id="jobmore">Show output</button><pre class="rcn-code" id="joblines"></pre></div>
@@ -314,6 +315,12 @@ $('center').onclick = () => {
   draw();
 };
 
+$('cleartrail').onclick = async () => {
+  try { await fetch('/api/trail/clear', { method: 'POST', body: '{}' }); } catch (err) { /* the next poll shows it */ }
+  trail = { id: -1, from: 0, points: [] };
+  draw();
+};
+
 function hint(text) { $('hint').textContent = text; $('hint').classList.toggle('show', !!text); }
 
 function startPoseTool(purpose) {
@@ -368,6 +375,12 @@ function showBanner() {
 }
 let lostContact = false;
 async function action(body) {
+  // Mapping and localization run without the driving apps; their names come from the car.
+  if (body.action === 'start' || body.action === 'load') {
+    let driving = [];
+    try { driving = (await (await fetch('/api/driving', { cache: 'no-store' })).json()).apps || []; } catch (err) { /* the car stops them anyway */ }
+    if (driving.length && !confirm(`${driving.join(' and ')} is open. Close it and continue?`)) return { ok: false };
+  }
   const r = await post('/api/action', body);
   if (!r.ok) report(r);
   poll();

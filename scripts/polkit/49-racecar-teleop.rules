@@ -1,0 +1,19 @@
+// RACECAR Neo - restart teleop without sudo.
+//
+// Installed to /etc/polkit-1/rules.d/ by scripts/setup_user_env.sh. The
+// Features tiles on the 8080 home page turn the camera and detections on and
+// off by restarting teleop with new launch arguments (scripts/features.py).
+// The grant covers that unit, the racecar user, and restart only; start, stop,
+// enabling, and every other unit still ask for authentication.
+
+polkit.addRule(function (action, subject) {
+    if (action.id !== "org.freedesktop.systemd1.manage-units") {
+        return polkit.Result.NOT_HANDLED;
+    }
+    if (action.lookup("unit") === "racecar-teleop.service" &&
+        action.lookup("verb") === "restart" &&
+        subject.user === "racecar") {
+        return polkit.Result.YES;
+    }
+    return polkit.Result.NOT_HANDLED;
+});
