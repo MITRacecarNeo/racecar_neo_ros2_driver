@@ -247,8 +247,8 @@ __RC_SVC_HELP__
                     bash "$pkg_dir/scripts/setup_all.sh" "$@"
                     ;;
                 dashboards)
-                    # Clones or fast-forwards the three lab-dashboard checkouts
-                    # and installs their units, stopped and disabled.
+                    # Installs the four lab dashboards' units, stopped and
+                    # disabled.
                     bash "$pkg_dir/scripts/setup_dashboards.sh" "$@"
                     ;;
                 realsense)

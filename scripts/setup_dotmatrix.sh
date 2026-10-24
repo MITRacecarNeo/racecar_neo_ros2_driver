@@ -4,4 +4,4 @@
 set -eo pipefail
 
 # Not in apt; install per-user (PEP 668 blocks system-wide).
-pip3 install --user --break-system-packages luma.led_matrix
+pip3 install --user --break-system-packages luma.led_matrix==1.9.0

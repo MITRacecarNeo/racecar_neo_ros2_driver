@@ -508,6 +508,8 @@ def check(run: Run = run_command, out: Callable[[str], None] = print) -> int:
     steps.sudo('mount', str(MOUNT))
     for unit in stopped:
         run(['systemctl', '--no-ask-password', 'start', unit])
+        if not unit_active(unit, run):
+            steps.sudo('systemctl', 'start', unit)
     out('Checked and mounted again.' if r.returncode <= 1 else 'Mounted again.')
     return 0 if r.returncode <= 1 else 1
 

@@ -69,7 +69,7 @@ Display node subscribes:
 Safety and uptime layers:
 - **Mux** enforces speed/steer limits and gates commands behind controller bumpers; zeroes output on joystick disconnect (500 ms timeout).
 - **Watchdog** (`scripts/watchdog.py`) supervises 7 nodes with two liveness signals (ROS topic + the node's entry-point path in `/proc`) and restarts a node when either fails. A 60 s startup grace, backoff of 30, 60, 120 and 240 s between restarts, and a give-up after 5 restarts that do not hold 60 s, re-armed by replugging the device or restarting teleop. Logs on state changes only, skips subsystems disabled at launch, and writes `~/logs/latest/watchdog_state.json`, which `racecar status` and the dashboard read. SIGTERM to SIGKILL escalation, FastRTPS SHM orphan sweep every 60 s, Pi 5 PMIC under-voltage alarm. Restart is skipped when the device is physically missing.
-- **Four core systemd units** (`racecar-{teleop,watchdog,dashboard,jupyter}.service`) wired with `BindsTo=` so watchdog dies when teleop dies, and `Wants=` so watchdog auto-starts when teleop starts. Three more units carry the lab dashboards; they install disabled and are started one at a time.
+- **Six core systemd units** (`racecar-{data,teleop,watchdog,dashboard,jupyter,mapview}.service`), enabled at boot. `racecar-data` records the data root first; the watchdog is wired with `BindsTo=` so it stops with teleop, and `Wants=` so it starts with teleop. `racecar-autonomy.service` installs disabled and starts on demand. Four more units carry the lab dashboards; they install disabled and start from the 8080 apps page.
 - **Launch wrapper** (`scripts/launch_teleop.sh`) creates `~/logs/<timestamp>/`, updates `~/logs/latest` atomically, sweeps FastRTPS SHM orphans, and `exec`s `ros2 launch` so systemd tracks the launch PID directly.
 - **Web dashboard** at `http://<robot>:8080`: 9 node cards, 9 topic-rate rows, System Health (data drive, RTC battery, Pi under-voltage alarm), watchdog log tail. Auto-refresh.
 - **JupyterLab** at `http://<robot>:8888` with PYTHONPATH/AMENT_PREFIX_PATH pre-set so `import rclpy` works in notebooks.
@@ -83,11 +83,11 @@ arbitrary at the call site, are in
 
 ## Quickstart (fresh Ubuntu 24.04 install)
 
-Target: Raspberry Pi 5 running **Ubuntu Server 24.04 LTS for arm64** (Noble). ROS2 Jazzy is the only supported distro for this driver; older Ubuntu releases (22.04 Jammy) are **not** supported because Jazzy doesn't install there.
+Target: Raspberry Pi 5 running **Ubuntu Desktop 24.04 LTS for arm64** (Noble). ROS2 Jazzy is the only supported distro for this driver; older Ubuntu releases (22.04 Jammy) are **not** supported because Jazzy doesn't install there.
 
 ### 1. SD card or NVMe image
 
-Use Raspberry Pi Imager -> *Other general-purpose OS* -> *Ubuntu* -> *Ubuntu Server 24.04 LTS (64-bit)*. Before writing, click the gear icon and pre-set:
+Use Raspberry Pi Imager -> *Other general-purpose OS* -> *Ubuntu* -> *Ubuntu Desktop 24.04 LTS (64-bit)*. Before writing, click the gear icon and pre-set:
 
 - **Hostname**: `racecar-neo` (matches what the systemd services + dashboard expect)
 - **Username**: `racecar` (the `racecar` shell tool, udev groups, and service unit `User=` are all hard-coded to this name; don't change it)
@@ -99,7 +99,7 @@ Boot the Pi, find its IP (`ip neigh` from another machine, or check your router)
 
 ### 2. needrestart configuration
 
-Ubuntu Server 24.04 ships with `needrestart`, which throws an interactive "restart services?" dialog mid-`apt` if any library upgrade affects a running daemon. Configure it to auto-restart silently before the big upgrade so the rest of setup is unattended:
+Ubuntu 24.04 ships with `needrestart`, which throws an interactive "restart services?" dialog mid-`apt` if any library upgrade affects a running daemon. Configure it to auto-restart silently before the big upgrade so the rest of setup is unattended:
 
 ```sh
 sudo apt update && sudo apt -y install needrestart git
@@ -124,7 +124,7 @@ git clone https://github.com/MITRacecarNeo/racecar_neo_ros2_driver.git
 bash racecar_neo_ros2_driver/scripts/setup_all.sh
 ```
 
-`setup_all.sh` is idempotent; re-running is safe (each phase checks for existing state and skips when already applied). Sudo password is prompted **once** at the top of the run and cached via a background keepalive for the remaining ~45 min; you can walk away after that prompt.
+Run it as the `racecar` user, without `sudo`, from that folder; it refuses otherwise, because the services name that user and path. `setup_all.sh` is idempotent; re-running is safe (each phase checks for existing state and skips when already applied). Sudo password is prompted **once** at the top of the run and cached via a background keepalive for the remaining ~45 min; you can walk away after that prompt. It ends by asking for a reboot.
 
 ### 5. Group membership activation
 
@@ -150,7 +150,7 @@ After reboot, `racecar-teleop.service` auto-starts and pulls the watchdog via `W
 
 ```sh
 racecar status              # full diagnostic; exits non-zero only on a FAIL
-racecar service status      # the 4 core racecar-* units should be active+enabled
+racecar service status      # the 6 core racecar-* units should be active+enabled
 ```
 
 Browse to `http://racecar-neo.local:8080` for the live dashboard.
@@ -169,18 +169,18 @@ This brings up an isolated AP on the ALFA dongle (`wlan1`) and puts eth0 in one 
 
 Twelve phases, all under `scripts/`:
 
-1. **`setup_ros2.sh`**: ROS2 Jazzy apt repo + message/driver packages, `nvme-cli` and `gdisk` for `racecar disk`
-2. **`setup_dev_tools.sh`**: build tools, Python hardware libs (`smbus` / `serial` / `spidev`), and the pinned linters (`ruff`, `black`, `mypy`) per-user
-3. **`setup_user_env.sh`**: joins `dialout` / `i2c` / `spi` / `gpio` / `video` groups; installs `/etc/polkit-1/rules.d/49-racecar-network.rules` so `racecar wifi` can control NetworkManager from a terminal; sources ROS2 + the `racecar` shell tool in `.bashrc` and puts `~/.local/bin` on `PATH`
-4. **`setup_raspi_config.sh`**: boot-level configuration: enable I2C, enable SPI, disable serial console (frees the GPIO UART / `ttyAMA0` for the NEO-PIT link), enable RTC backup-cell trickle charging (`RTC_VCHG_UV=0` turns it off; see [RTC backup cell](#rtc-backup-cell)), and reconcile the bootloader EEPROM (`RACECAR_EEPROM=0` skips it; see [Bootloader EEPROM](#bootloader-eeprom))
+1. **`setup_ros2.sh`**: ROS2 Jazzy apt repo + message/driver packages (`xacro` and `robot_state_publisher` for the frame tree, slam_toolbox, Nav2 AMCL and map server), `nvme-cli` and `gdisk` for `racecar disk`
+2. **`setup_dev_tools.sh`**: build tools, Python hardware libs (`smbus` / `serial` / `spidev`), Pi tools and services the car relies on (`raspi-config`, `rpi-eeprom`, `vcgencmd`, NetworkManager, avahi, polkit, matplotlib), and the pinned linters (`ruff`, `black`, `mypy`) per-user
+3. **`setup_user_env.sh`**: joins `dialout` / `i2c` / `spi` / `gpio` / `video` groups; installs the polkit rules in `scripts/polkit/` (NetworkManager for `racecar wifi`, the autonomy unit for `racecar map`, the lab dashboards for the apps page, the teleop restart for Features); sources ROS2 + the `racecar` shell tool in `.bashrc` and puts `~/.local/bin` on `PATH`
+4. **`setup_raspi_config.sh`**: boot-level configuration: enable I2C, enable SPI, disable serial console (frees the GPIO UART / `ttyAMA0` for the NEO-PIT link), `usb_max_power_enable=1`, enable RTC backup-cell trickle charging (`RTC_VCHG_UV=0` turns it off; see [RTC backup cell](#rtc-backup-cell)), and reconcile the bootloader EEPROM (`RACECAR_EEPROM=0` skips it; see [Bootloader EEPROM](#bootloader-eeprom))
 5. **`setup_udev.sh`**: installs `/etc/udev/rules.d/99-racecar.rules` (stable `/dev/neo-pit-pcb`, `/dev/lidar`)
-6. **`setup_dotmatrix.sh`**: `pip install --user luma.led_matrix`, the font source for the `dotmatrix_node` rasterizer
-7. **`setup_coral.sh`**: installs `libedgetpu1-std`, `tflite_runtime`, `pycoral` from vendored `depend/` artifacts; with the M.2 card present, also the gasket DKMS driver and the `coral-msi` overlay (reboot required)
+6. **`setup_dotmatrix.sh`**: `pip install --user luma.led_matrix` (pinned), the font source for the `dotmatrix_node` rasterizer
+7. **`setup_coral.sh`**: installs `libedgetpu1-std`, `tflite_runtime`, `pycoral` from vendored `depend/` artifacts; on a Pi 5, also the M.2 card's gasket DKMS driver and the `coral-msi` overlay, so a card fitted after setup works (reboot required)
 8. **`setup_realsense.sh`**: installs `realsense2_camera` (apt) + the Pi 5 IMU IIO permission fix (script, udev rule, boot service)
-9. **`setup_workspace.sh`**: clones `sllidar_ros2` and runs `colcon build --symlink-install`; `setup_all.sh` then runs `racecar profile migrate` (see [Car profile](#car-profile))
-10. **`setup_jupyter.sh`**: `pip install --user jupyterlab`, creates `~/jupyter_ws/`, links `~/jupyter_ws/data` and `~/jupyter_ws/maps` to the [data root](#car-data)
-11. **`setup_services.sh`**: installs and enables the core systemd units (`racecar-{data,teleop,watchdog,dashboard,jupyter}.service`) and `/etc/profile.d/racecar-data.sh`
-12. **`setup_dashboards.sh`**: clones or fast-forwards the three lab-dashboard checkouts into `scripts/dashboards/`, installs a stopped, disabled `racecar-*` unit for each, and removes units left by retired dashboards (`RACECAR_DASHBOARDS=0` skips it)
+9. **`setup_workspace.sh`**: clones `sllidar_ros2` at a pinned commit and runs `colcon build --symlink-install`; `setup_all.sh` then runs `racecar profile migrate` (see [Car profile](#car-profile))
+10. **`setup_jupyter.sh`**: `pip install --user jupyterlab` and the library's notebook packages (pinned), creates `~/jupyter_ws/`, links `~/jupyter_ws/data` and `~/jupyter_ws/maps` to the [data root](#car-data)
+11. **`setup_services.sh`**: installs and enables the core systemd units (`racecar-{data,teleop,watchdog,dashboard,jupyter,mapview}.service`), installs `racecar-autonomy.service` disabled, and installs `/etc/profile.d/racecar-data.sh`
+12. **`setup_dashboards.sh`**: installs a stopped, disabled `racecar-*` unit for each of the four lab dashboards in `scripts/dashboards/` (web teleop, line follow, wall follow, camera label) and removes units left by retired dashboards (`RACECAR_DASHBOARDS=0` skips it)
 
 Individual phase scripts can be run on their own to re-do or skip steps (e.g. `racecar setup networking` for just the networking phase, or `bash scripts/setup_udev.sh` to reinstall the udev rules after a hardware swap).
 

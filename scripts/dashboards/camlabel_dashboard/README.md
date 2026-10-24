@@ -38,7 +38,7 @@ Collection and labeling are separate stages:
 
 ## Dataset
 
-Saved on the car in `~/data/camlabel/`, outside the driver, so updating or reinstalling the driver leaves it alone. The tree is created at startup when missing:
+Saved on the car in `datasets/camlabel/` under the data root (`racecar data path`), outside the driver, so updating or reinstalling the driver leaves it alone. The tree is created at startup when missing:
 
 - `unlabeled/uN.jpg`: collected frames waiting for labels (not part of the training set)
 - `images/imgN.jpg`: the frame as captured, full camera resolution JPEG, no boxes burned in
@@ -50,4 +50,4 @@ This layout trains directly with ultralytics by pointing a data.yaml at it.
 
 ## Training parameters
 
-The bottom card holds the common YOLO parameters (model, epochs, batch, image size, learning rate, splits, augmentations), each with a short description. Save params writes them to `~/data/camlabel/train_params.txt`. A rough training time estimate for a Jetson Orin Nano updates live as values change.
+The bottom card holds the common YOLO parameters (model, epochs, batch, image size, learning rate, splits, augmentations), each with a short description. Save params writes them to `train_params.txt` in that folder. A rough training time estimate for a Jetson Orin Nano updates live as values change.

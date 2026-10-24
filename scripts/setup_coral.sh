@@ -5,8 +5,9 @@
 #   - libedgetpu runtime (.deb from depend/)
 #   - tflite_runtime + pycoral Python wheels (from depend/)
 #
-# M.2 / PCIe (Coral Apex, PCI 1ac1:089a), auto-selected when the card is on the
-# bus:
+# M.2 / PCIe (Coral Apex, PCI 1ac1:089a), installed on every Pi 5 (whether or
+# not the card is fitted yet, so one connected after setup works after a
+# reboot) and on any machine where the card is on the bus:
 #   - gasket/apex kernel driver via DKMS (depend/gasket-dkms_*.deb), patched by
 #     scripts/gasket-msi-fallback.patch
 #   - coral-msi device-tree overlay (scripts/coral-msi.dts)
@@ -50,8 +51,10 @@ else
 fi
 
 NEEDS_REBOOT=0
-if lspci -nn 2>/dev/null | grep -qi '1ac1:089a'; then
-    echo "[4/5] M.2/PCIe Coral (Apex) detected. Installing gasket driver + overlay..."
+IS_PI5=0
+grep -qa 'Raspberry Pi 5' /proc/device-tree/model 2>/dev/null && IS_PI5=1
+if [ "$IS_PI5" = "1" ] || lspci -nn 2>/dev/null | grep -qi '1ac1:089a'; then
+    echo "[4/5] Pi 5 or M.2 Coral (Apex): installing the gasket driver + overlay..."
 
     # Build prerequisites for the DKMS module. linux-headers-raspi (meta) keeps
     # headers tracking the kernel so DKMS auto-rebuilds apex after a kernel
@@ -89,7 +92,7 @@ __CFG__
     fi
     NEEDS_REBOOT=1
 else
-    echo "[4/5] No M.2 Apex on the bus. Coral USB access comes from the racecar"
+    echo "[4/5] Not a Pi 5 and no M.2 Apex on the bus. Coral USB access comes from the racecar"
     echo "      udev rules (scripts/udev/99-racecar.rules); run 'racecar setup udev'"
     echo "      or scripts/setup_udev.sh to install them. No reboot for USB."
 fi

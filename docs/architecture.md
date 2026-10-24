@@ -25,7 +25,7 @@ and what supervises them. Companion to the operational instructions in
 
 ## Platform
 
-Raspberry Pi 5 (BCM2712, aarch64, 4 cores) on Ubuntu Server 24.04 LTS, ROS 2
+Raspberry Pi 5 (BCM2712, aarch64, 4 cores) on Ubuntu Desktop 24.04 LTS, ROS 2
 Jazzy. The package is `ament_python`; the workspace overlay lives at
 `~/ros2_ws` and is built with `colcon build --symlink-install`, so edits to
 existing YAML, launch, and Python files take effect without a rebuild. A new

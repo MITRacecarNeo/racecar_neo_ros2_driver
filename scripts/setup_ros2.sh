@@ -3,13 +3,21 @@
 set -eo pipefail
 
 # Bootstrap tools needed to add the ROS2 apt repo.
+sudo apt-get update
 sudo apt-get install -y -qq curl wget gnupg ca-certificates lsb-release
 
+# The ROS apt source package. The newest release is looked up on GitHub; a
+# failed lookup (rate limit, outage) uses the version known to work.
+ROS_APT_SOURCE_FALLBACK=1.2.0
 if ! dpkg -s ros2-apt-source >/dev/null 2>&1; then
-    ROS_APT_SOURCE_VERSION=$(curl -s https://api.github.com/repos/ros-infrastructure/ros-apt-source/releases/latest \
-        | grep -F 'tag_name' | head -1 | awk -F'"' '{print $4}')
+    ROS_APT_SOURCE_VERSION=$(curl -fsS --retry 3 https://api.github.com/repos/ros-infrastructure/ros-apt-source/releases/latest \
+        | grep -F 'tag_name' | head -1 | awk -F'"' '{print $4}' || true)
+    if [ -z "$ROS_APT_SOURCE_VERSION" ]; then
+        echo "GitHub lookup failed; using ros-apt-source ${ROS_APT_SOURCE_FALLBACK}."
+        ROS_APT_SOURCE_VERSION="$ROS_APT_SOURCE_FALLBACK"
+    fi
     DEB="/tmp/ros2-apt-source.deb"
-    wget -q "https://github.com/ros-infrastructure/ros-apt-source/releases/download/${ROS_APT_SOURCE_VERSION}/ros2-apt-source_${ROS_APT_SOURCE_VERSION}.$(lsb_release -cs)_all.deb" -O "$DEB"
+    wget -q --tries=3 "https://github.com/ros-infrastructure/ros-apt-source/releases/download/${ROS_APT_SOURCE_VERSION}/ros2-apt-source_${ROS_APT_SOURCE_VERSION}.$(lsb_release -cs)_all.deb" -O "$DEB"
     sudo dpkg -i "$DEB"
 fi
 
@@ -29,6 +37,8 @@ sudo apt-get install -y \
     ros-jazzy-image-transport \
     ros-jazzy-image-transport-plugins \
     ros-jazzy-tf2-tools \
+    ros-jazzy-xacro \
+    ros-jazzy-robot-state-publisher \
     ros-jazzy-topic-tools \
     ros-jazzy-diagnostic-updater \
     ros-jazzy-slam-toolbox \

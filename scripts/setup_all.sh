@@ -10,6 +10,23 @@ set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# The systemd units and polkit rules name the racecar user and
+# /home/racecar/ros2_ws; set up anywhere else, every service would fail.
+EXPECTED_DIR="/home/racecar/ros2_ws/src/racecar_neo_ros2_driver/scripts"
+if [ "$EUID" -eq 0 ]; then
+    echo "Run as the racecar user, not with sudo or as root: bash scripts/setup_all.sh" >&2
+    exit 1
+fi
+if [ "$(id -un)" != "racecar" ]; then
+    echo "Run as the racecar user (this is $(id -un)). The services expect racecar." >&2
+    exit 1
+fi
+if [ "$SCRIPT_DIR" != "$EXPECTED_DIR" ]; then
+    echo "The driver must be at /home/racecar/ros2_ws/src/racecar_neo_ros2_driver" >&2
+    echo "(this copy is at ${SCRIPT_DIR%/scripts})." >&2
+    exit 1
+fi
+
 if [ "$(lsb_release -cs)" != "noble" ]; then
     echo "WARNING: this script targets Ubuntu 24.04 (Noble); detected '$(lsb_release -cs)'."
     echo "Continue anyway? [y/N]"
@@ -73,12 +90,13 @@ echo "==> [10/12] JupyterLab + workspace"
 bash "$SCRIPT_DIR/setup_jupyter.sh"
 
 echo
-echo "==> [11/12] systemd services (teleop, watchdog, dashboard, jupyter)"
+echo "==> [11/12] systemd services (data, teleop, watchdog, dashboard, jupyter, mapview, autonomy)"
 bash "$SCRIPT_DIR/setup_services.sh"
 
 echo
 echo "==> [12/12] Lab dashboards (install units, disabled)"
-bash "$SCRIPT_DIR/setup_dashboards.sh"
+DASHBOARDS_OK=1
+bash "$SCRIPT_DIR/setup_dashboards.sh" || DASHBOARDS_OK=0
 
 # The NVMe data drive is never formatted here; `racecar disk setup` asks first.
 if [ -e /dev/nvme0n1 ] && ! findmnt -n /mnt/nvme >/dev/null 2>&1; then
@@ -88,6 +106,11 @@ if [ -e /dev/nvme0n1 ] && ! findmnt -n /mnt/nvme >/dev/null 2>&1; then
 fi
 
 echo
-echo "Setup complete."
-echo "Log out and back in (or 'newgrp dialout') so group changes apply."
-echo "Then: 'racecar teleop' or 'sudo systemctl start racecar-teleop'."
+if [ "$DASHBOARDS_OK" = "1" ]; then
+    echo "Setup complete."
+else
+    echo "Setup complete except the lab dashboards (see above); re-run: racecar setup dashboards"
+fi
+echo "Reboot now: sudo reboot"
+echo "The reboot applies config.txt, the bootloader EEPROM, the Coral driver, and"
+echo "the new groups, and starts the services."

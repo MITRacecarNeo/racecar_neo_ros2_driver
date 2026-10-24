@@ -17,42 +17,44 @@
 # DTOVERLAY warning. See docs/troubleshooting.md, "raspi-config on Ubuntu".
 set -eo pipefail
 
-if ! command -v raspi-config >/dev/null; then
-    echo "raspi-config not found; skipping (not a Raspberry Pi image)."
-    exit 0
-fi
-
 SUDO="${RACECAR_SUDO-sudo}"
 
 if [ -f /boot/firmware/config.txt ]; then
     CONFIG_TXT=/boot/firmware/config.txt
     CMDLINE_TXT=/boot/firmware/cmdline.txt
-else
+elif [ -f /boot/config.txt ]; then
     CONFIG_TXT=/boot/config.txt
     CMDLINE_TXT=/boot/cmdline.txt
+else
+    echo "No config.txt; skipping (not a Raspberry Pi image)."
+    exit 0
 fi
 
-# Leave exactly one enable_uart=1 in the [all] scope (lines before the first
-# section header count as [all]). raspi-config variants may write enable_uart=0
-# or a second enable_uart line.
-ensure_enable_uart() {
-    local scan tmp
-    scan="$(awk 'BEGIN { all = 1 }
+# Leave exactly one KEY=VALUE in the [all] scope of config.txt (lines before
+# the first section header count as [all]). raspi-config variants may write
+# enable_uart=0 or a second enable_uart line.
+ensure_all_setting() {
+    local key="$1" value="$2" scan tmp
+    scan="$(awk -v key="$key" 'BEGIN { all = 1 }
         /^\[/ { all = ($0 ~ /^\[all\]/) }
-        all && /^[[:space:]]*enable_uart=/ { gsub(/[[:space:]]/, ""); print }' "$CONFIG_TXT")"
-    if [ "$scan" = "enable_uart=1" ]; then
-        echo "  enable_uart=1 already set"
+        all && $0 ~ "^[[:space:]]*" key "=" { gsub(/[[:space:]]/, ""); print }' "$CONFIG_TXT")"
+    if [ "$scan" = "${key}=${value}" ]; then
+        echo "  ${key}=${value} already set"
         return 0
     fi
     tmp="$(mktemp)"
-    awk 'BEGIN { all = 1 }
+    awk -v key="$key" -v value="$value" 'BEGIN { all = 1 }
         /^\[/ { all = ($0 ~ /^\[all\]/) }
-        all && /^[[:space:]]*enable_uart=/ { next }
+        all && $0 ~ "^[[:space:]]*" key "=" { next }
         { print }
-        END { if (!all) print "[all]"; print "enable_uart=1" }' "$CONFIG_TXT" > "$tmp"
+        END { if (!all) print "[all]"; print key "=" value }' "$CONFIG_TXT" > "$tmp"
     $SUDO tee "$CONFIG_TXT" < "$tmp" > /dev/null
     rm "$tmp"
-    echo "  enable_uart=1 set in [all]"
+    echo "  ${key}=${value} set in [all]"
+}
+
+ensure_enable_uart() {
+    ensure_all_setting enable_uart 1
 }
 
 # RTC backup cell trickle charge. The Pi 5 RTC sits in the PMIC and ships with
@@ -81,30 +83,43 @@ apply_rtc_charge() {
     fi
 }
 
-if grep -q '^do_serial_cons\b' /usr/bin/raspi-config; then
-    HAS_SERIAL_CONS=1
+# setup_dev_tools.sh installs raspi-config; without it only these calls are
+# skipped, and the config.txt, cmdline.txt and EEPROM steps below still run.
+if command -v raspi-config >/dev/null; then
+    if grep -q '^do_serial_cons\b' /usr/bin/raspi-config; then
+        HAS_SERIAL_CONS=1
+    else
+        HAS_SERIAL_CONS=0
+    fi
+
+    echo "  enabling I2C..."
+    sudo raspi-config nonint do_i2c 0
+
+    echo "  enabling SPI..."
+    sudo raspi-config nonint do_spi 0
+
+    echo "  disabling serial console, enabling serial hardware..."
+    if [ "$HAS_SERIAL_CONS" = "1" ]; then
+        sudo raspi-config nonint do_serial_cons 1   # 1 = disable console
+        sudo raspi-config nonint do_serial_hw 0     # 0 = enable hw UART
+    else
+        # Ubuntu fork: do_serial <console> <hw>, where 0=enable, 1=disable.
+        # 'do_serial 1 1' disables both; ensure_enable_uart below re-enables
+        # the hardware UART.
+        sudo raspi-config nonint do_serial 1 1
+    fi
 else
-    HAS_SERIAL_CONS=0
+    echo "  raspi-config not found; I2C and SPI come from config.txt below"
+    ensure_all_setting dtparam=i2c_arm on
+    ensure_all_setting dtparam=spi on
 fi
-
-echo "  enabling I2C..."
-sudo raspi-config nonint do_i2c 0
-
-echo "  enabling SPI..."
-sudo raspi-config nonint do_spi 0
-
-echo "  disabling serial console, enabling serial hardware..."
-if [ "$HAS_SERIAL_CONS" = "1" ]; then
-    sudo raspi-config nonint do_serial_cons 1   # 1 = disable console
-    sudo raspi-config nonint do_serial_hw 0     # 0 = enable hw UART
-else
-    # Ubuntu fork: do_serial <console> <hw>, where 0=enable, 1=disable.
-    # 'do_serial 1 1' disables both; ensure_enable_uart below re-enables the
-    # hardware UART. Also strip console= from cmdline.txt.
-    sudo raspi-config nonint do_serial 1 1
-    sudo sed -i -E 's/console=(serial0|ttyAMA0|ttyS0),[0-9]+ ?//g' "$CMDLINE_TXT"
-fi
+# The serial console would hold the UART the Teensy uses.
+sudo sed -i -E 's/console=(serial0|ttyAMA0|ttyS0),[0-9]+ ?//g' "$CMDLINE_TXT"
 ensure_enable_uart
+
+# Full USB current for the RealSense, lidar and Teensy; the EEPROM's
+# PSU_MAX_CURRENT below tells the firmware the supply can carry it.
+ensure_all_setting usb_max_power_enable 1
 
 RTC_VCHG_UV="${RTC_VCHG_UV:-3000000}"
 apply_rtc_charge

@@ -164,8 +164,6 @@ if [[ ${#failed[@]} -gt 0 ]]; then
     echo
     echo "Incomplete: ${failed[*]}"
     echo "Re-run 'racecar setup dashboards' once the problem is resolved."
+    exit 1
 fi
-
-# The script must not end on the exit status of a test; `set -e` leaves it as
-# the script's own status, so a clean run with nothing to report would exit 1.
 exit 0

@@ -485,6 +485,21 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Fixed
 
+- One-shot setup on a new car (`setup_all.sh`): installs `raspi-config`,
+  `rpi-eeprom`, `vcgencmd`, NetworkManager, avahi, polkit, matplotlib,
+  `xacro` and `robot_state_publisher`, which the code needs but only some
+  images carry; `setup_raspi_config.sh` writes `config.txt` and the EEPROM
+  keys even without `raspi-config`, and sets `usb_max_power_enable=1`; the
+  Coral M.2 driver installs on every Pi 5, so a card fitted after setup
+  works; `setup_all.sh` refuses to run as root, as another user, or from
+  another folder; `apt-get update` runs first and the ROS apt source lookup
+  retries and falls back to a known version; `sllidar_ros2`, JupyterLab and
+  the notebook packages, and `luma.led_matrix` are pinned; a failed
+  dashboard install is reported; the udev trigger is limited to the
+  racecar rules' subsystems; the run ends with a reboot notice. Ubuntu
+  Desktop 24.04 is the supported image.
+- `racecar disk check` starts again the units it stopped, with sudo when
+  polkit does not allow it.
 - `calibrate_mag.py` failed its fit ("Fit failed with N samples") whenever
   the car's hard iron exceeded the field, leaving zero field outside the
   ellipsoid: the quadric's constant term was fixed at 1, which made the fitted

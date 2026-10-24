@@ -248,6 +248,7 @@ class TestLaunchWrapper:
 
 class TestSystemdServices:
     SERVICES = (
+        'racecar-data.service',
         'racecar-teleop.service',
         'racecar-watchdog.service',
         'racecar-dashboard.service',
@@ -703,11 +704,13 @@ otg_mode=1
         """Run one shipped function from the script against a temp config.txt."""
         text = self.SCRIPT.read_text()
         body = text.split(f'{func}() {{', 1)[1].split('\n}\n', 1)[0]
+        helper = text.split('ensure_all_setting() {', 1)[1].split('\n}\n', 1)[0]
         cfg = tmp_path / 'config.txt'
         if not cfg.exists():
             cfg.write_text(config)
         assigns = ''.join(f'{k}={v}\n' for k, v in env.items())
-        script = f'CONFIG_TXT={cfg}\nSUDO=\n{assigns}{func}() {{{body}\n}}\n{func}\n'
+        script = (f'CONFIG_TXT={cfg}\nSUDO=\n{assigns}'
+                  f'ensure_all_setting() {{{helper}\n}}\n{func}() {{{body}\n}}\n{func}\n')
         result = subprocess.run(['bash', '-c', script], capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
         return cfg.read_text()
@@ -741,6 +744,27 @@ otg_mode=1
         first = self._call(tmp_path, 'ensure_enable_uart', self.FIXTURE)
         second = self._call(tmp_path, 'ensure_enable_uart', first)
         assert first == second
+
+    def test_usb_max_power_and_dtparams_once_in_all(self, tmp_path):
+        cfg = tmp_path / 'config.txt'
+        cfg.write_text(self.FIXTURE)
+        text = self.SCRIPT.read_text()
+        helper = text.split('ensure_all_setting() {', 1)[1].split('\n}\n', 1)[0]
+        script = (f'CONFIG_TXT={cfg}\nSUDO=\nensure_all_setting() {{{helper}\n}}\n'
+                  'ensure_all_setting usb_max_power_enable 1\n'
+                  'ensure_all_setting usb_max_power_enable 1\n'
+                  'ensure_all_setting dtparam=i2c_arm on\n')
+        result = subprocess.run(['bash', '-c', script], capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        scope = self._all_scope(cfg.read_text())
+        assert scope.count('usb_max_power_enable=1') == 1
+        assert scope.count('dtparam=i2c_arm=on') == 1
+
+    def test_runs_without_raspi_config(self):
+        text = self.SCRIPT.read_text()
+        assert 'raspi-config not found; skipping' not in text
+        assert 'if command -v raspi-config >/dev/null; then' in text
+        assert text.index('ensure_enable_uart\n') > text.index('if command -v raspi-config')
 
     def test_enable_uart_added_when_missing(self, tmp_path):
         out = self._call(tmp_path, 'ensure_enable_uart', '[all]\nkernel=vmlinuz\n')
@@ -791,3 +815,72 @@ class TestLinterInstall:
         text = (SCRIPTS_DIR / 'setup_user_env.sh').read_text()
         block = text.split('replace_block "$PATH_MARKER" <<\'EOF\'\n', 1)[1].split('\nEOF\n')[0]
         assert block.strip() and '\n\n' not in block
+
+
+class TestOneShotSetup:
+    """What a new car needs from setup_all.sh, checked against the scripts' text."""
+
+    def _all_setup_text(self):
+        return '\n'.join((SCRIPTS_DIR / s).read_text() for s in [*PHASE_SCRIPTS, ORCHESTRATOR])
+
+    @pytest.mark.parametrize('package', [
+        'raspi-config', 'rpi-eeprom', 'libraspberrypi-bin', 'network-manager',
+        'avahi-daemon', 'polkitd', 'python3-matplotlib', 'ros-jazzy-xacro',
+        'ros-jazzy-robot-state-publisher', 'nvme-cli', 'gdisk',
+        'ros-jazzy-slam-toolbox', 'ros-jazzy-nav2-amcl', 'ros-jazzy-foxglove-bridge',
+    ])
+    def test_runtime_packages_are_installed(self, package):
+        assert package in self._all_setup_text(), package
+
+    def test_refuses_the_wrong_user_root_or_folder(self):
+        text = (SCRIPTS_DIR / ORCHESTRATOR).read_text()
+        guards = text.index('EXPECTED_DIR=')
+        assert guards < text.index('sudo -v')
+        assert '"$EUID" -eq 0' in text and '"$(id -un)" != "racecar"' in text
+
+    def test_ends_with_a_reboot_and_reports_dashboard_failures(self):
+        text = (SCRIPTS_DIR / ORCHESTRATOR).read_text()
+        assert 'setup_dashboards.sh" || DASHBOARDS_OK=0' in text
+        assert 'sudo reboot' in text.split('setup_dashboards.sh')[-1]
+        dash = (SCRIPTS_DIR / 'setup_dashboards.sh').read_text()
+        assert 'exit 1' in dash.split('Incomplete:')[1]
+
+    def test_ros_apt_source_lookup_has_a_fallback(self):
+        text = (SCRIPTS_DIR / 'setup_ros2.sh').read_text()
+        assert 'curl -fsS --retry 3' in text and 'ROS_APT_SOURCE_FALLBACK=' in text
+        assert text.index('apt-get update') < text.index('apt-get install')
+
+    def test_network_installs_are_pinned(self):
+        assert 'SLLIDAR_COMMIT=' in (SCRIPTS_DIR / 'setup_workspace.sh').read_text()
+        assert 'jupyterlab==' in (SCRIPTS_DIR / 'setup_jupyter.sh').read_text()
+        assert 'luma.led_matrix==' in (SCRIPTS_DIR / 'setup_dotmatrix.sh').read_text()
+
+    def test_coral_m2_driver_on_every_pi5(self):
+        text = (SCRIPTS_DIR / 'setup_coral.sh').read_text()
+        assert "grep -qa 'Raspberry Pi 5' /proc/device-tree/model" in text
+        assert 'if [ "$IS_PI5" = "1" ] ||' in text
+
+    def test_udev_trigger_is_scoped(self):
+        text = (SCRIPTS_DIR / 'setup_udev.sh').read_text()
+        assert 'sudo udevadm trigger\n' not in text
+        assert '--subsystem-match' in text
+
+    def test_every_unit_in_a_polkit_rule_is_installed(self):
+        import re
+
+        rules = '\n'.join(p.read_text() for p in (SCRIPTS_DIR / 'polkit').glob('*.rules'))
+        named = set(re.findall(r'racecar-[a-z]+\.service', rules))
+        installed = {p.name for p in SCRIPTS_DIR.glob('racecar-*.service')}
+        templates = (SCRIPTS_DIR / 'dashboards').glob('*/racecar-*.service.in')
+        installed |= {p.name[:-len('.in')] for p in templates}
+        assert named and named <= installed, named - installed
+        user_env = (SCRIPTS_DIR / 'setup_user_env.sh').read_text()
+        for rule in (SCRIPTS_DIR / 'polkit').glob('*.rules'):
+            assert rule.name in user_env, rule.name
+
+    def test_every_unit_the_tools_manage_is_installed(self):
+        services = (SCRIPTS_DIR / 'setup_services.sh').read_text()
+        for unit in ('racecar-data.service', 'racecar-teleop.service', 'racecar-watchdog.service',
+                     'racecar-dashboard.service', 'racecar-jupyter.service',
+                     'racecar-mapview.service', 'racecar-autonomy.service'):
+            assert unit in services, unit

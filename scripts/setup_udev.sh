@@ -24,7 +24,11 @@ fi
 
 sudo install -m 0644 "${RULES_SRC}" "${RULES_DST}"
 sudo udevadm control --reload-rules
-sudo udevadm trigger
+# Only the subsystems the racecar rules match; a bare trigger replays every
+# device on a running car (network included).
+for subsystem in tty spidev gpio usb; do
+    sudo udevadm trigger --subsystem-match="$subsystem"
+done
 
 # hid_nintendo can load from the initramfs before /etc/modprobe.d/ is read,
 # so a changed blacklist also regenerates the initramfs.
