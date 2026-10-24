@@ -38,7 +38,7 @@ from rclpy.qos import (
     QoSReliabilityPolicy,
 )
 from rclpy.time import Time
-from sensor_msgs.msg import Imu, Joy, MagneticField
+from sensor_msgs.msg import BatteryState, Imu, Joy, MagneticField
 import serial
 from std_msgs.msg import Bool, Float32, Float32MultiArray, UInt8MultiArray
 from tf2_ros import TransformBroadcaster
@@ -64,6 +64,47 @@ SYS_DRIVER_STARTING = 0x10
 POSE_UNESTIMATED = -1.0
 TWIST_COMPONENT_UNKNOWN = 1e6
 SPEED_VARIANCE = 1e-2
+
+BATTERY_PERIOD_SEC = 1.0
+
+
+class PowerAverage:
+    """Mean pack voltage and current over each period of telemetry samples."""
+
+    def __init__(self, period_sec: float = BATTERY_PERIOD_SEC) -> None:
+        self.period = period_sec
+        self._start: float | None = None
+        self._sum_v = 0.0
+        self._sum_a = 0.0
+        self._n = 0
+
+    def add(self, now: float, volts: float, amps: float) -> tuple[float, float] | None:
+        """Add one sample; return (mean V, mean A) when a period has closed."""
+        if self._start is None:
+            self._start = now
+        self._sum_v += volts
+        self._sum_a += amps
+        self._n += 1
+        if now - self._start < self.period:
+            return None
+        means = (self._sum_v / self._n, self._sum_a / self._n)
+        self._start, self._sum_v, self._sum_a, self._n = now, 0.0, 0.0, 0
+        return means
+
+
+def build_battery_state(volts: float, amps: float) -> BatteryState:
+    """Build a BatteryState from pack means; ROS counts discharge current as negative."""
+    msg = BatteryState()
+    msg.voltage = float(volts)
+    msg.current = -float(amps)
+    msg.charge = msg.capacity = msg.design_capacity = msg.percentage = math.nan
+    msg.temperature = math.nan
+    msg.power_supply_status = (
+        BatteryState.POWER_SUPPLY_STATUS_DISCHARGING
+        if amps > 0.0 else BatteryState.POWER_SUPPLY_STATUS_UNKNOWN
+    )
+    msg.present = True
+    return msg
 
 
 def build_odom(speed_mps: float, frame_id: str, child_frame_id: str) -> Odometry:
@@ -158,6 +199,8 @@ class PitNode(Node):
         # the eight FlySky RC channels normalized to [-1, 1].
         self.declare_parameter('voltage_topic', '/battery/voltage')
         self.declare_parameter('current_topic', '/battery/current')
+        # 1 Hz means of the two above, for dashboards and logs.
+        self.declare_parameter('battery_state_topic', '/battery/state')
         self.declare_parameter('rc_topic', '/rc/channels')
         # Link state from raw pulse widths; see Telemetry.rc_link_up.
         self.declare_parameter('rc_link_topic', '/rc/link')
@@ -244,6 +287,7 @@ class PitNode(Node):
         self._odom_child_frame = self.get_parameter('odom_child_frame_id').value
         self._voltage_topic = self.get_parameter('voltage_topic').value
         self._current_topic = self.get_parameter('current_topic').value
+        self._battery_state_topic = self.get_parameter('battery_state_topic').value
         self._rc_topic = self.get_parameter('rc_topic').value
         self._rc_link_topic = self.get_parameter('rc_link_topic').value
         self._dotmatrix_topic = self.get_parameter('dotmatrix_topic').value
@@ -284,6 +328,8 @@ class PitNode(Node):
         )
         self._pub_voltage = self.create_publisher(Float32, self._voltage_topic, qos)
         self._pub_current = self.create_publisher(Float32, self._current_topic, qos)
+        self._pub_battery = self.create_publisher(BatteryState, self._battery_state_topic, 10)
+        self._power_avg = PowerAverage()
         self._pub_rc = self.create_publisher(Float32MultiArray, self._rc_topic, qos)
         self._pub_rc_link = self.create_publisher(Bool, self._rc_link_topic, qos)
         self.create_subscription(AckermannDriveStamped, '/motor', self._motor_cb, qos)
@@ -550,6 +596,11 @@ class PitNode(Node):
         curr = Float32()
         curr.data = float(telem.current_a)
         self._pub_current.publish(curr)
+        means = self._power_avg.add(time.monotonic(), telem.voltage_v, telem.current_a)
+        if means is not None:
+            battery = build_battery_state(*means)
+            battery.header.stamp = stamp
+            self._pub_battery.publish(battery)
         rc = Float32MultiArray()
         rc.data = [float(c) for c in telem.rc_normalized]
         self._pub_rc.publish(rc)

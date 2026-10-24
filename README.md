@@ -383,26 +383,55 @@ Changes apply on the **next boot**; `status` reports a pending change when the d
 
 ## Web dashboard
 
-Once `racecar-teleop.service` is running, browse to `http://<robot>:8080` for a live status page:
+Once `racecar-teleop.service` is running, browse to `http://<robot>:8080`.
 
-- **Nodes**: one card per monitored subsystem (9 total): green when the expected topic is being advertised, red when not. EdgeTPU and dot matrix, which the watchdog does not restart, show gray (`unsupervised`) instead of red.
-- **System Health**: RTC backup battery voltage (green >= 3.0 V, yellow 2.7-3.0 V, red < 2.7 V) and the Pi 5 PMIC sticky under-voltage alarm.
-- **Topic Rates**: live Hz for `/motor`, `/mux_out`, `/imu/fused`, `/imu/lsm9ds1`, `/scan`, `/edgetpu/inference`, `/camera/color`, `/camera/depth`, and `/imu/realsense`. Yellow when stale (< 0.5 Hz), red when missing. The three RealSense rows are read from the camera's own `/diagnostics` stream; the rest are counted from raw subscriptions, which keeps the dashboard's own CPU cost near 20%.
-- **Autonomy**: mode and map, localized, scan fit and pose spread while localizing, the last save while mapping, and a link to the map viewer on port 8084. Gray when the autonomy service is stopped, yellow when it runs but is not localized, red when its status stops arriving.
-- **Watchdog Log**: tail of `~/logs/latest/watchdog.log` so you can see restart events.
+**Apps.** One tile per app, in two groups. Hover over a tile for what it
+does. A white border means the app is running.
 
-Refreshes every 3 s; System Health refreshes every 60 s, since the cell voltage changes over weeks.
+- Core: map viewer and JupyterLab, which start at boot.
+- Utilities: web teleop, line follow, wall follow, and camera label.
+- Tap a tile to open the app in a new tab. A stopped utility is started
+  first, and the tab shows a loading bar until the app is ready. Cancel
+  closes that tab without opening the app.
+- Web teleop, line follow, and wall follow drive the car, so only one runs at
+  a time. Opening one while another runs asks before closing the other.
+- Clear apps stops every utility to free the CPU. Core apps keep running.
+- Starting and stopping utilities from the page needs the permission rule
+  that `scripts/setup_user_env.sh` installs.
+
+**Overview.** Expand it to see the car live: color camera, depth camera,
+lidar (seen from above, forward up), IMU rotation rates and encoder speed over
+the last 30 s, and battery voltage, battery current, CPU temperature, and
+memory in use over the last 2 hours. Hover or tap a chart to read a value.
+The camera, lidar, IMU, and encoder feeds run only while the section is open.
+The 2-hour history starts over when the dashboard service restarts.
+
+**System status.** Expand it at the bottom of the page.
+
+- Basic view: indicators grouped as battery, sensors, compute, actuation, and
+  autonomy, each with its name, topic rate in Hz, and a status mark. Hover or
+  tap an indicator for details. The LED strip shows Off until a program
+  drives it.
+- Advanced view: node cards, health (RTC backup cell, Pi under-voltage alarm),
+  topic rates, autonomy, and the watchdog log. Clear log hides the lines so
+  far; the log file is kept.
+- The header shows "System OK" or "Check system".
+
+The page refreshes every 3 s; Refresh at the bottom updates it at once. Health
+refreshes every 60 s, since the cell voltage changes over weeks.
 
 ## Lab dashboards
 
-Three browser-based labs in `scripts/dashboards/`, installed as `racecar-*`
-systemd units. Internals: [docs/dashboards.md](docs/dashboards.md).
+Four browser-based labs in `scripts/dashboards/`, installed as `racecar-*`
+systemd units and opened from the [web dashboard](#web-dashboard). Internals:
+[docs/dashboards.md](docs/dashboards.md).
 
 | Dashboard | Port | Reads | Publishes |
 |---|---|---|---|
 | `webteleop` | 8081 | `/camera/color`, `/camera/depth`, `/scan`, `/odom`, `/edgetpu/inference` | `/drive` |
 | `linefollow` | 8082 | `/camera/color`, `/odom` | `/drive` |
 | `wallfollow` | 8083 | `/scan`, `/odom` | `/drive` |
+| `camlabel` | 8085 | `/camera/color` | nothing; saves frames and labels to `~/data/camlabel/` |
 
 Install (also runs as phase 12 of `setup_all.sh`):
 
@@ -410,9 +439,11 @@ Install (also runs as phase 12 of `setup_all.sh`):
 racecar setup dashboards          # install the units, stopped and disabled
 ```
 
-The install also stops, disables and removes the units of the four retired
-dashboards (`camlabel`, `eps`, `pursuit`, `smartfollow`) if a car still has
-them.
+The install also stops, disables and removes the units of the three retired
+dashboards (`eps`, `pursuit`, `smartfollow`) if a car still has them.
+
+`webteleop`, `linefollow` and `wallfollow` publish `/drive`, so only one runs
+at a time. `camlabel` runs alongside any of them.
 
 Run one:
 
@@ -481,6 +512,18 @@ racecar log config --dir=/data --storage=mcap
 Bags go to `/data` when an NVMe is mounted there, and `~/logs/bags` otherwise.
 `racecar log` names an NVMe that is present but unmounted rather than silently
 falling back.
+
+### Recorded data on the NVMe
+
+The SD card holds the operating system and has little free space. Write
+recordings to the NVMe and copy them off the car from there.
+
+- `racecar log start` already writes to `/data` on the NVMe.
+- For your own recordings, give the output path on the NVMe:
+  `ros2 bag record -o /data/my_run /scan /odom`.
+- To copy a recording to your computer, run this on your computer:
+  `rsync -av racecar@<ip>:/data/my_run .`
+- Check free space with `df -h /data`.
 
 A drive shipped raw has no `/data` to fall back from; `bash scripts/setup_nvme.sh`
 partitions, formats and mounts it. That script erases the target disk, so it is
@@ -891,7 +934,9 @@ Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
   `racecar status`, `racecar service`, and the 8080 dashboard; a Lichtblick
   layout (`config/foxglove_layout.json`); a mapping steering cap, off by
   default; integrated odometry in `pit_node` (`odom -> base_link`,
-  `/odom/integrated`); telemetry stamped with the Teensy sample time;
+  `/odom/integrated`); an apps page on 8080 with a live sensor overview
+  (camera label back) and the map viewer in one shared style; recordings kept on the NVMe; telemetry stamped with the Teensy
+  sample time;
   `racecar calibrate` (guided calibration, status, backup,
   `check` against the live sensors including a magnetometer turn test and
   odometry calibration and check against the lidar (scan matching); rewritten

@@ -318,6 +318,62 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Changed
 
+- The web dashboard (8080) is an apps page: one tile per app (icon and name,
+  description on hover; a white border while running, gold and an alert
+  mark while starting, crimson and a cross when failed; orange on hover).
+  Opening an app starts it when stopped and shows a loading page until its
+  port answers (`/launch`, `GET /api/ready`, `POST /api/open`). Opening a
+  driving dashboard while another runs asks before stopping the other; the
+  separate lab-dashboard panel is gone. System status has a Basic view
+  (battery voltage and current, then icon, name, rate, and mark per node;
+  details on hover or tap) and the Advanced view;
+  a Refresh button reloads the status at once (`/api/status?refresh=1`).
+- `pit_node` publishes `/battery/state` (`sensor_msgs/BatteryState`), the
+  1 Hz means of battery voltage and current; discharge current is negative,
+  as the message defines.
+- The web dashboard has an Overview section: color and depth previews, the
+  lidar from above, IMU rotation rates and encoder speed over 30 s, and
+  charts of battery voltage, battery current, CPU temperature, and memory in
+  use over 2 hours (10 s means, `GET /api/history`). Its feeds (`scripts/overview.py`, `GET /api/overview`)
+  subscribe only while the section is open and close 10 s after the last
+  request.
+- Depth previews (web dashboard Overview, web teleop) draw pixels with no
+  depth reading in gray instead of black, so the D435i's stereo blind strip
+  on the left edge no longer reads as an object; troubleshooting explains
+  the strip ("Depth view gaps").
+- Web teleop (8081) has the simulator sensor dashboard's cards, read from
+  ROS topics: IMU (`/imu/fused`), battery (`/battery/state`), compass
+  (`/mag`), dot matrix editor and preview (`/dotmatrix/pixels`, `/text`,
+  `/frame`), and LED strip editor and preview (`/led/pixels`), alongside the
+  camera, detections, lidar, encoder, drive pad, tuning, and logs; restyled
+  to the shared look. The time charts of 8080 and 8081 share
+  `scripts/web/charts.js`; pages link the shared files with
+  `?v=webui.ASSET_VERSION` so a changed file reaches browsers at once.
+- The web dashboard groups apps as Core (map viewer, JupyterLab; started at
+  boot; in the order Terminator, JupyterLab, map viewer) and Utilities (the
+  four lab dashboards). Clear apps stops every
+  utility to free the CPU (`POST /api/clear-apps`). The loading page has one
+  Cancel button, which closes the tab. A refused start or stop names its unit.
+  Clear log hides the watchdog lines so far without deleting the file
+  (`POST /api/clear-log`, a `watchdog.cleared` mark beside the log). The
+  Basic view groups indicators as battery, sensors, compute, actuation, and
+  autonomy, and adds the LED strip (on while a program publishes
+  `/led/pixels`).
+- Battery in place of pack in user-facing text, `racecar status` rows
+  included ("Battery voltage", "Battery current").
+- `camlabel` (camera frame capture and labeling) ships in
+  `scripts/dashboards/camlabel_dashboard/` on port 8085 as
+  `racecar-camlabel.service`; it no longer counts as retired. It runs
+  alongside the driving dashboards, and the dashboards permission rule now
+  covers it.
+- The web dashboard (8080) and map viewer (8084) use one shared style,
+  served at `/ui/` by `scripts/webui.py` from `scripts/web/` (`rcn.css`,
+  bundled Barlow and JetBrains Mono fonts, logos, icons): dark only, status
+  shown as color, icon, and word. The map viewer's canvas and map list
+  thumbnails use the same dark map colors. The 8080 page is a home page with a
+  tile per dashboard and a panel that activates one lab dashboard.
+- README: recordings belong on the NVMe (`/data`), not the SD card, with the
+  `ros2 bag record -o /data/...` and `rsync` steps.
 - `/autonomy/save_map` writes into `<map>/save.tmp/` first; when the folder
   holds another run's map, those files move to `<map>/previous/<time>/`
   before the new ones replace them.

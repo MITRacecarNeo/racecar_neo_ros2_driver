@@ -52,6 +52,8 @@ SCAN_POINTS = 360
 TRAIL_STEP_M = 0.05
 TRAIL_MAX = 5000
 THUMB_PX = 160
+# Unknown, free, and wall cells; the same colors as the page's map canvas.
+THUMB_RGB = {'unknown': (0x23, 0x22, 0x28), 'free': (0x42, 0x3F, 0x52), 'wall': (0xFF, 0xFF, 0xFF)}
 JOB_LINES = 40
 FIND_TIMEOUT_SEC = 5.0
 # Same spread as the start pose of `racecar map load` (config/autonomy.yaml,
@@ -111,10 +113,11 @@ def thumbnail_png(stem: Path, max_px: int = THUMB_PX) -> bytes | None:
     if saved is None:
         return None
     _, grid = saved
-    shade = np.full(grid.shape, 205, dtype=np.uint8)
-    shade[grid == 0] = 254
-    shade[grid == 100] = 0
-    img = Image.fromarray(np.flipud(shade))
+    rgb = np.empty(grid.shape + (3,), dtype=np.uint8)
+    rgb[:] = THUMB_RGB['unknown']
+    rgb[grid == 0] = THUMB_RGB['free']
+    rgb[grid == 100] = THUMB_RGB['wall']
+    img = Image.fromarray(np.flipud(rgb))
     img.thumbnail((max_px, max_px))
     buf = io.BytesIO()
     img.save(buf, format='PNG')

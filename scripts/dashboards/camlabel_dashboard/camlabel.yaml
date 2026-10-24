@@ -1,0 +1,5 @@
+# Camera Label Dashboard settings. Restart the service after editing:
+#   racecar service restart camlabel
+preview_width: 320    # width in pixels of the live view sent to the browser.
+                      # Height follows the camera aspect. Smaller = less WiFi.
+preview_quality: 45   # jpeg quality 1..100 for the live view.

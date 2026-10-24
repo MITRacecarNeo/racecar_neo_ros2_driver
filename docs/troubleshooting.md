@@ -18,6 +18,7 @@ comment in the source can point here instead of carrying the full account.
 - [EdgeTPU inference rate and threshold](#edgetpu-inference-rate-and-threshold)
 - [Coral M.2 interrupts](#coral-m2-interrupts)
 - [RealSense firmware flash privileges](#realsense-firmware-flash-privileges)
+- [Depth view gaps](#depth-view-gaps)
 - [raspi-config on Ubuntu](#raspi-config-on-ubuntu)
 - [Gamepad hid_nintendo blacklist](#gamepad-hid_nintendo-blacklist)
 - [Lidar /scan stalls](#lidar-scan-stalls)
@@ -27,7 +28,7 @@ comment in the source can point here instead of carrying the full account.
 - [Lab dashboards](#lab-dashboards)
 - [WiFi persistence](#wifi-persistence)
 - [Boot brownout with ethernet attached](#boot-brownout-with-ethernet-attached)
-  - [Not a flat pack](#not-a-flat-pack)
+  - [Not a flat battery](#not-a-flat-battery)
   - [Root cause and repair](#root-cause-and-repair)
 
 ## Diagnostic rate checks
@@ -339,6 +340,26 @@ Only the flash itself needs root, because it writes the device and DFU
 re-enumerates as `8086:0adb`, which udev grants no user access. sudo strips
 `LD_*`, so the library path is passed explicitly there.
 
+## Depth view gaps
+
+The depth previews (web dashboard Overview, web teleop) draw pixels with no
+depth reading in flat gray. Two gaps are normal on the D435i:
+
+- A strip down the left edge, wider toward the bottom. The camera measures
+  depth by comparing its two infrared cameras, and the leftmost columns are
+  seen by only one of them. The strip is about 386 x 50 / Z pixels wide at
+  640 x 480, where Z is the distance in mm: 20 px at 1 m, 110 px at the
+  floor just ahead of the car.
+- The bottom rows, where the floor is closer than the camera's minimum range
+  of about 0.17 m, and shiny or plain floors with too little texture.
+
+Gray outlines on the left side of near objects are the same effect: the
+right camera cannot see behind the object's edge.
+
+The depth image is wider than the color image (about 79 against 55 degrees
+across), so a gap at the edge of the depth view can lie outside the color
+view. Neither gap is an object on the car.
+
 ## raspi-config on Ubuntu
 
 `scripts/setup_raspi_config.sh`.
@@ -475,9 +496,9 @@ Each unit is rendered from the dashboard's `.service.in`, substituting its
 directory and adding the discovery scope, rather than copied, so the unit
 always points at the tree it was installed from.
 
-The script also stops, disables and removes the units of the four retired
-dashboards (`camlabel`, `eps`, `pursuit`, `smartfollow`), so a car upgraded
-from v0.8.0 does not keep a second `/drive` publisher installed. Their old
+The script also stops, disables and removes the units of the three retired
+dashboards (`eps`, `pursuit`, `smartfollow`), so a car upgraded from v0.8.0
+does not keep a second `/drive` publisher installed. Their old
 checkouts under `scripts/dashboards/` are gitignored and left in place.
 
 Saved tuning lives in `<name>.local.yaml`, never in the shipped
@@ -518,12 +539,12 @@ is the part that persists.
 
 ## Boot brownout with ethernet attached
 
-Symptom, seen 2026-09-09: after the pack died, the car failed to boot three
+Symptom, seen 2026-09-09: after the battery died, the car failed to boot three
 times in a row with the ethernet cable attached, and booted normally once the
 cable was pulled.
 
 Known causes are an unseated BEC bulk capacitor and a bad contact in the
-supply harness; see [Not a flat pack](#not-a-flat-pack). One car was repaired
+supply harness; see [Not a flat battery](#not-a-flat-battery). One car was repaired
 on 2026-10-03 by replacing the buck to Pi 5 V wire; see
 [Root cause and repair](#root-cause-and-repair) for that fix and the check
 that confirms it.
@@ -545,7 +566,7 @@ Evidence:
   ALFA dongle starting to transmit is a current step, and the rail collapsed at
   that instant. The successful boot brought the same AP up at 19 seconds and
   held.
-- The pack's final boot before the cut logged 15 undervoltage events against
+- The battery's final boot before the cut logged 15 undervoltage events against
   one for every boot since.
 
 Read the ethernet cable as margin, not cause. The Pi 5 gigabit PHY draws a few
@@ -560,19 +581,19 @@ When the supply cannot hold 5 V it removes the last guard: the firmware permits
 a draw the supply cannot sustain. Do not lower it to mask a brownout; fix the
 supply.
 
-### Not a flat pack
+### Not a flat battery
 
 Measurement on 2026-09-10 rules out a depleted battery; do not start by
-charging the pack.
+charging the battery.
 
-- A fresh pack did not lift the rail. It read lower than the tired one had.
+- A fresh battery did not lift the rail. It read lower than the tired one had.
 - The BEC output measures 4.94 V on a multimeter while the Pi reads 4.49 V,
   and after recovery the drop from the same BEC is 36 to 68 mV under a
   four-core load step. A large steady drop and a small one cannot both be the
   harness.
-- Within a single boot, with no reboot and no pack change, `EXT5V` went 4.49 V
+- Within a single boot, with no reboot and no battery change, `EXT5V` went 4.49 V
   faulted, then 4.87 to 4.90 V with the live throttle bits clear, then 4.64 V
-  faulted again. A discharging pack does not recover and re-sag like that.
+  faulted again. A discharging battery does not recover and re-sag like that.
 - The recovery coincided with the top half of the chassis being removed.
 
 That profile is an intermittent connection rather than a depleted cell, and it
@@ -602,12 +623,12 @@ are set as suspect, since a throttled car also reads low on every topic rate.
 
 This section covers one car, repaired 2026-10-03. The fix there was
 replacing the buck to Pi GPIO 5 V wire. It does not rule out the BEC bulk
-capacitor in [Not a flat pack](#not-a-flat-pack) as the cause on another car.
+capacitor in [Not a flat battery](#not-a-flat-battery) as the cause on another car.
 
-Supply chain, pack to Pi:
+Supply chain, battery to Pi:
 
 ```
-7.4 V pack -> switch -> INA226 shunt -> boost (Pololu U3V70F9, 9 V)
+7.4 V battery -> switch -> INA226 shunt -> boost (Pololu U3V70F9, 9 V)
            -> buck (Pololu D24V90F5, 5 V) -> Pi 5 GPIO header 5 V pins
 ```
 
@@ -624,7 +645,7 @@ were intermittent:
   with no sag first. A step in both directions is a contact making and
   breaking, not heat or load.
 
-Ruled out: the pack (sag persisted on a full 8.2 V pack), the buck (4.95 V
+Ruled out: the battery (sag persisted on a full 8.2 V battery), the buck (4.95 V
 metered, within its 4.80 to 5.20 V tolerance), the boost (about 3 A load
 against a 6 A input rating), the BEC bulk capacitor (inspected and seated on
 this car), and the Pi and its peripherals (16 min on wall power at 5.01 to

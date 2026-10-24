@@ -1,6 +1,7 @@
 """Unit tests for scripts/dashboard.py."""
 
 from collections import deque
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import threading
@@ -17,6 +18,7 @@ def dashboard():
 
 class TestMonitoredAndRateTopics:
     EXPECTED_NODES = {
+        'led',
         'pit',
         'throttle',
         'mux',
@@ -174,7 +176,8 @@ class TestDashboardHTML:
         assert '<!DOCTYPE html>' in dashboard.DASHBOARD_HTML
 
     def test_html_references_api_endpoint(self, dashboard):
-        assert "fetch('/api/status')" in dashboard.DASHBOARD_HTML
+        html = dashboard.DASHBOARD_HTML
+        assert "'/api/status'" in html and "'/api/status?refresh=1'" in html
 
     def test_title_says_racecar(self, dashboard):
         html = dashboard.DASHBOARD_HTML
@@ -269,10 +272,109 @@ class FakeRun:
 
 
 class TestHome:
-    def test_apps_cover_the_five_dashboards(self, dashboard):
-        assert [a['port'] for a in dashboard.APPS] == [8084, 8888, 8081, 8082, 8083]
-        labs = [a['id'] for a in dashboard.APPS if a['lab']]
-        assert labs == ['webteleop', 'linefollow', 'wallfollow']
+    def test_apps_cover_the_six_dashboards(self, dashboard):
+        assert [a['port'] for a in dashboard.APPS] == [None, 8888, 8084, 8081, 8082, 8083, 8085]
+        core = [a['id'] for a in dashboard.APPS if a['group'] == 'core']
+        assert core == ['terminator', 'jupyter', 'mapview']
+        exclusive = [a['id'] for a in dashboard.APPS if a['exclusive']]
+        assert exclusive == ['webteleop', 'linefollow', 'wallfollow']
+        startable = [a['id'] for a in dashboard.APPS if a['startable']]
+        assert startable == ['webteleop', 'linefollow', 'wallfollow', 'camlabel']
+
+    def test_every_app_icon_exists(self, dashboard):
+        scripts = Path(__file__).resolve().parent.parent / 'scripts'
+        icons = (scripts / 'web' / 'icons.svg').read_text()
+        for app in dashboard.APPS:
+            assert f'id="{app["icon"]}"' in icons, app['icon']
+
+    def test_terminator_is_a_placeholder(self, dashboard):
+        run = FakeRun({})
+        assert dashboard.open_app('terminator', run) == (False, 'Terminator is not available.')
+        assert run.calls == []
+        states = dashboard.unit_states(dashboard._app_units(), FakeRun({}))
+        apps = {a['id']: a for a in dashboard.app_list(states)}
+        assert apps['terminator']['state'] == 'unavailable'
+
+    def test_open_exclusive_stops_the_other_first(self, dashboard):
+        run = FakeRun({'racecar-webteleop': 'active'})
+        ok, _ = dashboard.open_app('linefollow', run)
+        assert ok
+        verbs = [(c[-2], c[-1]) for c in run.calls if c[1] == '--no-ask-password']
+        assert verbs == [('stop', 'racecar-webteleop'), ('start', 'racecar-linefollow')]
+
+    def test_open_running_exclusive_does_nothing(self, dashboard):
+        run = FakeRun({'racecar-wallfollow': 'active'})
+        assert dashboard.open_app('wallfollow', run)[0]
+        assert not [c for c in run.calls if c[1] == '--no-ask-password']
+
+    def test_open_camlabel_leaves_the_driving_app_running(self, dashboard):
+        run = FakeRun({'racecar-webteleop': 'active'})
+        ok, message = dashboard.open_app('camlabel', run)
+        assert ok and message == 'Camera label started.'
+        assert run.states['racecar-webteleop'] == 'active'
+        assert run.states['racecar-camlabel'] == 'active'
+
+    def test_open_stopped_core_app_names_the_command(self, dashboard):
+        run = FakeRun({'racecar-mapview': 'inactive'})
+        ok, message = dashboard.open_app('mapview', run)
+        assert not ok and 'racecar service start mapview' in message
+        assert not [c for c in run.calls if c[1] == '--no-ask-password']
+
+    def test_clear_apps_stops_utilities_only(self, dashboard):
+        run = FakeRun({'racecar-mapview': 'active', 'racecar-jupyter': 'active',
+                       'racecar-webteleop': 'active', 'racecar-camlabel': 'active',
+                       'racecar-dashboard': 'active', 'racecar-teleop': 'active'})
+        assert dashboard.clear_apps(run) == (True, 'Utilities stopped.')
+        assert run.states['racecar-webteleop'] == 'inactive'
+        assert run.states['racecar-camlabel'] == 'inactive'
+        for unit in ('racecar-mapview', 'racecar-jupyter', 'racecar-dashboard', 'racecar-teleop'):
+            assert run.states[unit] == 'active'
+
+    def test_clear_apps_names_the_unit_it_may_not_stop(self, dashboard):
+        stderr = 'Failed to stop: Interactive authentication required.'
+        run = FakeRun({'racecar-linefollow': 'active'}, fail='stop', stderr=stderr)
+        ok, message = dashboard.clear_apps(run)
+        assert not ok and 'racecar-linefollow' in message and 'setup_user_env.sh' in message
+
+    def test_clear_apps_with_none_running(self, dashboard):
+        assert dashboard.clear_apps(FakeRun({})) == (True, 'No utilities running.')
+
+    def test_clear_log_hides_earlier_lines_and_keeps_the_file(self, dashboard, tmp_path,
+                                                              monkeypatch):
+        log = tmp_path / 'watchdog.log'
+        log.write_text('old 1\nold 2\n')
+        monkeypatch.setattr(dashboard, 'WATCHDOG_LOG', log)
+        monkeypatch.setattr(dashboard, 'WATCHDOG_CLEARED', tmp_path / 'watchdog.cleared')
+        assert dashboard._read_watchdog_tail() == ['old 1', 'old 2']
+        assert dashboard.clear_watchdog_log() == (True, 'Log cleared.')
+        assert dashboard._read_watchdog_tail() == []
+        with log.open('a') as f:
+            f.write('new 1\n')
+        assert dashboard._read_watchdog_tail() == ['new 1']
+        assert log.read_text().startswith('old 1')
+        log.write_text('fresh\n')  # a new session's log is shorter than the mark
+        assert dashboard._read_watchdog_tail() == ['fresh']
+
+    def test_open_refuses_unknown(self, dashboard):
+        assert dashboard.open_app('../x', FakeRun({})) == (False, 'Unknown app: ../x')
+
+    def test_app_ready_needs_an_answer(self, dashboard):
+        server = ThreadingHTTPServer(('127.0.0.1', 0), BaseHTTPRequestHandler)
+        port = server.server_address[1]
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            assert dashboard.app_ready(port)
+        finally:
+            server.shutdown()
+            server.server_close()
+        assert not dashboard.app_ready(port, timeout=0.2)
+
+    def test_launch_page_opens_then_waits(self, dashboard):
+        html = dashboard._read_page(dashboard._LAUNCH_PATH)
+        assert "fetch('/api/open'" in html and '/api/ready?app=' in html
+        assert 'location.replace' in html and 'id="cancel"' in html
+        assert 'window.close()' in html
+        assert 'Try again' not in html
 
     def test_unit_states_in_order(self, dashboard):
         run = FakeRun({'racecar-mapview': 'active', 'racecar-jupyter': 'failed'})
@@ -281,7 +383,9 @@ class TestHome:
             'racecar-mapview': 'active', 'racecar-jupyter': 'failed', 'racecar-x': 'inactive'
         }
         apps = dashboard.app_list(states)
-        assert apps[0]['state'] == 'active' and apps[2]['state'] == 'unknown'
+        by_id = {a['id']: a['state'] for a in apps}
+        assert by_id['mapview'] == 'active' and by_id['webteleop'] == 'unknown'
+        assert by_id['terminator'] == 'unavailable'
 
     def test_activate_stops_the_running_lab_first(self, dashboard):
         run = FakeRun({'racecar-webteleop': 'active', 'racecar-mapview': 'active'})
@@ -300,11 +404,13 @@ class TestHome:
         stderr = 'Failed to start: Interactive authentication required.'
         run = FakeRun({}, fail='start', stderr=stderr)
         ok, message = dashboard.activate('linefollow', run)
-        assert not ok and 'Permission rule missing' in message
+        assert not ok and message == (
+            'No permission to start racecar-linefollow. Run scripts/setup_user_env.sh.'
+        )
 
     def test_activate_refuses_unknown_and_core_units(self, dashboard):
         run = FakeRun({})
-        for target in ('mapview', 'jupyter', '../x', ''):
+        for target in ('mapview', 'jupyter', 'camlabel', '../x', ''):
             ok, _ = dashboard.activate(target, run)
             assert not ok
         assert all(c[1] == 'is-active' for c in run.calls) or run.calls == []
@@ -312,12 +418,65 @@ class TestHome:
     def test_polkit_rule_scope(self):
         scripts = Path(__file__).resolve().parent.parent / 'scripts'
         text = (scripts / 'polkit' / '49-racecar-dashboards.rules').read_text()
-        for unit in ('racecar-webteleop', 'racecar-linefollow', 'racecar-wallfollow'):
+        for unit in ('racecar-webteleop', 'racecar-linefollow', 'racecar-wallfollow',
+                     'racecar-camlabel'):
             assert f'"{unit}.service"' in text
         assert '["start", "stop"]' in text and 'subject.user === "racecar"' in text
-        assert 'racecar-mapview' not in text and 'enable' not in text.split('polkit.addRule')[1]
+        for core in ('racecar-dashboard', 'racecar-teleop', 'racecar-autonomy',
+                     'racecar-mapview', 'racecar-jupyter'):
+            assert core not in text
+        assert 'enable' not in text.split('polkit.addRule')[1]
         assert '49-racecar-dashboards.rules' in (scripts / 'setup_user_env.sh').read_text()
 
     def test_page_uses_the_shared_assets(self, dashboard):
         html = dashboard._load_dashboard_html()
-        assert '/ui/rcn.css' in html and '/ui/brand/' in html and "fetch('/api/activate'" in html
+        assert '/ui/rcn.css' in html and '/ui/brand/' in html and '/launch?app=' in html
+        assert html.count('/ui/brand/mark.png') == 1, 'one logo on the page, in color'
+        assert '/ui/brand/lockup' not in html
+
+
+class TestHistory:
+    def test_window_drops_old_samples(self, dashboard):
+        h = dashboard.History(window_sec=100)
+        h.add(0.0, 8.0, 1.0)
+        h.add(150.0, 7.9, 2.0)
+        assert h.buckets(150.0, bucket_sec=10) == [[155.0, 7.9, 2.0]]
+
+    def test_buckets_average_each_interval(self, dashboard):
+        h = dashboard.History(window_sec=1000)
+        for t, v, a in ((0, 8.0, 1.0), (5, 8.2, 3.0), (12, 7.0, 0.5)):
+            h.add(float(t), v, a)
+        assert h.buckets(20.0, bucket_sec=10) == [[5.0, 8.1, 2.0], [15.0, 7.0, 0.5]]
+
+    def test_latest_has_age(self, dashboard):
+        h = dashboard.History()
+        assert h.latest(10.0) is None
+        h.add(4.0, 8.1, 1.5)
+        assert h.latest(10.0) == ((8.1, 1.5), 6.0)
+
+    def test_battery_view(self, dashboard, monkeypatch):
+        h = dashboard.History()
+        h.add(100.0, 7.9, 2.0)
+        monkeypatch.setattr(dashboard, '_battery', h)
+        assert dashboard.battery_view(102.0) == {
+            'volts': 7.9, 'amps': 2.0, 'age': 2.0, 'stale': False
+        }
+        assert dashboard.battery_view(110.0)['stale']
+
+    def test_system_sample_is_temperature_and_memory_in_use(self, dashboard, monkeypatch):
+        h = dashboard.History()
+        monkeypatch.setattr(dashboard, '_system', h)
+        monkeypatch.setattr(dashboard, '_read_soc_temp', lambda: 61.26)
+        monkeypatch.setattr(dashboard, '_read_memory', lambda: {'available': 2000, 'total': 8000})
+        dashboard.sample_system(5.0)
+        assert h.latest(5.0) == ((61.3, 75.0), 0.0)
+
+    def test_window_is_two_hours(self, dashboard):
+        assert dashboard.BATTERY_WINDOW_SEC == 7200
+
+    def test_page_charts_both_series(self, dashboard):
+        html = dashboard.DASHBOARD_HTML
+        assert "fetch('/api/history')" in html and "fetch('/api/overview')" in html
+        for chart in ('ov-volts', 'ov-amps', 'ov-temp', 'ov-mem', 'ov-imu', 'ov-speed'):
+            assert f'id="{chart}"' in html
+        assert 'Pack' not in html and 'pack' not in html

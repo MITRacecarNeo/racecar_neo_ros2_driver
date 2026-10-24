@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """RACECAR Neo web teleop service: drive the car from buttons or the keyboard
-in a browser, with the camera, the lidar, and the encoder in view.
+in a browser, with every sensor in view: camera, depth, lidar, encoder, IMU,
+battery, and compass, plus editors for the dot matrix and the LED strip.
 
 The camera card carries both D435i streams: the color frame over a colorized
 depth frame. Depth is optional; a car whose camera has no depth stream leaves
@@ -31,6 +32,13 @@ speed at 0.0 so the buttons do nothing until the slider is raised.
 /drive steering is negated on publish: positive on the wire turns this car
 left (physically verified on the sibling dashboards). Speed feedback comes
 from /odom.
+
+The IMU, magnetometer, dot matrix frame, and LED strip are read from the same
+topics as the student library (rc.physics, rc.display, rc.led). Their
+callbacks keep only the latest serialized message; the timer decodes it at
+the publish rate. Dot matrix and LED frames sent from the page are re-sent
+while the page is open, because the driver blanks both shortly after the last
+message; they stop DISPLAY_HOLD_S after the page stops polling.
 """
 
 from collections import deque
@@ -52,7 +60,9 @@ import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import Image, LaserScan
+from rclpy.serialization import deserialize_message
+from sensor_msgs.msg import BatteryState, Image, Imu, LaserScan, MagneticField
+from std_msgs.msg import String, UInt8MultiArray
 try:
     from vision_msgs.msg import Detection2DArray
 except ImportError:
@@ -102,14 +112,25 @@ LIDAR_MOUNT_YAW_DEG = 180.0
 # uniform inferno ramp: a single ordered scale, so a step in colour is a step
 # in distance, and it survives being read by a colour blind student. The ramp
 # starts at DEPTH_FLOOR rather than 0 so the darkest real reading is still
-# above black, which leaves pure black to mean "no return" on its own.
+# above black. No return is flat gray, so the stereo blind strip on the left
+# and floor closer than the minimum range do not read as a dark object.
 DEPTH_FLOOR = 24
 DEPTH_NEAR_M = 0.15     # below the D435i minimum range; nothing valid is nearer
-NO_RETURN_BGR = (0, 0, 0)
+NO_RETURN_BGR = (102, 81, 80)
 
 # Detections older than this are dropped rather than left frozen on the
 # frame. The overlay is only honest if a stale box disappears.
 DET_TIMEOUT_S = 1.5
+
+# Sensor charts: the last SENSE_S seconds at the publish rate.
+SENSE_S = 10.0
+MATRIX_ROWS, MATRIX_COLS = 8, 24
+NUM_LEDS = 84
+# Re-send periods inside the driver's timeouts (dot matrix pixels 5 s, text
+# 6 s, LED frame 0.5 s), and how long a frame is held after the page stops.
+MATRIX_RESEND_S = 1.0
+LED_RESEND_S = 0.2
+DISPLAY_HOLD_S = 3.0
 
 _lock = threading.Lock()
 _params: dict = {}
@@ -130,6 +151,13 @@ _rows: deque = deque(maxlen=1200)
 # Parameter-change markers [t, label] shown on the charts. Saved into logs
 # as "# mark" lines.
 _marks: deque = deque(maxlen=40)
+_sense: deque = deque(maxlen=int(SENSE_S * PUBLISH_RATE_HZ))
+# Latest serialized messages, decoded by the timer: {name: (bytes, stamp)}.
+_raw: dict = {}
+# What the page asked the dot matrix and LED strip to show. kind is
+# 'pixels' or 'text' for the matrix; leds is 252 bytes or None.
+_display: dict = {'kind': None, 'pixels': [], 'text': '', 'leds': None}
+_last_poll = 0.0
 _T0 = time.monotonic()
 
 
@@ -210,6 +238,39 @@ def _axis(v):
     return (v > 0) - (v < 0)
 
 
+def heading_deg(mag):
+    """Compass heading from the magnetic field in body axes: 0 facing magnetic
+    north, increasing counterclockwise, as the simulator's dashboard."""
+    return math.degrees(math.atan2(-mag[1], mag[0]))
+
+
+def matrix_pixels(values):
+    """192 values (0/1, row-major) from whatever the page sent."""
+    flat = [1 if v else 0 for v in list(values)[:MATRIX_ROWS * MATRIX_COLS]]
+    return flat + [0] * (MATRIX_ROWS * MATRIX_COLS - len(flat))
+
+
+def led_bytes(colors):
+    """NUM_LEDS x RGB as the 252 bytes pit_node expects, clamped to 0..255."""
+    out = []
+    for c in list(colors)[:NUM_LEDS]:
+        out.extend(max(0, min(255, int(v))) for v in (list(c) + [0, 0, 0])[:3])
+    return bytes(out + [0] * (NUM_LEDS * 3 - len(out)))
+
+
+def set_display(kind, value):
+    """Record a dot matrix or LED request from the page; the timer sends it."""
+    with _lock:
+        if kind == 'pixels':
+            _display.update(kind='pixels', pixels=matrix_pixels(value))
+        elif kind == 'text':
+            _display.update(kind='text', text=str(value)[:255])
+        elif kind == 'leds':
+            _display['leds'] = led_bytes(value)
+        elif kind == 'release':
+            _display.update(kind=None, leds=None)
+
+
 def set_cmd(data, now=None):
     """Take the browser's command: {'fwd': -1|0|1, 'turn': -1|0|1}. Both
     axes together are one command, so forward and left arrive as one post
@@ -242,6 +303,19 @@ class TeleopNode(Node):
                 Detection2DArray, det_topic, self._det_cb, qos_profile_sensor_data)
         self.create_subscription(LaserScan, '/scan', self._scan_cb, qos_profile_sensor_data)
         self.create_subscription(Odometry, '/odom', self._odom_cb, qos_profile_sensor_data)
+        # The library's topics, raw: the timer decodes only the newest message.
+        for name, kind, topic in (('imu', Imu, '/imu/fused'), ('mag', MagneticField, '/mag'),
+                                  ('frame', UInt8MultiArray, '/dotmatrix/frame'),
+                                  ('leds', UInt8MultiArray, '/led/pixels')):
+            self.create_subscription(kind, topic, self._raw_cb(name), qos_profile_sensor_data,
+                                     raw=True)
+        self.create_subscription(BatteryState, '/battery/state', self._battery_cb, 10)
+        self._pub_pixels = self.create_publisher(UInt8MultiArray, '/dotmatrix/pixels', 1)
+        self._pub_text = self.create_publisher(String, '/dotmatrix/text', 1)
+        self._pub_leds = self.create_publisher(UInt8MultiArray, '/led/pixels', 1)
+        self._matrix_sent = 0.0
+        self._leds_sent = 0.0
+        self._battery = None
         # /drive at a fixed rate whether or not the browser is talking, so
         # the mux never sees a gap and a silent browser reads as released.
         self.create_timer(1.0 / PUBLISH_RATE_HZ, self._actuate)
@@ -259,6 +333,66 @@ class TeleopNode(Node):
 
     def _odom_cb(self, msg):
         self._enc = msg.twist.twist.linear.x
+
+    @staticmethod
+    def _raw_cb(name):
+        def cb(data):
+            _raw[name] = (data, time.monotonic())
+        return cb
+
+    def _battery_cb(self, msg):
+        # BatteryState counts discharge as negative; the page shows draw as positive.
+        self._battery = (round(float(msg.voltage), 3), round(-float(msg.current), 3))
+
+    def _decode(self, name, kind):
+        item = _raw.get(name)
+        return deserialize_message(item[0], kind) if item else None
+
+    def _sample_sensors(self, t):
+        """Decode the newest IMU and magnetometer messages into one chart row."""
+        imu, mag = self._decode('imu', Imu), self._decode('mag', MagneticField)
+        state = {}
+        if imu is not None:
+            a, g = imu.linear_acceleration, imu.angular_velocity
+            state['accel'] = [round(a.x, 3), round(a.y, 3), round(a.z, 3)]
+            state['gyro'] = [round(g.x, 4), round(g.y, 4), round(g.z, 4)]
+        if mag is not None:
+            f = mag.magnetic_field
+            ut = [round(v * 1e6, 2) for v in (f.x, f.y, f.z)]
+            state['mag'] = ut
+            state['heading'] = round(heading_deg(ut), 1)
+        if self._battery is not None:
+            state['volts'], state['amps'] = self._battery
+        if imu is not None or mag is not None:
+            _sense.append([t, *state.get('accel', [0.0] * 3), *state.get('gyro', [0.0] * 3),
+                           *state.get('mag', [0.0] * 3)])
+        frame = self._decode('frame', UInt8MultiArray)
+        if frame is not None:
+            state['matrix'] = matrix_pixels(frame.data)
+        leds = _raw.get('leds')
+        if leds is not None and time.monotonic() - leds[1] < 1.0:
+            data = bytes(self._decode('leds', UInt8MultiArray).data)
+            state['leds'] = [list(data[i:i + 3]) for i in range(0, min(len(data), NUM_LEDS * 3), 3)]
+        else:
+            state['leds'] = []
+        return state
+
+    def _send_display(self, now):
+        """Re-send the page's dot matrix and LED frames while the page is open."""
+        with _lock:
+            d = dict(_display)
+            alive = now - _last_poll < DISPLAY_HOLD_S
+        if not alive:
+            return
+        if d['kind'] and now - self._matrix_sent >= MATRIX_RESEND_S:
+            self._matrix_sent = now
+            if d['kind'] == 'pixels':
+                self._pub_pixels.publish(UInt8MultiArray(data=d['pixels']))
+            else:
+                self._pub_text.publish(String(data=d['text']))
+        if d['leds'] is not None and now - self._leds_sent >= LED_RESEND_S:
+            self._leds_sent = now
+            self._pub_leds.publish(UInt8MultiArray(data=d['leds']))
 
     @staticmethod
     def _student_deg(msg, i):
@@ -400,6 +534,8 @@ class TeleopNode(Node):
         self._pub.publish(out)
 
         t = _now()
+        sensors = self._sample_sensors(t)
+        self._send_display(now)
         _rows.append(f'{t},{fwd},{turn},{self._speed_cmd:.3f},{self._steer_cmd:.3f},{self._enc:.3f}\n')
         _hist.append([t, round(self._enc, 3), round(self._speed_cmd, 3)])
         with _lock:
@@ -408,7 +544,8 @@ class TeleopNode(Node):
                            'speed_cmd': round(self._speed_cmd, 3),
                            'steer': round(self._steer_cmd, 3),
                            'enc_speed': round(self._enc, 3),
-                           'hist': _thin(_hist), 'marks': list(_marks)})
+                           'hist': _thin(_hist), 'marks': list(_marks),
+                           'sense': list(_sense), **sensors})
 
 
 def _colorize_depth(metres, far_m):
@@ -450,6 +587,7 @@ class Handler(BaseHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
 
     def do_GET(self):
+        global _last_poll
         asset = webui.static_file(self.path)
         if asset is not None:
             self.send_response(200)
@@ -477,7 +615,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_error(503)
         elif self.path == '/state':
             with _lock:
-                body = json.dumps({**_state, 'params': _params, 'marks': list(_marks)})
+                _last_poll = time.monotonic()
+                body = json.dumps({**_state, 'params': _params, 'marks': list(_marks),
+                                   'display': {'kind': _display['kind'],
+                                               'text': _display['text']}})
             self._send(body.encode(), 'application/json')
         elif self.path == '/logs':
             names = sorted((f.name for f in LOG_DIR.glob('*.csv')), key=_log_number)
@@ -508,6 +649,14 @@ class Handler(BaseHTTPRequestHandler):
                 f.writelines(rows)
             self._send(name.encode(), 'text/plain')
             return
+        elif self.path == '/matrix':
+            set_display('pixels', self._body().get('pixels', []))
+        elif self.path == '/text':
+            set_display('text', self._body().get('text', ''))
+        elif self.path == '/leds':
+            set_display('leds', self._body().get('colors', []))
+        elif self.path == '/display/release':
+            set_display('release', None)
         elif self.path == '/save':
             save_params()
         elif self.path == '/load':

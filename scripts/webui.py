@@ -15,6 +15,9 @@ WEB_DIR = Path(__file__).resolve().parent / 'web'
 PREFIX = '/ui/'
 # Phones refetch an updated stylesheet within minutes rather than keeping it.
 CACHE_CONTROL = 'max-age=300'
+# Pages link the shared files as /ui/<file>?v=ASSET_VERSION; bump it when
+# rcn.css or charts.js changes, so browsers fetch the new copy at once.
+ASSET_VERSION = '4'
 TYPES = {
     '.css': 'text/css; charset=utf-8',
     '.js': 'text/javascript; charset=utf-8',

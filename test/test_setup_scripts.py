@@ -538,6 +538,7 @@ class TestDashboardScript:
         'teleop_dashboard': ('racecar-webteleop', '8081'),
         'linefollow_dashboard': ('racecar-linefollow', '8082'),
         'wallfollow_dashboard': ('racecar-wallfollow', '8083'),
+        'camlabel_dashboard': ('racecar-camlabel', '8085'),
     }
 
     @pytest.fixture(scope='class')
@@ -565,12 +566,13 @@ class TestDashboardScript:
     def test_env_var_skips_the_phase(self, text):
         assert 'RACECAR_DASHBOARDS' in text
 
-    def test_ships_the_three_dashboards(self, text):
+    def test_ships_the_four_dashboards(self, text):
         listed = text.split('DASHBOARDS=(', 1)[1].split(')', 1)[0].split()
         assert listed == list(self.DASHBOARDS)
 
     @pytest.mark.parametrize(
-        'name', ['teleop_dashboard', 'linefollow_dashboard', 'wallfollow_dashboard']
+        'name',
+        ['teleop_dashboard', 'linefollow_dashboard', 'wallfollow_dashboard', 'camlabel_dashboard'],
     )
     def test_templates_ship_in_tree(self, name):
         unit, port = self.DASHBOARDS[name]
@@ -592,7 +594,7 @@ class TestDashboardScript:
             assert f'WorkingDirectory={SCRIPTS_DIR / "dashboards" / name}' in body
             assert 'ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST' in body
         again = subprocess.run(['bash', str(self.SCRIPT)], capture_output=True, text=True)
-        assert again.stdout.count('already up to date') == 3
+        assert again.stdout.count('already up to date') == len(self.DASHBOARDS)
 
     def test_a_failed_install_is_not_reported_as_success(self, text):
         # install_unit runs under `|| true`, which suppresses errexit for its
@@ -606,7 +608,7 @@ class TestDashboardScript:
     def test_gitignore_tracks_the_dashboards(self):
         gitignore = (SCRIPTS_DIR.parent / '.gitignore').read_text().splitlines()
         assert 'scripts/dashboards/' not in gitignore
-        for kept_out in ('camlabel', 'eps', 'pursuit', 'smartfollow'):
+        for kept_out in ('eps', 'pursuit', 'smartfollow'):
             assert f'scripts/dashboards/{kept_out}_dashboard/' in gitignore
         assert 'scripts/dashboards/*/*.local.yaml' in gitignore
 
@@ -646,7 +648,6 @@ class TestDashboardScript:
     def test_retired_dashboards_are_listed(self, text):
         retired = text.split('RETIRED_UNITS=(', 1)[1].split(')', 1)[0].split()
         assert sorted(retired) == [
-            'racecar-camlabel',
             'racecar-eps',
             'racecar-pursuit',
             'racecar-smartfollow',
@@ -654,13 +655,13 @@ class TestDashboardScript:
 
     def test_retired_units_are_stopped_disabled_and_removed(self, tmp_path):
         result, units, calls, _ = self._retired(
-            tmp_path, ['racecar-camlabel', 'racecar-eps', 'racecar-webteleop']
+            tmp_path, ['racecar-pursuit', 'racecar-eps', 'racecar-webteleop']
         )
         assert result.returncode == 0, result.stderr
-        assert not (units / 'racecar-camlabel.service').exists()
+        assert not (units / 'racecar-pursuit.service').exists()
         assert not (units / 'racecar-eps.service').exists()
         assert (units / 'racecar-webteleop.service').exists(), 'a live dashboard was removed'
-        for unit in ('racecar-camlabel.service', 'racecar-eps.service'):
+        for unit in ('racecar-pursuit.service', 'racecar-eps.service'):
             assert f'stop {unit}' in calls
             assert f'disable {unit}' in calls
         assert 'CHANGED:1' in result.stdout

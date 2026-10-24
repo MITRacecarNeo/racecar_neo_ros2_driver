@@ -106,8 +106,8 @@ SENSOR_TOPICS = [
     TopicSpec('/mag', 'PIT magnetometer', 136.0, PIT_FLOOR_FRAC),
     TopicSpec('/imu/fused', 'Fused IMU', 100.0),
     TopicSpec('/encoder/speed', 'Encoder', 136.0, PIT_FLOOR_FRAC),
-    TopicSpec('/battery/voltage', 'Pack voltage', 136.0, PIT_FLOOR_FRAC),
-    TopicSpec('/battery/current', 'Pack current', 136.0, PIT_FLOOR_FRAC),
+    TopicSpec('/battery/voltage', 'Battery voltage', 136.0, PIT_FLOOR_FRAC),
+    TopicSpec('/battery/current', 'Battery current', 136.0, PIT_FLOOR_FRAC),
     TopicSpec('/rc/channels', 'FlySky RC', 136.0, PIT_FLOOR_FRAC),
     # Capped by edgetpu_node's inference_rate_hz, not by the camera.
     TopicSpec('/edgetpu/inference', 'Coral inference', 15.0),

@@ -22,6 +22,7 @@ import yaml
 def mv():
     load_script('sysinfo')
     load_script('map_control')
+    load_script('webui')
     return load_script('mapview')
 
 
@@ -90,6 +91,14 @@ class TestMapsFromDisk:
         png = mv.thumbnail_png(write_map(tmp_path, 'room', room_pixels()), max_px=3)
         img = Image.open(io.BytesIO(png))
         assert img.format == 'PNG' and max(img.size) <= 3
+
+    def test_thumbnail_colors_match_page(self, mv, tmp_path):
+        png = mv.thumbnail_png(write_map(tmp_path, 'room', room_pixels()), max_px=1000)
+        colors = {c for _, c in Image.open(io.BytesIO(png)).convert('RGB').getcolors()}
+        assert colors <= set(mv.THUMB_RGB.values())
+        page = (Path(mv.__file__).parent / 'mapview.html').read_text()
+        for name, (r, g, b) in mv.THUMB_RGB.items():
+            assert f'--map-{name}: #{r:02x}{g:02x}{b:02x};' in page
 
 
 class TestLiveData:

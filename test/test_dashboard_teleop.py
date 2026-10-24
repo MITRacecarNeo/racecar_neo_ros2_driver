@@ -462,3 +462,48 @@ def test_thin_keeps_the_newest_row():
     sent = tp._thin(rows)
     assert len(sent) < len(rows)
     assert sent[-1] is rows[-1]
+
+
+# ---- sensors, dot matrix, LED strip ----
+
+def test_heading_is_zero_facing_north_and_counterclockwise_positive():
+    assert tp.heading_deg([20.0, 0.0, -40.0]) == pytest.approx(0.0)
+    # Field along -y in the body: north is to the car's right, so the car
+    # faces 90 deg counterclockwise of north.
+    assert tp.heading_deg([0.0, -20.0, -40.0]) == pytest.approx(90.0)
+
+
+def test_matrix_pixels_are_192_zeros_and_ones():
+    px = tp.matrix_pixels([5, 0, 255] + [1] * 300)
+    assert len(px) == 192 and px[:3] == [1, 0, 1] and set(px) <= {0, 1}
+    assert tp.matrix_pixels([]) == [0] * 192
+
+
+def test_led_bytes_are_84_rgb_triples_clamped():
+    data = tp.led_bytes([[300, -5, 10], [1, 2]])
+    assert len(data) == 252 and data[:6] == bytes([255, 0, 10, 1, 2, 0])
+    assert data[6:] == bytes(246)
+
+
+def test_display_is_resent_only_while_the_page_polls(node):
+    tp._display.update(kind=None, pixels=[], text='', leds=None)
+    tp.set_display('text', 'hi')
+    tp.set_display('leds', [[1, 2, 3]])
+    tp._last_poll = 100.0
+    node._send_display(100.5)
+    assert node._pub_text.msgs[-1].data == 'hi'
+    assert bytes(node._pub_leds.msgs[-1].data)[:3] == bytes([1, 2, 3])
+    sent = len(node._pub_text.msgs), len(node._pub_leds.msgs)
+    node._send_display(100.6)  # inside both re-send periods
+    assert (len(node._pub_text.msgs), len(node._pub_leds.msgs)) == sent
+    node._send_display(100.0 + tp.DISPLAY_HOLD_S + 1)  # the page went away
+    assert (len(node._pub_text.msgs), len(node._pub_leds.msgs)) == sent
+
+
+def test_release_stops_the_resends(node):
+    tp.set_display('pixels', [1] * 192)
+    tp.set_display('leds', [[9, 9, 9]])
+    tp.set_display('release', None)
+    tp._last_poll = 200.0
+    node._send_display(200.1)
+    assert node._pub_pixels.msgs == [] and node._pub_leds.msgs == []

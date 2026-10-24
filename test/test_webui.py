@@ -1,5 +1,6 @@
 """Shared dashboard assets: scripts/webui.py and scripts/web/."""
 
+from pathlib import Path
 import re
 from xml.etree import ElementTree
 
@@ -62,3 +63,18 @@ def test_icons_parse_and_have_ids(webui):
     root = ElementTree.parse(webui.WEB_DIR / 'icons.svg').getroot()
     ids = {el.get('id') for el in root if el.tag.endswith('symbol')}
     assert {'map', 'notebook', 'gamepad', 'line', 'wall', 'pulse', 'check', 'alert'} <= ids
+
+
+def test_pages_link_shared_files_with_the_asset_version(webui):
+    # A browser keeps /ui/ files for CACHE_CONTROL; the version query is what
+    # makes it fetch a changed rcn.css or charts.js at once.
+    scripts = Path(__file__).resolve().parent.parent / 'scripts'
+    pages = [
+        scripts / 'dashboard.html', scripts / 'dashboard_launch.html', scripts / 'mapview.html',
+        scripts / 'dashboards' / 'teleop_dashboard' / 'teleop.html',
+    ]
+    for page in pages:
+        text = page.read_text()
+        for name in ('rcn.css', 'charts.js'):
+            for link in re.findall(rf'"/ui/{re.escape(name)}[^"]*"', text):
+                assert link == f'"/ui/{name}?v={webui.ASSET_VERSION}"', (page.name, link)

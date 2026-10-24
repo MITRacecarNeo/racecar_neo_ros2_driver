@@ -35,7 +35,7 @@ done
 # polkit instead (docs/troubleshooting.md, "NetworkManager authorization").
 # 49-racecar-autonomy: start, stop, and restart of racecar-autonomy.service
 # by the racecar user, for the map viewer and `racecar map`.
-# 49-racecar-dashboards: start and stop of the three lab dashboards by the
+# 49-racecar-dashboards: start and stop of the lab dashboards by the
 # racecar user, for the home page on port 8080.
 for rule in 49-racecar-network.rules 49-racecar-autonomy.rules 49-racecar-dashboards.rules; do
     POLKIT_SRC="${SCRIPT_DIR}/polkit/${rule}"

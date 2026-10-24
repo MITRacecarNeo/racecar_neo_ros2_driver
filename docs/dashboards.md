@@ -1,7 +1,8 @@
 # Lab dashboards
 
-Internals of the three lab dashboards in `scripts/dashboards/`: webteleop
-(8081), linefollow (8082), and wallfollow (8083). Install and use: README,
+Internals of the lab dashboards in `scripts/dashboards/`: webteleop
+(8081), linefollow (8082), and wallfollow (8083). camlabel (8085) is
+described in its own README. Install and use: README,
 "Lab dashboards". Unit install: `scripts/setup_dashboards.sh`.
 
 ## Contents
@@ -69,8 +70,11 @@ the constant; linefollow does not read the lidar.
 
 ## webteleop
 
-Drive from buttons or the keyboard, with the color and depth previews, the
-lidar, and the object detector's boxes in view.
+Drive from buttons or the keyboard, with every sensor in view: color and
+depth previews with the object detector's boxes, the lidar, encoder, IMU,
+battery, and compass, plus dot matrix and LED strip editors. The cards match
+the simulator's sensor dashboard, read from ROS topics instead of
+`racecar_core`.
 
 ```
 /camera/color ─┐
@@ -94,6 +98,15 @@ browser buttons/keys ─▶ POST /cmd ─▶ _cmd ─┐                       �
 - Detections leave as fractions of the frame and are scaled in the browser to
   the drawn preview. They expire after `DET_TIMEOUT_S`, so a stale box never
   sits on a live frame.
+- `/imu/fused`, `/mag`, `/dotmatrix/frame`, and `/led/pixels` are raw
+  subscriptions that keep only the newest message; `_actuate` decodes them at
+  15 Hz into `_sense` (10 s of acceleration, angular velocity, and field) and
+  the state. `/battery/state` arrives at 1 Hz.
+- POST /matrix, /text, and /leds record a frame in `_display`; `_actuate`
+  re-sends it inside the driver's timeouts (`MATRIX_RESEND_S`,
+  `LED_RESEND_S`) until POST /display/release, or until the page has not
+  polled /state for `DISPLAY_HOLD_S`.
+- Charts are drawn by the shared `/ui/charts.js`.
 
 ## linefollow
 

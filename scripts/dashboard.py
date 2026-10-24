@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Callable
+import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import logging
@@ -17,11 +18,13 @@ import threading
 import time
 from types import FrameType
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
+from sensor_msgs.msg import BatteryState
 
 # Shared with scripts/diagnose.py. Both are run by path rather than imported
 # as a package, so the sibling has to be put on the path explicitly.
@@ -30,7 +33,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sysinfo import (  # noqa: E402
     classify_rtc as _classify_rtc,
     read_diagnostic_rates,
+    read_memory as _read_memory,
     read_rtc_voltage as _read_battery_voltage,
+    read_soc_temp as _read_soc_temp,
     read_under_voltage_alarm as _read_under_voltage_alarm,
     read_watchdog_state,
     REALSENSE_DIAGNOSTIC_NAMES,
@@ -43,31 +48,45 @@ import webui  # noqa: E402
 
 PORT = 8080
 
-# Home page tiles. Lab dashboards publish /drive, so one runs at a time;
-# switching needs scripts/polkit/49-racecar-dashboards.rules.
+# Home page apps. Core apps start at boot. Utilities start when opened and
+# stop with Clear apps, which needs scripts/polkit/49-racecar-dashboards.rules.
+# `exclusive` utilities publish /drive, so one runs at a time. An app with no
+# unit is shown but opens nothing.
 APPS: list[dict[str, Any]] = [
-    {'id': 'mapview', 'name': 'Map viewer', 'icon': 'map', 'port': 8084,
-     'unit': 'racecar-mapview', 'lab': False,
-     'desc': 'Build and load maps; see the car on them.'},
+    {'id': 'terminator', 'name': 'Terminator', 'icon': 'terminal', 'port': None,
+     'group': 'core', 'unit': None, 'exclusive': False, 'startable': False,
+     'desc': 'Terminals on the car, in the browser.'},
     {'id': 'jupyter', 'name': 'JupyterLab', 'icon': 'notebook', 'port': 8888,
-     'unit': 'racecar-jupyter', 'lab': False,
+     'group': 'core', 'unit': 'racecar-jupyter', 'exclusive': False, 'startable': False,
      'desc': 'Notebooks and the student library.'},
+    {'id': 'mapview', 'name': 'Map viewer', 'icon': 'map', 'port': 8084,
+     'group': 'core', 'unit': 'racecar-mapview', 'exclusive': False, 'startable': False,
+     'desc': 'Build and load maps; see the car on them.'},
     {'id': 'webteleop', 'name': 'Web teleop', 'icon': 'gamepad', 'port': 8081,
-     'unit': 'racecar-webteleop', 'lab': True,
+     'group': 'utilities', 'unit': 'racecar-webteleop', 'exclusive': True, 'startable': True,
      'desc': 'Drive from the browser with camera and lidar.'},
     {'id': 'linefollow', 'name': 'Line follow', 'icon': 'line', 'port': 8082,
-     'unit': 'racecar-linefollow', 'lab': True,
+     'group': 'utilities', 'unit': 'racecar-linefollow', 'exclusive': True, 'startable': True,
      'desc': 'Follow a colored line with the camera.'},
     {'id': 'wallfollow', 'name': 'Wall follow', 'icon': 'wall', 'port': 8083,
-     'unit': 'racecar-wallfollow', 'lab': True,
+     'group': 'utilities', 'unit': 'racecar-wallfollow', 'exclusive': True, 'startable': True,
      'desc': 'Follow walls with the lidar.'},
+    {'id': 'camlabel', 'name': 'Camera label', 'icon': 'tag', 'port': 8085,
+     'group': 'utilities', 'unit': 'racecar-camlabel', 'exclusive': False, 'startable': True,
+     'desc': 'Capture camera frames and label them for training.'},
 ]
+READY_TIMEOUT_SEC = 1.0
 SYSTEMCTL_TIMEOUT_SEC = 30.0
 RATE_WINDOW_SEC = 3.0
 MAPVIEW_PORT = 8084
 # /autonomy/status arrives at 1 Hz; older than this, the node has stopped.
 AUTONOMY_STALE_SEC = 5.0
 SYSTEM_HEALTH_REFRESH_SEC = 60.0
+# Overview charts: pit_node's 1 Hz /battery/state and the monitor loop's CPU
+# temperature and memory, kept for one battery's run time.
+BATTERY_WINDOW_SEC = 2 * 3600
+BATTERY_BUCKET_SEC = 10
+BATTERY_STALE_SEC = 5.0
 
 # supervised: the watchdog restarts this node. An unsupervised card that loses
 # its topic shows gray instead of red.
@@ -81,6 +100,8 @@ MONITORED = {
     'realsense': {'topic': '/camera/color', 'label': 'RealSense D435i', 'supervised': True},
     'edgetpu': {'topic': '/edgetpu/inference', 'label': 'Coral EdgeTPU', 'supervised': False},
     'dotmatrix': {'topic': '/dotmatrix/frame', 'label': 'Dot matrix', 'supervised': False},
+    'led': {'topic': '/led/pixels', 'label': 'LED strip', 'supervised': False,
+            'publisher': True},
 }
 
 # Subscribed to and counted by the dashboard.
@@ -127,6 +148,66 @@ _monitor_running = True
 # ---------------------------------------------------------------------------
 
 
+class History:
+    """Timed samples of a few values over a sliding window (wall-clock seconds)."""
+
+    def __init__(self, window_sec: float = BATTERY_WINDOW_SEC) -> None:
+        self.window = window_sec
+        self._samples: deque[tuple[float, ...]] = deque()
+        self._lock = threading.Lock()
+
+    def add(self, t: float, *values: float) -> None:
+        with self._lock:
+            self._samples.append((t, *values))
+            while self._samples and self._samples[0][0] < t - self.window:
+                self._samples.popleft()
+
+    def latest(self, now: float) -> tuple[tuple[float, ...], float] | None:
+        """Return the last values and their age, or None before the first sample."""
+        with self._lock:
+            if not self._samples:
+                return None
+            last = self._samples[-1]
+        return last[1:], now - last[0]
+
+    def buckets(self, now: float, bucket_sec: float = BATTERY_BUCKET_SEC) -> list[list[float]]:
+        """Return [time, mean of each value] per bucket within the window, oldest first."""
+        with self._lock:
+            samples = [s for s in self._samples if s[0] >= now - self.window]
+        acc: dict[int, list[float]] = {}
+        for t, *values in samples:
+            a = acc.setdefault(int(t // bucket_sec), [0.0] * (len(values) + 1))
+            for i, v in enumerate(values):
+                a[i] += v
+            a[-1] += 1
+        return [
+            [(k + 0.5) * bucket_sec, *[round(s / acc[k][-1], 3) for s in acc[k][:-1]]]
+            for k in sorted(acc)
+        ]
+
+
+_battery = History()
+_system = History()
+
+
+def battery_view(now: float) -> dict[str, Any] | None:
+    """Return the current battery values for the status snapshot; stale after BATTERY_STALE_SEC."""
+    latest = _battery.latest(now)
+    if latest is None:
+        return None
+    (volts, amps), age = latest
+    return {'volts': volts, 'amps': amps, 'age': age, 'stale': age > BATTERY_STALE_SEC}
+
+
+def sample_system(now: float) -> None:
+    """Record CPU temperature (C) and memory in use (%) for the overview charts."""
+    temp = _read_soc_temp()
+    mem = _read_memory()
+    if temp is None or not mem or not mem.get('total'):
+        return
+    _system.add(now, round(temp, 1), round(100.0 * (1 - mem['available'] / mem['total']), 1))
+
+
 class _RateSampler(Node):
     """Holds one BEST_EFFORT subscription per RATE_TOPICS entry and tracks arrivals."""
 
@@ -163,6 +244,10 @@ class _RateSampler(Node):
         self._autonomy_sub = self.create_subscription(
             DiagnosticStatus, '/autonomy/status', self._record_autonomy, latched
         )
+        # 1 Hz means from pit_node; the raw 150 Hz /battery/* topics cost too much here.
+        self._battery_sub = self.create_subscription(
+            BatteryState, '/battery/state', self._record_battery, 10
+        )
 
     def _record(self, topic: str) -> None:
         now = time.monotonic()
@@ -183,6 +268,10 @@ class _RateSampler(Node):
             self._diagnostic_rates.update(updates)
             for topic in updates:
                 self._diagnostic_last_update[topic] = now
+
+    def _record_battery(self, msg: BatteryState) -> None:
+        # BatteryState counts discharge as negative; the page shows draw as positive.
+        _battery.add(time.time(), float(msg.voltage), -float(msg.current))
 
     def _record_autonomy(self, msg: DiagnosticStatus) -> None:
         values = {kv.key: kv.value for kv in msg.values}
@@ -253,6 +342,7 @@ class _RateSampler(Node):
 
 
 _sampler: _RateSampler | None = None
+_overview: Any = None  # overview.Overview once main() runs
 
 
 def _measure_hz(topic: str) -> float | None:
@@ -277,18 +367,44 @@ def _get_node_list() -> list[str]:
     return sampler.node_list()
 
 
-def _read_watchdog_tail(n: int = 10, max_bytes: int = 4096) -> list[str]:
-    """Return the last n lines of the watchdog log without reading the whole file."""
-    logfile = Path.home() / 'logs' / 'latest' / 'watchdog.log'
+WATCHDOG_LOG = Path.home() / 'logs' / 'latest' / 'watchdog.log'
+# Byte offset of the last Clear, beside the log of this teleop session.
+WATCHDOG_CLEARED = WATCHDOG_LOG.with_name('watchdog.cleared')
+
+
+def _cleared_offset(size: int) -> int:
     try:
-        with open(logfile, 'rb') as f:
+        offset = int(WATCHDOG_CLEARED.read_text().strip() or 0)
+    except (OSError, ValueError):
+        return 0
+    # A shorter log is a new file, so an old mark does not apply.
+    return offset if offset <= size else 0
+
+
+def _read_watchdog_tail(n: int = 10, max_bytes: int = 4096) -> list[str]:
+    """Return the last n lines of the watchdog log after the last Clear."""
+    try:
+        with open(WATCHDOG_LOG, 'rb') as f:
             f.seek(0, 2)
             size = f.tell()
-            f.seek(max(0, size - max_bytes))
+            f.seek(max(_cleared_offset(size), size - max_bytes))
             tail = f.read()
     except OSError:
         return []
     return tail.decode(errors='replace').splitlines()[-n:]
+
+
+def clear_watchdog_log() -> tuple[bool, str]:
+    """Hide the lines logged so far; the file itself is kept."""
+    try:
+        size = WATCHDOG_LOG.stat().st_size
+    except OSError:
+        return True, 'Log is empty.'
+    try:
+        WATCHDOG_CLEARED.write_text(f'{size}\n')
+    except OSError as exc:
+        return False, str(exc)
+    return True, 'Log cleared.'
 
 
 def _collect_system_health() -> dict[str, dict[str, str]]:
@@ -385,46 +501,110 @@ def unit_states(units: list[str], run: Callable[..., Any] = subprocess.run) -> d
 
 
 def app_list(states: dict[str, str]) -> list[dict[str, Any]]:
-    return [{**app, 'state': states.get(app['unit'], 'unknown')} for app in APPS]
+    return [
+        {**app, 'state': states.get(app['unit'], 'unknown') if app['unit'] else 'unavailable'}
+        for app in APPS
+    ]
+
+
+def _app_units() -> list[str]:
+    return [a['unit'] for a in APPS if a['unit']]
+
+
+def open_app(target: str, run: Callable[..., Any] = subprocess.run) -> tuple[bool, str]:
+    """
+    Start `target` if it is not running.
+
+    An exclusive app first stops the other exclusive one; the page asks the
+    user before calling this.
+    """
+    app = next((a for a in APPS if a['id'] == target), None)
+    if app is None:
+        return False, f'Unknown app: {target}'
+    if app['unit'] is None:
+        return False, f'{app["name"]} is not available.'
+    if app['exclusive']:
+        return activate(target, run)
+    if unit_states([app['unit']], run)[app['unit']] in ('active', 'activating'):
+        return True, f'{app["name"]} is running.'
+    if not app['startable']:
+        return False, f'{app["name"]} is stopped. Run: racecar service start {target}'
+    error = _systemctl('start', app['unit'], run)
+    if error:
+        return False, error
+    return True, f'{app["name"]} started.'
+
+
+def clear_apps(run: Callable[..., Any] = subprocess.run) -> tuple[bool, str]:
+    """Stop every running utility to free CPU; core apps and the dashboard keep running."""
+    units = [a['unit'] for a in APPS if a['group'] == 'utilities']
+    states = unit_states(units, run)
+    stopped, errors = 0, []
+    for unit in units:
+        if states.get(unit) in ('active', 'activating'):
+            error = _systemctl('stop', unit, run)
+            if error:
+                errors.append(error)
+            else:
+                stopped += 1
+    if errors:
+        return False, ' '.join(errors)
+    return True, 'Utilities stopped.' if stopped else 'No utilities running.'
+
+
+def _systemctl(verb: str, unit: str, run: Callable[..., Any]) -> str:
+    """Run systemctl without a password prompt; return '' or a short error."""
+    try:
+        r = run(
+            ['systemctl', '--no-ask-password', verb, unit],
+            capture_output=True, text=True, timeout=SYSTEMCTL_TIMEOUT_SEC,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return str(exc)
+    if r.returncode == 0:
+        return ''
+    if 'auth' in (r.stderr or '').lower():
+        return f'No permission to {verb} {unit}. Run scripts/setup_user_env.sh.'
+    return (r.stderr or '').strip().splitlines()[-1] if r.stderr else f'{verb} failed'
+
+
+def app_ready(port: int, timeout: float = READY_TIMEOUT_SEC) -> bool:
+    """Return True once the app's web server answers on localhost."""
+    conn = http.client.HTTPConnection('127.0.0.1', port, timeout=timeout)
+    try:
+        conn.request('GET', '/')
+        conn.getresponse().read(0)
+        return True
+    except (OSError, http.client.HTTPException):
+        return False
+    finally:
+        conn.close()
 
 
 def activate(target: str, run: Callable[..., Any] = subprocess.run) -> tuple[bool, str]:
-    """Make `target` the one running lab dashboard, or stop them all for 'none'."""
-    labs = {a['id']: a['unit'] for a in APPS if a['lab']}
+    """Make `target` the one running exclusive app, or stop them all for 'none'."""
+    labs = {a['id']: a['unit'] for a in APPS if a['exclusive']}
     if target != 'none' and target not in labs:
         return False, f'Unknown dashboard: {target}'
     states = unit_states(list(labs.values()), run)
 
-    def systemctl(verb: str, unit: str) -> str:
-        try:
-            r = run(
-                ['systemctl', '--no-ask-password', verb, unit],
-                capture_output=True, text=True, timeout=SYSTEMCTL_TIMEOUT_SEC,
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            return str(exc)
-        if r.returncode == 0:
-            return ''
-        if 'auth' in (r.stderr or '').lower():
-            return 'Permission rule missing. Run scripts/setup_user_env.sh.'
-        return (r.stderr or '').strip().splitlines()[-1] if r.stderr else f'{verb} failed'
-
     for lab_id, unit in labs.items():
         if lab_id != target and states.get(unit) in ('active', 'activating'):
-            error = systemctl('stop', unit)
+            error = _systemctl('stop', unit, run)
             if error:
                 return False, error
     if target == 'none':
         return True, 'Lab dashboards stopped.'
-    error = systemctl('start', labs[target])
-    if error:
-        return False, error
+    if states.get(labs[target]) not in ('active', 'activating'):
+        error = _systemctl('start', labs[target], run)
+        if error:
+            return False, error
     name = next(a['name'] for a in APPS if a['id'] == target)
     return True, f'{name} active.'
 
 
 def _refresh_apps() -> None:
-    apps = app_list(unit_states([a['unit'] for a in APPS]))
+    apps = app_list(unit_states(_app_units()))
     with _status_lock:
         _latest_status['apps'] = apps
 
@@ -449,7 +629,11 @@ def _monitor_loop() -> None:
             )
             node_status = {}
             for name, cfg in MONITORED.items():
-                present = cfg['topic'] in topics
+                if cfg.get('publisher'):
+                    # pit_node subscribes, so the topic exists without a driver.
+                    present = _sampler is not None and _sampler.count_publishers(cfg['topic']) > 0
+                else:
+                    present = cfg['topic'] in topics
                 if present:
                     status = 'healthy'
                 elif cfg['supervised']:
@@ -471,6 +655,7 @@ def _monitor_loop() -> None:
                 hz = _measure_hz(topic)
                 rates[topic] = {'hz': hz, 'stale': hz is None or hz < 0.5}
 
+            sample_system(time.time())
             now = time.monotonic()
             if now - last_system_health >= SYSTEM_HEALTH_REFRESH_SEC:
                 system_health = _collect_system_health()
@@ -486,7 +671,8 @@ def _monitor_loop() -> None:
                 'watchdog_log': _read_watchdog_tail(),
                 'log_dir': str(Path.home() / 'logs' / 'latest'),
                 'autonomy': autonomy_view(*(_sampler.autonomy() if _sampler else (None, None))),
-                'apps': app_list(unit_states([a['unit'] for a in APPS])),
+                'apps': app_list(unit_states(_app_units())),
+                'battery': battery_view(time.time()),
                 'host': socket.gethostname(),
             }
 
@@ -513,13 +699,18 @@ def get_status() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 _HTML_PATH = Path(__file__).resolve().parent / 'dashboard.html'
+_LAUNCH_PATH = Path(__file__).resolve().parent / 'dashboard_launch.html'
+
+
+def _read_page(path: Path) -> str:
+    try:
+        return path.read_text(encoding='utf-8')
+    except OSError as exc:
+        return f'<!DOCTYPE html><body><pre>{path.name} unreadable: {exc}</pre>'
 
 
 def _load_dashboard_html() -> str:
-    try:
-        return _HTML_PATH.read_text(encoding='utf-8')
-    except OSError as exc:
-        return f'<!DOCTYPE html><body><pre>dashboard.html unreadable: {exc}</pre>'
+    return _read_page(_HTML_PATH)
 
 
 DASHBOARD_HTML = _load_dashboard_html()
@@ -538,48 +729,90 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(asset[0])
             return
-        if self.path == '/':
-            self._serve_html()
-        elif self.path == '/api/status':
-            self._serve_status()
+        url = urlparse(self.path)
+        query = parse_qs(url.query)
+        if url.path == '/':
+            self._send_html(_load_dashboard_html())
+        elif url.path == '/launch':
+            self._send_html(_read_page(_LAUNCH_PATH))
+        elif url.path == '/api/status':
+            if query.get('refresh') == ['1']:
+                _refresh_apps()
+            self._send_json(200, get_status())
+        elif url.path == '/api/history':
+            now = time.time()
+            self._send_json(200, {
+                'now': now,
+                'window_sec': BATTERY_WINDOW_SEC,
+                'battery': _battery.buckets(now),
+                'system': _system.buckets(now),
+            })
+        elif url.path == '/api/overview':
+            if _overview is None:
+                self._send_json(503, {})
+            else:
+                _overview.touch()
+                self._send_json(200, _overview.state())
+        elif url.path in ('/api/overview/color.jpg', '/api/overview/depth.jpg'):
+            name = url.path.rsplit('/', 1)[1].split('.')[0]
+            frame = _overview.jpeg(name) if _overview is not None else None
+            if frame is None:
+                self.send_error(404)
+            else:
+                self.send_response(200)
+                self.send_header('Content-Type', 'image/jpeg')
+                self.send_header('Content-Length', str(len(frame)))
+                self.send_header('Cache-Control', 'no-store')
+                self.end_headers()
+                self.wfile.write(frame)
+        elif url.path == '/api/ready':
+            app = next((a for a in APPS if a['id'] == query.get('app', [''])[0]), None)
+            if app is None:
+                self._send_json(404, {'ready': False})
+            else:
+                self._send_json(200, {'ready': app_ready(app['port']), 'port': app['port']})
         else:
             self.send_error(404)
 
-    def _serve_html(self) -> None:
-        content = _load_dashboard_html().encode()
+    def _send_html(self, text: str) -> None:
+        content = text.encode()
         self.send_response(200)
         self.send_header('Content-Type', 'text/html; charset=utf-8')
         self.send_header('Content-Length', str(len(content)))
         self.end_headers()
         self.wfile.write(content)
 
-    def _serve_status(self) -> None:
-        data = get_status()
+    def _send_json(self, code: int, data: Any) -> None:
         body = json.dumps(data).encode()
-        self.send_response(200)
+        self.send_response(code)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
     def do_POST(self) -> None:  # noqa: N802
-        if self.path != '/api/activate':
+        if self.path == '/api/clear-apps':
+            ok, message = clear_apps()
+            _refresh_apps()
+            log.info('clear apps: %s', message)
+            self._send_json(200 if ok else 400, {'ok': ok, 'message': message})
+            return
+        if self.path == '/api/clear-log':
+            ok, message = clear_watchdog_log()
+            self._send_json(200 if ok else 400, {'ok': ok, 'message': message})
+            return
+        if self.path != '/api/open':
             self.send_error(404)
             return
         try:
             length = int(self.headers.get('Content-Length') or 0)
-            target = str(json.loads(self.rfile.read(length) or b'{}').get('target', ''))
+            target = str(json.loads(self.rfile.read(length) or b'{}').get('app', ''))
         except (ValueError, AttributeError):
             target = ''
-        ok, message = activate(target)
+        ok, message = open_app(target)
         _refresh_apps()
-        log.info('activate %s: %s', target, message)
-        body = json.dumps({'ok': ok, 'message': message}).encode()
-        self.send_response(200 if ok else 400)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Content-Length', str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        log.info('open %s: %s', target, message)
+        self._send_json(200 if ok else 400, {'ok': ok, 'message': message})
 
     def log_message(self, fmt: str, *args: Any) -> None:
         """Suppress default per-request logging."""
@@ -591,7 +824,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    global _monitor_running, _sampler
+    global _monitor_running, _sampler, _overview
 
     logdir = Path.home() / 'logs' / 'latest'
     handlers: list[logging.Handler] = [logging.StreamHandler(sys.stderr)]
@@ -611,6 +844,9 @@ def main() -> None:
     rclpy.init()
     sampler = _RateSampler(RATE_TOPICS)
     _sampler = sampler
+    from overview import Overview
+
+    _overview = Overview(sampler)
 
     def _spin_sampler() -> None:
         try:

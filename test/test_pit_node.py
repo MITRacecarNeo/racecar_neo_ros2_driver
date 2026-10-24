@@ -6,9 +6,11 @@ import pytest
 from racecar_neo_ros2_driver.mux_node import MuxMode
 from racecar_neo_ros2_driver.pit_node import (
     _MODE_BITS,
+    build_battery_state,
     build_odom,
     PitNode,
     POSE_UNESTIMATED,
+    PowerAverage,
     remap_axes,
     SPEED_VARIANCE,
     SYS_DOTMATRIX_ACTIVE,
@@ -217,3 +219,20 @@ class TestTelemetryStamp:
         pit._clock.ns = 10**9 + 6_000_000
         pit._telemetry_stamp(5)  # Teensy reset
         assert any('restarted' in m for m in pit.logged)
+
+
+class TestBatteryState:
+    def test_average_closes_each_period(self):
+        avg = PowerAverage(period_sec=1.0)
+        assert avg.add(0.0, 8.0, 1.0) is None
+        assert avg.add(0.5, 8.2, 3.0) is None
+        assert avg.add(1.0, 8.4, 2.0) == pytest.approx((8.2, 2.0))
+        assert avg.add(1.5, 7.0, 1.0) is None
+        assert avg.add(2.0, 7.2, 1.0) == pytest.approx((7.1, 1.0))
+
+    def test_discharge_current_is_negative(self):
+        msg = build_battery_state(8.1, 2.5)
+        assert msg.voltage == pytest.approx(8.1) and msg.current == pytest.approx(-2.5)
+        assert msg.present
+        assert msg.power_supply_status == msg.POWER_SUPPLY_STATUS_DISCHARGING
+        assert np.isnan(msg.percentage)

@@ -49,19 +49,44 @@ Keys: W, A, S, D or the arrow keys. Key auto-repeat is ignored; a key drives fro
 
 ## Dashboard
 
-Top row, the camera stack, the lidar, then the encoder and the logs down the rest of the width:
+The page uses the same cards as the simulator's sensor dashboard, read from the
+car's ROS topics:
 
-- Camera card: the live color frame with the depth frame under it, same width and same framing, so a feature lines up vertically between the two. The Detections switch on the card's heading overlays the object detector's boxes on the color frame.
-- Depth view: bright is near, dark is `depth_max_m` away, black is a pixel the camera got no return from, which is what glass, a mirror, and anything past the far end all look like. The ramp is inferno, one ordered scale from dark to bright, so a step in color is a step in distance. A car with no `depth_topic` set drops the pane; a car that has one and receives nothing keeps it, so a dead stream stays visible as a fault.
-- Detections: each box carries its class and confidence, drawn in brand orange. The switch is disabled on a car with no `detections_topic`, and the label reads `no signal` when a configured detector has stopped publishing; boxes older than 1.5 s are cleared rather than left frozen on a live frame. What the boxes say depends on the model the driver has loaded: the shipped default is EfficientDet-Lite0 on COCO, so 90 everyday classes.
-- Lidar view: scan points around the car, the nose up, range rings at 1, 2, and 3 m, scroll to zoom. 0 degrees is the nose. The Neo's RPLIDAR faces aft, so the raw scan is yawed 180 degrees onto that convention by `LIDAR_MOUNT_YAW_DEG`; see `docs/dashboards.md`, "Lidar convention", in the driver.
-- Encoder card: a state box, STOPPED, FORWARD, FORWARD LEFT, and so on, ember while moving, crimson on TIMED OUT, and under it the live chart: measured speed from `/odom` in white on its own scale, the commanded throttle in orange on a fixed -1 to 1, dashed rules at every slider change. The gap between the two traces is the car's lag and the difference between a commanded fraction and real meters per second.
+- Camera: the color frame with the depth frame under it. The Detections
+  switch overlays the object detector's boxes, each with its class and
+  confidence; boxes older than 1.5 s are cleared. Depth: bright is near, dark
+  is `depth_max_m` away, gray is no reading (glass, a mirror, past the far
+  end, or the strip down the left edge that only one of the depth camera's
+  two lenses sees).
+- Lidar: scan points around the car, nose up, rings every meter. Scroll or
+  use + and - to zoom. 0 degrees is the nose; see `docs/dashboards.md`,
+  "Lidar convention", in the driver.
+- Encoder: a state box (STOPPED, FORWARD LEFT, TIMED OUT, and so on) and the
+  last 10 s of measured speed (m/s, left axis) against the commanded throttle
+  (-1 to 1, right axis), with dashed lines at slider changes.
+- IMU: linear acceleration and angular velocity over 10 s, x, y and z, from
+  `/imu/fused`, and the current values.
+- Battery: voltage and current now and over the last minute.
+- Compass: a dial with the car pointing up and magnetic north marked, the
+  magnetic field over 10 s from `/mag`, and the heading (0 facing north,
+  increasing counterclockwise).
+- Dot matrix: click or drag dots, then Send (`set_matrix`), or type text and
+  Show text (`show_text`). Showing now is what the display shows, from
+  `/dotmatrix/frame`.
+- LED strip: paint LEDs with a color, Fill, or Rainbow, then Send
+  (`set_pixels`). Showing now is the last frame on `/led/pixels`.
+- Drive: the pad, or WASD and the arrow keys.
+- Tune: the speed and angle sliders. Save and Load write and read
+  teleop.yaml on the car.
+- Logs: Save log snapshots the encoder chart to LogN.csv; Load log draws a
+  saved one with measured speed, throttle, and steer.
 
-Second row: the drive pad on the left, the two sliders on the right. The page shows only names and numbers; every explanation is a tooltip. Hover a view, the chart, the state box, a pad button, or a slider to read what it does.
+The page keeps re-sending a dot matrix or LED frame while it is open, because
+the car blanks both shortly after the last message. Stop sending, or closing
+the page, hands the display back to the car within a few seconds.
 
-Save and Load write and read teleop.yaml on the car. Reset (top bar) re-reads the yaml. STOP (top bar) releases every button and sets speed to 0.
-
-Save log snapshots what is on the live chart to LogN.csv: the two axes, the throttle and steer sent, and the measured speed. Load log defaults to the latest save and draws measured speed, throttle, and steer together.
+Reset (top bar) re-reads teleop.yaml. Stop (top bar) releases every button
+and sets speed to 0.
 
 ## Parameters
 

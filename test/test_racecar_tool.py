@@ -209,6 +209,7 @@ class TestService:
             'racecar-webteleop',
             'racecar-linefollow',
             'racecar-wallfollow',
+            'racecar-camlabel',
         ):
             assert unit in result.stdout, f'status missing {unit}'
 
@@ -216,7 +217,10 @@ class TestService:
         result = _run('service', 'help')
         assert result.returncode == 0
         assert 'update' not in result.stdout
-        for name, port in (('webteleop', '8081'), ('linefollow', '8082'), ('wallfollow', '8083')):
+        for name, port in (
+            ('webteleop', '8081'), ('linefollow', '8082'), ('wallfollow', '8083'),
+            ('camlabel', '8085'),
+        ):
             assert f'{name}({port})' in result.stdout
 
     def test_help_lists_core_ports_and_autonomy(self):
@@ -245,21 +249,26 @@ class TestService:
         # All three steer, so none may run alongside another; one list serves
         # both the status view and the one-at-a-time rule.
         text = TOOL.read_text()
-        dash = text.split('local -a dash_units=')[1].split('case "$action"')[0]
+        dash = text.split('local -a dash_units=')[1].split('local -a app_units=')[0]
         for name in ('webteleop', 'linefollow', 'wallfollow'):
             assert f'racecar-{name}' in dash, f'{name} missing from dash_units'
         assert dash.count('racecar-') == 3
         assert 'drive_units' not in text
 
+    def test_camlabel_is_not_a_drive_dashboard(self):
+        text = TOOL.read_text()
+        apps = text.split('local -a app_units=')[1].split('\n')[0]
+        assert 'racecar-camlabel' in apps
+
     def test_no_retired_dashboard_is_named_anywhere(self):
         text = TOOL.read_text()
-        for gone in ('camlabel', 'pursuit', 'smartfollow', 'eps'):
+        for gone in ('pursuit', 'smartfollow', 'eps'):
             assert not re.search(rf'\b{gone}\b', text), f'{gone} is no longer shipped'
 
     def test_top_level_help_lists_three_dashboards(self):
         out = _run('help').stdout
-        assert 'Dashboards: webteleop, linefollow, wallfollow' in out
-        assert 'three lab dashboards' in out
+        assert 'Dashboards: webteleop, linefollow, wallfollow, camlabel' in out
+        assert "install the lab dashboards' units" in out
         assert 'seven' not in out
 
     def test_top_level_help_counts_the_setup_phases(self):
@@ -685,7 +694,7 @@ class TestCompletionInstalled:
 
     def test_service_units_exclude_retired_dashboards(self):
         words = self._complete('racecar', 'service', 'start', '')
-        for gone in ('camlabel', 'pursuit', 'eps', 'smartfollow'):
+        for gone in ('pursuit', 'eps', 'smartfollow'):
             assert gone not in words
 
     def test_top_level_offers_lint_not_clear(self):

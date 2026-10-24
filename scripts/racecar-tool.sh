@@ -105,6 +105,8 @@ racecar() {
             # one stops the others.
             local -a dash_units=("racecar-webteleop" "racecar-linefollow"
                                  "racecar-wallfollow")
+            # Dashboards that do not drive; they run alongside the above.
+            local -a app_units=("racecar-camlabel")
             case "$action" in
                 install)
                     bash "$pkg_dir/scripts/setup_services.sh"
@@ -179,7 +181,7 @@ racecar() {
                         printf "  %-22s  active=%s\n" "$u" "$state"
                     fi
                     echo "dashboards:"
-                    for u in "${dash_units[@]}"; do
+                    for u in "${dash_units[@]}" "${app_units[@]}"; do
                         if [[ ! -f "/etc/systemd/system/$u.service" ]]; then
                             printf "  %-22s  not installed\n" "$u"
                             continue
@@ -209,9 +211,9 @@ actions:
   status          active/enabled snapshot, core, autonomy, and dashboards (default)
 core units: teleop, watchdog, dashboard(8080), jupyter(8888), mapview(8084)
 autonomy: started and stopped by `racecar map` or the map viewer, not at boot
-dashboards: webteleop(8081) linefollow(8082) wallfollow(8083)
-All three publish /drive, so only one runs at a time; starting one stops
-the others.
+dashboards: webteleop(8081) linefollow(8082) wallfollow(8083) camlabel(8085)
+webteleop, linefollow and wallfollow publish /drive. Of those, only one runs at a time;
+starting one stops the others. camlabel runs alongside them.
 __RC_SVC_HELP__
                     ;;
                 *)
@@ -1149,7 +1151,7 @@ Commands:
                                            --eth-mode=static|dynamic
                                            --show
                                            --reset (disable the wlan1 AP + clear saved ID)
-                          dashboards   install the three lab dashboards' units
+                          dashboards   install the lab dashboards' units
                                          (stopped, disabled).
                                          Skip with RACECAR_DASHBOARDS=0.
                           realsense    flash D435i firmware from the locally-staged
@@ -1166,8 +1168,8 @@ Commands:
                           logs [name]          journalctl -f for racecar-<name>
                           status               active/enabled summary (default)
                         Core units: teleop, watchdog, dashboard, jupyter
-                        Dashboards: webteleop, linefollow, wallfollow
-                        Starting a dashboard stops the other /drive publishers.
+                        Dashboards: webteleop, linefollow, wallfollow, camlabel
+                        Starting a driving dashboard stops the other /drive publishers.
                         Bare enable/disable covers the core units only.
     library <action>    Manage racecar_student.pth in user site-packages.
                           --select <folder>   point at ~/jupyter_ws/<folder>/library
@@ -1421,7 +1423,7 @@ _racecar_complete() {
                 local action="${COMP_WORDS[2]}"
                 case "$action" in
                     start|stop|restart|logs|enable|disable)
-                        COMPREPLY=( $(compgen -W "teleop watchdog dashboard jupyter mapview autonomy webteleop linefollow wallfollow" -- "$cur") )
+                        COMPREPLY=( $(compgen -W "teleop watchdog dashboard jupyter mapview autonomy webteleop linefollow wallfollow camlabel" -- "$cur") )
                         ;;
                 esac
             fi

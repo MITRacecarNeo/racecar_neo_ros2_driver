@@ -1,15 +1,16 @@
 #!/bin/bash
 # Install the lab dashboards as racecar-* systemd units.
 #
-# Three dashboards ship in scripts/dashboards/: webteleop (8081), linefollow
-# (8082), wallfollow (8083). Units are rendered from each dashboard's
-# .service.in. See docs/troubleshooting.md, "Lab dashboards".
+# Four dashboards ship in scripts/dashboards/: webteleop (8081), linefollow
+# (8082), wallfollow (8083), camlabel (8085). Units are rendered from each
+# dashboard's .service.in. See docs/troubleshooting.md, "Lab dashboards".
 #
 # Usage:
 #   setup_dashboards.sh                render and install the units
 #
-# Units install stopped and disabled. All three publish /drive and fight the
-# mux if a second one runs, so enabling is per unit and deliberate:
+# Units install stopped and disabled. webteleop, linefollow and wallfollow
+# publish /drive and fight the mux if a second one runs, so enabling is per
+# unit and deliberate:
 # `racecar service enable wallfollow`.
 #
 # Units of retired dashboards are stopped, disabled and removed.
@@ -29,11 +30,11 @@ DASHBOARDS=(
     teleop_dashboard
     linefollow_dashboard
     wallfollow_dashboard
+    camlabel_dashboard
 )
 
 # Dashboards no longer shipped. Their units are removed if still installed.
 RETIRED_UNITS=(
-    racecar-camlabel
     racecar-eps
     racecar-pursuit
     racecar-smartfollow
@@ -149,7 +150,7 @@ if [[ $changed -eq 1 ]]; then
 fi
 
 echo
-echo "Dashboards installed, stopped and disabled. One at a time:"
+echo "Dashboards installed, stopped and disabled. One driving dashboard at a time:"
 for name in "${DASHBOARDS[@]}"; do
     src="$(find "$DASH_DIR/$name" -maxdepth 1 -name 'racecar-*.service.in' | head -1)"
     [[ -n "$src" ]] || continue

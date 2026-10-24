@@ -163,14 +163,20 @@ is slow and revoking immediate: one bad frame hands the gate back.
 
 ### Lab dashboards
 
-Three dashboards in `scripts/dashboards/` run as `racecar-*` units, installed
-by `scripts/setup_dashboards.sh`: `webteleop` on 8081, `linefollow` on 8082
-and `wallfollow` on 8083, beside the driver's own dashboard on 8080 and the
-map viewer on 8084. All three publish `/drive` and so are mutually exclusive;
-a second publisher fights the mux, and `racecar service start` enforces one at
-a time. `setup_dashboards.sh` also removes units left by the four retired
-dashboards (`camlabel`, `eps`, `pursuit`, `smartfollow`). Internals, data
-pipelines and the lidar convention: `docs/dashboards.md`.
+Four dashboards in `scripts/dashboards/` run as `racecar-*` units, installed
+by `scripts/setup_dashboards.sh`: `webteleop` on 8081, `linefollow` on 8082,
+`wallfollow` on 8083 and `camlabel` on 8085, beside the driver's own dashboard
+on 8080 and the map viewer on 8084. The first three publish `/drive` and so
+are mutually exclusive; a second publisher fights the mux, and both
+`racecar service start` and the 8080 apps page (`open_app` in
+`scripts/dashboard.py`) keep one at a time. `camlabel` only reads the camera.
+The apps page starts a stopped app through systemd and opens it once its port
+answers (`/launch`, `/api/ready`); Clear apps stops them all. Both are allowed
+for these four units by `scripts/polkit/49-racecar-dashboards.rules`. The map
+viewer and JupyterLab start at boot and are left running. `setup_dashboards.sh` also removes
+units left by the three retired dashboards (`eps`, `pursuit`,
+`smartfollow`). Internals, data pipelines and the lidar convention:
+`docs/dashboards.md`.
 
 ## Sensor and perception nodes
 
@@ -247,7 +253,8 @@ patterns on `/dotmatrix/pixels`.
 | `/imu/realsense` | `sensor_msgs/Imu` | `realsense2_camera_node` | `imu_fusion_node`, `calibrate_realsense_imu.py` |
 | `/imu/fused` | `sensor_msgs/Imu` | `imu_fusion_node` | user code |
 | `/encoder/speed` | `std_msgs/Float32` | `pit_node` | user code |
-| `/battery/voltage`, `/battery/current` | `std_msgs/Float32` | `pit_node` | dashboard, user code |
+| `/battery/voltage`, `/battery/current` | `std_msgs/Float32` | `pit_node` | user code |
+| `/battery/state` | `sensor_msgs/BatteryState` (1 Hz means; discharge current negative) | `pit_node` | dashboard |
 | `/rc/channels` | `std_msgs/Float32MultiArray` | `pit_node` | `mux_node` (when `rc_authority_enable`), user code |
 | `/rc/link` | `std_msgs/Bool` | `pit_node` | `mux_node` (when `rc_authority_enable`) |
 | `/odom` | `nav_msgs/Odometry` | `pit_node` | lab dashboards, user code |
@@ -555,7 +562,7 @@ network; rate
 checks compare observed Hz against a per-topic floor rather than testing for
 presence. Each rate row also carries one decoded sample from its topic in a
 tab-separated column, and a payload outside its expected range (gravity,
-pack voltage, channel count) sets the row's status. The autonomy section
+battery voltage, channel count) sets the row's status. The autonomy section
 reports the unit's state; while it runs, `/autonomy/pose` and
 `/autonomy/status` join the window, giving the pose rate, mode, localized,
 scan fit, spread, and saves (`autonomy_checks`). The RealSense streams

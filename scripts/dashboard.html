@@ -4,40 +4,80 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RACECAR Neo</title>
-<link rel="stylesheet" href="/ui/rcn.css">
+<link rel="stylesheet" href="/ui/rcn.css?v=4">
+<script src="/ui/charts.js?v=4"></script>
 <link rel="icon" href="/ui/brand/app-icon-32.png">
 <link rel="apple-touch-icon" href="/ui/brand/app-icon-180.png">
 <style>
-  .layout { display: grid; grid-template-columns: 280px 1fr; gap: var(--rcn-space-6); max-width: 1200px; margin: 0 auto; padding: var(--rcn-space-6) var(--rcn-space-4); }
-  @media (max-width: 760px) { .layout { grid-template-columns: 1fr; gap: var(--rcn-space-4); padding: var(--rcn-space-4); } }
-  .hero { display: flex; flex-wrap: wrap; align-items: end; gap: var(--rcn-space-3) var(--rcn-space-6); margin-bottom: var(--rcn-space-6); }
-  .hero img { width: 320px; max-width: 100%; height: auto; display: block; }
-  @media (max-width: 760px) { .hero { display: none; } }
+  .rcn-header .host { font: 600 16px/24px var(--rcn-font-sans); color: var(--rcn-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  main { max-width: 1100px; margin: 0 auto; padding: var(--rcn-space-6) var(--rcn-space-4) var(--rcn-space-8); }
 
-  aside { align-self: start; }
-  aside h2 { font-size: 20px; line-height: 28px; margin-bottom: var(--rcn-space-3); }
-  .choice { display: flex; align-items: center; gap: var(--rcn-space-3); padding: 10px 12px; border-radius: var(--rcn-radius-md); cursor: pointer; }
-  .choice:hover { background: var(--rcn-bg); }
-  .choice input { width: 18px; height: 18px; margin: 0; }
-  .choice .rcn-icon { width: 20px; height: 20px; color: var(--rcn-orange); }
-  .choice .live { margin-left: auto; }
-  #activate { width: 100%; justify-content: center; margin-top: var(--rcn-space-3); }
-  #activate-msg { min-height: 20px; margin-top: var(--rcn-space-2); }
+  /* Hover and keyboard-focus explanations. */
+  [data-tip] { position: relative; }
+  [data-tip]::after {
+    content: attr(data-tip); position: absolute; left: 50%; top: calc(100% + 6px); transform: translateX(-50%);
+    width: max-content; max-width: 240px; padding: 6px 10px; border-radius: var(--rcn-radius-sm);
+    background: var(--rcn-ink); color: var(--rcn-paper); border: 1px solid var(--rcn-steel);
+    font: 600 13px/18px var(--rcn-font-sans); text-align: left; white-space: normal;
+    opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 0.12s; z-index: 20;
+  }
+  [data-tip]:hover::after, [data-tip]:focus-visible::after, [data-tip].tip-open::after { opacity: 1; visibility: visible; }
 
-  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: var(--rcn-space-4); margin-top: var(--rcn-space-3); }
-  .tile { display: flex; flex-direction: column; gap: var(--rcn-space-2); padding: var(--rcn-space-4); border: 1px solid var(--rcn-border); border-radius: var(--rcn-radius-lg); color: var(--rcn-text); text-decoration: none; min-height: 150px; }
-  a.tile:hover { border-color: var(--rcn-orange); }
-  .tile .top { display: flex; align-items: center; justify-content: space-between; }
-  .tile .glyph { width: 44px; height: 44px; border-radius: var(--rcn-radius-md); background: var(--rcn-surface); display: grid; place-items: center; color: var(--rcn-orange); }
-  .tile .glyph .rcn-icon { width: 26px; height: 26px; }
-  .tile .foot { margin-top: auto; display: flex; align-items: center; gap: var(--rcn-space-2); }
-  .tile .foot .rcn-icon { width: 16px; height: 16px; }
+  /* Apps: white border while running; orange on hover, running or not. */
+  .apps { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: var(--rcn-space-6) var(--rcn-space-4); margin-top: var(--rcn-space-4); }
+  .app { display: flex; flex-direction: column; align-items: center; gap: var(--rcn-space-2); background: none; border: 0; padding: 0; color: var(--rcn-text); cursor: pointer; font: inherit; }
+  .app .glyph { position: relative; width: 76px; height: 76px; border-radius: 20px; background: var(--rcn-surface); display: grid; place-items: center; color: var(--rcn-orange); border: 3px solid var(--rcn-steel); transition: border-color 0.12s, background-color 0.12s; }
+  .app .glyph > .rcn-icon { width: 36px; height: 36px; }
+  .app .name { font: 600 15px/20px var(--rcn-font-sans); text-align: center; }
+  .app.on .glyph { border-color: var(--rcn-paper); }
+  .app.starting .glyph { border-color: var(--rcn-gold); }
+  .app.err .glyph { border-color: var(--rcn-crimson); }
+  .app:hover .glyph, .app:focus-visible .glyph { border-color: var(--rcn-orange); background: var(--rcn-steel); }
+  .app .badge { position: absolute; right: -8px; top: -8px; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; border: 2px solid var(--rcn-bg); }
+  .app .badge .rcn-icon { width: 14px; height: 14px; stroke-width: 3; }
+  .app.starting .badge { background: var(--rcn-gold); color: var(--rcn-ink); }
+  .app.err .badge { background: var(--rcn-crimson); color: var(--rcn-paper); }
 
+  .bar-row { display: flex; align-items: center; justify-content: space-between; gap: var(--rcn-space-3); }
+  .apps-title { font-size: 20px; line-height: 28px; }
+  .group-row { min-height: 36px; margin-top: var(--rcn-space-4); }
+  .app.unavailable { cursor: default; }
+  .app.unavailable .glyph { border-style: dashed; color: var(--rcn-mist); }
+  .app.unavailable:hover .glyph { border-color: var(--rcn-steel); background: var(--rcn-surface); }
+  #msg { min-height: 20px; margin-top: var(--rcn-space-3); }
   details { margin-top: var(--rcn-space-8); border-top: 1px solid var(--rcn-border); padding-top: var(--rcn-space-4); }
   summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: var(--rcn-space-2); font: 700 20px/28px var(--rcn-font-display); }
   summary::-webkit-details-marker { display: none; }
   summary .rcn-icon { transition: transform 0.15s; }
-  details[open] summary .rcn-icon { transform: rotate(180deg); }
+  details[open] > summary .rcn-icon { transform: rotate(180deg); }
+
+  /* Overview tiles */
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: var(--rcn-space-3); margin-top: var(--rcn-space-4); }
+  /* Every tile: title row, one fixed row for legend or unit, fixed-height body. */
+  .tile { background: var(--rcn-surface); border-radius: var(--rcn-radius-md); padding: var(--rcn-space-3); display: grid; grid-template-rows: 24px 18px 200px; gap: var(--rcn-space-2); }
+  .tile .head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--rcn-space-2); }
+  .tile .title { font-weight: 600; }
+  .tile .now { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tile .frame { position: relative; background: var(--rcn-code-bg); border-radius: var(--rcn-radius-sm); overflow: hidden; }
+  .tile .frame img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .tile .frame .empty, .chart .empty { position: absolute; inset: 0; display: grid; place-items: center; }
+  .chart { position: relative; touch-action: pan-y; }
+  .lidar { position: relative; background: var(--rcn-code-bg); border-radius: var(--rcn-radius-sm); }
+  .lidar svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+  /* System status */
+  .views { display: inline-flex; gap: var(--rcn-space-1); margin: var(--rcn-space-4) 0 var(--rcn-space-2); }
+  .group { margin-top: var(--rcn-space-3); }
+  .chips { display: flex; flex-wrap: wrap; gap: var(--rcn-space-2); margin: var(--rcn-space-2) 0; }
+  .chip { display: inline-flex; align-items: center; gap: var(--rcn-space-2); padding: 6px 10px; border-radius: var(--rcn-radius-md); background: var(--rcn-surface); border: 2px solid var(--rcn-steel); color: var(--rcn-text); font: 700 15px/20px var(--rcn-font-sans); cursor: default; }
+  .chip > .rcn-icon { width: 20px; height: 20px; color: var(--rcn-orange); }
+  .chip .word { font-weight: 600; color: var(--rcn-text-muted); }
+  .chip .unit { font-weight: 600; font-size: 12px; color: var(--rcn-text-muted); margin-left: -4px; }
+  .chip .st { width: 16px; height: 16px; }
+  .chip.ok { border-color: var(--rcn-success); } .chip.ok .st { color: #4fb3b8; }
+  .chip.warn { border-color: var(--rcn-gold); } .chip.warn .st { color: var(--rcn-gold); }
+  .chip.err { border-color: var(--rcn-crimson); } .chip.err .st { color: var(--rcn-led-red); }
+  .chip.off .st { color: var(--rcn-mist); }
   .sys-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: var(--rcn-space-3); margin: var(--rcn-space-3) 0 var(--rcn-space-6); }
   .sys-card { background: var(--rcn-surface); border-radius: var(--rcn-radius-md); padding: var(--rcn-space-3) var(--rcn-space-4); }
   .sys-card .row { display: flex; align-items: center; justify-content: space-between; gap: var(--rcn-space-2); }
@@ -46,34 +86,94 @@
   th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--rcn-border); }
   th { color: var(--rcn-text-muted); font-weight: 600; }
   h3.sec { margin-top: var(--rcn-space-4); }
+  .foot { display: flex; align-items: center; gap: var(--rcn-space-4); flex-wrap: wrap; margin-top: var(--rcn-space-8); }
 </style>
 </head>
 <body>
 
 <header class="rcn-header">
-  <img class="rcn-mark" src="/ui/brand/mark-white.png" alt="RACECAR Neo">
-  <span class="rcn-title" id="host">RACECAR Neo</span>
+  <img class="rcn-mark" src="/ui/brand/mark.png" alt="RACECAR Neo">
+  <span class="host" id="host"></span>
   <span class="rcn-spacer"></span>
   <span class="rcn-status off" id="overall"><svg class="rcn-icon"><use href="/ui/icons.svg#info"/></svg>Loading</span>
 </header>
 
-<div class="layout">
-  <aside class="rcn-panel">
-    <h2>Active lab dashboard</h2>
-    <div id="choices"></div>
-    <button class="rcn-btn primary" id="activate"><svg class="rcn-icon"><use href="/ui/icons.svg#play"/></svg>Activate</button>
-    <div class="rcn-small rcn-muted" id="activate-msg"></div>
-  </aside>
+<main>
+  <h2 class="apps-title">Apps</h2>
+  <div class="bar-row group-row"><div class="rcn-eyebrow">Core</div></div>
+  <div class="apps" id="apps-core"></div>
+  <div class="bar-row group-row">
+    <div class="rcn-eyebrow">Utilities</div>
+    <button class="rcn-btn quiet small" id="clear-apps"><svg class="rcn-icon"><use href="/ui/icons.svg#stop"/></svg>Clear apps</button>
+  </div>
+  <div class="apps" id="apps-utilities"></div>
+  <div class="rcn-small rcn-muted" id="msg"></div>
 
-  <main>
-    <div class="hero">
-      <img src="/ui/brand/lockup-horizontal-reversed.png" alt="RACECAR Neo">
+  <details id="overview">
+    <summary>Overview <svg class="rcn-icon"><use href="/ui/icons.svg#chevron-down"/></svg></summary>
+    <div class="tiles">
+      <div class="tile">
+        <div class="head"><span class="title">Color camera</span></div>
+        <div class="legend rcn-legend"></div>
+        <div class="frame"><img id="ov-color" alt="Color camera"></div>
+      </div>
+      <div class="tile">
+        <div class="head"><span class="title">Depth camera</span></div>
+        <div class="legend rcn-legend"></div>
+        <div class="frame"><img id="ov-depth" alt="Depth camera"></div>
+      </div>
+      <div class="tile">
+        <div class="head"><span class="title">Lidar</span></div>
+        <div class="legend rcn-legend"></div>
+        <div class="lidar" id="ov-lidar"></div>
+      </div>
+      <div class="tile">
+        <div class="head"><span class="title">IMU</span><span class="now" id="ov-imu-now"></span></div>
+        <div class="legend rcn-legend" id="ov-imu-legend"></div>
+        <div class="chart rcn-chart" id="ov-imu"></div>
+      </div>
+      <div class="tile">
+        <div class="head"><span class="title">Encoder</span><span class="now" id="ov-speed-now"></span></div>
+        <div class="legend rcn-legend" id="ov-speed-legend"></div>
+        <div class="chart rcn-chart" id="ov-speed"></div>
+      </div>
+      <div class="tile">
+        <div class="head"><span class="title">Battery voltage</span><span class="now" id="ov-volts-now"></span></div>
+        <div class="legend rcn-legend" id="ov-volts-legend"></div>
+        <div class="chart rcn-chart" id="ov-volts"></div>
+      </div>
+      <div class="tile">
+        <div class="head"><span class="title">Battery current</span><span class="now" id="ov-amps-now"></span></div>
+        <div class="legend rcn-legend" id="ov-amps-legend"></div>
+        <div class="chart rcn-chart" id="ov-amps"></div>
+      </div>
+      <div class="tile">
+        <div class="head"><span class="title">CPU temperature</span><span class="now" id="ov-temp-now"></span></div>
+        <div class="legend rcn-legend" id="ov-temp-legend"></div>
+        <div class="chart rcn-chart" id="ov-temp"></div>
+      </div>
+      <div class="tile">
+        <div class="head"><span class="title">Memory</span><span class="now" id="ov-mem-now"></span></div>
+        <div class="legend rcn-legend" id="ov-mem-legend"></div>
+        <div class="chart rcn-chart" id="ov-mem"></div>
+      </div>
     </div>
-    <div class="rcn-eyebrow">Dashboards</div>
-    <div class="tiles" id="tiles"></div>
+  </details>
 
-    <details id="system">
-      <summary>System status <svg class="rcn-icon"><use href="/ui/icons.svg#chevron-down"/></svg></summary>
+  <details id="system">
+    <summary>System status <svg class="rcn-icon"><use href="/ui/icons.svg#chevron-down"/></svg></summary>
+    <div class="views" role="group" aria-label="View">
+      <button class="rcn-btn quiet small" id="view-basic" aria-pressed="true">Basic</button>
+      <button class="rcn-btn quiet small" id="view-advanced" aria-pressed="false">Advanced</button>
+    </div>
+    <div id="basic">
+      <div class="group"><div class="rcn-eyebrow">Battery</div><div class="chips" id="chips-battery"></div></div>
+      <div class="group"><div class="rcn-eyebrow">Sensors</div><div class="chips" id="chips-sensors"></div></div>
+      <div class="group"><div class="rcn-eyebrow">Compute</div><div class="chips" id="chips-compute"></div></div>
+      <div class="group"><div class="rcn-eyebrow">Actuation</div><div class="chips" id="chips-actuation"></div></div>
+      <div class="group"><div class="rcn-eyebrow">Autonomy</div><div class="chips" id="chips-autonomy"></div></div>
+    </div>
+    <div id="advanced" hidden>
       <h3 class="sec">Autonomy</h3>
       <div class="sys-grid" id="autonomy"></div>
       <h3 class="sec">Nodes</h3>
@@ -82,75 +182,225 @@
       <div class="sys-grid" id="system-health"></div>
       <h3 class="sec">Topic rates</h3>
       <table><thead><tr><th>Topic</th><th>Rate</th><th>Status</th></tr></thead><tbody id="rates"></tbody></table>
-      <h3 class="sec">Watchdog log</h3>
+      <div class="bar-row"><h3 class="sec">Watchdog log</h3><button class="rcn-btn quiet small" id="clear-log">Clear log</button></div>
       <pre class="rcn-code" id="watchdog-log">No watchdog events yet.</pre>
-      <p class="rcn-small rcn-muted" id="timestamp"></p>
-    </details>
-  </main>
-</div>
+    </div>
+  </details>
+
+  <div class="foot">
+    <button class="rcn-btn quiet small" id="refresh"><svg class="rcn-icon"><use href="/ui/icons.svg#refresh"/></svg>Refresh</button>
+    <span class="rcn-small rcn-muted" id="timestamp"></span>
+  </div>
+</main>
 
 <script>
 'use strict';
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const icon = (name) => `<svg class="rcn-icon"><use href="/ui/icons.svg#${name}"/></svg>`;
+const icon = (name, cls = 'rcn-icon') => `<svg class="${cls}"><use href="/ui/icons.svg#${name}"/></svg>`;
+const STATUS_ICON = { ok: 'check', warn: 'alert', err: 'cross', off: 'info' };
 // kind: ok | warn | err | off, each with its icon and word.
-const pill = (kind, word) => `<span class="rcn-status ${kind}">${icon({ ok: 'check', warn: 'alert', err: 'cross', off: 'info' }[kind])}${esc(word)}</span>`;
+const pill = (kind, word) => `<span class="rcn-status ${kind}">${icon(STATUS_ICON[kind])}${esc(word)}</span>`;
 const STATUS = { healthy: 'ok', stale: 'warn', dead: 'err', unsupervised: 'off' };
 const WORD = { healthy: 'OK', stale: 'Check', dead: 'Down', unsupervised: 'Off' };
-
-let apps = [];
-let chosen = null;   // the user's pick in the panel; null follows the running one
-let busy = false;
-
-function appPill(app) {
-  if (app.state === 'active') return pill('ok', app.lab ? 'Active' : 'Running');
-  if (app.state === 'activating') return pill('warn', 'Starting');
-  if (app.state === 'failed') return pill('err', 'Failed');
-  return pill('off', app.lab ? 'Off' : 'Stopped');
-}
-
-function renderTiles() {
-  $('tiles').innerHTML = apps.map((a) => {
-    const url = `http://${location.hostname}:${a.port}`;
-    const running = a.state === 'active';
-    const foot = running
-      ? `${icon('external')}<span class="rcn-small">Open, port ${a.port}</span>`
-      : `<span class="rcn-small rcn-muted">${a.lab ? 'Activate in the panel.' : `Port ${a.port}`}</span>`;
-    const body = `<div class="top"><span class="glyph">${icon(a.icon)}</span>${appPill(a)}</div>
-      <h3>${esc(a.name)}</h3><div class="rcn-muted rcn-small">${esc(a.desc)}</div><div class="foot">${foot}</div>`;
-    return running ? `<a class="tile" href="${url}" target="_blank" rel="noopener">${body}</a>` : `<div class="tile">${body}</div>`;
-  }).join('');
-}
-
-function renderChoices() {
-  const labs = apps.filter((a) => a.lab);
-  const live = labs.find((a) => a.state === 'active');
-  const pick = chosen ?? (live ? live.id : 'none');
-  const rows = [{ id: 'none', name: 'None', icon: 'stop' }, ...labs];
-  $('choices').innerHTML = rows.map((r) => `<label class="choice">
-      <input type="radio" name="lab" value="${r.id}" ${r.id === pick ? 'checked' : ''}>
-      ${icon(r.icon)}<span>${esc(r.name)}</span>
-      ${r.state === 'active' ? `<span class="live">${pill('ok', 'Active')}</span>` : ''}</label>`).join('');
-  $('activate').disabled = busy;
-}
-$('choices').addEventListener('change', (e) => { if (e.target.name === 'lab') chosen = e.target.value; });
-
-$('activate').onclick = async () => {
-  const target = (document.querySelector('input[name=lab]:checked') || {}).value || 'none';
-  busy = true; renderChoices();
-  $('activate-msg').textContent = target === 'none' ? 'Stopping...' : 'Starting...';
-  try {
-    const res = await fetch('/api/activate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target }) });
-    const r = await res.json();
-    $('activate-msg').textContent = r.message;
-  } catch (err) {
-    $('activate-msg').textContent = 'Lost contact with the car.';
-  }
-  busy = false; chosen = null; update();
+const store = {
+  get: (k, d) => { try { return localStorage.getItem(k) ?? d; } catch (err) { return d; } },
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch (err) { /* not remembered */ } },
 };
 
-function renderSystem(data) {
+// Redrawn every 3 s: touch the DOM only when the markup changes.
+const shown = new Map();
+function setHtml(id, html) { if (shown.get(id) !== html) { shown.set(id, html); $(id).innerHTML = html; } }
+
+// -- apps --
+let apps = [];
+const APP_STATE = {
+  active: ['on', '', 'Running'],
+  activating: ['starting', 'alert', 'Starting'],
+  failed: ['err', 'cross', 'Failed'],
+  unavailable: ['unavailable', '', 'Not available'],
+};
+function renderApps() {
+  for (const group of ['core', 'utilities']) setHtml(`apps-${group}`, apps.filter((a) => a.group === group).map((a) => {
+    const [cls, badge, word] = APP_STATE[a.state] || ['', '', 'Stopped'];
+    return `<button class="app ${cls}" data-id="${a.id}" data-tip="${esc(a.desc)}"
+        aria-label="${esc(`${a.name}, ${word.toLowerCase()}. ${a.desc}`)}">
+      <span class="glyph">${icon(a.icon)}${badge ? `<span class="badge">${icon(badge)}</span>` : ''}</span>
+      <span class="name">${esc(a.name)}</span></button>`;
+  }).join(''));
+}
+document.querySelector('main').addEventListener('click', (e) => {
+  const el = e.target.closest('.app');
+  if (!el) return;
+  const app = apps.find((a) => a.id === el.dataset.id);
+  if (!app || app.state === 'unavailable') return;
+  const live = (a) => a.state === 'active' || a.state === 'activating';
+  const other = apps.find((a) => a.exclusive && a.id !== app.id && live(a));
+  if (app.exclusive && other && !live(app)
+      && !confirm(`${other.name} is open. Close it and open ${app.name}?`)) return;
+  // Opened from the click so the browser allows the new tab.
+  window.open(`/launch?app=${encodeURIComponent(app.id)}`, '_blank');
+});
+
+// -- charts (shared: /ui/charts.js) --
+const { timeChart: drawChart, clockTicks, recentTicks } = RcnCharts;
+const SVGNS = 'http://www.w3.org/2000/svg';
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  if (parent) parent.append(e);
+  return e;
+}
+function legend(id, series) { setHtml(id, RcnCharts.legendHtml(series)); }
+const timeChart = (box, t0, t1, series, xTicks, gapSec) => drawChart(box, t0, t1, series, xTicks, { gapSec });
+
+// -- overview --
+let ov = null;       // /api/overview
+let history = null;  // /api/history: battery and system, 2 h
+let frameTick = 0;
+const overviewOpen = () => $('overview').open;
+function loadFrame(id, name) {
+  const img = $(id);
+  if (img.dataset.busy) return;
+  img.dataset.busy = '1';
+  const next = new Image();
+  next.onload = () => { img.src = next.src; delete img.dataset.busy; };
+  next.onerror = () => { delete img.dataset.busy; };
+  next.src = `/api/overview/${name}.jpg?t=${frameTick++}`;
+}
+function drawLidar() {
+  const box = $('ov-lidar');
+  const w = box.clientWidth, h = box.clientHeight;
+  if (!w) return;
+  const range = 4;  // meters from the car to the edge of the short side
+  const s = Math.min(w, h) / 2 / range;
+  const cx = w / 2, cy = h / 2;
+  const svg = document.createElementNS(SVGNS, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  for (const r of [1, 2, 3, 4]) el('circle', { cx, cy, r: r * s, fill: 'none', stroke: 'var(--rcn-steel)', 'stroke-width': 1 }, svg);
+  el('text', { class: 'tick', x: cx + 4, y: cy - 2 * s - 3, fill: 'var(--rcn-mist)', 'font-size': 11 }, svg).textContent = '2 m';
+  let dots = '';
+  for (const [px, py] of (ov && ov.scan) || []) {
+    // base_link: x forward (up on screen), y left.
+    const sx = cx - py * s, sy = cy - px * s;
+    if (sx >= 0 && sx <= w && sy >= 0 && sy <= h) dots += `M${sx.toFixed(1)},${sy.toFixed(1)}h0.01`;
+  }
+  el('path', { d: dots, stroke: 'var(--rcn-orange)', 'stroke-width': 3, 'stroke-linecap': 'round' }, svg);
+  el('path', { d: `M${cx},${cy - 9}L${cx + 6},${cy + 6}L${cx - 6},${cy + 6}Z`, fill: 'var(--rcn-paper)' }, svg);
+  box.replaceChildren(svg);
+}
+const IMU_SERIES = [['Roll rate', 'a', 1], ['Pitch rate', 'b', 2], ['Yaw rate', 'c', 3]];
+function renderOverview() {
+  if (!overviewOpen()) return;
+  const now = ov ? ov.now : Date.now() / 1000, span = ov ? ov.graph_sec : 30;
+  drawLidar();
+  const imu = (ov && ov.imu) || [];
+  const imuSeries = IMU_SERIES.map(([name, style, col]) => ({ name, style, axis: 'l', unit: 'deg/s', digits: 1, minSpan: 5, pts: imu.map((p) => [p[0], p[col]]) }));
+  legend('ov-imu-legend', imuSeries);
+  timeChart($('ov-imu'), now - span, now, imuSeries, recentTicks(now), 1);
+  const last = imu[imu.length - 1];
+  $('ov-imu-now').textContent = last ? `Yaw ${Math.round(last[3]) || 0} deg/s` : '';
+  const speed = (ov && ov.speed) || [];
+  seriesTile('ov-speed', 'Speed', 'm/s', 2, 0.2, speed, now - span, now, recentTicks(now), 1, 'ov-speed-now');
+  renderHistory();
+}
+function renderHistory() {
+  if (!overviewOpen() || !history) return;
+  const t0 = history.now - history.window_sec, t1 = history.now;
+  const col = (rows, i) => rows.map((p) => [p[0], p[i]]);
+  seriesTile('ov-volts', 'Voltage', 'V', 2, 0.1, col(history.battery, 1), t0, t1, clockTicks, 60, 'ov-volts-now');
+  seriesTile('ov-amps', 'Current', 'A', 2, 0.2, col(history.battery, 2), t0, t1, clockTicks, 60, 'ov-amps-now');
+  seriesTile('ov-temp', 'Temperature', 'C', 1, 2, col(history.system, 1), t0, t1, clockTicks, 60, 'ov-temp-now');
+  seriesTile('ov-mem', 'In use', '%', 0, 5, col(history.system, 2), t0, t1, clockTicks, 60, 'ov-mem-now');
+}
+function seriesTile(id, name, unit, digits, minSpan, pts, t0, t1, ticks, gap, nowId) {
+  legend(`${id}-legend`, [{ name: `${name} (${unit})`, style: 'a' }]);
+  timeChart($(id), t0, t1, [{ name, style: 'a', axis: 'l', unit, digits, minSpan, pts }], ticks, gap);
+  const last = pts[pts.length - 1];
+  $(nowId).textContent = last ? `${last[1].toFixed(digits)} ${unit}` : '';
+}
+function pollOverview() {
+  if (!overviewOpen()) return;
+  fetch('/api/overview').then((r) => r.json()).then((d) => { ov = d; renderOverview(); }).catch(() => {});
+  loadFrame('ov-color', 'color');
+  loadFrame('ov-depth', 'depth');
+}
+function pollHistory() {
+  if (!overviewOpen()) return;
+  fetch('/api/history').then((r) => r.json()).then((h) => { history = h; renderHistory(); }).catch(() => {});
+}
+$('overview').addEventListener('toggle', () => {
+  store.set('rcn-overview-open', overviewOpen() ? '1' : '0');
+  pollOverview(); pollHistory();
+});
+new ResizeObserver(renderOverview).observe($('overview'));
+if (store.get('rcn-overview-open', '0') === '1') $('overview').open = true;
+
+// -- system status --
+// [kind, key, icon, word, group]; kind picks where the status comes from.
+const INDICATORS = [
+  ['node', 'imu_fusion', 'axes', 'IMU', 'sensors'],
+  ['node', 'lidar', 'radar', 'Lidar', 'sensors'],
+  ['node', 'realsense', 'camera', 'Camera', 'sensors'],
+  ['rate', '/camera/depth', 'depth', 'Depth', 'sensors', 'RealSense depth'],
+  ['rate', '/imu/realsense', 'axes', 'Cam-IMU', 'sensors', 'RealSense IMU'],
+  ['node', 'gamepad', 'gamepad', 'Gamepad', 'sensors'],
+  ['node', 'pit', 'board', 'PIT', 'compute'],
+  ['node', 'edgetpu', 'pulse', 'Coral', 'compute'],
+  ['health', 'rtc', 'clock', 'RTC', 'compute'],
+  ['health', 'under_voltage', 'bolt', 'Power', 'compute'],
+  ['node', 'throttle', 'gauge', 'Throttle', 'actuation'],
+  ['node', 'mux', 'merge', 'Mux', 'actuation'],
+  ['node', 'dotmatrix', 'grid', 'Display', 'actuation'],
+  ['node', 'led', 'led', 'LED strip', 'actuation'],
+  ['autonomy', 'autonomy', 'map', 'Autonomy', 'autonomy'],
+];
+const hz = (r) => (r && r.hz !== null && r.hz !== undefined ? r.hz : null);
+let openChip = null;  // key of the chip whose explanation is open (touch)
+function chip(key, glyph, word, kind, num, unit, tip) {
+  return `<button class="chip ${kind}${key === openChip ? ' tip-open' : ''}" data-key="${esc(key)}" data-tip="${esc(tip)}" aria-label="${esc(tip)}">`
+    + `${icon(glyph)}<span class="word">${esc(word)}</span>`
+    + `${num !== null ? `<span class="rcn-num">${esc(num)}</span><span class="unit">${esc(unit)}</span>` : ''}`
+    + `${icon(STATUS_ICON[kind], 'rcn-icon st')}</button>`;
+}
+function renderBasic(data) {
+  const b = data.battery;
+  const bk = !b ? 'off' : (b.stale ? 'warn' : 'ok');
+  const stale = b && b.stale ? ' No recent reading.' : '';
+  setHtml('chips-battery', [
+    chip('volts', 'battery', 'Voltage', bk, b ? b.volts.toFixed(2) : null, 'V', b ? `Battery voltage: ${b.volts.toFixed(2)} V.${stale}` : 'Battery voltage: no data.'),
+    chip('amps', 'battery', 'Current', bk, b ? b.amps.toFixed(2) : null, 'A', b ? `Battery current: ${b.amps.toFixed(2)} A.${stale}` : 'Battery current: no data.'),
+  ].join(''));
+  const rates = data.rates || {};
+  const groups = { sensors: [], compute: [], actuation: [], autonomy: [] };
+  for (const [kind, key, glyph, word, group, label] of INDICATORS) {
+    if (kind === 'node') {
+      const n = (data.nodes || {})[key];
+      if (!n) continue;
+      const st = STATUS[n.status] || 'off', r = hz(rates[n.topic]);
+      const tip = `${n.label}: ${r !== null ? `${r.toFixed(1)} Hz` : (n.alive ? 'running' : 'no data')}. ${WORD[n.status] || n.status}.${n.detail ? ` ${n.detail}` : ''}`;
+      groups[group].push(chip(key, glyph, word, st, r !== null ? r.toFixed(0) : null, 'Hz', tip));
+    } else if (kind === 'rate') {
+      const r = hz(rates[key]), st = r === null ? 'err' : (rates[key].stale ? 'warn' : 'ok');
+      groups[group].push(chip(key, glyph, word, st, r !== null ? r.toFixed(0) : null, 'Hz', `${label}: ${r !== null ? `${r.toFixed(1)} Hz` : 'no data'}.`));
+    } else if (kind === 'health') {
+      const h = (data.system_health || {})[key];
+      if (h) groups[group].push(chip(key, glyph, word, STATUS[h.status] || 'off', null, '', `${h.label}: ${h.detail}.`));
+    } else {
+      const a = data.autonomy || {};
+      if (a.status) groups[group].push(chip(key, glyph, word, STATUS[a.status] || 'off', null, '', [a.headline, ...(a.lines || [])].join('. ')));
+    }
+  }
+  for (const [group, chips] of Object.entries(groups)) setHtml(`chips-${group}`, chips.join(''));
+}
+// Touch screens have no hover: a tap on a chip shows its explanation.
+document.querySelector('#basic').addEventListener('click', (e) => {
+  const c = e.target.closest('.chip');
+  document.querySelectorAll('.chip.tip-open').forEach((x) => { if (x !== c) x.classList.remove('tip-open'); });
+  if (c) openChip = c.classList.toggle('tip-open') ? c.dataset.key : null;
+});
+
+function renderAdvanced(data) {
   const a = data.autonomy || {};
   if (a.status) {
     $('autonomy').innerHTML = `<div class="sys-card"><div class="row"><span class="name">${esc(a.headline)}</span>${pill(STATUS[a.status] || 'off', WORD[a.status] || '')}</div>
@@ -169,34 +419,61 @@ function renderSystem(data) {
   }).join('');
   const wl = data.watchdog_log || [];
   $('watchdog-log').textContent = wl.length ? wl.join('\n') : 'No watchdog events yet.';
-  $('timestamp').textContent = `Updated ${data.timestamp}`;
-
-  const bad = Object.values(data.nodes || {}).some((n) => n.status === 'dead')
-    || Object.values(data.system_health || {}).some((h) => h.status === 'dead');
-  const warn = Object.values(data.nodes || {}).some((n) => n.status === 'stale')
-    || Object.values(data.system_health || {}).some((h) => h.status === 'stale');
-  $('overall').outerHTML = bad ? pill('err', 'Check system').replace('class="', 'id="overall" class="')
-    : warn ? pill('warn', 'Check system').replace('class="', 'id="overall" class="')
-    : pill('ok', 'System OK').replace('class="', 'id="overall" class="');
 }
 
-function update() {
-  fetch('/api/status')
+function renderOverall(data) {
+  const all = [...Object.values(data.nodes || {}), ...Object.values(data.system_health || {})];
+  const kind = all.some((n) => n.status === 'dead') ? 'err' : (all.some((n) => n.status === 'stale') ? 'warn' : 'ok');
+  setOverall(kind, kind === 'ok' ? 'System OK' : 'Check system');
+}
+function setOverall(kind, word) { $('overall').outerHTML = pill(kind, word).replace('class="', 'id="overall" class="'); }
+
+function setView(view) {
+  $('basic').hidden = view !== 'basic';
+  $('advanced').hidden = view !== 'advanced';
+  $('view-basic').setAttribute('aria-pressed', view === 'basic');
+  $('view-advanced').setAttribute('aria-pressed', view === 'advanced');
+  store.set('rcn-status-view', view);
+}
+$('view-basic').onclick = () => setView('basic');
+$('view-advanced').onclick = () => setView('advanced');
+setView(store.get('rcn-status-view', 'basic'));
+
+function update(refresh) {
+  return fetch(refresh ? '/api/status?refresh=1' : '/api/status')
     .then((r) => r.json())
     .then((data) => {
       apps = data.apps || [];
-      $('host').textContent = data.host || 'RACECAR Neo';
-      renderTiles();
-      if (!busy) renderChoices();
-      renderSystem(data);
+      $('host').textContent = data.host || '';
+      renderApps();
+      renderBasic(data);
+      renderAdvanced(data);
+      renderOverall(data);
+      $('timestamp').textContent = `Updated ${data.timestamp}`;
     })
-    .catch(() => {
-      $('overall').outerHTML = pill('err', 'No contact').replace('class="', 'id="overall" class="');
-    });
+    .catch(() => setOverall('err', 'No contact'));
 }
+$('clear-apps').onclick = async () => {
+  if (!confirm('Stop all utilities?')) return;
+  $('msg').textContent = 'Stopping utilities...';
+  try {
+    const r = await (await fetch('/api/clear-apps', { method: 'POST' })).json();
+    $('msg').textContent = r.message;
+  } catch (err) { $('msg').textContent = 'Lost contact with the car.'; }
+  update(true);
+};
+$('clear-log').onclick = async () => {
+  try { await fetch('/api/clear-log', { method: 'POST' }); } catch (err) { /* shown on the next update */ }
+  update(true);
+};
+$('refresh').onclick = () => { update(true); pollOverview(); pollHistory(); };
 
-update();
-setInterval(update, 3000);
+update(false);
+setInterval(() => update(false), 3000);
+// Overview: frames and graphs at 2 Hz while open; the battery history moves in 10 s buckets.
+setInterval(pollOverview, 500);
+setInterval(pollHistory, 10000);
+pollOverview(); pollHistory();
 </script>
 </body>
 </html>

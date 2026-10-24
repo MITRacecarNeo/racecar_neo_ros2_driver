@@ -163,7 +163,7 @@ class TestRateChecks:
         assert (check.status, check.data) == (diag.OK, '+1.50 m/s')
 
     def test_bad_sample_fails_a_healthy_rate(self, diag):
-        spec = diag.TopicSpec('/battery/voltage', 'Pack voltage', 100.0)
+        spec = diag.TopicSpec('/battery/voltage', 'Battery voltage', 100.0)
         ros = self._ros(diag, {'/battery/voltage': 200})
         ros.values = {'/battery/voltage': SimpleNamespace(data=2.0)}
         assert diag.rate_checks('sensors', [spec], ros)[0].status == diag.FAIL
