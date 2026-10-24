@@ -35,6 +35,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import features  # noqa: E402, I100  sibling script, after the path insert
 import sysinfo  # noqa: E402
 
 OK, WARN, FAIL, SKIP = 'OK', 'WARN', 'FAIL', 'SKIP'
@@ -885,6 +886,22 @@ def actuator_checks(ros: RosResult) -> list[Check]:
     return out
 
 
+# Rows of the teleop subsystems the Features tiles turn off (scripts/features.py).
+FEATURE_ROWS = {
+    'camera': ('RealSense color', 'RealSense depth', 'RealSense IMU'),
+    'detections': ('Coral inference',),
+}
+
+
+def note_turned_off(checks: list[Check], running: dict[str, bool] | None = None) -> list[Check]:
+    """Mark the rows of a subsystem teleop was started without as turned off, not failed."""
+    running = features.running() if running is None else running
+    off = {name for feature, names in FEATURE_ROWS.items()
+           if not running.get(feature, True) for name in names}
+    return [Check(c.group, c.name, SKIP, 'turned off (Features on 8080)') if c.name in off else c
+            for c in checks]
+
+
 def note_mapping_pause(checks: list[Check], ros: RosResult) -> list[Check]:
     """While mapping, edgetpu_node drops its camera input (pause_while_mapping); say so."""
     msg = ros.values.get('/autonomy/status')
@@ -1107,7 +1124,8 @@ def main() -> int:
     checks: list[Check] = []
     checks.extend(host.get('devices', []))
     if 'sensors' in requested:
-        checks.extend(note_mapping_pause(rate_checks('sensors', SENSOR_TOPICS, ros), ros))
+        checks.extend(note_turned_off(
+            note_mapping_pause(rate_checks('sensors', SENSOR_TOPICS, ros), ros)))
     if 'actuators' in requested:
         checks.extend(actuator_checks(ros))
     if 'autonomy' in requested:

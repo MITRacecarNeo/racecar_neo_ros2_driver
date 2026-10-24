@@ -719,3 +719,15 @@ def test_coral_row_reads_paused_while_mapping(diag):
     localizing = diag.RosResult(available=True, values={'/autonomy/status': _status(mode='off')})
     assert diag.note_mapping_pause([row], localizing)[0] is row
     assert diag.note_mapping_pause([row], diag.RosResult())[0] is row
+
+
+class TestTurnedOff:
+    def test_turned_off_subsystems_are_skipped(self, diag):
+        checks = [diag.Check('sensors', 'Coral inference', diag.FAIL, 'not published'),
+                  diag.Check('sensors', 'RealSense color', diag.FAIL, 'not published'),
+                  diag.Check('sensors', 'RPLIDAR', diag.OK, '7.5 Hz')]
+        out = diag.note_turned_off(checks, {'camera': True, 'detections': False})
+        assert [c.status for c in out] == [diag.SKIP, diag.FAIL, diag.OK]
+        out = diag.note_turned_off(checks, {'camera': False, 'detections': False})
+        assert [c.status for c in out] == [diag.SKIP, diag.SKIP, diag.OK]
+        assert out[0].detail.startswith('turned off')
