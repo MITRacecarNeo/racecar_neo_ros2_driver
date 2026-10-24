@@ -399,16 +399,19 @@ does. A white border means the app is running.
 - Starting and stopping utilities from the page needs the permission rule
   that `scripts/setup_user_env.sh` installs.
 
-**Safety override.** Override safety controller lets programs and lab
-dashboards drive with no controller in hand. It asks first. While it is on:
+**Safety override.** The Safety override tile lets programs and lab
+dashboards drive with no controller in hand. It asks first. While it is on,
+the tile turns red and:
 
-- A red banner shows on the page, the dot matrix shows AUTO, and the LED
-  strip flashes amber.
+- A red banner shows on this page and on web teleop, line follow, and wall
+  follow. The dot matrix shows AUTO, and the LED strip flashes amber.
 - Holding LB drives from the controller.
 - Any other controller button turns it off.
-- Turn off, or closing the tab, turns it off within 2 s.
+- Turn off in any banner turns it off.
+- It stays on while any of those pages is open. It turns off 2 s after the
+  last one closes, or after the phone puts them all in the background.
 
-The car may start moving without warning. Watch it at all times.
+The car may start moving without warning. Do not leave it unattended.
 
 **Overview.** Expand it to see the car live: color camera, depth camera,
 lidar (seen from above, forward up), IMU rotation rates and encoder speed over

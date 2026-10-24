@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RACECAR Neo</title>
-<link rel="stylesheet" href="/ui/rcn.css?v=9">
-<script src="/ui/charts.js?v=9"></script>
+<link rel="stylesheet" href="/ui/rcn.css?v=10">
+<script src="/ui/charts.js?v=10"></script>
 <link rel="icon" href="/ui/brand/app-icon-32.png">
 <link rel="apple-touch-icon" href="/ui/brand/app-icon-180.png">
 <style>
@@ -42,6 +42,7 @@
   .apps-title { font-size: 20px; line-height: 28px; }
   .group-row { min-height: 36px; margin-top: var(--rcn-space-4); }
   .app.unavailable { cursor: default; }
+  #override[aria-pressed="true"] .glyph { border-color: var(--rcn-crimson); background: var(--rcn-crimson-deep); color: var(--rcn-paper); }
   .app.unavailable .glyph { border-style: dashed; color: var(--rcn-mist); }
   .app.unavailable:hover .glyph { border-color: var(--rcn-steel); background: var(--rcn-surface); }
   #msg { min-height: 20px; margin-top: var(--rcn-space-3); }
@@ -87,11 +88,6 @@
   th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--rcn-border); }
   th { color: var(--rcn-text-muted); font-weight: 600; }
   h3.sec { margin-top: var(--rcn-space-4); }
-  /* Safety override */
-  .override-banner { display: flex; align-items: center; gap: var(--rcn-space-3); flex-wrap: wrap; background: var(--rcn-crimson); color: var(--rcn-paper); border-radius: var(--rcn-radius-md); padding: var(--rcn-space-3) var(--rcn-space-4); margin-bottom: var(--rcn-space-4); font-weight: 700; }
-  .override-banner .rcn-icon { width: 24px; height: 24px; flex: none; }
-  .override-banner span { flex: 1; min-width: 180px; }
-  .override-banner .rcn-btn { background: var(--rcn-paper); border-color: var(--rcn-paper); color: var(--rcn-crimson-deep); }
   #override[aria-pressed="true"] { border-color: var(--rcn-crimson); }
   .foot { display: flex; align-items: center; gap: var(--rcn-space-4); flex-wrap: wrap; margin-top: var(--rcn-space-8); }
 </style>
@@ -106,9 +102,9 @@
 </header>
 
 <main>
-  <div class="override-banner" id="override-banner" role="alert" hidden>
+  <div class="rcn-override" id="override-banner" role="alert" hidden>
     <svg class="rcn-icon"><use href="/ui/icons.svg#alert"/></svg>
-    <span id="override-text">Safety override on. The car can move without warning.</span>
+    <span id="override-text">Safety switch override is on. The car may move without warning. Do not leave it unattended.</span>
     <button class="rcn-btn small" id="override-off">Turn off</button>
   </div>
   <h2 class="apps-title">Apps</h2>
@@ -119,9 +115,11 @@
     <button class="rcn-btn quiet small" id="clear-apps"><svg class="rcn-icon"><use href="/ui/icons.svg#stop"/></svg>Clear apps</button>
   </div>
   <div class="apps" id="apps-utilities"></div>
-  <div class="bar-row group-row">
-    <div class="rcn-eyebrow">Safety</div>
-    <button class="rcn-btn quiet small" id="override" aria-pressed="false" data-tip="Drive without a controller. Press any controller button except LB to stop.">Override safety controller</button>
+  <div class="bar-row group-row"><div class="rcn-eyebrow">Safety</div></div>
+  <div class="apps">
+    <button class="app" id="override" aria-pressed="false" data-tip="Drive without a controller. Press any controller button except LB to stop.">
+      <span class="glyph"><svg class="rcn-icon"><use href="/ui/icons.svg#alert"/></svg></span>
+      <span class="name">Safety override</span></button>
   </div>
   <div class="rcn-small rcn-muted" id="msg"></div>
 
@@ -247,7 +245,7 @@ function renderApps() {
 }
 document.querySelector('main').addEventListener('click', (e) => {
   const el = e.target.closest('.app');
-  if (!el) return;
+  if (!el || !el.dataset.id) return;
   const app = apps.find((a) => a.id === el.dataset.id);
   if (!app || app.state === 'unavailable') return;
   const live = (a) => a.state === 'active' || a.state === 'activating';
@@ -474,48 +472,39 @@ $('view-basic').onclick = () => setView('basic');
 $('view-advanced').onclick = () => setView('advanced');
 setView(store.get('rcn-status-view', 'basic'));
 
-// Safety override: this tab keeps it alive once a second; the car ends it
-// two seconds after the last keepalive, so closing the tab ends it.
-let overrideOwner = false;
-let overrideTimer = null;
-let overrideEpoch = 0;  // Status replies sent before the last start or stop are ignored.
+// Safety override: this page and the driving lab pages (/ui/override.js)
+// keep it alive once a second; it ends 2 s after the last one stops asking.
+let overrideOn = false;
+let overrideEpoch = 0;  // Replies to requests sent before the last start or stop are ignored.
 function renderOverride(o) {
   const on = !!(o && o.on);
   $('override-banner').hidden = !on;
   $('override').setAttribute('aria-pressed', on);
   $('override-text').textContent = on && !o.confirmed
     ? 'Safety override starting...'
-    : 'Safety override on. The car can move without warning.';
-  if (!on && overrideOwner) {
-    overrideOwner = false;
-    clearInterval(overrideTimer);
-    if (o && o.ended) $('msg').textContent = `Safety override off. ${o.ended}`;
-  }
+    : 'Safety switch override is on. The car may move without warning. Do not leave it unattended.';
+  if (overrideOn && !on && o.ended) $('msg').textContent = `Safety override off. ${o.ended}`;
+  overrideOn = on;
 }
 async function sendOverride(action) {
+  const epoch = action === 'keep' ? overrideEpoch : ++overrideEpoch;
   try {
     const r = await fetch('/api/override', { method: 'POST', body: JSON.stringify({ action }) });
-    renderOverride(await r.json());
+    const o = await r.json();
+    if (epoch === overrideEpoch) renderOverride(o);
   } catch (err) { if (action !== 'keep') $('msg').textContent = 'Lost contact with the car.'; }
 }
-async function startOverride() {
-  if (!confirm('Override the safety controller?\n\nThe car may start moving without warning. Watch it at all times.')) return;
-  overrideOwner = true;
-  overrideEpoch += 1;
-  clearInterval(overrideTimer);
-  overrideTimer = setInterval(() => sendOverride('keep'), 1000);
+function startOverride() {
+  if (!confirm('The car may start moving without warning. Do not leave it unattended.')) return;
   $('msg').textContent = '';
-  await sendOverride('start');
+  sendOverride('start');
 }
-function stopOverride() { overrideOwner = false; overrideEpoch += 1; clearInterval(overrideTimer); sendOverride('stop'); }
-$('override').onclick = () => ($('override').getAttribute('aria-pressed') === 'true' ? stopOverride() : startOverride());
-$('override-off').onclick = stopOverride;
-addEventListener('pagehide', () => {
-  if (overrideOwner) navigator.sendBeacon('/api/override', JSON.stringify({ action: 'stop' }));
-});
+$('override').onclick = () => (overrideOn ? sendOverride('stop') : startOverride());
+$('override-off').onclick = () => sendOverride('stop');
+setInterval(() => sendOverride('keep'), 1000);
+sendOverride('keep');
 
 function update(refresh) {
-  const epoch = overrideEpoch;
   return fetch(refresh ? '/api/status?refresh=1' : '/api/status')
     .then((r) => r.json())
     .then((data) => {
@@ -525,7 +514,6 @@ function update(refresh) {
       renderBasic(data);
       renderAdvanced(data);
       renderOverall(data);
-      if (epoch === overrideEpoch) renderOverride(data.override);
       $('timestamp').textContent = `Updated ${data.timestamp}`;
     })
     .catch(() => setOverall('err', 'No contact'));

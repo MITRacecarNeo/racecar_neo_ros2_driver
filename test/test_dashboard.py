@@ -584,10 +584,12 @@ class TestOverrideEndpoint:
         server = ThreadingHTTPServer(('127.0.0.1', 0), dashboard.DashboardHandler)
         threading.Thread(target=server.serve_forever, daemon=True).start()
 
-        def send(action):
+        def send(action, headers=None):
             conn = http.client.HTTPConnection('127.0.0.1', server.server_address[1], timeout=5)
-            conn.request('POST', '/api/override', body=json.dumps({'action': action}))
+            conn.request('POST', '/api/override', body=json.dumps({'action': action}),
+                         headers=headers or {})
             resp = conn.getresponse()
+            send.cors = resp.getheader('Access-Control-Allow-Origin')
             return resp.status, json.loads(resp.read())
 
         yield send
@@ -600,10 +602,31 @@ class TestOverrideEndpoint:
         assert post('stop')[1]['on'] is False
         assert post('keep')[1]['on'] is False
 
+    def test_lab_page_can_read_the_reply(self, post):
+        post('keep', {'Origin': 'http://127.0.0.1:8081'})
+        assert post.cors == 'http://127.0.0.1:8081'
+
+    def test_other_origins_get_no_cors_header(self, post):
+        post('keep', {'Origin': 'http://127.0.0.1:8085'})
+        assert post.cors is None
+
     def test_unknown_action_is_rejected(self, post):
         assert post('go')[0] == 400
 
     def test_page_has_the_toggle_and_warning(self, dashboard):
         html = dashboard._load_dashboard_html()
         assert 'id="override"' in html and 'id="override-banner"' in html
-        assert 'The car may start moving without warning. Watch it at all times.' in html
+        assert 'The car may start moving without warning. Do not leave it unattended.' in html
+
+
+class TestOverrideOrigin:
+    @pytest.mark.parametrize('origin, host, allowed', [
+        ('http://car.local:8081', 'car.local:8080', True),
+        ('http://car.local:8083', 'car.local:8080', True),
+        ('http://car.local:8085', 'car.local:8080', False),
+        ('http://other:8081', 'car.local:8080', False),
+        ('https://car.local:8081', 'car.local:8080', False),
+        (None, 'car.local:8080', False),
+    ])
+    def test_only_driving_lab_pages_on_this_host(self, dashboard, origin, host, allowed):
+        assert (dashboard.override_origin(origin, host) is not None) is allowed

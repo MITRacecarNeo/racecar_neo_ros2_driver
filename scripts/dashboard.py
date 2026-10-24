@@ -267,6 +267,22 @@ class OverrideSession:
 _override = OverrideSession()
 
 
+def override_origin(origin: str | None, host: str | None) -> str | None:
+    """
+    Return `origin` when a driving lab page on this car may call /api/override.
+
+    The lab pages (scripts/web/override.js) run on their own ports, so the
+    browser needs a CORS header to read the reply.
+    """
+    if not origin or not host:
+        return None
+    o, h = urlparse(origin), urlparse(f'//{host}')
+    ports = {a['port'] for a in APPS if a['exclusive']}
+    if o.scheme == 'http' and o.hostname == h.hostname and o.port in ports:
+        return origin
+    return None
+
+
 def battery_view(now: float) -> dict[str, Any] | None:
     """Return the current battery values for the status snapshot; stale after BATTERY_STALE_SEC."""
     latest = _battery.latest(now)
@@ -919,11 +935,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(content)
 
-    def _send_json(self, code: int, data: Any) -> None:
+    def _send_json(self, code: int, data: Any, headers: dict[str, str] | None = None) -> None:
         body = json.dumps(data).encode()
         self.send_response(code)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', str(len(body)))
+        for key, value in (headers or {}).items():
+            self.send_header(key, value)
         self.end_headers()
         self.wfile.write(body)
 
@@ -958,6 +976,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def _override(self, action: str) -> None:
         now = time.monotonic()
+        origin = override_origin(self.headers.get('Origin'), self.headers.get('Host'))
+        cors = {'Access-Control-Allow-Origin': origin, 'Vary': 'Origin'} if origin else {}
         if action == 'start':
             _override.start(now)
             log.warning('Safety override turned on from %s', self.client_address[0])
@@ -968,9 +988,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 log.info('Safety override turned off')
             _override.stop()
         else:
-            self._send_json(400, {'ok': False, 'message': 'Unknown action.'})
+            self._send_json(400, {'ok': False, 'message': 'Unknown action.'}, cors)
             return
-        self._send_json(200, {'ok': True, **_override.view(now)})
+        self._send_json(200, {'ok': True, **_override.view(now)}, cors)
 
     def log_message(self, fmt: str, *args: Any) -> None:
         """Suppress default per-request logging."""

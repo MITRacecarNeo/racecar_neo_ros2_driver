@@ -78,7 +78,7 @@ def test_pages_link_shared_files_with_the_asset_version(webui):
     ]
     for page in pages:
         text = page.read_text()
-        for name in ('rcn.css', 'charts.js', 'lost.js'):
+        for name in ('rcn.css', 'charts.js', 'lost.js', 'override.js'):
             for link in re.findall(rf'"/ui/{re.escape(name)}[^"]*"', text):
                 assert link == f'"/ui/{name}?v={webui.ASSET_VERSION}"', (page.name, link)
 
@@ -90,3 +90,10 @@ def test_lab_pages_show_a_closed_screen():
                  'wallfollow_dashboard/wallfollow.html', 'camlabel_dashboard/camlabel.html'):
         text = (dashboards / page).read_text()
         assert '/ui/lost.js?v=' in text and 'data-app="' in text, page
+
+
+def test_driving_lab_pages_keep_the_override_alive():
+    dashboards = Path(__file__).resolve().parent.parent / 'scripts' / 'dashboards'
+    for page in ('teleop_dashboard/teleop.html', 'linefollow_dashboard/linefollow.html',
+                 'wallfollow_dashboard/wallfollow.html'):
+        assert '/ui/override.js?v=' in (dashboards / page).read_text(), page

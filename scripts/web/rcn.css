@@ -142,6 +142,12 @@ code, pre, .rcn-mono { font-family: var(--rcn-font-mono); }
 .rcn-status.ok { background: var(--rcn-success); color: var(--rcn-paper); }
 .rcn-status.warn { background: var(--rcn-gold); color: var(--rcn-ink); }
 .rcn-status.err { background: var(--rcn-crimson); color: var(--rcn-paper); }
+
+/* Safety-override banner: 8080 and the driving lab pages (override.js). */
+.rcn-override { display: flex; align-items: center; gap: var(--rcn-space-3); flex-wrap: wrap; background: var(--rcn-crimson); color: var(--rcn-paper); border-radius: var(--rcn-radius-md); padding: var(--rcn-space-3) var(--rcn-space-4); margin-bottom: var(--rcn-space-4); font-weight: 700; }
+.rcn-override .rcn-icon { width: 24px; height: 24px; flex: none; }
+.rcn-override span { flex: 1; min-width: 180px; }
+.rcn-override .rcn-btn { background: var(--rcn-paper); border-color: var(--rcn-paper); color: var(--rcn-crimson-deep); }
 .rcn-status.info, .rcn-status.off { background: var(--rcn-steel); color: var(--rcn-paper); }
 
 /* Badge: parallelogram, text upright. */

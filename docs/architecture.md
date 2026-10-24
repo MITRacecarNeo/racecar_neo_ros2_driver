@@ -163,11 +163,14 @@ is slow and revoking immediate: one bad frame hands the gate back.
 
 ### Safety-controller override
 
-The 8080 dashboard can hold the gate with no controller. While its toggle is
-on, the page posts a keepalive each second (`/api/override`), and
-`OverrideSession` in `scripts/dashboard.py` publishes a random nonzero session
-number on `/mux/override` (`std_msgs/UInt32`) at 5 Hz; 0 means off. The
-session lapses 2 s after the last keepalive, so a closed tab ends it.
+The 8080 dashboard can hold the gate with no controller. Its toggle starts a
+session; the 8080 page and the three driving lab pages (`scripts/web/override.js`)
+each post a keepalive to `/api/override` every second, which never starts one.
+The lab pages call 8080 from their own ports, so the reply carries a CORS
+header for those origins only (`override_origin`). `OverrideSession` in
+`scripts/dashboard.py` publishes a random nonzero session number on
+`/mux/override` (`std_msgs/UInt32`) at 5 Hz; 0 means off. The session lapses
+2 s after the last keepalive, so closing every page ends it.
 `SafetyOverride` in `mux_node` forwards `/drive` while a session number is
 under `override_timeout_sec` old. LB held selects `/gamepad_drive`; a press of
 any other button cancels that session number, and only a new one turns the

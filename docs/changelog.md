@@ -7,9 +7,11 @@ All notable changes to this project will be documented in this file. The format 
 ### Added
 
 - Safety-controller override on the 8080 dashboard: a toggle, with a
-  warning, that lets `/drive` through `mux_node` with no controller. The page
-  keeps it alive; it ends 2 s after the tab closes, on Turn off, or on any
-  controller button except LB (which still drives). `/mux/override` (session
+  warning, that lets `/drive` through `mux_node` with no controller. The 8080
+  page and the web teleop, line follow, and wall follow pages
+  (`scripts/web/override.js`) keep it alive and show its banner; it ends 2 s
+  after the last of them closes, on Turn off, or on any controller button
+  except LB (which still drives). `/mux/override` (session
   number) and `/mux/override_active` (latched); `override_timeout_sec` in
   `config/mux.yaml`. A red banner, the AUTO glyph, and an amber flashing LED
   strip show it is on.
