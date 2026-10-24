@@ -29,6 +29,7 @@ This package is the v2 successor to [`racecar-neo-ros2-backend`](https://github.
 - [RTC backup cell](#rtc-backup-cell)
 - [Bootloader EEPROM](#bootloader-eeprom)
 - [ROS discovery scope](#ros-discovery-scope)
+- [FlySky transmitter](#flysky-transmitter)
 - [Changelog](#changelog)
 - [License](#license)
 
@@ -507,8 +508,7 @@ survive a reboot, and bare `racecar service enable` covers only the core five.
 
 **Safety.** `mux_node` forwards `/drive` only while the RB bumper is held, and
 zeroes the output when `/joy` or the active source goes stale. See
-[Autonomy gate](#autonomy-gate) for the case where a transmitter holds the
-gate.
+[Autonomy gate](#autonomy-gate).
 
 **Tuning.** Save in the page writes `dashboards/<name>.yaml` in the
 [car profile](#car-profile); the shipped `<name>.yaml` keeps the defaults. Expect to
@@ -517,31 +517,10 @@ per car. Logs go to `dashboards/<name>/` under the [data root](#car-data).
 
 ## Autonomy gate
 
-By default the gamepad bumpers govern: LB for manual, RB for autonomy, neither
-or both for idle. A FlySky transmitter can hold that gate instead, which is off
-by default because not every car has one:
-
-```yaml
-# ~/.config/racecar/params/mux.yaml  (car profile, loaded after config/mux.yaml)
-mux_node:
-  ros__parameters:
-    rc_authority_enable: true
-```
-
-With it enabled and a live transmitter, channel 6 (switch B) selects the mode:
-middle idle, up manual (the USB gamepad still drives; the transmitter is a gate,
-not a drive source), down autonomous. The bumpers are ignored while the
-transmitter holds the gate. With no transmitter, nothing changes.
-
-Authority is granted only when the link is fresh, every channel is inside the
-valid pulse band, it has held continuously for `rc_link_hold_sec`, and the
-switch has been seen at middle once since the grant. Any one of those failing
-revokes it immediately and hands the gate back to the bumpers.
-
-**Confirm on the bench before enabling.** Which physical switch lands on channel
-6 depends on the transmitter's channel assignment, up and down may be mirrored
-from what this assumes, and a receiver configured to emit failsafe values with
-the transmitter off would look like a live link. Wheels off the ground.
+The gamepad bumpers govern: LB for manual, RB for autonomy, neither or both
+for idle. The safety override on the 8080 page lets `/drive` through with no
+gamepad. An optional FlySky transmitter can hold the gate instead; see
+[FlySky transmitter](#flysky-transmitter).
 
 ## Car data
 
@@ -630,9 +609,8 @@ the bag looks healthy until it is read. Name the topics you need, or
 `racecar map` builds a 2D map of a room or hallway from the lidar and saves it
 under `maps/NAME/` in the [data root](#car-data). A saved map can be loaded later, and the car then
 reports its position on it. Teleop must be running (`racecar service start
-teleop`). You drive the car with the gamepad or the RC transmitter as usual.
-While mapping, the gamepad speed is held at the firmware minimum of 0.5 m/s.
-The RC transmitter is not limited, so switch it to slow mode before mapping.
+teleop`). You drive the car with the gamepad as usual. While mapping, the
+speed is held at the firmware minimum of 0.5 m/s.
 The same steps run from a phone or laptop in the [map viewer](#map-viewer).
 
 ```sh
@@ -1045,6 +1023,37 @@ need them, widen the range on both machines:
 ```sh
 export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
 ```
+
+## FlySky transmitter
+
+A FlySky transmitter is an optional accessory. It can hold the drive gate
+instead of the gamepad bumpers; that is off by default:
+
+```yaml
+# ~/.config/racecar/params/mux.yaml  (car profile, loaded after config/mux.yaml)
+mux_node:
+  ros__parameters:
+    rc_authority_enable: true
+```
+
+With it enabled and a live transmitter, channel 6 (switch B) selects the mode:
+middle idle, up manual (the USB gamepad still drives; the transmitter is a gate,
+not a drive source), down autonomous. The bumpers are ignored while the
+transmitter holds the gate. With no transmitter, nothing changes.
+
+Authority is granted only when the link is fresh, every channel is inside the
+valid pulse band, it has held continuously for `rc_link_hold_sec`, and the
+switch has been seen at middle once since the grant. Any one of those failing
+revokes it immediately and hands the gate back to the bumpers.
+
+**Confirm on the bench before enabling.** Which physical switch lands on channel
+6 depends on the transmitter's channel assignment, up and down may be mirrored
+from what this assumes, and a receiver configured to emit failsafe values with
+the transmitter off would look like a live link. Wheels off the ground.
+
+**Mapping.** The mapping speed limit applies to the gamepad and the student
+library. The transmitter drives the Teensy directly and is not limited, so
+switch it to slow mode before mapping.
 
 ## Changelog
 

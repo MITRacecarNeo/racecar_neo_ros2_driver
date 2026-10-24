@@ -45,7 +45,7 @@ def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog='racecar map',
         description='Build, save, and load maps. Teleop must be running; the car is driven '
-        'with the gamepad or RC transmitter as usual.',
+        'with the gamepad as usual.',
     )
     sub = p.add_subparsers(dest='action', required=True, metavar='ACTION')
 

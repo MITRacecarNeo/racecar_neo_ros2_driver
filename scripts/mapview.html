@@ -86,7 +86,7 @@ main.maps-open #hint { left: calc(min(340px, 80%) + var(--rcn-space-3)); }
 
 <div class="sheet" id="startsheet"><div>
   <h2 id="starttitle">Start mapping</h2>
-  <div class="rcn-small rcn-muted" id="startnote">Teleop must be running. Drive with the gamepad or the transmitter.</div>
+  <div class="rcn-small rcn-muted" id="startnote">Teleop must be running. Drive with the gamepad.</div>
   <div class="row"><input type="text" class="rcn-input" id="newname" placeholder="map name (letters, digits, - and _)"
     autocomplete="off" autocapitalize="off" spellcheck="false"></div>
   <div class="row"><button class="rcn-btn primary" id="startgo">Start</button><button class="rcn-btn quiet" id="startcancel">Cancel</button></div>
@@ -426,7 +426,7 @@ function openStart(source) {
   $('starttitle').textContent = source ? `Extend "${source}"` : 'Start mapping';
   $('startnote').textContent = source
     ? 'Name for the extended map. Use the same name to extend it in place.'
-    : 'Teleop must be running. Drive with the gamepad or the transmitter.';
+    : 'Teleop must be running. Drive with the gamepad.';
   $('newname').value = source || '';
   $('startsheet').dataset.source = source || '';
   $('startsheet').classList.add('show');

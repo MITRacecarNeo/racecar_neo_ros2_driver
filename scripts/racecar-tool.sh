@@ -1260,8 +1260,8 @@ Commands:
                           export FILE   write the profile to FILE (.tar.gz)
                           import FILE   read a profile written by export
     map <action>        Build, save, and load maps (SLAM on top of teleop).
-                        Teleop must be running; drive with the gamepad or RC
-                        transmitter as usual. Maps are in ~/data/maps.
+                        Teleop must be running; drive with the gamepad as
+                        usual. Maps are in maps/ under the data root.
                           start NAME          start mapping; speed held at the
                                               firmware minimum while mapping
                                                 --from SAVED    extend SAVED

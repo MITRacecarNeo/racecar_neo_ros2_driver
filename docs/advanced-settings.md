@@ -212,8 +212,8 @@ following the car, a table of `/autonomy/status`, and a plot of the pose.
 | Safe path | any |
 
 `throttle_node` applies both while `/autonomy/status` reports mapping, to the
-gamepad and the student library; the RC transmitter goes to the Teensy
-directly and is not limited. `mapping_speed_cap` (0.02) makes every command
+gamepad and the student library; an optional FlySky transmitter goes to the
+Teensy directly and is not limited (README, "FlySky transmitter"). `mapping_speed_cap` (0.02) makes every command
 drive at the firmware floor of 0.5 m/s. `mapping_steering_cap` (1.0, off)
 clips steering before the trim.
 
