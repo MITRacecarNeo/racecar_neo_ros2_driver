@@ -884,3 +884,22 @@ class TestOneShotSetup:
                      'racecar-dashboard.service', 'racecar-jupyter.service',
                      'racecar-mapview.service', 'racecar-autonomy.service'):
             assert unit in services, unit
+
+
+class TestRerunOnASetUpCar:
+    """A second setup_all run, after the car profile moved the per-car files out."""
+
+    def test_build_clears_dangling_links_first(self):
+        text = (SCRIPTS_DIR / 'setup_workspace.sh').read_text()
+        assert 'find "$tree" -xtype l -print0' in text
+        assert text.index('-xtype l') < text.rindex('colcon build')
+
+    def test_local_yaml_is_not_installed(self):
+        setup_py = (SCRIPTS_DIR.parent / 'setup.py').read_text()
+        assert "if not f.endswith('.local.yaml')" in setup_py
+
+    @pytest.mark.parametrize('script', [*PHASE_SCRIPTS, ORCHESTRATOR])
+    def test_no_grep_q_after_a_pipe(self, script):
+        # Under pipefail, grep -q exiting at the first match can SIGPIPE the
+        # writer and fail the test even though it matched.
+        assert '| grep -q' not in (SCRIPTS_DIR / script).read_text()

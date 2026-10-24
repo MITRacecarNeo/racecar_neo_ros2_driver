@@ -30,7 +30,7 @@ DEPEND_DIR="$SCRIPT_DIR/../depend"
 echo "=== Coral EdgeTPU Setup ==="
 
 echo "[1/5] Installing libedgetpu runtime..."
-if dpkg -l libedgetpu1-std 2>/dev/null | grep -q "^ii"; then
+if dpkg -l libedgetpu1-std 2>/dev/null | grep "^ii" >/dev/null; then
     echo "  libedgetpu1-std already installed. Skipping."
 else
     sudo dpkg -i "$DEPEND_DIR"/libedgetpu1-std_*.deb
@@ -53,7 +53,9 @@ fi
 NEEDS_REBOOT=0
 IS_PI5=0
 grep -qa 'Raspberry Pi 5' /proc/device-tree/model 2>/dev/null && IS_PI5=1
-if [ "$IS_PI5" = "1" ] || lspci -nn 2>/dev/null | grep -qi '1ac1:089a'; then
+# grep without -q reads all input: under pipefail, -q exiting early can kill
+# the writer with SIGPIPE and fail the test even on a match.
+if [ "$IS_PI5" = "1" ] || lspci -nn 2>/dev/null | grep -i '1ac1:089a' >/dev/null; then
     echo "[4/5] Pi 5 or M.2 Coral (Apex): installing the gasket driver + overlay..."
 
     # Build prerequisites for the DKMS module. linux-headers-raspi (meta) keeps
@@ -66,7 +68,7 @@ if [ "$IS_PI5" = "1" ] || lspci -nn 2>/dev/null | grep -qi '1ac1:089a'; then
 
     # gasket/apex DKMS driver. DKMS builds it for the running kernel and
     # rebuilds on kernel updates; ships its own apex udev rule (GROUP=apex).
-    if dpkg -l gasket-dkms 2>/dev/null | grep -q "^ii"; then
+    if dpkg -l gasket-dkms 2>/dev/null | grep "^ii" >/dev/null; then
         echo "  gasket-dkms already installed. Skipping."
     else
         sudo dpkg -i "$DEPEND_DIR"/gasket-dkms_*.deb || sudo apt-get -f install -y
@@ -99,7 +101,7 @@ fi
 
 echo "[5/5] Verifying Coral EdgeTPU..."
 if [ "$NEEDS_REBOOT" = "1" ]; then
-    if dkms status 2>/dev/null | grep -q "gasket.*installed"; then
+    if dkms status 2>/dev/null | grep "gasket.*installed" >/dev/null; then
         echo "  gasket DKMS module installed."
     else
         echo "  WARNING: gasket DKMS module not reported installed. Check the build log."
@@ -110,7 +112,7 @@ if [ "$NEEDS_REBOOT" = "1" ]; then
         echo "  /dev/apex_0 not present yet (expected before reboot)."
     fi
 else
-    if lsusb | grep -qi "google\|1a6e:089a\|18d1:9302"; then
+    if lsusb | grep -i "google\|1a6e:089a\|18d1:9302" >/dev/null; then
         echo "  Coral USB device detected on bus."
     else
         echo "  WARNING: Coral USB device not found. Is it plugged in?"

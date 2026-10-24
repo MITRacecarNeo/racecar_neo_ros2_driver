@@ -40,7 +40,7 @@ fi
 
 if [[ $INITRAMFS_NEEDED -eq 1 ]]; then
     # Unload the running module so the change applies this boot.
-    if lsmod | grep -q '^hid_nintendo'; then
+    if lsmod | grep '^hid_nintendo' >/dev/null; then
         echo "  Unloading running hid_nintendo module..."
         sudo modprobe -r hid_nintendo 2>/dev/null || true
     fi

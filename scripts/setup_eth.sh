@@ -148,7 +148,7 @@ session_is_on_iface() {
     local server_ip
     server_ip="$(awk '{print $3}' <<<"$SSH_CONNECTION")"
     [ -n "$server_ip" ] || return 1
-    v4_addrs | cut -d/ -f1 | grep -qx "$server_ip"
+    v4_addrs | cut -d/ -f1 | grep -x "$server_ip" >/dev/null
 }
 
 # --- renderers ----------------------------------------------------------------

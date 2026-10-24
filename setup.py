@@ -12,7 +12,9 @@ setup(
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', glob.glob('launch/*.launch.py')),
-        ('share/' + package_name + '/config', glob.glob('config/*.yaml')),
+        # *.local.yaml: per-car files from before the car profile; never read.
+        ('share/' + package_name + '/config',
+         [f for f in glob.glob('config/*.yaml') if not f.endswith('.local.yaml')]),
         ('share/' + package_name + '/config', glob.glob('config/*.json')),
         ('share/' + package_name + '/urdf', glob.glob('urdf/*.xacro')),
         (

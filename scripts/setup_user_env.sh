@@ -22,7 +22,7 @@ for grp in dialout i2c spi gpio video; do
     if ! getent group "$grp" >/dev/null 2>&1; then
         continue
     fi
-    if id -nG "$USER_NAME" | grep -qw "$grp"; then
+    if id -nG "$USER_NAME" | grep -w "$grp" >/dev/null; then
         echo "  $USER_NAME already in $grp"
     else
         sudo usermod -aG "$grp" "$USER_NAME"
