@@ -62,18 +62,41 @@ def test_subscriptions_open_on_request_and_close_when_idle(ov, monkeypatch):
     feed = ov.Overview(node, deserialize=lambda data, cls: data, config_dir=None)
     assert node.subs == []
     feed.touch()
-    assert sorted(s.topic for s in node.subs) == sorted(t for t, _ in ov.FEEDS.values())
+    cameras = {ov.FEEDS[n][0] for n in ov.CAMERAS}
+    assert sorted(s.topic for s in node.subs) == sorted(
+        t for t, _ in ov.FEEDS.values() if t not in cameras
+    )
     feed.last_request -= ov.IDLE_SEC + 1
     with feed._lock:
         feed._close()
     assert node.subs == [] and not feed.active
 
 
+def fake_message(data, cls):
+    zero = SimpleNamespace(x=0.0, y=0.0, z=0.0)
+    return SimpleNamespace(data=0.0, angular_velocity=zero)
+
+
 def test_state_reports_feed_ages(ov):
     node = FakeNode()
-    feed = ov.Overview(node, deserialize=lambda data, cls: data, config_dir=None)
+    feed = ov.Overview(node, deserialize=fake_message, config_dir=None)
     feed.touch()
     next(s for s in node.subs if s.topic == '/encoder/speed').cb(b'x')
     state = feed.state()
     assert 'encoder' in state['ages'] and state['scan'] == []
     assert state['graph_sec'] == ov.GRAPH_SEC
+
+
+def test_cameras_open_only_when_frames_are_requested(ov):
+    node = FakeNode()
+    feed = ov.Overview(node, deserialize=lambda data, cls: data, config_dir=None)
+    feed.touch()
+    topics = {s.topic for s in node.subs}
+    assert '/camera/color' not in topics and '/camera/depth' not in topics and '/scan' in topics
+    feed.touch_cameras()
+    assert {'/camera/color', '/camera/depth'} <= {s.topic for s in node.subs}
+    feed.last_frame_request -= ov.CAMERA_IDLE_SEC + 1
+    with feed._lock:
+        feed._drop([n for n in ov.CAMERAS if n in feed._handles])
+    topics = {s.topic for s in node.subs}
+    assert '/camera/color' not in topics and '/scan' in topics

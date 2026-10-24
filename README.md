@@ -403,7 +403,8 @@ does. A white border means the app is running.
 lidar (seen from above, forward up), IMU rotation rates and encoder speed over
 the last 30 s, and battery voltage, battery current, CPU temperature, and
 memory in use over the last 2 hours. Hover or tap a chart to read a value.
-The camera, lidar, IMU, and encoder feeds run only while the section is open.
+The camera tiles start paused; Show camera starts them. The lidar, IMU, and
+encoder feeds run only while the section is open.
 The 2-hour history starts over when the dashboard service restarts.
 
 **System status.** Expand it at the bottom of the page.
@@ -417,7 +418,9 @@ The 2-hour history starts over when the dashboard service restarts.
   far; the log file is kept.
 - The header shows "System OK" or "Check system".
 
-The page refreshes every 3 s; Refresh at the bottom updates it at once. Health
+The page refreshes every 3 s; Refresh at the bottom updates it at once. Topic
+rates are measured only while the page is open, so they read "measuring" for
+the first few seconds. Health
 refreshes every 60 s, since the cell voltage changes over weeks.
 
 ## Lab dashboards

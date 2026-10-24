@@ -341,6 +341,11 @@ All notable changes to this project will be documented in this file. The format 
   depth reading in gray instead of black, so the D435i's stereo blind strip
   on the left edge no longer reads as an object; troubleshooting explains
   the strip ("Depth view gaps").
+- The web dashboard measures topic rates, nodes, and app states only while a
+  page polls it, and stops 15 s after the last request: about 0.6% of a core
+  with no page open, against about 41% before. The Overview's camera tiles
+  start paused (Show camera), so an open Overview without them adds about
+  14 points of a core instead of about 34.
 - Web teleop (8081) has the simulator sensor dashboard's cards, read from
   ROS topics: IMU (`/imu/fused`), battery (`/battery/state`), compass
   (`/mag`), dot matrix editor and preview (`/dotmatrix/pixels`, `/text`,

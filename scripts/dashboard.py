@@ -82,6 +82,11 @@ MAPVIEW_PORT = 8084
 # /autonomy/status arrives at 1 Hz; older than this, the node has stopped.
 AUTONOMY_STALE_SEC = 5.0
 SYSTEM_HEALTH_REFRESH_SEC = 60.0
+# Rates, nodes, and app states are measured only while a page polls: the rate
+# subscriptions wake the process for every message, a large share of a core.
+# They stop VIEW_IDLE_SEC after the last request.
+VIEW_IDLE_SEC = 15.0
+MONITOR_PERIOD_SEC = 3.0
 # Overview charts: pit_node's 1 Hz /battery/state and the monitor loop's CPU
 # temperature and memory, kept for one battery's run time.
 BATTERY_WINDOW_SEC = 2 * 3600
@@ -226,6 +231,7 @@ class _RateSampler(Node):
         )
         self._topics = list(topics)
         self._subs: dict[str, Any] = {}
+        self.attached_at: float | None = None
         self._diagnostic_rates: dict[str, float] = {}
         self._diagnostic_last_update: dict[str, float] = {}
         self._diagnostics_sub = self.create_subscription(
@@ -306,6 +312,22 @@ class _RateSampler(Node):
             self._subs[topic] = self.create_subscription(
                 msg_cls, topic, self._arrival_callback(topic), self._qos, raw=True
             )
+            if self.attached_at is None:
+                self.attached_at = time.monotonic()
+
+    def detach_subscriptions(self) -> None:
+        """Drop the rate subscriptions and their counts until the next attach."""
+        for sub in self._subs.values():
+            self.destroy_subscription(sub)
+        self._subs.clear()
+        with self._lock:
+            for dq in self._stamps.values():
+                dq.clear()
+        self.attached_at = None
+
+    def warming(self) -> bool:
+        """Return True until the rate window has filled since the subscriptions opened."""
+        return self.attached_at is None or time.monotonic() - self.attached_at < self._window
 
     def _arrival_callback(self, topic: str) -> Callable[[Any], None]:
         return lambda _msg: self._record(topic)
@@ -609,12 +631,38 @@ def _refresh_apps() -> None:
         _latest_status['apps'] = apps
 
 
+_last_view = 0.0
+_wake = threading.Event()
+
+
+def note_view() -> bool:
+    """Record a page request; return True when monitoring was idle until now."""
+    global _last_view
+    idle = not viewing()
+    _last_view = time.monotonic()
+    if idle:
+        _wake.set()
+    return idle
+
+
+def viewing() -> bool:
+    return time.monotonic() - _last_view < VIEW_IDLE_SEC
+
+
 def _monitor_loop() -> None:
-    """Background thread that continuously refreshes the cached status snapshot."""
+    """Background thread that refreshes the cached status snapshot while a page polls."""
     last_system_health = 0.0
     system_health = _collect_system_health()
     while _monitor_running:
         try:
+            sample_system(time.time())
+            if not viewing():
+                if _sampler is not None and _sampler.attached_at is not None:
+                    _sampler.detach_subscriptions()
+                    log.info('No page open; rate sampling stopped')
+                _wake.wait(MONITOR_PERIOD_SEC)
+                _wake.clear()
+                continue
             # Publishers can appear after the dashboard starts, so retry the
             # topic-to-type lookup each tick.
             if _sampler is not None:
@@ -651,11 +699,14 @@ def _monitor_loop() -> None:
                 }
 
             rates = {}
+            warming = _sampler is not None and _sampler.warming()
             for topic in DISPLAY_RATE_TOPICS:
                 hz = _measure_hz(topic)
-                rates[topic] = {'hz': hz, 'stale': hz is None or hz < 0.5}
+                if warming and hz is None and topic not in REALSENSE_DIAGNOSTIC_NAMES.values():
+                    rates[topic] = {'hz': None, 'stale': False, 'warming': True}
+                else:
+                    rates[topic] = {'hz': hz, 'stale': hz is None or hz < 0.5}
 
-            sample_system(time.time())
             now = time.monotonic()
             if now - last_system_health >= SYSTEM_HEALTH_REFRESH_SEC:
                 system_health = _collect_system_health()
@@ -682,10 +733,8 @@ def _monitor_loop() -> None:
         except Exception:  # noqa: BLE001
             log.exception('Error in monitor loop')
 
-        for _ in range(30):
-            if not _monitor_running:
-                break
-            time.sleep(0.1)
+        _wake.wait(MONITOR_PERIOD_SEC)
+        _wake.clear()
 
 
 def get_status() -> dict[str, Any]:
@@ -736,6 +785,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         elif url.path == '/launch':
             self._send_html(_read_page(_LAUNCH_PATH))
         elif url.path == '/api/status':
+            if note_view():
+                # The cached snapshot may be minutes old; refresh what is cheap.
+                _refresh_apps()
             if query.get('refresh') == ['1']:
                 _refresh_apps()
             self._send_json(200, get_status())
@@ -755,6 +807,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json(200, _overview.state())
         elif url.path in ('/api/overview/color.jpg', '/api/overview/depth.jpg'):
             name = url.path.rsplit('/', 1)[1].split('.')[0]
+            if _overview is not None:
+                _overview.touch_cameras()
             frame = _overview.jpeg(name) if _overview is not None else None
             if frame is None:
                 self.send_error(404)

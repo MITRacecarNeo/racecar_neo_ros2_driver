@@ -480,3 +480,38 @@ class TestHistory:
         for chart in ('ov-volts', 'ov-amps', 'ov-temp', 'ov-mem', 'ov-imu', 'ov-speed'):
             assert f'id="{chart}"' in html
         assert 'Pack' not in html and 'pack' not in html
+
+
+class FakeGraphNode:
+    def __init__(self):
+        self.made, self.destroyed = [], []
+
+    def destroy_subscription(self, sub):
+        self.destroyed.append(sub)
+
+
+class TestOnDemand:
+    def test_rate_subscriptions_detach_and_counts_reset(self, sampler):
+        s, _clock = sampler
+        node = FakeGraphNode()
+        s._subs = {'/scan': 'sub-scan', '/motor': 'sub-motor'}
+        s.destroy_subscription = node.destroy_subscription
+        s.attached_at = 1.0
+        s._stamps['/scan'].extend([1.0, 1.1])
+        s.detach_subscriptions()
+        assert sorted(node.destroyed) == ['sub-motor', 'sub-scan']
+        assert s._subs == {} and s.attached_at is None and not s._stamps['/scan']
+
+    def test_warming_until_the_window_fills(self, sampler):
+        s, clock = sampler
+        s.attached_at = clock.t
+        assert s.warming()
+        clock.t += s._window + 0.1
+        assert not s.warming()
+
+    def test_view_tracking(self, dashboard, monkeypatch):
+        monkeypatch.setattr(dashboard, '_last_view', 0.0)
+        dashboard._wake.clear()
+        assert dashboard.note_view() is True and dashboard._wake.is_set()
+        assert dashboard.viewing()
+        assert dashboard.note_view() is False

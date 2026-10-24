@@ -55,7 +55,8 @@
   .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: var(--rcn-space-3); margin-top: var(--rcn-space-4); }
   /* Every tile: title row, one fixed row for legend or unit, fixed-height body. */
   .tile { background: var(--rcn-surface); border-radius: var(--rcn-radius-md); padding: var(--rcn-space-3); display: grid; grid-template-rows: 24px 18px 200px; gap: var(--rcn-space-2); }
-  .tile .head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--rcn-space-2); }
+  .tile .head { display: flex; align-items: center; justify-content: space-between; gap: var(--rcn-space-2); }
+  .tile .head .rcn-btn { padding: 2px 10px; }
   .tile .title { font-weight: 600; }
   .tile .now { font-weight: 600; font-variant-numeric: tabular-nums; }
   .tile .frame { position: relative; background: var(--rcn-code-bg); border-radius: var(--rcn-radius-sm); overflow: hidden; }
@@ -113,14 +114,14 @@
     <summary>Overview <svg class="rcn-icon"><use href="/ui/icons.svg#chevron-down"/></svg></summary>
     <div class="tiles">
       <div class="tile">
-        <div class="head"><span class="title">Color camera</span></div>
+        <div class="head"><span class="title">Color camera</span><button class="rcn-btn quiet small cam-toggle" aria-pressed="false">Show camera</button></div>
         <div class="legend rcn-legend"></div>
-        <div class="frame"><img id="ov-color" alt="Color camera"></div>
+        <div class="frame"><img id="ov-color" alt="Color camera" hidden><div class="empty rcn-small rcn-muted cam-paused">Camera paused.</div></div>
       </div>
       <div class="tile">
-        <div class="head"><span class="title">Depth camera</span></div>
+        <div class="head"><span class="title">Depth camera</span><button class="rcn-btn quiet small cam-toggle" aria-pressed="false">Show camera</button></div>
         <div class="legend rcn-legend"></div>
-        <div class="frame"><img id="ov-depth" alt="Depth camera"></div>
+        <div class="frame"><img id="ov-depth" alt="Depth camera" hidden><div class="empty rcn-small rcn-muted cam-paused">Camera paused.</div></div>
       </div>
       <div class="tile">
         <div class="head"><span class="title">Lidar</span></div>
@@ -319,11 +320,23 @@ function seriesTile(id, name, unit, digits, minSpan, pts, t0, t1, ticks, gap, no
   const last = pts[pts.length - 1];
   $(nowId).textContent = last ? `${last[1].toFixed(digits)} ${unit}` : '';
 }
+// The camera tiles start paused: their feeds cost about two thirds of the Overview.
+let showCamera = false;
+function setCamera(on) {
+  showCamera = on;
+  document.querySelectorAll('.cam-toggle').forEach((b) => {
+    b.textContent = on ? 'Pause camera' : 'Show camera';
+    b.setAttribute('aria-pressed', on);
+  });
+  document.querySelectorAll('.cam-paused').forEach((el) => { el.hidden = on; });
+  $('ov-color').hidden = $('ov-depth').hidden = !on;
+  if (on) { loadFrame('ov-color', 'color'); loadFrame('ov-depth', 'depth'); }
+}
+document.querySelectorAll('.cam-toggle').forEach((b) => { b.onclick = () => setCamera(!showCamera); });
 function pollOverview() {
   if (!overviewOpen()) return;
   fetch('/api/overview').then((r) => r.json()).then((d) => { ov = d; renderOverview(); }).catch(() => {});
-  loadFrame('ov-color', 'color');
-  loadFrame('ov-depth', 'depth');
+  if (showCamera) { loadFrame('ov-color', 'color'); loadFrame('ov-depth', 'depth'); }
 }
 function pollHistory() {
   if (!overviewOpen()) return;
@@ -377,12 +390,16 @@ function renderBasic(data) {
     if (kind === 'node') {
       const n = (data.nodes || {})[key];
       if (!n) continue;
-      const st = STATUS[n.status] || 'off', r = hz(rates[n.topic]);
-      const tip = `${n.label}: ${r !== null ? `${r.toFixed(1)} Hz` : (n.alive ? 'running' : 'no data')}. ${WORD[n.status] || n.status}.${n.detail ? ` ${n.detail}` : ''}`;
+      const measuring = rates[n.topic] && rates[n.topic].warming;
+      const st = measuring ? 'off' : (STATUS[n.status] || 'off'), r = hz(rates[n.topic]);
+      const tip = measuring ? `${n.label}: measuring.`
+        : `${n.label}: ${r !== null ? `${r.toFixed(1)} Hz` : (n.alive ? 'running' : 'no data')}. ${WORD[n.status] || n.status}.${n.detail ? ` ${n.detail}` : ''}`;
       groups[group].push(chip(key, glyph, word, st, r !== null ? r.toFixed(0) : null, 'Hz', tip));
     } else if (kind === 'rate') {
-      const r = hz(rates[key]), st = r === null ? 'err' : (rates[key].stale ? 'warn' : 'ok');
-      groups[group].push(chip(key, glyph, word, st, r !== null ? r.toFixed(0) : null, 'Hz', `${label}: ${r !== null ? `${r.toFixed(1)} Hz` : 'no data'}.`));
+      const rr = rates[key] || {}, r = hz(rr);
+      const st = rr.warming ? 'off' : (r === null ? 'err' : (rr.stale ? 'warn' : 'ok'));
+      groups[group].push(chip(key, glyph, word, st, r !== null ? r.toFixed(0) : null, 'Hz',
+        rr.warming ? `${label}: measuring.` : `${label}: ${r !== null ? `${r.toFixed(1)} Hz` : 'no data'}.`));
     } else if (kind === 'health') {
       const h = (data.system_health || {})[key];
       if (h) groups[group].push(chip(key, glyph, word, STATUS[h.status] || 'off', null, '', `${h.label}: ${h.detail}.`));
@@ -413,8 +430,8 @@ function renderAdvanced(data) {
       <span class="name">${esc(h.label)}</span>${pill(STATUS[h.status] || 'off', WORD[h.status] || h.status)}</div>
       <div class="rcn-small rcn-muted">${esc(h.detail)}</div></div>`).join('');
   $('rates').innerHTML = Object.entries(data.rates || {}).map(([topic, r]) => {
-    const kind = r.hz === null ? 'err' : (r.stale ? 'warn' : 'ok');
-    const word = r.hz === null ? 'No data' : (r.stale ? 'Stale' : 'OK');
+    const kind = r.warming ? 'off' : (r.hz === null ? 'err' : (r.stale ? 'warn' : 'ok'));
+    const word = r.warming ? 'Measuring' : (r.hz === null ? 'No data' : (r.stale ? 'Stale' : 'OK'));
     return `<tr><td class="rcn-mono">${esc(topic)}</td><td class="rcn-num">${r.hz === null ? '-' : r.hz.toFixed(1) + ' Hz'}</td><td>${pill(kind, word)}</td></tr>`;
   }).join('');
   const wl = data.watchdog_log || [];

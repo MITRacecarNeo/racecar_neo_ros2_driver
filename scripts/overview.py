@@ -2,7 +2,9 @@
 Live sensor feeds for the web dashboard's Overview section.
 
 Subscriptions open on the first request and close IDLE_SEC after the last, so
-the dashboard costs nothing extra while nobody watches. Callbacks keep only
+the dashboard costs nothing extra while nobody watches. The two camera feeds,
+two thirds of the cost, open only while the page asks for frames and close
+CAMERA_IDLE_SEC after the last one. Callbacks keep only
 the latest serialized message; decoding and JPEG encoding happen when the
 page asks, at the page's rate rather than the sensor's.
 """
@@ -19,6 +21,8 @@ from typing import Any, Callable
 import numpy as np
 
 IDLE_SEC = 10.0
+CAMERA_IDLE_SEC = 3.0
+CAMERAS = ('color', 'depth')
 GRAPH_SEC = 30.0
 GRAPH_HZ = 10.0
 PREVIEW_WIDTH = 320
@@ -113,7 +117,8 @@ class Overview:
         self.node = node
         self._deserialize = deserialize
         self._lock = threading.Lock()
-        self._handles: list[Any] = []
+        self._handles: dict[str, Any] = {}
+        self.last_frame_request = 0.0
         self._latest: dict[str, tuple[bytes, float]] = {}
         self._jpeg: dict[str, tuple[bytes, float]] = {}
         self.imu: deque[list[float]] = deque(maxlen=int(GRAPH_SEC * GRAPH_HZ))
@@ -129,21 +134,36 @@ class Overview:
         with self._lock:
             self.last_request = time.monotonic()
             if not self.active:
-                self._open()
+                self._open([n for n in FEEDS if n not in CAMERAS])
+                self.active = True
 
-    def _open(self) -> None:
+    def touch_cameras(self) -> None:
+        with self._lock:
+            self.last_request = self.last_frame_request = time.monotonic()
+            if not self.active:
+                self._open([n for n in FEEDS if n not in CAMERAS])
+                self.active = True
+            self._open([n for n in CAMERAS if n in FEEDS and n not in self._handles])
+
+    def _open(self, names: list[str]) -> None:
         from rclpy.qos import qos_profile_sensor_data
 
-        for name, (topic, type_path) in FEEDS.items():
-            self._handles.append(self.node.create_subscription(
+        for name in names:
+            topic, type_path = FEEDS[name]
+            self._handles[name] = self.node.create_subscription(
                 _msg_class(type_path), topic, self._store(name), qos_profile_sensor_data, raw=True,
-            ))
-        self.active = True
+            )
+
+    def _drop(self, names: list[str]) -> None:
+        for name in names:
+            h = self._handles.pop(name, None)
+            if h is not None:
+                self.node.destroy_subscription(h)
+            self._latest.pop(name, None)
+            self._jpeg.pop(name, None)
 
     def _close(self) -> None:
-        for h in self._handles:
-            self.node.destroy_subscription(h)
-        self._handles = []
+        self._drop(list(self._handles))
         self._latest.clear()
         self._jpeg.clear()
         self.imu.clear()
@@ -169,6 +189,8 @@ class Overview:
             with self._lock:
                 if self.active and time.monotonic() - self.last_request > IDLE_SEC:
                     self._close()
+                elif time.monotonic() - self.last_frame_request > CAMERA_IDLE_SEC:
+                    self._drop([n for n in CAMERAS if n in self._handles])
                 if not self.active:
                     continue
                 now = time.time()
