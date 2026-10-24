@@ -1059,7 +1059,7 @@ switch it to slow mode before mapping.
 
 Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
 
-- **Unreleased**: 2D SLAM beside teleop (`racecar map` to build, save,
+- **0.9.0** (2026-10-24): 2D SLAM beside teleop (`racecar map` to build, save,
   load, extend, and recover maps through `racecar-autonomy.service`;
   `racecar launch autonomy`: slam_toolbox mapping, AMCL or slam_toolbox
   localization; maps in `~/data/maps`); a web map viewer on port 8084

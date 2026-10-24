@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-24
+
 ### Added
 
 - Data root: everything the car produces (bags, maps, sessions, captures,
@@ -1454,7 +1456,8 @@ Design notes and migration from v1:
 - Parameter YAMLs: `config/gamepad.yaml`, `mux.yaml`, `throttle.yaml`, `pwm.yaml`
 - Project files: `README.md`, `LICENSE` (GPLv3), `.gitignore`, `.gitattributes`
 
-[Unreleased]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.8.3...HEAD
+[Unreleased]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.8.3...v0.9.0
 [0.8.3]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.8.0...v0.8.1
