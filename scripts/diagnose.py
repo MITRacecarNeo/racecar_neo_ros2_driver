@@ -390,8 +390,12 @@ def check_profile() -> Check:
     left = car_profile.unmigrated(here.parent / 'config', here / 'dashboards')
     detail = f'{car_profile.car_info()["name"]}, {car_profile.profile_dir()}'
     if left:
-        return Check('system', 'car profile', WARN,
-                     f'{detail}; {len(left)} file(s) not used: racecar profile migrate')
+        return Check(
+            'system',
+            'car profile',
+            WARN,
+            f'{detail}; {len(left)} file(s) not used: racecar profile migrate',
+        )
     return Check('system', 'car profile', OK, detail)
 
 
@@ -896,10 +900,16 @@ FEATURE_ROWS = {
 def note_turned_off(checks: list[Check], running: dict[str, bool] | None = None) -> list[Check]:
     """Mark the rows of a subsystem teleop was started without as turned off, not failed."""
     running = features.running() if running is None else running
-    off = {name for feature, names in FEATURE_ROWS.items()
-           if not running.get(feature, True) for name in names}
-    return [Check(c.group, c.name, SKIP, 'turned off (Features on 8080)') if c.name in off else c
-            for c in checks]
+    off = {
+        name
+        for feature, names in FEATURE_ROWS.items()
+        if not running.get(feature, True)
+        for name in names
+    }
+    return [
+        Check(c.group, c.name, SKIP, 'turned off (Features on 8080)') if c.name in off else c
+        for c in checks
+    ]
 
 
 def note_mapping_pause(checks: list[Check], ros: RosResult) -> list[Check]:
@@ -1124,8 +1134,9 @@ def main() -> int:
     checks: list[Check] = []
     checks.extend(host.get('devices', []))
     if 'sensors' in requested:
-        checks.extend(note_turned_off(
-            note_mapping_pause(rate_checks('sensors', SENSOR_TOPICS, ros), ros)))
+        checks.extend(
+            note_turned_off(note_mapping_pause(rate_checks('sensors', SENSOR_TOPICS, ros), ros))
+        )
     if 'actuators' in requested:
         checks.extend(actuator_checks(ros))
     if 'autonomy' in requested:

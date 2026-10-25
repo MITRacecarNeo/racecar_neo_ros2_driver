@@ -343,8 +343,10 @@ class TestNetworkPolkitRule:
 
     def test_installed_by_setup_user_env(self):
         text = self.INSTALLER.read_text()
-        rules = ('49-racecar-network.rules 49-racecar-autonomy.rules '
-                 '49-racecar-dashboards.rules 49-racecar-teleop.rules')
+        rules = (
+            '49-racecar-network.rules 49-racecar-autonomy.rules '
+            '49-racecar-dashboards.rules 49-racecar-teleop.rules'
+        )
         assert f'for rule in {rules}; do' in text
         assert 'POLKIT_SRC="${SCRIPT_DIR}/polkit/${rule}"' in text
         assert 'POLKIT_DST="/etc/polkit-1/rules.d/${rule}"' in text
@@ -613,11 +615,17 @@ class TestDashboardScript:
             assert f'scripts/dashboards/{kept_out}_dashboard/' in gitignore
         assert 'scripts/dashboards/*/*.local.yaml' in gitignore
 
-    def test_linters_exclude_the_dashboards(self):
-        flake8 = (SCRIPTS_DIR.parent / 'test' / 'test_flake8.py').read_text()
-        pep257 = (SCRIPTS_DIR.parent / 'test' / 'test_pep257.py').read_text()
-        assert 'dashboards' in flake8
-        assert 'dashboards' in pep257
+    def test_linters_exclude_only_the_retired_dashboards(self):
+        root = SCRIPTS_DIR.parent
+        flake8 = (root / 'test' / 'test_flake8.py').read_text()
+        pep257 = (root / 'test' / 'test_pep257.py').read_text()
+        pyproject = (root / 'pyproject.toml').read_text()
+        for retired in ('eps_dashboard', 'pursuit_dashboard', 'smartfollow_dashboard'):
+            assert retired in flake8
+            assert retired in pep257
+            assert pyproject.count(retired) == 3  # black, ruff, mypy
+        for shipped in ('teleop', 'linefollow', 'wallfollow', 'camlabel'):
+            assert f'{shipped}_dashboard' not in flake8 + pep257 + pyproject
 
     def _retired(self, tmp_path, installed):
         """Run the shipped remove_retired_unit() against a throwaway unit dir."""
@@ -709,8 +717,10 @@ otg_mode=1
         if not cfg.exists():
             cfg.write_text(config)
         assigns = ''.join(f'{k}={v}\n' for k, v in env.items())
-        script = (f'CONFIG_TXT={cfg}\nSUDO=\n{assigns}'
-                  f'ensure_all_setting() {{{helper}\n}}\n{func}() {{{body}\n}}\n{func}\n')
+        script = (
+            f'CONFIG_TXT={cfg}\nSUDO=\n{assigns}'
+            f'ensure_all_setting() {{{helper}\n}}\n{func}() {{{body}\n}}\n{func}\n'
+        )
         result = subprocess.run(['bash', '-c', script], capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
         return cfg.read_text()
@@ -750,10 +760,12 @@ otg_mode=1
         cfg.write_text(self.FIXTURE)
         text = self.SCRIPT.read_text()
         helper = text.split('ensure_all_setting() {', 1)[1].split('\n}\n', 1)[0]
-        script = (f'CONFIG_TXT={cfg}\nSUDO=\nensure_all_setting() {{{helper}\n}}\n'
-                  'ensure_all_setting usb_max_power_enable 1\n'
-                  'ensure_all_setting usb_max_power_enable 1\n'
-                  'ensure_all_setting dtparam=i2c_arm on\n')
+        script = (
+            f'CONFIG_TXT={cfg}\nSUDO=\nensure_all_setting() {{{helper}\n}}\n'
+            'ensure_all_setting usb_max_power_enable 1\n'
+            'ensure_all_setting usb_max_power_enable 1\n'
+            'ensure_all_setting dtparam=i2c_arm on\n'
+        )
         result = subprocess.run(['bash', '-c', script], capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
         scope = self._all_scope(cfg.read_text())
@@ -823,12 +835,25 @@ class TestOneShotSetup:
     def _all_setup_text(self):
         return '\n'.join((SCRIPTS_DIR / s).read_text() for s in [*PHASE_SCRIPTS, ORCHESTRATOR])
 
-    @pytest.mark.parametrize('package', [
-        'raspi-config', 'rpi-eeprom', 'libraspberrypi-bin', 'network-manager',
-        'avahi-daemon', 'polkitd', 'python3-matplotlib', 'ros-jazzy-xacro',
-        'ros-jazzy-robot-state-publisher', 'nvme-cli', 'gdisk',
-        'ros-jazzy-slam-toolbox', 'ros-jazzy-nav2-amcl', 'ros-jazzy-foxglove-bridge',
-    ])
+    @pytest.mark.parametrize(
+        'package',
+        [
+            'raspi-config',
+            'rpi-eeprom',
+            'libraspberrypi-bin',
+            'network-manager',
+            'avahi-daemon',
+            'polkitd',
+            'python3-matplotlib',
+            'ros-jazzy-xacro',
+            'ros-jazzy-robot-state-publisher',
+            'nvme-cli',
+            'gdisk',
+            'ros-jazzy-slam-toolbox',
+            'ros-jazzy-nav2-amcl',
+            'ros-jazzy-foxglove-bridge',
+        ],
+    )
     def test_runtime_packages_are_installed(self, package):
         assert package in self._all_setup_text(), package
 
@@ -872,7 +897,7 @@ class TestOneShotSetup:
         named = set(re.findall(r'racecar-[a-z]+\.service', rules))
         installed = {p.name for p in SCRIPTS_DIR.glob('racecar-*.service')}
         templates = (SCRIPTS_DIR / 'dashboards').glob('*/racecar-*.service.in')
-        installed |= {p.name[:-len('.in')] for p in templates}
+        installed |= {p.name[: -len('.in')] for p in templates}
         assert named and named <= installed, named - installed
         user_env = (SCRIPTS_DIR / 'setup_user_env.sh').read_text()
         for rule in (SCRIPTS_DIR / 'polkit').glob('*.rules'):
@@ -880,9 +905,15 @@ class TestOneShotSetup:
 
     def test_every_unit_the_tools_manage_is_installed(self):
         services = (SCRIPTS_DIR / 'setup_services.sh').read_text()
-        for unit in ('racecar-data.service', 'racecar-teleop.service', 'racecar-watchdog.service',
-                     'racecar-dashboard.service', 'racecar-jupyter.service',
-                     'racecar-mapview.service', 'racecar-autonomy.service'):
+        for unit in (
+            'racecar-data.service',
+            'racecar-teleop.service',
+            'racecar-watchdog.service',
+            'racecar-dashboard.service',
+            'racecar-jupyter.service',
+            'racecar-mapview.service',
+            'racecar-autonomy.service',
+        ):
             assert unit in services, unit
 
 

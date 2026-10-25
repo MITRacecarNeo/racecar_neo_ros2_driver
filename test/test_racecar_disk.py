@@ -24,15 +24,33 @@ def disk():
 
 
 def lsblk(children=(), serial='25475480ECE6'):
-    return json.dumps({'blockdevices': [{
-        'name': 'nvme0n1', 'path': '/dev/nvme0n1', 'type': 'disk', 'size': 500107862016,
-        'model': 'CT500P310SSD8', 'serial': serial, 'children': list(children),
-    }]})
+    return json.dumps(
+        {
+            'blockdevices': [
+                {
+                    'name': 'nvme0n1',
+                    'path': '/dev/nvme0n1',
+                    'type': 'disk',
+                    'size': 500107862016,
+                    'model': 'CT500P310SSD8',
+                    'serial': serial,
+                    'children': list(children),
+                }
+            ]
+        }
+    )
 
 
 def ours(mounts=(None,)):
-    return {'name': 'nvme0n1p1', 'path': '/dev/nvme0n1p1', 'type': 'part', 'fstype': 'ext4',
-            'label': 'racecar-data', 'uuid': UUID, 'mountpoints': list(mounts)}
+    return {
+        'name': 'nvme0n1p1',
+        'path': '/dev/nvme0n1p1',
+        'type': 'part',
+        'fstype': 'ext4',
+        'label': 'racecar-data',
+        'uuid': UUID,
+        'mountpoints': list(mounts),
+    }
 
 
 class FakeRun:
@@ -173,11 +191,15 @@ class TestSetup:
         run = FakeRun(lsblk([ours([str(env[1])])]))
         assert disk.setup(run, lambda s: None, lambda p: 'y', NOW) == 0
         links = [c for c in run.calls if c[:2] == ['ln', '-sfn']]
-        assert [c[-1] for c in links] == [str(tmp_path / 'home' / 'jupyter_ws' / 'data'),
-                                          str(tmp_path / 'home' / 'jupyter_ws' / 'maps')]
+        assert [c[-1] for c in links] == [
+            str(tmp_path / 'home' / 'jupyter_ws' / 'data'),
+            str(tmp_path / 'home' / 'jupyter_ws' / 'maps'),
+        ]
         copies = [c for c in run.calls if c[:2] == ['cp', '-a']]
-        assert [c[-1] for c in copies] == [str(env[1] / 'data' / 'datasets' / 'camlabel'),
-                                           str(env[1] / 'data' / 'maps')]
+        assert [c[-1] for c in copies] == [
+            str(env[1] / 'data' / 'datasets' / 'camlabel'),
+            str(env[1] / 'data' / 'maps'),
+        ]
 
 
 class TestFormat:

@@ -70,7 +70,9 @@ def test_pages_link_shared_files_with_the_asset_version(webui):
     # makes it fetch a changed rcn.css or charts.js at once.
     scripts = Path(__file__).resolve().parent.parent / 'scripts'
     pages = [
-        scripts / 'dashboard.html', scripts / 'dashboard_launch.html', scripts / 'mapview.html',
+        scripts / 'dashboard.html',
+        scripts / 'dashboard_launch.html',
+        scripts / 'mapview.html',
         scripts / 'dashboards' / 'teleop_dashboard' / 'teleop.html',
         scripts / 'dashboards' / 'linefollow_dashboard' / 'linefollow.html',
         scripts / 'dashboards' / 'wallfollow_dashboard' / 'wallfollow.html',
@@ -86,14 +88,21 @@ def test_pages_link_shared_files_with_the_asset_version(webui):
 def test_lab_pages_show_a_closed_screen():
     # A lab app stopped from the apps page leaves its tab open; lost.js covers it.
     dashboards = Path(__file__).resolve().parent.parent / 'scripts' / 'dashboards'
-    for page in ('teleop_dashboard/teleop.html', 'linefollow_dashboard/linefollow.html',
-                 'wallfollow_dashboard/wallfollow.html', 'camlabel_dashboard/camlabel.html'):
+    for page in (
+        'teleop_dashboard/teleop.html',
+        'linefollow_dashboard/linefollow.html',
+        'wallfollow_dashboard/wallfollow.html',
+        'camlabel_dashboard/camlabel.html',
+    ):
         text = (dashboards / page).read_text()
         assert '/ui/lost.js?v=' in text and 'data-app="' in text, page
 
 
 def test_driving_lab_pages_keep_the_override_alive():
     dashboards = Path(__file__).resolve().parent.parent / 'scripts' / 'dashboards'
-    for page in ('teleop_dashboard/teleop.html', 'linefollow_dashboard/linefollow.html',
-                 'wallfollow_dashboard/wallfollow.html'):
+    for page in (
+        'teleop_dashboard/teleop.html',
+        'linefollow_dashboard/linefollow.html',
+        'wallfollow_dashboard/wallfollow.html',
+    ):
         assert '/ui/override.js?v=' in (dashboards / page).read_text(), page

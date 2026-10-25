@@ -419,9 +419,7 @@ class TestRunSequence:
 
 
 class TestSessionBack:
-    def test_back_reruns_the_previous_step_with_its_first_values(
-        self, cal, params, monkeypatch
-    ):
+    def test_back_reruns_the_previous_step_with_its_first_values(self, cal, params, monkeypatch):
         answers = ['', 'b', '', '', 'n']  # imu, back, imu again, mag, no restart
         monkeypatch.setattr(cal, 'ask', lambda _p='': answers.pop(0))
         ran = []

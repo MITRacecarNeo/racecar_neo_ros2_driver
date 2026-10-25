@@ -28,13 +28,15 @@ class TestResolver:
         assert car_profile.param_path('odom.yaml') == car_profile_dir / 'params' / 'odom.yaml'
         assert car_profile.param_path('odom') == car_profile_dir / 'params' / 'odom.yaml'
         assert car_profile.dashboard_settings('teleop') == (
-            car_profile_dir / 'dashboards' / 'teleop.yaml')
+            car_profile_dir / 'dashboards' / 'teleop.yaml'
+        )
 
     def test_overrides_only_for_existing_files(self, car_profile_dir):
         assert car_profile.param_override('odom') is None
         car_profile.write_values('odom', {'a': 1})
         assert car_profile.param_overrides(['mux.yaml', 'odom.yaml']) == [
-            str(car_profile_dir / 'params' / 'odom.yaml')]
+            str(car_profile_dir / 'params' / 'odom.yaml')
+        ]
 
 
 class TestWrites:
@@ -62,7 +64,8 @@ class TestWrites:
 
     def test_node_params_layers_the_profile_on_the_defaults(self, tmp_path):
         (tmp_path / 'odom.yaml').write_text(
-            yaml.safe_dump({'pit_node': {'ros__parameters': {'a': 0, 'b': 0}}}))
+            yaml.safe_dump({'pit_node': {'ros__parameters': {'a': 0, 'b': 0}}})
+        )
         car_profile.write_params('odom', 'pit_node', {'a': 5})
         assert car_profile.node_params('odom', 'pit_node', tmp_path) == {'a': 5, 'b': 0}
 
@@ -147,7 +150,8 @@ class TestExportImport:
         lines = car_profile.import_profile(archive, NOW)
         assert 'Imported params/frames.yaml.' in lines
         assert yaml.safe_load((other / 'params' / 'frames.yaml').read_text()) == {
-            'laser_yaw_deg': 179.5}
+            'laser_yaw_deg': 179.5
+        }
         assert not (other / 'history').exists()
         assert car_profile.import_profile(archive, NOW) == []
 

@@ -172,8 +172,11 @@ def ensure_profile() -> Path:
     car = root / 'car.yaml'
     if not car.exists():
         body = {'name': socket.gethostname(), 'profile_version': PROFILE_VERSION}
-        write_text(car, '# This car. Read by racecar profile and racecar status.\n'
-                   + yaml.safe_dump(body, sort_keys=False))
+        write_text(
+            car,
+            '# This car. Read by racecar profile and racecar status.\n'
+            + yaml.safe_dump(body, sort_keys=False),
+        )
     return root
 
 
@@ -199,8 +202,9 @@ def legacy_files(config_dir: Path | None, dashboards_root: Path | None) -> dict[
 
 def unmigrated(config_dir: Path | None, dashboards_root: Path | None) -> list[Path]:
     """Return old per-car files whose profile copy does not exist: values the driver ignores."""
-    return [old for old, new in legacy_files(config_dir, dashboards_root).items()
-            if not new.exists()]
+    return [
+        old for old, new in legacy_files(config_dir, dashboards_root).items() if not new.exists()
+    ]
 
 
 def migrate(
@@ -219,8 +223,10 @@ def migrate(
     for old, new in legacy_files(config_dir, dashboards_root).items():
         kept = backup / old.name
         if kept.is_file() and kept.read_bytes() != old.read_bytes():
-            lines.append(f'{old.name}: the copy in {backup} differs; keeping the one in '
-                         f'the driver folder. The other is kept under {profile_dir()}/history.')
+            lines.append(
+                f'{old.name}: the copy in {backup} differs; keeping the one in '
+                f'the driver folder. The other is kept under {profile_dir()}/history.'
+            )
         if new.exists() and new.read_bytes() == old.read_bytes():
             old.unlink()
             lines.append(f'{old.name}: already in the profile; removed from the driver folder.')

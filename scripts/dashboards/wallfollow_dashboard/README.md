@@ -64,7 +64,7 @@ wallfollow.yaml. Save rewrites the numbers in place, so the comments in the file
 | speed_kp, speed_kd | slow down in proportion to \|error\|. 0 leaves speed constant |
 | window | averaging window per ray, degrees; smooths a noisy scan |
 | max_mps | the car's top speed; the slider is a fraction of this |
-| lookahead | metres. Distances are capped here in both modes, so an open side reads as `lookahead` rather than as 12 m of empty room |
+| lookahead | meters. Distances are capped here in both modes, so an open side reads as `lookahead` rather than as 12 m of empty room |
 | look_angle | static mode: the side windows sit this many degrees off the nose. 90 is straight sideways |
 | width, side_weight | dynamic mode: how far either side of the nose to search, and a bias toward one side |
 

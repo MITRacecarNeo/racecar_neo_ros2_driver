@@ -69,12 +69,13 @@ def params(monkeypatch, tmp_path):
 @pytest.fixture
 def node(monkeypatch):
     monkeypatch.setattr(tp.Node, '__init__', lambda self, name: None)
-    monkeypatch.setattr(tp.TeleopNode, 'create_publisher',
-                        lambda self, *a, **k: Recorder(), raising=False)
-    monkeypatch.setattr(tp.TeleopNode, 'create_subscription',
-                        lambda self, *a, **k: None, raising=False)
-    monkeypatch.setattr(tp.TeleopNode, 'create_timer',
-                        lambda self, *a, **k: None, raising=False)
+    monkeypatch.setattr(
+        tp.TeleopNode, 'create_publisher', lambda self, *a, **k: Recorder(), raising=False
+    )
+    monkeypatch.setattr(
+        tp.TeleopNode, 'create_subscription', lambda self, *a, **k: None, raising=False
+    )
+    monkeypatch.setattr(tp.TeleopNode, 'create_timer', lambda self, *a, **k: None, raising=False)
     return tp.TeleopNode()
 
 
@@ -87,6 +88,7 @@ def drive(node, fwd, turn, at=100.0, tick=None):
 
 # ---- parameters ----
 
+
 def test_speed_is_capped_both_ways():
     assert tp.clamp_speed(5.0) == tp.MAX_SPEED
     assert tp.clamp_speed(-5.0) == -tp.MAX_SPEED
@@ -94,6 +96,7 @@ def test_speed_is_capped_both_ways():
 
 def test_shipped_yaml_cannot_drive():
     import yaml
+
     assert yaml.safe_load(SHIPPED)['speed'] == 0.0
 
 
@@ -119,6 +122,7 @@ def test_update_clamps(params):
 
 
 # ---- command mapping ----
+
 
 def test_forward_publishes_the_speed_slider(node, params):
     msg = drive(node, 1, 0)
@@ -168,6 +172,7 @@ def test_speed_zero_means_no_motion_but_steering(node, params):
 
 # ---- timeout ----
 
+
 def test_stale_command_drives_zero(node, params):
     params['cmd_timeout'] = 0.5
     msg = drive(node, 1, -1, at=100.0, tick=100.4)
@@ -195,6 +200,7 @@ def test_a_released_command_never_reads_as_timed_out(node):
 
 
 # ---- sensors ----
+
 
 def make_scan(points=1080, span_deg=360.0, fill=2.0):
     """Build a scan shaped like this car's: 1080 points over 360 degrees."""
@@ -294,7 +300,7 @@ def test_depth_preview_is_encoded(node):
     assert tp._state['depth_res'] == [640, 480]
 
 
-def test_depth_preview_takes_metres_too(node):
+def test_depth_preview_takes_meters_too(node):
     msg = Image()
     msg.encoding = '32FC1'
     msg.height, msg.width = 480, 640
@@ -324,12 +330,16 @@ def test_a_colour_only_car_does_not_subscribe_to_depth(monkeypatch, params):
     """
     topics = []
     monkeypatch.setattr(tp.Node, '__init__', lambda self, name: None)
-    monkeypatch.setattr(tp.TeleopNode, 'create_publisher',
-                        lambda self, *a, **k: Recorder(), raising=False)
-    monkeypatch.setattr(tp.TeleopNode, 'create_subscription',
-                        lambda self, kind, topic, *a, **k: topics.append(topic), raising=False)
-    monkeypatch.setattr(tp.TeleopNode, 'create_timer',
-                        lambda self, *a, **k: None, raising=False)
+    monkeypatch.setattr(
+        tp.TeleopNode, 'create_publisher', lambda self, *a, **k: Recorder(), raising=False
+    )
+    monkeypatch.setattr(
+        tp.TeleopNode,
+        'create_subscription',
+        lambda self, kind, topic, *a, **k: topics.append(topic),
+        raising=False,
+    )
+    monkeypatch.setattr(tp.TeleopNode, 'create_timer', lambda self, *a, **k: None, raising=False)
     params['depth_topic'] = ''
     tp.TeleopNode()
     assert '/camera/depth' not in topics
@@ -438,12 +448,16 @@ def test_stale_detections_are_cleared(node):
 def test_a_car_with_no_detector_never_subscribes(monkeypatch, params):
     topics = []
     monkeypatch.setattr(tp.Node, '__init__', lambda self, name: None)
-    monkeypatch.setattr(tp.TeleopNode, 'create_publisher',
-                        lambda self, *a, **k: Recorder(), raising=False)
-    monkeypatch.setattr(tp.TeleopNode, 'create_subscription',
-                        lambda self, kind, topic, *a, **k: topics.append(topic), raising=False)
-    monkeypatch.setattr(tp.TeleopNode, 'create_timer',
-                        lambda self, *a, **k: None, raising=False)
+    monkeypatch.setattr(
+        tp.TeleopNode, 'create_publisher', lambda self, *a, **k: Recorder(), raising=False
+    )
+    monkeypatch.setattr(
+        tp.TeleopNode,
+        'create_subscription',
+        lambda self, kind, topic, *a, **k: topics.append(topic),
+        raising=False,
+    )
+    monkeypatch.setattr(tp.TeleopNode, 'create_timer', lambda self, *a, **k: None, raising=False)
     params['detections_topic'] = ''
     node = tp.TeleopNode()
     assert node._det_available is False
@@ -465,6 +479,7 @@ def test_thin_keeps_the_newest_row():
 
 
 # ---- sensors, dot matrix, LED strip ----
+
 
 def test_heading_is_zero_facing_north_and_counterclockwise_positive():
     assert tp.heading_deg([20.0, 0.0, -40.0]) == pytest.approx(0.0)

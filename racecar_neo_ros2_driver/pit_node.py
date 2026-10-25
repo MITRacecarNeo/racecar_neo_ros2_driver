@@ -101,7 +101,8 @@ def build_battery_state(volts: float, amps: float) -> BatteryState:
     msg.temperature = math.nan
     msg.power_supply_status = (
         BatteryState.POWER_SUPPLY_STATUS_DISCHARGING
-        if amps > 0.0 else BatteryState.POWER_SUPPLY_STATUS_UNKNOWN
+        if amps > 0.0
+        else BatteryState.POWER_SUPPLY_STATUS_UNKNOWN
     )
     msg.present = True
     return msg

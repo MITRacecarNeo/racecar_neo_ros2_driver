@@ -57,39 +57,104 @@ PORT = 8080
 # `exclusive` utilities publish /drive, so one runs at a time. An app with no
 # unit is shown but opens nothing.
 APPS: list[dict[str, Any]] = [
-    {'id': 'terminator', 'name': 'Terminator', 'icon': 'terminal', 'port': None,
-     'group': 'core', 'unit': None, 'exclusive': False, 'startable': False,
-     'desc': 'Open a terminal'},
-    {'id': 'jupyter', 'name': 'JupyterLab', 'icon': 'notebook', 'port': 8888,
-     'group': 'core', 'unit': 'racecar-jupyter', 'exclusive': False, 'startable': False,
-     'desc': 'Notebooks and code'},
-    {'id': 'mapview', 'name': 'Map Viewer', 'icon': 'map', 'port': 8084,
-     'group': 'core', 'unit': 'racecar-mapview', 'exclusive': False, 'startable': False,
-     'desc': 'Build and load maps'},
-    {'id': 'webteleop', 'name': 'Web Teleop', 'icon': 'gamepad', 'port': 8081,
-     'group': 'utilities', 'unit': 'racecar-webteleop', 'exclusive': True, 'startable': True,
-     'desc': 'Drive from the browser with camera and lidar.'},
-    {'id': 'linefollow', 'name': 'Line Follow', 'icon': 'line', 'port': 8082,
-     'group': 'utilities', 'unit': 'racecar-linefollow', 'exclusive': True, 'startable': True,
-     'desc': 'Follow a colored line with the camera.', 'needs': 'camera'},
-    {'id': 'wallfollow', 'name': 'Wall Follow', 'icon': 'wall', 'port': 8083,
-     'group': 'utilities', 'unit': 'racecar-wallfollow', 'exclusive': True, 'startable': True,
-     'desc': 'Follow walls with the lidar.'},
-    {'id': 'camlabel', 'name': 'Camera Label', 'icon': 'tag', 'port': 8085,
-     'group': 'utilities', 'unit': 'racecar-camlabel', 'exclusive': False, 'startable': True,
-     'desc': 'Capture camera frames and label them for training.', 'needs': 'camera'},
+    {
+        'id': 'terminator',
+        'name': 'Terminator',
+        'icon': 'terminal',
+        'port': None,
+        'group': 'core',
+        'unit': None,
+        'exclusive': False,
+        'startable': False,
+        'desc': 'Open a terminal',
+    },
+    {
+        'id': 'jupyter',
+        'name': 'JupyterLab',
+        'icon': 'notebook',
+        'port': 8888,
+        'group': 'core',
+        'unit': 'racecar-jupyter',
+        'exclusive': False,
+        'startable': False,
+        'desc': 'Notebooks and code',
+    },
+    {
+        'id': 'mapview',
+        'name': 'Map Viewer',
+        'icon': 'map',
+        'port': 8084,
+        'group': 'core',
+        'unit': 'racecar-mapview',
+        'exclusive': False,
+        'startable': False,
+        'desc': 'Build and load maps',
+    },
+    {
+        'id': 'webteleop',
+        'name': 'Web Teleop',
+        'icon': 'gamepad',
+        'port': 8081,
+        'group': 'utilities',
+        'unit': 'racecar-webteleop',
+        'exclusive': True,
+        'startable': True,
+        'desc': 'Drive from the browser with camera and lidar.',
+    },
+    {
+        'id': 'linefollow',
+        'name': 'Line Follow',
+        'icon': 'line',
+        'port': 8082,
+        'group': 'utilities',
+        'unit': 'racecar-linefollow',
+        'exclusive': True,
+        'startable': True,
+        'desc': 'Follow a colored line with the camera.',
+        'needs': 'camera',
+    },
+    {
+        'id': 'wallfollow',
+        'name': 'Wall Follow',
+        'icon': 'wall',
+        'port': 8083,
+        'group': 'utilities',
+        'unit': 'racecar-wallfollow',
+        'exclusive': True,
+        'startable': True,
+        'desc': 'Follow walls with the lidar.',
+    },
+    {
+        'id': 'camlabel',
+        'name': 'Camera Label',
+        'icon': 'tag',
+        'port': 8085,
+        'group': 'utilities',
+        'unit': 'racecar-camlabel',
+        'exclusive': False,
+        'startable': True,
+        'desc': 'Capture camera frames and label them for training.',
+        'needs': 'camera',
+    },
 ]
 
 # Features: parts of the car that cost CPU and can be turned off. The camera
 # and detections are teleop subsystems (scripts/features.py); changing one
 # restarts teleop. Autonomy is its own unit, started from the map viewer.
 FEATURES: list[dict[str, Any]] = [
-    {'id': 'camera', 'name': 'Camera', 'icon': 'camera',
-     'desc': 'Turn on/off the color and depth camera'},
-    {'id': 'detections', 'name': 'Detections', 'icon': 'target',
-     'desc': 'Turn on/off the detection node'},
-    {'id': 'autonomy', 'name': 'Autonomy', 'icon': 'radar',
-     'desc': 'Mapping or localization.'},
+    {
+        'id': 'camera',
+        'name': 'Camera',
+        'icon': 'camera',
+        'desc': 'Turn on/off the color and depth camera',
+    },
+    {
+        'id': 'detections',
+        'name': 'Detections',
+        'icon': 'target',
+        'desc': 'Turn on/off the detection node',
+    },
+    {'id': 'autonomy', 'name': 'Autonomy', 'icon': 'radar', 'desc': 'Mapping or localization.'},
 ]
 TELEOP_UNIT = 'racecar-teleop.service'
 AUTONOMY_UNIT = 'racecar-autonomy.service'
@@ -128,8 +193,7 @@ MONITORED = {
     'realsense': {'topic': '/camera/color', 'label': 'RealSense D435i', 'supervised': True},
     'edgetpu': {'topic': '/edgetpu/inference', 'label': 'Coral EdgeTPU', 'supervised': False},
     'dotmatrix': {'topic': '/dotmatrix/frame', 'label': 'Dot matrix', 'supervised': False},
-    'led': {'topic': '/led/pixels', 'label': 'LED strip', 'supervised': False,
-            'publisher': True},
+    'led': {'topic': '/led/pixels', 'label': 'LED strip', 'supervised': False, 'publisher': True},
 }
 
 # Subscribed to and counted by the dashboard.
@@ -273,8 +337,7 @@ class OverrideSession:
             if self.number and now - self._kept > OVERRIDE_KEEPALIVE_SEC:
                 self.number = 0
                 self.ended = 'Ended. The page stopped responding.'
-            if (self.number and not self._confirmed
-                    and now - self._started > OVERRIDE_CONFIRM_SEC):
+            if self.number and not self._confirmed and now - self._started > OVERRIDE_CONFIRM_SEC:
                 self.number = 0
                 self.ended = 'Teleop is not running.'
             return self.number
@@ -565,8 +628,11 @@ def data_root_health() -> dict[str, str]:
     if warning:
         detail = f'{warning} {free:.0f} GB free'
         return {'label': 'Data drive', 'status': 'stale', 'detail': detail}
-    return {'label': 'Data drive', 'status': 'healthy' if free >= 10 else 'stale',
-            'detail': detail}
+    return {
+        'label': 'Data drive',
+        'status': 'healthy' if free >= 10 else 'stale',
+        'detail': detail,
+    }
 
 
 def _collect_system_health() -> dict[str, dict[str, str]]:
@@ -689,8 +755,10 @@ def open_app(target: str, run: Callable[..., Any] = subprocess.run) -> tuple[boo
         return False, f'{app["name"]} is not available.'
     if app['exclusive']:
         live = ('active', 'activating')
-        if (unit_states([app['unit']], run)[app['unit']] not in live
-                and unit_states([AUTONOMY_UNIT], run)[AUTONOMY_UNIT] in live):
+        if (
+            unit_states([app['unit']], run)[app['unit']] not in live
+            and unit_states([AUTONOMY_UNIT], run)[AUTONOMY_UNIT] in live
+        ):
             mapping = last_run().get('mode') == 'mapping'
             message = autonomy_action('save-stop' if mapping else 'stop', run)
             if unit_states([AUTONOMY_UNIT], run)[AUTONOMY_UNIT] in live:
@@ -728,7 +796,9 @@ def _systemctl(verb: str, unit: str, run: Callable[..., Any]) -> str:
     try:
         r = run(
             ['systemctl', '--no-ask-password', verb, unit],
-            capture_output=True, text=True, timeout=SYSTEMCTL_TIMEOUT_SEC,
+            capture_output=True,
+            text=True,
+            timeout=SYSTEMCTL_TIMEOUT_SEC,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return str(exc)
@@ -803,8 +873,10 @@ def feature_list(
             out.append({**item, 'state': state, 'last': last})
             continue
         on = teleop == 'active' and running[item['id']]
-        pending = busy or teleop in ('activating', 'reloading') or (
-            teleop == 'active' and running[item['id']] != wanted[item['id']]
+        pending = (
+            busy
+            or teleop in ('activating', 'reloading')
+            or (teleop == 'active' and running[item['id']] != wanted[item['id']])
         )
         state = 'activating' if pending else ('active' if on else 'inactive')
         out.append({**item, 'state': state, 'wanted': wanted[item['id']]})
@@ -816,7 +888,9 @@ def map_tool(*argv: str, run: Callable[..., Any] = subprocess.run) -> tuple[int,
     try:
         r = run(
             [*MAP_TOOL, *argv],
-            capture_output=True, text=True, timeout=MAP_TOOL_TIMEOUT_SEC,
+            capture_output=True,
+            text=True,
+            timeout=MAP_TOOL_TIMEOUT_SEC,
             stdin=subprocess.DEVNULL,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -989,7 +1063,9 @@ def _monitor_loop() -> None:
             for name, cfg in MONITORED.items():
                 if cfg.get('publisher'):
                     # pit_node subscribes, so the topic exists without a driver.
-                    present = _sampler is not None and _sampler.count_publishers(cfg['topic']) > 0
+                    present = (
+                        _sampler is not None and _sampler.count_publishers(str(cfg['topic'])) > 0
+                    )
                 else:
                     present = cfg['topic'] in topics
                 if present:
@@ -1008,7 +1084,7 @@ def _monitor_loop() -> None:
                     'detail': detail,
                 }
 
-            rates = {}
+            rates: dict[str, dict[str, Any]] = {}
             warming = _sampler is not None and _sampler.warming()
             for topic in DISPLAY_RATE_TOPICS:
                 hz = _measure_hz(topic)
@@ -1100,19 +1176,25 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 _refresh_apps()
             if query.get('refresh') == ['1']:
                 _refresh_apps()
-            self._send_json(200, {
-                **get_status(),
-                'override': _override.view(time.monotonic()),
-                'features': features_view(),
-            })
+            self._send_json(
+                200,
+                {
+                    **get_status(),
+                    'override': _override.view(time.monotonic()),
+                    'features': features_view(),
+                },
+            )
         elif url.path == '/api/history':
             now = time.time()
-            self._send_json(200, {
-                'now': now,
-                'window_sec': BATTERY_WINDOW_SEC,
-                'battery': _battery.buckets(now),
-                'system': _system.buckets(now),
-            })
+            self._send_json(
+                200,
+                {
+                    'now': now,
+                    'window_sec': BATTERY_WINDOW_SEC,
+                    'battery': _battery.buckets(now),
+                    'system': _system.buckets(now),
+                },
+            )
         elif url.path == '/api/overview':
             if _overview is None:
                 self._send_json(503, {})

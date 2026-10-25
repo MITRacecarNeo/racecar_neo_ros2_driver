@@ -429,8 +429,11 @@ class MuxNode(Node):
             self._override_was = active
             self._override_pub.publish(Bool(data=active))
             log = self.get_logger().warn if active else self.get_logger().info
-            log('Safety override on: /drive forwarded without RB' if active
-                else 'Safety override off')
+            log(
+                'Safety override on: /drive forwarded without RB'
+                if active
+                else 'Safety override off'
+            )
         if not active:
             return None
         if self._joy_mode(now) == MuxMode.GAMEPAD:

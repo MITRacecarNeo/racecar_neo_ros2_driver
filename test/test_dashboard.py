@@ -322,9 +322,16 @@ class TestHome:
         assert not [c for c in run.calls if c[1] == '--no-ask-password']
 
     def test_clear_apps_stops_utilities_only(self, dashboard):
-        run = FakeRun({'racecar-mapview': 'active', 'racecar-jupyter': 'active',
-                       'racecar-webteleop': 'active', 'racecar-camlabel': 'active',
-                       'racecar-dashboard': 'active', 'racecar-teleop': 'active'})
+        run = FakeRun(
+            {
+                'racecar-mapview': 'active',
+                'racecar-jupyter': 'active',
+                'racecar-webteleop': 'active',
+                'racecar-camlabel': 'active',
+                'racecar-dashboard': 'active',
+                'racecar-teleop': 'active',
+            }
+        )
         assert dashboard.clear_apps(run) == (True, 'Utilities stopped.')
         assert run.states['racecar-webteleop'] == 'inactive'
         assert run.states['racecar-camlabel'] == 'inactive'
@@ -340,8 +347,9 @@ class TestHome:
     def test_clear_apps_with_none_running(self, dashboard):
         assert dashboard.clear_apps(FakeRun({})) == (True, 'No utilities running.')
 
-    def test_clear_log_hides_earlier_lines_and_keeps_the_file(self, dashboard, tmp_path,
-                                                              monkeypatch):
+    def test_clear_log_hides_earlier_lines_and_keeps_the_file(
+        self, dashboard, tmp_path, monkeypatch
+    ):
         log = tmp_path / 'watchdog.log'
         log.write_text('old 1\nold 2\n')
         monkeypatch.setattr(dashboard, 'WATCHDOG_LOG', log)
@@ -381,7 +389,9 @@ class TestHome:
         run = FakeRun({'racecar-mapview': 'active', 'racecar-jupyter': 'failed'})
         states = dashboard.unit_states(['racecar-mapview', 'racecar-jupyter', 'racecar-x'], run)
         assert states == {
-            'racecar-mapview': 'active', 'racecar-jupyter': 'failed', 'racecar-x': 'inactive'
+            'racecar-mapview': 'active',
+            'racecar-jupyter': 'failed',
+            'racecar-x': 'inactive',
         }
         apps = dashboard.app_list(states)
         by_id = {a['id']: a['state'] for a in apps}
@@ -419,12 +429,21 @@ class TestHome:
     def test_polkit_rule_scope(self):
         scripts = Path(__file__).resolve().parent.parent / 'scripts'
         text = (scripts / 'polkit' / '49-racecar-dashboards.rules').read_text()
-        for unit in ('racecar-webteleop', 'racecar-linefollow', 'racecar-wallfollow',
-                     'racecar-camlabel'):
+        for unit in (
+            'racecar-webteleop',
+            'racecar-linefollow',
+            'racecar-wallfollow',
+            'racecar-camlabel',
+        ):
             assert f'"{unit}.service"' in text
         assert '["start", "stop"]' in text and 'subject.user === "racecar"' in text
-        for core in ('racecar-dashboard', 'racecar-teleop', 'racecar-autonomy',
-                     'racecar-mapview', 'racecar-jupyter'):
+        for core in (
+            'racecar-dashboard',
+            'racecar-teleop',
+            'racecar-autonomy',
+            'racecar-mapview',
+            'racecar-jupyter',
+        ):
             assert core not in text
         assert 'enable' not in text.split('polkit.addRule')[1]
         assert '49-racecar-dashboards.rules' in (scripts / 'setup_user_env.sh').read_text()
@@ -470,7 +489,10 @@ class TestHistory:
         h.add(100.0, 7.9, 2.0)
         monkeypatch.setattr(dashboard, '_battery', h)
         assert dashboard.battery_view(102.0) == {
-            'volts': 7.9, 'amps': 2.0, 'age': 2.0, 'stale': False
+            'volts': 7.9,
+            'amps': 2.0,
+            'age': 2.0,
+            'stale': False,
         }
         assert dashboard.battery_view(110.0)['stale']
 
@@ -596,8 +618,9 @@ class TestOverrideEndpoint:
 
         def send(action, headers=None):
             conn = http.client.HTTPConnection('127.0.0.1', server.server_address[1], timeout=5)
-            conn.request('POST', '/api/override', body=json.dumps({'action': action}),
-                         headers=headers or {})
+            conn.request(
+                'POST', '/api/override', body=json.dumps({'action': action}), headers=headers or {}
+            )
             resp = conn.getresponse()
             send.cors = resp.getheader('Access-Control-Allow-Origin')
             return resp.status, json.loads(resp.read())
@@ -630,14 +653,17 @@ class TestOverrideEndpoint:
 
 
 class TestOverrideOrigin:
-    @pytest.mark.parametrize('origin, host, allowed', [
-        ('http://car.local:8081', 'car.local:8080', True),
-        ('http://car.local:8083', 'car.local:8080', True),
-        ('http://car.local:8085', 'car.local:8080', False),
-        ('http://other:8081', 'car.local:8080', False),
-        ('https://car.local:8081', 'car.local:8080', False),
-        (None, 'car.local:8080', False),
-    ])
+    @pytest.mark.parametrize(
+        'origin, host, allowed',
+        [
+            ('http://car.local:8081', 'car.local:8080', True),
+            ('http://car.local:8083', 'car.local:8080', True),
+            ('http://car.local:8085', 'car.local:8080', False),
+            ('http://other:8081', 'car.local:8080', False),
+            ('https://car.local:8081', 'car.local:8080', False),
+            (None, 'car.local:8080', False),
+        ],
+    )
     def test_only_driving_lab_pages_on_this_host(self, dashboard, origin, host, allowed):
         assert (dashboard.override_origin(origin, host) is not None) is allowed
 
@@ -654,22 +680,32 @@ class TestFeatures:
     def test_states(self, dashboard):
         wanted = {'camera': True, 'detections': False}
         items = dashboard.feature_list(
-            {TELEOP: 'active', AUTONOMY: 'inactive'}, wanted, wanted, False, {})
+            {TELEOP: 'active', AUTONOMY: 'inactive'}, wanted, wanted, False, {}
+        )
         assert [i['state'] for i in items] == ['active', 'inactive', 'inactive']
 
     def test_pending_restart_shows_starting(self, dashboard):
         items = dashboard.feature_list(
-            {TELEOP: 'active'}, {'camera': True, 'detections': True},
-            {'camera': True, 'detections': False}, False, {})
+            {TELEOP: 'active'},
+            {'camera': True, 'detections': True},
+            {'camera': True, 'detections': False},
+            False,
+            {},
+        )
         assert items[1]['state'] == 'activating'
         items = dashboard.feature_list(
-            {TELEOP: 'active'}, dashboard.features.DEFAULTS, dashboard.features.DEFAULTS, True, {})
+            {TELEOP: 'active'}, dashboard.features.DEFAULTS, dashboard.features.DEFAULTS, True, {}
+        )
         assert items[0]['state'] == items[1]['state'] == 'activating'
 
     def test_teleop_down_reads_off(self, dashboard):
         items = dashboard.feature_list(
-            {TELEOP: 'inactive'}, dashboard.features.DEFAULTS, dashboard.features.DEFAULTS,
-            False, {})
+            {TELEOP: 'inactive'},
+            dashboard.features.DEFAULTS,
+            dashboard.features.DEFAULTS,
+            False,
+            {},
+        )
         assert items[0]['state'] == 'inactive'
 
     def test_last_run(self, dashboard, tmp_path):
@@ -720,7 +756,8 @@ class TestApplyFeatures:
     def test_autonomy_is_stopped_first_and_resumed(self, dashboard, tool):
         run = tool({TELEOP: 'active', AUTONOMY: 'active'})
         message = dashboard.apply_features(
-            {'camera': True, 'detections': True}, run, sleep=lambda s: None)
+            {'camera': True, 'detections': True}, run, sleep=lambda s: None
+        )
         restart = run.calls.index(['systemctl', '--no-ask-password', 'restart', TELEOP])
         assert run.tool == ['stop', 'resume'] and restart > 0
         assert message.endswith('resume done')
@@ -751,7 +788,9 @@ class TestFeatureEndpoint:
         assert dashboard.change_feature('autonomy', True, 'go')[0] is False
         assert job.start('busy', lambda: 'x' if __import__('time').sleep(0.3) is None else '')
         assert dashboard.change_feature('autonomy', True, 'resume') == (
-            False, 'Another change is running.')
+            False,
+            'Another change is running.',
+        )
 
     def test_page_has_features(self, dashboard):
         html = dashboard._load_dashboard_html()

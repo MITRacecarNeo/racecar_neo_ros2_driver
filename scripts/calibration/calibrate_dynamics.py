@@ -51,10 +51,9 @@ sys.path.insert(0, str(HERE.parent))
 
 from calibrate_common import (  # noqa: E402, I100
     backup_reminder,
-    install_config_dir,
     node_params,
     run_sequence,
-    source_config_dir,
+    stack_config_dir,
     update_local_values,
 )
 from racecar_log import build_bag_name, build_record_argv, load_config  # noqa: E402, I100
@@ -309,7 +308,7 @@ def read_bag(path: Path, axis: int = 2, sign: float = 1.0) -> Bag:
             scans.append((st + msg.scan_time, ranges[ok], angles[ok], beams[ok]))
     o = np.array(odom)
     xy = o[:, 1:3]
-    path = np.concatenate(([0.0], np.cumsum(np.hypot(*np.diff(xy, axis=0).T))))
+    path_m = np.concatenate(([0.0], np.cumsum(np.hypot(*np.diff(xy, axis=0).T))))
     g = np.array(gyro)
     m = np.array(motor)
     pts = [(t_ref, np.column_stack((r * np.cos(a), r * np.sin(a))), b) for t_ref, r, a, b in scans]
@@ -317,7 +316,7 @@ def read_bag(path: Path, axis: int = 2, sign: float = 1.0) -> Bag:
         odom_t=o[:, 0],
         odom=np.column_stack((xy, np.unwrap(o[:, 3]))),
         speed=o[:, 4],
-        path_m=path,
+        path_m=path_m,
         gyro_t=g[:, 0],
         yaw_rate=g[:, 1],
         motor_t=m[:, 0],
@@ -346,7 +345,7 @@ def command_edges(bag: Bag) -> list[tuple[float, float, float]]:
 def laser_pose() -> Pose:
     from racecar_neo_ros2_driver.frames import load_frames
 
-    f = load_frames(install_config_dir() or source_config_dir())
+    f = load_frames(stack_config_dir())
     return f['laser_x_mm'] * 1e-3, f['laser_y_mm'] * 1e-3, math.radians(f['laser_yaw_deg'])
 
 

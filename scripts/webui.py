@@ -33,7 +33,7 @@ def static_file(request_path: str, root: Path = WEB_DIR) -> tuple[bytes, str] | 
     path = unquote(urlparse(request_path).path)
     if not path.startswith(PREFIX):
         return None
-    target = (root / path[len(PREFIX):]).resolve()
+    target = (root / path.removeprefix(PREFIX)).resolve()
     if root.resolve() not in target.parents or not target.is_file():
         return None
     kind = TYPES.get(target.suffix)

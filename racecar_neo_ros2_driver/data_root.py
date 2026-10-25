@@ -101,8 +101,10 @@ def session_problem() -> str:
     root = current()[0]
     if root.is_dir() and writable(root):
         return ''
-    return (f'{root} cannot be written; the data drive may have dropped out. '
-            'Check it with racecar disk, or reboot to use the SD card.')
+    return (
+        f'{root} cannot be written; the data drive may have dropped out. '
+        'Check it with racecar disk, or reboot to use the SD card.'
+    )
 
 
 def on_nvme(path: Path) -> bool:

@@ -10,6 +10,15 @@ All notable changes to this project will be documented in this file. The format 
   times, 1.0 (off) by default; about 0.15 with the field firmware holds the
   car to about 1.0 m/s. The lowest active cap wins while mapping.
 
+### Changed
+
+- The lab dashboards in `scripts/dashboards/` (web teleop, line follow,
+  wall follow, camera label) are held to the package's lint rules: flake8,
+  pep257, ruff, black, and mypy (typed signatures). Only the retired
+  dashboards kept on some cars stay excluded. `racecar lint` passes on the
+  whole package again (black formatting, typing fixes in the calibration
+  tools, `racecar disk`, the dashboard, and the sensor overview).
+
 ## [0.9.0] - 2026-10-24
 
 ### Added

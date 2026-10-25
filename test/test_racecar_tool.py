@@ -218,7 +218,9 @@ class TestService:
         assert result.returncode == 0
         assert 'update' not in result.stdout
         for name, port in (
-            ('webteleop', '8081'), ('linefollow', '8082'), ('wallfollow', '8083'),
+            ('webteleop', '8081'),
+            ('linefollow', '8082'),
+            ('wallfollow', '8083'),
             ('camlabel', '8085'),
         ):
             assert f'{name}({port})' in result.stdout
