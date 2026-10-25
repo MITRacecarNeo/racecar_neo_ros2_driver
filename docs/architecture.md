@@ -89,7 +89,7 @@ Eight nodes ship in this package (`setup.py` console scripts):
 |---|---|
 | `pit_node` | Sole owner of the Teensy UART. Encodes drive commands, decodes telemetry, forwards display and LED frames, and integrates odometry (`odometry.py`) into `odom -> base_link`. |
 | `mux_node` | Arbitrates teleop against autonomy, enforces speed and steering limits, gates on the controller or on a live FlySky transmitter, zeroes output when the joystick drops. |
-| `throttle_node` | Clamps `/mux_out` to `[-1, 1]` and applies per-direction speed and steering caps onto `/motor`; while `/autonomy/status` reports mapping, clips speed to `mapping_speed_cap` and steering to `mapping_steering_cap`. The Teensy maps the normalized command to PWM. |
+| `throttle_node` | Clamps `/mux_out` to `[-1, 1]` and applies per-direction speed and steering caps onto `/motor`; while `/autonomy/status` reports mapping, clips speed to `mapping_speed_cap` and steering to `mapping_steering_cap`; clips speed to `speed_cap` at all times (1.0, off). The Teensy maps the normalized command to PWM. |
 | `gamepad_node` | Maps `/joy` axes into an Ackermann drive command. |
 | `imu_fusion_node` | Merges the RealSense and LSM9DS1 IMUs into one stream; passes through when only one is live. |
 | `dotmatrix_node` | Renders text, student pixel buffers, a startup splash, or a mode glyph into a display frame. |
@@ -642,7 +642,7 @@ node's `<name>_config` launch argument.
 |---|---|---|
 | `pit.yaml` | `pit_node` | serial device, axis order and polarity, topic names, CRC toggle |
 | `mux.yaml` | `mux_node` | speed and steering limits, arming buttons, joystick timeout, RC gate |
-| `throttle.yaml` | `throttle_node` | forward, reverse, and steering caps as fractions of full scale; `mapping_speed_cap`, `mapping_steering_cap` |
+| `throttle.yaml` | `throttle_node` | forward, reverse, and steering caps as fractions of full scale; `mapping_speed_cap`, `mapping_steering_cap`, `speed_cap` |
 | `gamepad.yaml` | `gamepad_node` | axis indices and signs |
 | `imu_fusion.yaml` | `imu_fusion_node` | source topics, output topic, rate, staleness timeout |
 | `lidar.yaml` | `sllidar_node` | serial device, baud, scan mode |

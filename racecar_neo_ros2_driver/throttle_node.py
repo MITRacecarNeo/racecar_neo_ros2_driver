@@ -7,6 +7,8 @@ every source drives straight at steering 0. While /autonomy/status reports
 mode 'mapping', speed is also clipped to mapping_speed_cap, which the firmware
 drives at its floor, and steering to mapping_steering_cap (before the trim;
 1.0, off, by default). The caps lift when the status reports another mode.
+speed_cap clips speed for every source at all times (1.0, off, by default);
+the lowest active cap wins.
 """
 
 from ackermann_msgs.msg import AckermannDriveStamped
@@ -49,6 +51,7 @@ class ThrottleNode(Node):
         self.declare_parameter('steering_trim', 0.0)
         self.declare_parameter('mapping_speed_cap', 0.02)
         self.declare_parameter('mapping_steering_cap', 1.0)
+        self.declare_parameter('speed_cap', 1.0)
 
         self._max_fwd = self.get_parameter('max_speed_forward').value
         self._max_back = self.get_parameter('max_speed_backward').value
@@ -56,6 +59,7 @@ class ThrottleNode(Node):
         self._trim = float(self.get_parameter('steering_trim').value)
         self._mapping_cap = float(self.get_parameter('mapping_speed_cap').value)
         self._mapping_steer = float(self.get_parameter('mapping_steering_cap').value)
+        self._speed_cap = float(self.get_parameter('speed_cap').value)
         self._mapping = False
 
         qos = QoSProfile(
@@ -75,14 +79,16 @@ class ThrottleNode(Node):
 
         self.get_logger().info(
             f'Throttle ready: max_fwd={self._max_fwd}, max_back={self._max_back}, '
-            f'max_steer={self._max_steer}, steering_trim={self._trim:+g} '
-            '(fractions of the firmware PWM range)'
+            f'max_steer={self._max_steer}, steering_trim={self._trim:+g}, '
+            f'speed_cap={self._speed_cap:g} (fractions of the firmware PWM range)'
         )
 
     def _drive_cb(self, msg: AckermannDriveStamped) -> None:
         out = AckermannDriveStamped()
         out.header = msg.header
-        out.drive.speed = scale_speed(msg.drive.speed, self._max_fwd, self._max_back)
+        out.drive.speed = cap_speed(
+            scale_speed(msg.drive.speed, self._max_fwd, self._max_back), self._speed_cap
+        )
         if self._mapping:
             out.drive.speed = cap_speed(out.drive.speed, self._mapping_cap)
         out.drive.steering_angle = scale_steering(

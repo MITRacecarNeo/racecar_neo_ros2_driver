@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+### Added
+
+- `speed_cap` in `throttle.yaml`: speed clipped for every source at all
+  times, 1.0 (off) by default; about 0.15 with the field firmware holds the
+  car to about 1.0 m/s. The lowest active cap wins while mapping.
+
 ## [0.9.0] - 2026-10-24
 
 ### Added

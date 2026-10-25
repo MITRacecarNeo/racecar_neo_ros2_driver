@@ -20,6 +20,7 @@ setting cuts your current connection.
 - [Per-car parameters](#per-car-parameters)
 - [Foxglove bridge](#foxglove-bridge)
 - [Mapping limits](#mapping-limits)
+- [Speed cap](#speed-cap)
 - [Golden image preparation](#golden-image-preparation)
 
 ## Ethernet addressing
@@ -225,6 +226,22 @@ from 65 to 47 deg/s; scans fit the finished map 97.9% within 0.1 m against
 94.7% without it, but the walls came out no thinner and a furnished room took
 many three-point turns. It suits a large open space. See
 docs/troubleshooting.md, "Map quality".
+
+## Speed cap
+
+| | |
+|---|---|
+| Default | off (`speed_cap` 1.0) |
+| Change | `speed_cap` in the car profile's `params/throttle.yaml`; restart teleop |
+| Revert | remove the key, restart teleop |
+| Safe path | any |
+
+`throttle_node` clips speed to `speed_cap` for the gamepad, the student
+library, and every other source, at all times. Unlike `max_speed_forward`,
+it clips instead of scaling, so a command below the cap drives as before.
+With the field firmware (4.0 m/s ceiling), 0.15 holds the car to about
+1.0 m/s. While mapping, the lower of `speed_cap` and `mapping_speed_cap`
+applies.
 
 ## Golden image preparation
 

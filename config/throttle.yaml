@@ -27,6 +27,12 @@ throttle_node:
     # no thinner and the room took many three-point turns; set it per car for
     # large open spaces.
     mapping_steering_cap: 1.0
+    # Speed clipped to this for every source at all times; 1.0 is off. Unlike
+    # max_speed_forward it clips instead of scaling, so a command keeps its
+    # meaning below the cap. With the field firmware (4.0 m/s ceiling) about
+    # 0.15 limits the car to about 1.0 m/s; set it per car in the car profile.
+    # The lowest active cap wins (mapping_speed_cap while mapping).
+    speed_cap: 1.0
     # Added to every steering command after max_steering, so the car drives
     # straight at steering 0. Per car, in throttle.local.yaml, written by
     # calibrate_steering.py (racecar calibrate steering).
