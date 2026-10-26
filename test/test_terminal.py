@@ -176,12 +176,20 @@ def client(tmp_path):
     sock = tmp_path / 'ttyd.sock'
     fake = _FakeTtyd(sock)
     closed = []
+    started = []
     ctx = term.Context(
         sock,
         authenticate=lambda u, p: p == 'right',
         allow_lan=lambda: False,
         layout=term.LayoutStore(tmp_path / 'profile' / 'terminal' / 'layout.json'),
         close=lambda pane: closed.append(pane) or pane != 'gone',
+        presets=term.PresetStore(
+            Path(term.CONFIG_DIR) / 'terminal_presets.json',
+            tmp_path / 'profile' / 'terminal' / 'presets.json',
+        ),
+        start=lambda tree: started.append(tree),
+        capture=lambda pane: None if pane == 'gone' else f'scrollback of {pane}\n',
+        exports=lambda: tmp_path,
     )
     srv = ThreadingHTTPServer(('127.0.0.1', 0), term.make_handler(ctx))
     srv.daemon_threads = True
@@ -205,6 +213,8 @@ def client(tmp_path):
     request.login = login
     request.port = srv.server_address[1]
     request.closed = closed
+    request.started = started
+    request.tmp = tmp_path
     yield request
     srv.shutdown()
     srv.server_close()
@@ -394,3 +404,145 @@ class TestLayoutApi:
         assert '.xterm-viewport::-webkit-scrollbar-thumb' in html
         assert 'id="reset"' in html and 'Close every terminal except Terminal 1?' in html
         assert 'shell' not in html.lower().split('<script>')[1].split('confirm(')[1][:80]
+
+
+class TestPresets:
+    def test_builtin_presets_are_valid(self):
+        presets = json.loads((Path(term.CONFIG_DIR) / 'terminal_presets.json').read_text())
+        clean = [term.validate_preset(p) for p in presets]
+        assert [p['name'] for p in clean] == [
+            'One terminal',
+            'Teleop logs',
+            'Car status',
+            'Four terminals',
+        ]
+        cmds = [n.get('cmd') for p in clean for n in _leaves(p['layout'])]
+        assert 'racecar service logs teleop' in cmds and 'htop' in cmds
+
+    @pytest.mark.parametrize('cmd', ['a\nb', 'x' * 301, 3])
+    def test_bad_commands(self, cmd):
+        with pytest.raises(ValueError):
+            term.validate_layout({'type': 'pane', 'id': 'a', 'cmd': cmd})
+
+    def test_store(self, tmp_path):
+        store = term.PresetStore(tmp_path / 'none.json', tmp_path / 'mine.json')
+        assert store.listing() == {'builtin': [], 'user': []}
+        store.save([{'name': ' Mine ', 'layout': _pane('a')}])
+        store.save([{'name': 'Mine', 'layout': _split(_pane('a'), _pane('b'))}])
+        assert [p['name'] for p in store.listing()['user']] == ['Mine']
+        assert store.find('Mine', 'user')['layout']['type'] == 'split'
+        assert store.delete('Mine') and not store.delete('Mine')
+
+    def test_store_limit(self, tmp_path):
+        store = term.PresetStore(tmp_path / 'none.json', tmp_path / 'mine.json')
+        store.save([{'name': f'p{i}', 'layout': _pane('a')} for i in range(20)])
+        with pytest.raises(ValueError):
+            store.save([{'name': 'one more', 'layout': _pane('a')}])
+
+    def test_fresh_ids(self):
+        tree = _split(_pane('a'), _pane('b'))
+        fresh = term.fresh_ids(tree)
+        ids = term.pane_ids(fresh)
+        assert len(set(ids)) == 2 and not set(ids) & {'a', 'b'}
+        assert all(term.PANE_ID.match(i) for i in ids)
+
+    def test_start_terminals(self):
+        calls = []
+        tree = _split(_pane('x'), {'type': 'pane', 'id': 'y', 'title': '', 'cmd': 'htop'})
+        term.start_terminals(
+            tree, Path('/c.conf'), Path('/w'), lambda argv, **kw: calls.append(argv)
+        )
+        base = ['tmux', '-L', 'racecar-terminal', '-f', '/c.conf']
+        assert calls == [
+            [*base, 'new-session', '-d', '-c', '/w', '-s', 'rcn-x'],
+            [*base, 'new-session', '-d', '-c', '/w', '-s', 'rcn-y'],
+            [*base, 'send-keys', '-t', 'rcn-y', '-l', 'htop'],
+            [*base, 'send-keys', '-t', 'rcn-y', 'Enter'],
+        ]
+
+    def test_scrollback(self):
+        calls = []
+
+        def run(argv, **kwargs):
+            calls.append(argv)
+            return SimpleNamespace(returncode=0, stdout='line 1\nline 2\n\n\n')
+
+        assert term.scrollback('a', run) == 'line 1\nline 2\n'
+        assert calls[0][-2:] == ['-t', 'rcn-a'] and '-S' in calls[0]
+        assert term.scrollback('BAD', run) is None
+
+    def test_export_name(self):
+        name = term.export_name('Teleop logs / 2', 0.0)
+        assert name.endswith('-Teleop-logs-2.txt') and name[:8].isdigit()
+        assert term.export_name('', 0.0).endswith('-terminal.txt')
+
+
+def _leaves(node):
+    return [node] if node['type'] == 'pane' else _leaves(node['a']) + _leaves(node['b'])
+
+
+class TestPresetApi:
+    def _cookie(self, client):
+        return client.login().getheader('Set-Cookie').split(';')[0]
+
+    def _post(self, client, path, body, cookie):
+        headers = {'Cookie': cookie, 'Content-Type': 'application/json'}
+        return client('POST', path, json.dumps(body), headers)
+
+    def test_list(self, client):
+        cookie = self._cookie(client)
+        resp, body = client('GET', '/api/presets', headers={'Cookie': cookie})
+        data = json.loads(body)
+        assert resp.status == 200 and len(data['builtin']) == 4 and data['user'] == []
+
+    def test_apply_starts_new_terminals_and_closes_the_old(self, client):
+        cookie = self._cookie(client)
+        resp, body = self._post(
+            client, '/api/presets/apply', {'name': 'Car status', 'kind': 'builtin'}, cookie
+        )
+        state = json.loads(body)
+        assert resp.status == 200 and state['version'] == 1
+        assert len(client.started) == 1 and client.started[0] == state['layout']
+        assert client.closed == ['main']
+        assert [n.get('cmd') for n in _leaves(state['layout'])] == ['racecar status', 'htop']
+
+    def test_apply_unknown(self, client):
+        cookie = self._cookie(client)
+        resp, _ = self._post(client, '/api/presets/apply', {'name': 'x', 'kind': 'user'}, cookie)
+        assert resp.status == 404
+
+    def test_save_import_delete(self, client):
+        cookie = self._cookie(client)
+        layout = _split(_pane('a', 'Left'), _pane('b'))
+        resp, body = self._post(
+            client, '/api/presets/save', {'name': 'Mine', 'layout': layout}, cookie
+        )
+        assert resp.status == 200 and json.loads(body)['user'][0]['name'] == 'Mine'
+        resp, body = self._post(
+            client,
+            '/api/presets/import',
+            {'presets': [{'name': 'Other', 'layout': _pane('a')}]},
+            cookie,
+        )
+        assert json.loads(body)['imported'] == 1
+        resp, body = self._post(client, '/api/presets/delete', {'name': 'Mine'}, cookie)
+        assert [p['name'] for p in json.loads(body)['user']] == ['Other']
+
+    def test_bad_import(self, client):
+        cookie = self._cookie(client)
+        resp, _ = self._post(client, '/api/presets/import', {'presets': [{'name': 3}]}, cookie)
+        assert resp.status == 400
+
+    def test_scrollback_export_keeps_a_copy(self, client):
+        cookie = self._cookie(client)
+        resp, body = self._post(client, '/api/scrollback', {'id': 'b', 'title': 'Logs'}, cookie)
+        data = json.loads(body)
+        assert resp.status == 200 and data['text'] == 'scrollback of b\n'
+        assert data['name'].endswith('-Logs.txt')
+        assert (client.tmp / data['name']).read_text() == 'scrollback of b\n'
+        assert self._post(client, '/api/scrollback', {'id': 'gone'}, cookie)[0].status == 404
+
+    def test_page_has_presets_and_export(self):
+        html = (Path(__file__).resolve().parent.parent / 'scripts' / 'terminal.html').read_text()
+        assert 'id="presets"' in html and 'data-act="export"' in html
+        assert 'Replace the open terminals with ${name}?' in html

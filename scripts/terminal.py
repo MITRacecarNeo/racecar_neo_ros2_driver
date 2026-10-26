@@ -69,6 +69,11 @@ MAX_PANES = 8
 MAX_DEPTH = 6
 MAX_TITLE = 40
 RATIO_RANGE = (0.1, 0.9)
+# A preset terminal's start command: one line, typed into the shell once.
+MAX_CMD = 300
+MAX_PRESETS = 20
+MAX_NAME = 40
+SCROLLBACK_FOLDER = 'terminal'
 DEFAULT_LAYOUT: dict[str, Any] = {'type': 'pane', 'id': 'main', 'title': ''}
 # New terminals start here (the student workspace), else in the home folder.
 START_DIR = Path.home() / 'jupyter_ws'
@@ -205,7 +210,13 @@ def validate_layout(node: Any, depth: int = 0) -> dict[str, Any]:
             raise ValueError('bad terminal id')
         if not isinstance(title, str):
             raise ValueError('bad title')
-        return {'type': 'pane', 'id': pane_id, 'title': title[:MAX_TITLE]}
+        clean = {'type': 'pane', 'id': pane_id, 'title': title[:MAX_TITLE]}
+        cmd = node.get('cmd', '')
+        if not isinstance(cmd, str) or len(cmd) > MAX_CMD or '\n' in cmd or '\r' in cmd:
+            raise ValueError('bad command')
+        if cmd:
+            clean['cmd'] = cmd
+        return clean
     if node.get('type') == 'split' and node.get('dir') in ('row', 'col'):
         try:
             ratio = float(node.get('ratio', 0.5))
@@ -279,6 +290,145 @@ def close_pane(pane_id: str, run: Callable[..., Any] = subprocess.run) -> bool:
     except (OSError, subprocess.TimeoutExpired):
         return False
     return r.returncode == 0
+
+
+def validate_preset(preset: Any) -> dict[str, Any]:
+    """Return a clean preset {name, layout}, or raise ValueError."""
+    if not isinstance(preset, dict):
+        raise ValueError('bad preset')
+    name = preset.get('name')
+    if not isinstance(name, str) or not name.strip() or len(name) > MAX_NAME:
+        raise ValueError('bad preset name')
+    return {'name': name.strip(), 'layout': validate_layout(preset.get('layout'))}
+
+
+class PresetStore:
+    """Built-in presets shipped in config/, and the car's own presets in the profile."""
+
+    def __init__(self, builtin: Path, user: Path) -> None:
+        self.builtin, self.user = builtin, user
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def _read(path: Path) -> list[dict[str, Any]]:
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, ValueError):
+            return []
+        out = []
+        for preset in data if isinstance(data, list) else []:
+            try:
+                out.append(validate_preset(preset))
+            except ValueError:
+                continue
+        return out
+
+    def _write(self, presets: list[dict[str, Any]]) -> None:
+        self.user.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.user.with_name(f'.{self.user.name}.tmp')
+        tmp.write_text(json.dumps(presets, indent=2))
+        tmp.replace(self.user)
+
+    def listing(self) -> dict[str, list[dict[str, Any]]]:
+        return {'builtin': self._read(self.builtin), 'user': self._read(self.user)}
+
+    def find(self, name: str, kind: str) -> dict[str, Any] | None:
+        source = self.builtin if kind == 'builtin' else self.user
+        return next((p for p in self._read(source) if p['name'] == name), None)
+
+    def save(self, presets: list[Any]) -> int:
+        """Add or replace the car's presets by name; return how many were saved."""
+        clean = [validate_preset(p) for p in presets]
+        with self._lock:
+            mine = {p['name']: p for p in self._read(self.user)}
+            for preset in clean:
+                mine[preset['name']] = preset
+            if len(mine) > MAX_PRESETS:
+                raise ValueError('too many presets')
+            self._write(list(mine.values()))
+        return len(clean)
+
+    def delete(self, name: str) -> bool:
+        with self._lock:
+            mine = self._read(self.user)
+            kept = [p for p in mine if p['name'] != name]
+            if len(kept) == len(mine):
+                return False
+            self._write(kept)
+            return True
+
+
+def fresh_ids(node: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of a layout with new terminal ids, so a preset never joins a live shell."""
+    if node['type'] == 'pane':
+        return {**node, 'id': secrets.token_hex(3)}
+    return {**node, 'a': fresh_ids(node['a']), 'b': fresh_ids(node['b'])}
+
+
+def start_terminals(
+    node: dict[str, Any], tmux_conf: Path, cwd: Path, run: Callable[..., Any] = subprocess.run
+) -> None:
+    """Create each terminal's tmux session and type its start command once."""
+    if node['type'] == 'split':
+        start_terminals(node['a'], tmux_conf, cwd, run)
+        start_terminals(node['b'], tmux_conf, cwd, run)
+        return
+    session = f'{PANE_PREFIX}{node["id"]}'
+    base = ['tmux', '-L', TMUX_SOCKET, '-f', str(tmux_conf)]
+    run(
+        [*base, 'new-session', '-d', '-c', str(cwd), '-s', session], capture_output=True, timeout=5
+    )
+    if node.get('cmd'):
+        run([*base, 'send-keys', '-t', session, '-l', node['cmd']], capture_output=True, timeout=5)
+        run([*base, 'send-keys', '-t', session, 'Enter'], capture_output=True, timeout=5)
+
+
+def scrollback(pane_id: str, run: Callable[..., Any] = subprocess.run) -> str | None:
+    """Return a terminal's whole scrollback as text, or None for a bad id or no session."""
+    if not PANE_ID.match(pane_id):
+        return None
+    try:
+        r = run(
+            [
+                'tmux',
+                '-L',
+                TMUX_SOCKET,
+                'capture-pane',
+                '-p',
+                '-J',
+                '-S',
+                '-',
+                '-t',
+                f'{PANE_PREFIX}{pane_id}',
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return r.stdout.rstrip('\n') + '\n' if r.returncode == 0 else None
+
+
+def export_name(title: str, now: float) -> str:
+    """Return a file name for a scrollback export: time stamp and a file-safe title."""
+    safe = re.sub(r'[^A-Za-z0-9._-]+', '-', title).strip('-')[:MAX_TITLE] or 'terminal'
+    return f'{time.strftime("%Y%m%d_%H%M%S", time.localtime(now))}-{safe}.txt'
+
+
+def export_folder() -> Path:
+    from racecar_neo_ros2_driver import data_root
+
+    return data_root.data_dir(SCROLLBACK_FOLDER)
+
+
+def presets_paths() -> tuple[Path, Path]:
+    from racecar_neo_ros2_driver import car_profile
+
+    return (
+        CONFIG_DIR / 'terminal_presets.json',
+        car_profile.profile_dir() / 'terminal' / 'presets.json',
+    )
 
 
 def layout_path() -> Path:
@@ -375,10 +525,20 @@ class Context:
         allow_lan: Callable[[], bool] = allow_lan_setting,
         layout: LayoutStore | None = None,
         close: Callable[[str], bool] = close_pane,
+        presets: PresetStore | None = None,
+        start: Callable[[dict[str, Any]], None] | None = None,
+        capture: Callable[[str], str | None] = scrollback,
+        exports: Callable[[], Path] = export_folder,
     ) -> None:
         self.sock = sock
         self.layout = layout or LayoutStore(layout_path())
         self.close = close
+        self.presets = presets or PresetStore(*presets_paths())
+        self.start = start or (
+            lambda tree: start_terminals(tree, CONFIG_DIR / 'terminal.tmux.conf', start_dir())
+        )
+        self.capture = capture
+        self.exports = exports
         self.user = pwd.getpwuid(os.getuid()).pw_name
         self.sessions = Sessions()
         self.guard = LoginGuard()
@@ -435,11 +595,13 @@ def make_handler(ctx: Context) -> type[BaseHTTPRequestHandler]:
             if path.startswith(f'{PANE_BASE}/'):
                 self._pane(now)
                 return
-            if path == '/api/layout':
+            if path in ('/api/layout', '/api/presets'):
                 if not ctx.sessions.touch(self._token(), now):
                     self._json(401, {'message': 'Log in first.'})
                     return
-                self._json(200, ctx.layout.load())
+                self._json(
+                    200, ctx.layout.load() if path == '/api/layout' else ctx.presets.listing()
+                )
                 return
             self._send(404, b'Not found.', 'text/plain')
 
@@ -471,15 +633,64 @@ def make_handler(ctx: Context) -> type[BaseHTTPRequestHandler]:
                     return
                 self._json(200 if saved else 409, state)
                 return
+            if path.startswith('/api/presets/'):
+                self._presets(path.rsplit('/', 1)[1], body)
+                return
+            if path == '/api/scrollback':
+                self._scrollback(body)
+                return
             ok = ctx.close(str(body.get('id', '')))
             self._json(200 if ok else 404, {'ok': ok})
+
+        def _presets(self, action: str, body: dict[str, Any]) -> None:
+            try:
+                if action == 'apply':
+                    preset = ctx.presets.find(str(body.get('name', '')), str(body.get('kind', '')))
+                    if preset is None:
+                        self._json(404, {'message': 'No such preset.'})
+                        return
+                    tree = fresh_ids(preset['layout'])
+                    ctx.start(tree)
+                    current = ctx.layout.load()
+                    saved, state = ctx.layout.save(current['version'], tree)
+                    if saved:
+                        for old in pane_ids(current['layout']):
+                            ctx.close(old)
+                    self._json(200 if saved else 409, state)
+                elif action == 'save':
+                    ctx.presets.save([body])
+                    self._json(200, ctx.presets.listing())
+                elif action == 'import':
+                    presets = body.get('presets')
+                    count = ctx.presets.save(presets if isinstance(presets, list) else [])
+                    self._json(200, {**ctx.presets.listing(), 'imported': count})
+                elif action == 'delete':
+                    ok = ctx.presets.delete(str(body.get('name', '')))
+                    self._json(200 if ok else 404, ctx.presets.listing())
+                else:
+                    self._json(404, {'message': 'Not found.'})
+            except (ValueError, TypeError):
+                self._json(400, {'message': 'Bad preset.'})
+
+        def _scrollback(self, body: dict[str, Any]) -> None:
+            """Return a terminal's scrollback for download and keep a copy on the car."""
+            text = ctx.capture(str(body.get('id', '')))
+            if text is None:
+                self._json(404, {'message': 'No such terminal.'})
+                return
+            name = export_name(str(body.get('title', '')), time.time())
+            path = ctx.exports() / name
+            path.write_text(text)
+            self._json(200, {'name': name, 'path': str(path), 'text': text})
 
         def do_POST(self) -> None:  # noqa: N802
             if not self._allowed():
                 self._send(403, b'Not allowed from this network.', 'text/plain')
                 return
             path = urlparse(self.path).path
-            if path in ('/api/layout', '/api/pane/close'):
+            if path in ('/api/layout', '/api/pane/close', '/api/scrollback') or path.startswith(
+                '/api/presets/'
+            ):
                 self._api_post(path)
                 return
             if path == '/logout':

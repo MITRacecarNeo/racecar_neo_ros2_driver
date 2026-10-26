@@ -21,6 +21,14 @@
   .pane .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
   .pane .bar button { font: 600 12px/18px var(--rcn-font-sans); padding: 1px 6px; border-radius: 4px; border: 1px solid var(--rcn-steel); background: transparent; color: var(--rcn-text); cursor: pointer; }
   .pane .bar button:hover { border-color: var(--rcn-orange); }
+  .presets { position: relative; }
+  #preset-menu { position: absolute; right: 0; top: calc(100% + 8px); z-index: 20; min-width: 240px; background: var(--rcn-surface); border: 1px solid var(--rcn-steel); border-radius: var(--rcn-radius-md); padding: var(--rcn-space-2); }
+  #preset-menu .group { font: 700 11px/18px var(--rcn-font-sans); text-transform: uppercase; color: var(--rcn-text-muted); padding: 6px 6px 2px; }
+  #preset-menu .row { display: flex; align-items: center; gap: 4px; }
+  #preset-menu button { flex: 1; text-align: left; font: 500 14px/20px var(--rcn-font-sans); padding: 4px 6px; border: 0; border-radius: 4px; background: transparent; color: var(--rcn-text); cursor: pointer; }
+  #preset-menu button:hover { background: var(--rcn-steel); }
+  #preset-menu button.delete { flex: none; color: var(--rcn-text-muted); }
+  #preset-menu hr { border: 0; border-top: 1px solid var(--rcn-steel); margin: 6px 0; }
   .pane iframe { flex: 1; width: 100%; border: 0; display: block; background: #000; }
   .divider { position: absolute; z-index: 5; }
   .divider.row { width: 8px; margin-left: -4px; cursor: col-resize; }
@@ -37,6 +45,11 @@
   <span id="msg" role="status"></span>
   <span class="rcn-spacer"></span>
   <span class="tools">
+    <span class="presets">
+      <button class="rcn-btn quiet small" id="presets" aria-haspopup="true" aria-expanded="false">Presets</button>
+      <div id="preset-menu" hidden></div>
+    </span>
+    <input type="file" id="import-file" accept="application/json,.json" hidden>
     <button class="rcn-btn quiet small" id="reset" title="Close all but Terminal 1">Reset</button>
     <button class="rcn-btn quiet small" id="font-down" title="Smaller text">A-</button>
     <button class="rcn-btn quiet small" id="font-up" title="Larger text">A+</button>
@@ -109,6 +122,7 @@ function makePane(id) {
     <button data-act="row" title="Split right (Ctrl+Shift+E)">Split right</button>
     <button data-act="col" title="Split down (Ctrl+Shift+O)">Split down</button>
     <button data-act="max" title="Maximize (Ctrl+Shift+X)">Max</button>
+    <button data-act="export" title="Save the text to a file">Export</button>
     <button data-act="close" title="Close (Ctrl+Shift+W)">Close</button></div>`;
   const frame = document.createElement('iframe');
   frame.title = 'Terminal';
@@ -119,6 +133,7 @@ function makePane(id) {
     if (act === 'row' || act === 'col') split(id, act);
     else if (act === 'max') toggleMax(id);
     else if (act === 'close') closePane(id);
+    else if (act === 'export') exportText(id);
   };
   el.querySelector('.title').ondblclick = () => rename(id);
   frame.addEventListener('load', () => hookFrame(id, frame));
@@ -287,6 +302,107 @@ function rename(id) {
 }
 
 // Server state.
+// Export: the terminal's whole scrollback as a download; the car keeps a copy.
+function titleOf(id) {
+  const all = place(layout, 0, 0, 100, 100, { panes: [], dividers: [] }).panes;
+  const i = all.findIndex((p) => p.id === id);
+  return (all[i] && all[i].node.title) || `Terminal ${i + 1}`;
+}
+function download(name, text, type) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type }));
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+async function exportText(id) {
+  try {
+    const r = await post('/api/scrollback', { id, title: titleOf(id) });
+    const o = await r.json();
+    if (!r.ok) { say(o.message); return; }
+    download(o.name, o.text, 'text/plain');
+    say(`Saved to ${o.path}`);
+  } catch (err) { say(LOST); }
+}
+
+// Presets: built-in layouts with start commands, and this car's own.
+let presets = { builtin: [], user: [] };
+function presetRow(p, kind) {
+  const del = kind === 'user' ? `<button class="delete" data-del="${esc(p.name)}" title="Delete">x</button>` : '';
+  return `<div class="row"><button data-apply="${esc(p.name)}" data-kind="${kind}">${esc(p.name)}</button>${del}</div>`;
+}
+function esc(t) { return String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function renderPresets() {
+  const mine = presets.user.length
+    ? `<div class="group">Your presets</div>${presets.user.map((p) => presetRow(p, 'user')).join('')}` : '';
+  $('preset-menu').innerHTML = `<div class="group">Built in</div>${presets.builtin.map((p) => presetRow(p, 'builtin')).join('')}${mine}
+    <hr><div class="row"><button data-op="save">Save layout as preset</button></div>
+    <div class="row"><button data-op="export">Export presets</button></div>
+    <div class="row"><button data-op="import">Import presets</button></div>`;
+}
+async function loadPresets() {
+  try {
+    const r = await fetch('/api/presets');
+    if (r.ok) { presets = await r.json(); renderPresets(); }
+  } catch (err) { say(LOST); }
+}
+function toggleMenu(open) {
+  const menu = $('preset-menu');
+  menu.hidden = open === undefined ? !menu.hidden : !open;
+  $('presets').setAttribute('aria-expanded', String(!menu.hidden));
+  if (!menu.hidden) loadPresets();
+}
+$('presets').onclick = (ev) => { ev.stopPropagation(); toggleMenu(); };
+document.addEventListener('click', (ev) => { if (!$('preset-menu').contains(ev.target)) toggleMenu(false); });
+document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') toggleMenu(false); });
+$('preset-menu').onclick = async (ev) => {
+  const b = ev.target.closest('button');
+  if (!b) return;
+  if (b.dataset.apply) applyPreset(b.dataset.apply, b.dataset.kind);
+  else if (b.dataset.del) deletePreset(b.dataset.del);
+  else if (b.dataset.op === 'save') savePreset();
+  else if (b.dataset.op === 'export') download('terminal-presets.json', JSON.stringify(presets.user, null, 2), 'application/json');
+  else if (b.dataset.op === 'import') $('import-file').click();
+};
+async function applyPreset(name, kind) {
+  toggleMenu(false);
+  if (!confirm(`Replace the open terminals with ${name}?`)) return;
+  try {
+    const r = await post('/api/presets/apply', { name, kind });
+    const o = await r.json();
+    if (r.ok) { maximized = null; adopt(o); } else say(o.message || 'Could not open the preset.');
+  } catch (err) { say(LOST); }
+}
+async function savePreset() {
+  toggleMenu(false);
+  const name = prompt('Preset name');
+  if (!name || !name.trim()) return;
+  if (presets.user.some((p) => p.name === name.trim()) && !confirm(`Replace ${name.trim()}?`)) return;
+  try {
+    const r = await post('/api/presets/save', { name: name.trim(), layout });
+    if (r.ok) { presets = await r.json(); renderPresets(); say(`Saved ${name.trim()}.`); }
+    else say((await r.json()).message);
+  } catch (err) { say(LOST); }
+}
+async function deletePreset(name) {
+  if (!confirm(`Delete ${name}?`)) return;
+  try {
+    const r = await post('/api/presets/delete', { name });
+    if (r.ok) { presets = await r.json(); renderPresets(); }
+  } catch (err) { say(LOST); }
+}
+$('import-file').onchange = async () => {
+  const file = $('import-file').files[0];
+  $('import-file').value = '';
+  if (!file) return;
+  try {
+    const list = JSON.parse(await file.text());
+    const r = await post('/api/presets/import', { presets: list });
+    const o = await r.json();
+    if (r.ok) { presets = o; renderPresets(); say(`Imported ${o.imported} presets.`); } else say('That file has no presets.');
+  } catch (err) { say('That file has no presets.'); }
+};
+
 async function post(path, body) {
   const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   if (r.status === 401) location.reload();
