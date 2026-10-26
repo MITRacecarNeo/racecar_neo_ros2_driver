@@ -1,0 +1,41 @@
+battery_guard:
+  ros__parameters:
+    # Gens ace 5000 mAh 2S LiPo. Charge usable down to floor_volts under the
+    # car's load; the rated 5000 includes charge below the floor.
+    capacity_mah: 4700.0
+
+    # Charge left (%) against battery voltage under load (mV), highest first.
+    # Measured on a full discharge; the PIT firmware's LED bar uses the same
+    # table. Both lists must keep the same length.
+    curve_mv: [8400, 8200, 8110, 8050, 7860, 7740, 7620, 7545,
+               7485, 7450, 7395, 7305, 7280, 7195, 7000]
+    curve_pct: [100, 100, 95, 90, 80, 70, 60, 50,
+                40, 30, 20, 10, 5, 2, 0]
+
+    # Added to the voltage as amps times this before the curve. 0 because the
+    # curve is already under load.
+    r_internal_ohm: 0.0
+
+    # Power and mean current average over window_sec; charge uses the median
+    # voltage over soc_window_sec. No estimate until min_samples are in the
+    # window, and no time left while the mean current is under min_current_a.
+    window_sec: 300.0
+    soc_window_sec: 60.0
+    min_samples: 30
+    min_current_a: 0.1
+
+    # Readings older than stale_sec, or outside the plausible range, never
+    # warn or shut down.
+    stale_sec: 5.0
+    plausible_min_volts: 6.0
+    plausible_max_volts: 8.6
+
+    # Minutes left that start the warning and the shutdown countdown.
+    warn_min: 15.0
+    shutdown_min: 5.0
+
+    # The countdown starts at this voltage whatever the estimate says.
+    floor_volts: 7.0
+
+    # false: the shutdown_min estimate only warns; floor_volts still shuts down.
+    shutdown_enabled: false
