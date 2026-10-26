@@ -254,6 +254,7 @@ class TestSystemdServices:
         'racecar-dashboard.service',
         'racecar-jupyter.service',
         'racecar-mapview.service',
+        'racecar-battery-guard.service',
     )
 
     @pytest.mark.parametrize('name', SERVICES)
@@ -345,11 +346,55 @@ class TestNetworkPolkitRule:
         text = self.INSTALLER.read_text()
         rules = (
             '49-racecar-network.rules 49-racecar-autonomy.rules '
-            '49-racecar-dashboards.rules 49-racecar-teleop.rules'
+            '49-racecar-dashboards.rules 49-racecar-teleop.rules 49-racecar-power.rules'
         )
         assert f'for rule in {rules}; do' in text
         assert 'POLKIT_SRC="${SCRIPT_DIR}/polkit/${rule}"' in text
         assert 'POLKIT_DST="/etc/polkit-1/rules.d/${rule}"' in text
+
+
+def test_battery_guard_independent_of_teleop():
+    # The guard must keep watching across teleop restarts and stop teleop itself.
+    text = (SCRIPTS_DIR / 'racecar-battery-guard.service').read_text()
+    assert 'teleop' not in text.split('[Service]')[0]
+    assert 'scripts/battery_guard.py' in text
+    assert 'Restart=always' in text
+
+
+def test_battery_guard_enabled_by_setup_services():
+    text = (SCRIPTS_DIR / 'setup_services.sh').read_text()
+    services = text.split('SERVICES=(')[1].split(')')[0]
+    assert 'racecar-battery-guard.service' in services
+
+
+class TestPowerPolkitRule:
+    """The polkit rule that lets the battery guard stop teleop and power the car off."""
+
+    RULE_FILE = SCRIPTS_DIR / 'polkit' / '49-racecar-power.rules'
+
+    @pytest.fixture
+    def text(self):
+        return self.RULE_FILE.read_text()
+
+    def test_sorts_ahead_of_the_polkit_default(self):
+        assert int(self.RULE_FILE.name.split('-')[0]) < 50
+
+    @pytest.mark.parametrize(
+        'action_id',
+        [
+            'org.freedesktop.login1.power-off',
+            'org.freedesktop.login1.power-off-multiple-sessions',
+            'org.freedesktop.login1.power-off-ignore-inhibit',
+        ],
+    )
+    def test_grants_power_off(self, text, action_id):
+        assert f'"{action_id}"' in text
+
+    def test_scoped_to_racecar_and_teleop_stop(self, text):
+        assert 'subject.user !== "racecar"' in text
+        assert 'action.lookup("unit") === "racecar-teleop.service"' in text
+        assert 'action.lookup("verb") === "stop"' in text
+        assert 'reboot' not in text.split('polkit.addRule')[1]
 
 
 class TestUdevRules:

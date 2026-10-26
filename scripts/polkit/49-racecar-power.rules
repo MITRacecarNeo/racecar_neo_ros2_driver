@@ -1,0 +1,26 @@
+// RACECAR Neo - low-battery shutdown without sudo.
+//
+// Installed to /etc/polkit-1/rules.d/ by scripts/setup_user_env.sh. The
+// battery guard (racecar-battery-guard.service, racecar user) stops teleop so
+// the car stops driving, then powers the car off before the battery runs
+// flat. The grant covers the racecar user, stop of racecar-teleop.service,
+// and power off with other sessions open or inhibitors held; reboot, every
+// other unit and verb still ask for authentication.
+
+polkit.addRule(function (action, subject) {
+    if (subject.user !== "racecar") {
+        return polkit.Result.NOT_HANDLED;
+    }
+    var power = ["org.freedesktop.login1.power-off",
+                 "org.freedesktop.login1.power-off-multiple-sessions",
+                 "org.freedesktop.login1.power-off-ignore-inhibit"];
+    if (power.indexOf(action.id) !== -1) {
+        return polkit.Result.YES;
+    }
+    if (action.id === "org.freedesktop.systemd1.manage-units" &&
+        action.lookup("unit") === "racecar-teleop.service" &&
+        action.lookup("verb") === "stop") {
+        return polkit.Result.YES;
+    }
+    return polkit.Result.NOT_HANDLED;
+});

@@ -39,7 +39,9 @@ done
 # racecar user, for the home page on port 8080.
 # 49-racecar-teleop: restart of racecar-teleop.service by the racecar user,
 # for the Features tiles on the home page.
-for rule in 49-racecar-network.rules 49-racecar-autonomy.rules 49-racecar-dashboards.rules 49-racecar-teleop.rules; do
+# 49-racecar-power: stop of racecar-teleop.service and power off by the
+# racecar user, for the battery guard's low-battery shutdown.
+for rule in 49-racecar-network.rules 49-racecar-autonomy.rules 49-racecar-dashboards.rules 49-racecar-teleop.rules 49-racecar-power.rules; do
     POLKIT_SRC="${SCRIPT_DIR}/polkit/${rule}"
     POLKIT_DST="/etc/polkit-1/rules.d/${rule}"
     if [ ! -f "$POLKIT_SRC" ]; then
