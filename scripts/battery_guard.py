@@ -236,7 +236,7 @@ class CsvLog:
         new = not path.exists()
         self.path = path
         self._file: IO[str] = open(path, 'a', newline='', buffering=1)
-        self._writer = csv.writer(self._file)
+        self._writer = csv.writer(self._file, lineterminator='\n')
         if new:
             self.write(CSV_FIELDS)
 
@@ -271,13 +271,16 @@ def csv_row(sample: Sample | None, guard: Guard, event: str) -> list[str]:
 
 
 def shutdown_sequence(
-    run: Callable[..., Any] = subprocess.run, dry_run: bool = False
+    run: Callable[..., Any] = subprocess.run,
+    dry_run: bool = False,
+    report: Callable[[str], None] = lambda line: None,
 ) -> list[str]:
     """
     Stop recording, driving, autonomy, and teleop, then power off.
 
     Each step is bounded and its failure does not stop the next; the car is
-    turned off whatever happened. Returns one line per step for the log.
+    turned off whatever happened. Each step's line goes to `report` as soon as
+    it finishes, and all of them are returned.
     """
     steps: list[tuple[str, list[str]]] = [
         ('stop recording', [sys.executable, str(SCRIPT_DIR / 'racecar_log.py'), 'stop']),
@@ -290,15 +293,17 @@ def shutdown_sequence(
     lines = []
     for name, argv in steps:
         if dry_run:
-            lines.append(f'{name}: dry run, not run')
-            continue
-        try:
-            r = run(argv, capture_output=True, text=True, timeout=STEP_TIMEOUT_SEC)
-            ok = r.returncode == 0
-            detail = '' if ok else f' ({(r.stderr or r.stdout or "").strip()[:200]})'
-            lines.append(f'{name}: {"ok" if ok else "failed"}{detail}')
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            lines.append(f'{name}: failed ({exc})')
+            line = f'{name}: dry run, not run'
+        else:
+            try:
+                r = run(argv, capture_output=True, text=True, timeout=STEP_TIMEOUT_SEC)
+                ok = r.returncode == 0
+                detail = '' if ok else f' ({(r.stderr or r.stdout or "").strip()[:200]})'
+                line = f'{name}: {"ok" if ok else "failed"}{detail}'
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                line = f'{name}: failed ({exc})'
+        report(line)
+        lines.append(line)
     return lines
 
 
@@ -434,9 +439,12 @@ def main(argv: list[str] | None = None) -> int:
             announcements.join()
             if not args.dry_run:
                 write_last_shutdown(folder, guard.trigger, time.time(), guard)
-            for line in shutdown_sequence(dry_run=args.dry_run):
+
+            def report(line: str) -> None:
                 log.warning('Shutdown: %s', line)
                 csv_log.write(csv_row(None, guard, line))
+
+            shutdown_sequence(dry_run=args.dry_run, report=report)
 
     rclpy.init()
     node = BatteryGuardNode()

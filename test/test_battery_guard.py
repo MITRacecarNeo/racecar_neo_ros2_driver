@@ -187,6 +187,7 @@ class TestStatusAndLog:
         log = bg.CsvLog(path)
         log.write(bg.csv_row(None, guard, 'warn'))
         log.close()
+        assert b'\r' not in path.read_bytes()
         rows = list(csv.reader(path.open()))
         assert rows[0] == list(bg.CSV_FIELDS)
         assert len(rows) == 3
@@ -236,6 +237,18 @@ class TestShutdownSequence:
         assert calls[-1][-1] == 'poweroff'
         assert any('failed (denied)' in line for line in lines)
         assert any(bg.TELEOP_UNIT in line and 'failed' in line for line in lines)
+
+    def test_each_step_is_reported_as_it_finishes(self):
+        order = []
+        run, _ = self._fake()
+
+        def logged_run(argv, **kwargs):
+            order.append(('run', argv[-1]))
+            return run(argv, **kwargs)
+
+        bg.shutdown_sequence(logged_run, report=lambda line: order.append(('report', line)))
+        kinds = [k for k, _ in order]
+        assert kinds == ['run', 'report'] * (len(kinds) // 2)
 
     def test_dry_run_runs_nothing(self):
         run, calls = self._fake()

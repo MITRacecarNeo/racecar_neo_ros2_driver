@@ -162,3 +162,74 @@ class TestTerminals:
 
     def test_write_tty_missing(self, tmp_path):
         assert not ba.write_tty(str(tmp_path / 'gone'), ba.canceled_message())
+
+
+def _proc(tmp_path, entries):
+    """Fake /proc: entries is [(pid, comm, tty_nr, tpgid)]."""
+    proc = tmp_path / 'proc'
+    for pid, comm, tty_nr, tpgid in entries:
+        d = proc / str(pid)
+        d.mkdir(parents=True)
+        (d / 'stat').write_text(f'{pid} ({comm}) S 1 {pid} {pid} {tty_nr} {tpgid} 4194304 0\n')
+        (d / 'comm').write_text(comm + '\n')
+    return proc
+
+
+class TestRedraw:
+    PTS = '/dev/pts/5'
+
+    def _stat(self, monkeypatch, rdev, mode=0o20620):
+        real = os.stat
+        fake = SimpleNamespace(st_rdev=rdev, st_mode=mode)
+        monkeypatch.setattr(
+            ba.os, 'stat', lambda p, *a, **k: fake if p == self.PTS else real(p, *a, **k)
+        )
+
+    def test_foreground_group_of_a_pts(self, tmp_path, monkeypatch):
+        rdev = os.makedev(136, 5)
+        self._stat(monkeypatch, rdev)
+        tty_nr = (5 & 0xFF) | (136 << 8)
+        proc = _proc(
+            tmp_path, [(10, 'sshd', 0, -1), (20, 'bash', tty_nr, 30), (30, 'vim', tty_nr, 30)]
+        )
+        assert ba.foreground_group(self.PTS, proc) == 30
+        assert ba.foreground_command(self.PTS, proc) == 'vim'
+
+    def test_command_name_with_spaces(self, tmp_path, monkeypatch):
+        self._stat(monkeypatch, os.makedev(136, 5))
+        tty_nr = (5 & 0xFF) | (136 << 8)
+        proc = _proc(tmp_path, [(40, 'my prog) x', tty_nr, 40)])
+        assert ba.foreground_group(self.PTS, proc) == 40
+
+    def test_not_a_character_device(self, tmp_path, monkeypatch):
+        self._stat(monkeypatch, 0, mode=0o100644)
+        assert ba.foreground_group(self.PTS, _proc(tmp_path, [])) is None
+
+    def test_no_foreground_group(self, tmp_path, monkeypatch):
+        self._stat(monkeypatch, os.makedev(136, 5))
+        assert ba.foreground_group(self.PTS, _proc(tmp_path, [(10, 'sshd', 0, -1)])) is None
+
+    def test_only_shells_are_nudged(self, monkeypatch):
+        opened = []
+        monkeypatch.setattr(ba, 'foreground_command', lambda path: 'vim')
+        monkeypatch.setattr(ba.os, 'open', lambda *a: opened.append(a) or 3)
+        ba.redraw(self.PTS)
+        assert opened == []
+
+    def test_shell_width_nudged_and_restored(self, monkeypatch):
+        sizes = []
+        monkeypatch.setattr(ba, 'foreground_command', lambda path: 'bash')
+        monkeypatch.setattr(ba.os, 'open', lambda *a: 3)
+        monkeypatch.setattr(ba.os, 'close', lambda fd: None)
+        monkeypatch.setattr(ba.time, 'sleep', lambda s: None)
+        start = ba.struct.pack('HHHH', 24, 80, 0, 0)
+
+        def ioctl(fd, op, arg):
+            if op == ba.termios.TIOCGWINSZ:
+                return start
+            sizes.append(ba.struct.unpack('HHHH', arg)[:2])
+            return arg
+
+        monkeypatch.setattr(ba.fcntl, 'ioctl', ioctl)
+        ba.redraw(self.PTS)
+        assert sizes == [(24, 81), (24, 80)]
