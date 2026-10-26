@@ -34,6 +34,10 @@ sudo apt-get install -y \
     python3-matplotlib \
     ttyd python3-pampy
 
+# The ttyd package enables its own login shell on localhost:7681. The terminal
+# app runs ttyd itself on a private socket, so that service stays off.
+sudo systemctl disable --now ttyd.service 2>/dev/null || true
+
 # Linters, pinned so every car agrees with pyproject.toml. Per-user install
 # (PEP 668 blocks system-wide); binaries land in ~/.local/bin, which
 # setup_user_env.sh puts on PATH.

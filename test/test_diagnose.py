@@ -733,3 +733,19 @@ class TestTurnedOff:
         out = diag.note_turned_off(checks, {'camera': False, 'detections': False})
         assert [c.status for c in out] == [diag.SKIP, diag.SKIP, diag.OK]
         assert out[0].detail.startswith('turned off')
+
+
+class TestTerminalCheck:
+    def test_not_installed(self, diag):
+        assert diag.terminal_check('', '').status == diag.SKIP
+
+    def test_stopped_is_fine(self, diag):
+        check = diag.terminal_check('inactive', '')
+        assert check.status == diag.OK and check.detail.startswith('inactive')
+
+    def test_running_counts_panes(self, diag):
+        check = diag.terminal_check('active', 'rcn-main\nrcn-t1\nother\n')
+        assert check.status == diag.OK and check.detail == 'active, 2 pane(s)'
+
+    def test_battery_guard_is_a_service_row(self, diag):
+        assert 'racecar-battery-guard' in diag.SERVICE_UNITS

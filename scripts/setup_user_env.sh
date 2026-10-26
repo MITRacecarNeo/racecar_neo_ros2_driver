@@ -60,6 +60,17 @@ for rule in 49-racecar-network.rules 49-racecar-autonomy.rules 49-racecar-dashbo
     fi
 done
 
+# PAM service for the terminal app's login (scripts/terminal.py): the racecar
+# password through common-auth, with a 3 s delay after a failure.
+PAM_SRC="${SCRIPT_DIR}/pam.d-racecar-terminal"
+PAM_DST="/etc/pam.d/racecar-terminal"
+if sudo cmp -s "$PAM_SRC" "$PAM_DST" 2>/dev/null; then
+    echo "  $PAM_DST already up to date"
+else
+    sudo install -m 0644 -o root -g root "$PAM_SRC" "$PAM_DST"
+    echo "  installed $PAM_DST"
+fi
+
 BASHRC="$USER_HOME/.bashrc"
 
 # Each run rewrites its blocks rather than testing for a marker, so hand edits

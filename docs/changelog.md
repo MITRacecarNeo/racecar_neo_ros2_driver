@@ -35,6 +35,19 @@ All notable changes to this project will be documented in this file. The format 
   times, 1.0 (off) by default; about 0.15 with the field firmware holds the
   car to about 1.0 m/s. The lowest active cap wins while mapping.
 
+- Terminal app on port 8086 (`scripts/terminal.py`,
+  `racecar-terminal.service`): a shell on the car in the browser, behind the
+  racecar password (PAM, `/etc/pam.d/racecar-terminal`). Each pane is a tmux
+  session on its own socket (`tmux -L racecar-terminal`), so it survives a
+  reload and can be attached from SSH; new panes start in `~/jupyter_ws`.
+  Logins come from the access point only unless `car.yaml` sets
+  `terminal: {allow_lan: true}`. Opened from the Terminal tile in Core,
+  which replaces the Terminator placeholder. `ttyd` and `python3-pampy`
+  join the setup packages.
+- 8080 header: the car's date, time, and zone, and a network pill with a
+  menu of every interface, its network, and address.
+- `racecar status` rows for the battery guard and the terminal app.
+
 ### Changed
 
 - 8080 hover tips end without a period.

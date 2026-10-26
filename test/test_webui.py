@@ -77,6 +77,8 @@ def test_pages_link_shared_files_with_the_asset_version(webui):
         scripts / 'dashboards' / 'linefollow_dashboard' / 'linefollow.html',
         scripts / 'dashboards' / 'wallfollow_dashboard' / 'wallfollow.html',
         scripts / 'dashboards' / 'camlabel_dashboard' / 'camlabel.html',
+        scripts / 'terminal.html',
+        scripts / 'terminal_login.html',
     ]
     for page in pages:
         text = page.read_text()
@@ -118,6 +120,7 @@ def test_app_pages_show_the_low_battery_banner():
         'dashboards/linefollow_dashboard/linefollow.html',
         'dashboards/wallfollow_dashboard/wallfollow.html',
         'dashboards/camlabel_dashboard/camlabel.html',
+        'terminal.html',
     ):
         assert '/ui/battery.js?v=' in (scripts / page).read_text(), page
     assert '/ui/battery.js' not in (scripts / 'dashboard.html').read_text()

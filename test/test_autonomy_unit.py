@@ -49,7 +49,9 @@ class TestUnit:
 
     def test_installed_but_not_enabled(self):
         text = (SCRIPTS / 'setup_services.sh').read_text()
-        assert 'INSTALL_ONLY=(\n    racecar-autonomy.service\n)' in text
+        install_only = text.split('INSTALL_ONLY=(')[1].split(')')[0]
+        assert 'racecar-autonomy.service' in install_only
+        assert 'racecar-autonomy.service' not in text.split('SERVICES=(')[1].split(')')[0]
         assert 'for svc in "${SERVICES[@]}"; do\n    if systemctl is-enabled' in text
 
     def test_launcher_uses_the_mode_file_arguments(self):

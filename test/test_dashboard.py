@@ -275,13 +275,13 @@ class FakeRun:
 
 class TestHome:
     def test_apps_cover_the_six_dashboards(self, dashboard):
-        assert [a['port'] for a in dashboard.APPS] == [None, 8888, 8084, 8081, 8082, 8083, 8085]
+        assert [a['port'] for a in dashboard.APPS] == [8086, 8888, 8084, 8081, 8082, 8083, 8085]
         core = [a['id'] for a in dashboard.APPS if a['group'] == 'core']
-        assert core == ['terminator', 'jupyter', 'mapview']
+        assert core == ['terminal', 'jupyter', 'mapview']
         exclusive = [a['id'] for a in dashboard.APPS if a['exclusive']]
         assert exclusive == ['webteleop', 'linefollow', 'wallfollow']
         startable = [a['id'] for a in dashboard.APPS if a['startable']]
-        assert startable == ['webteleop', 'linefollow', 'wallfollow', 'camlabel']
+        assert startable == ['terminal', 'webteleop', 'linefollow', 'wallfollow', 'camlabel']
 
     def test_every_app_icon_exists(self, dashboard):
         scripts = Path(__file__).resolve().parent.parent / 'scripts'
@@ -289,13 +289,17 @@ class TestHome:
         for app in dashboard.APPS:
             assert f'id="{app["icon"]}"' in icons, app['icon']
 
-    def test_terminator_is_a_placeholder(self, dashboard):
+    def test_terminal_starts_when_opened(self, dashboard):
         run = FakeRun({})
-        assert dashboard.open_app('terminator', run) == (False, 'Terminator is not available.')
-        assert run.calls == []
-        states = dashboard.unit_states(dashboard._app_units(), FakeRun({}))
-        apps = {a['id']: a for a in dashboard.app_list(states)}
-        assert apps['terminator']['state'] == 'unavailable'
+        assert dashboard.open_app('terminal', run) == (True, 'Terminal started.')
+        assert run.states['racecar-terminal'] == 'active'
+        assert dashboard.open_app('terminal', run) == (True, 'Terminal is running.')
+
+    def test_clear_apps_leaves_the_terminal_running(self, dashboard):
+        run = FakeRun({'racecar-terminal': 'active', 'racecar-camlabel': 'active'})
+        dashboard.clear_apps(run)
+        assert run.states['racecar-terminal'] == 'active'
+        assert run.states['racecar-camlabel'] == 'inactive'
 
     def test_open_exclusive_stops_the_other_first(self, dashboard):
         run = FakeRun({'racecar-webteleop': 'active'})
@@ -397,7 +401,7 @@ class TestHome:
         apps = dashboard.app_list(states)
         by_id = {a['id']: a['state'] for a in apps}
         assert by_id['mapview'] == 'active' and by_id['webteleop'] == 'unknown'
-        assert by_id['terminator'] == 'unavailable'
+        assert by_id['terminal'] == 'unknown'
 
     def test_activate_stops_the_running_lab_first(self, dashboard):
         run = FakeRun({'racecar-webteleop': 'active', 'racecar-mapview': 'active'})
@@ -435,6 +439,7 @@ class TestHome:
             'racecar-linefollow',
             'racecar-wallfollow',
             'racecar-camlabel',
+            'racecar-terminal',
         ):
             assert f'"{unit}.service"' in text
         assert '["start", "stop"]' in text and 'subject.user === "racecar"' in text

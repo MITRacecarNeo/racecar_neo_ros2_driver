@@ -146,7 +146,10 @@ SERVICE_UNITS = (
     'racecar-dashboard',
     'racecar-jupyter',
     'racecar-mapview',
+    'racecar-battery-guard',
 )
+# Started from the 8080 Terminal tile, not at boot, so stopped is fine.
+TERMINAL_UNIT = 'racecar-terminal'
 
 # Started by `racecar map` or the map viewer, never at boot, so it is not a
 # service row; the autonomy section samples these while it runs.
@@ -414,8 +417,24 @@ def check_services() -> list[Check]:
             out.append(
                 Check('services', unit, WARN, f'active={active or "?"} enabled={enabled or "?"}')
             )
+    out.append(
+        terminal_check(
+            _run(['systemctl', 'is-active', TERMINAL_UNIT]).strip(),
+            _run(['tmux', '-L', 'racecar-terminal', 'ls', '-F', '#S']),
+        )
+    )
     out.append(watchdog_check(sysinfo.read_watchdog_state()))
     return out
+
+
+def terminal_check(active: str, sessions: str) -> Check:
+    """Summarize the terminal app: running with its pane count, stopped, or not installed."""
+    if not active:
+        return Check('services', TERMINAL_UNIT, SKIP, 'unit not installed')
+    if active != 'active':
+        return Check('services', TERMINAL_UNIT, OK, f'{active} (starts from the Terminal tile)')
+    panes = sum(1 for line in sessions.splitlines() if line.startswith('rcn-'))
+    return Check('services', TERMINAL_UNIT, OK, f'active, {panes} pane(s)')
 
 
 def watchdog_check(state: dict[str, Any] | None) -> Check:

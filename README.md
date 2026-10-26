@@ -396,8 +396,8 @@ Once `racecar-teleop.service` is running, browse to `http://<robot>:8080`.
 **Apps.** One tile per app, in two groups. Hover over a tile for what it
 does. A white border means the app is running.
 
-- Core: map viewer and JupyterLab, which start at boot, the safety
-  override, and Turn Off (below).
+- Core: map viewer and JupyterLab, which start at boot; Terminal, which
+  starts when opened; the safety override and Turn Off (below).
 - Utilities: web teleop, line follow, wall follow, and camera label.
 - Tap a tile to open the app in a new tab. A stopped utility is started
   first, and the tab shows a loading bar until the app is ready. Cancel

@@ -859,6 +859,35 @@ def test_terminal_app_packages_are_installed_by_setup():
         assert f' {package}' in text, package
 
 
+class TestTerminalUnit:
+    UNIT = SCRIPTS_DIR / 'racecar-terminal.service'
+
+    def test_installed_not_enabled(self):
+        text = (SCRIPTS_DIR / 'setup_services.sh').read_text()
+        install_only = text.split('INSTALL_ONLY=(')[1].split(')')[0]
+        enabled = text.split('SERVICES=(')[1].split(')')[0]
+        assert 'racecar-terminal.service' in install_only
+        assert 'racecar-terminal.service' not in enabled
+
+    def test_private_socket_folder_and_panes_end_with_the_app(self):
+        text = self.UNIT.read_text()
+        assert 'RuntimeDirectory=racecar-terminal' in text
+        assert 'RuntimeDirectoryMode=0700' in text
+        assert 'KillMode=control-group' in text
+        assert 'User=racecar' in text and 'scripts/terminal.py' in text
+
+    def test_packaged_ttyd_service_is_turned_off(self):
+        text = (SCRIPTS_DIR / 'setup_dev_tools.sh').read_text()
+        assert 'sudo systemctl disable --now ttyd.service' in text
+        assert text.index('ttyd python3-pampy') < text.index('disable --now ttyd.service')
+
+    def test_pam_file_installed_by_setup(self):
+        pam = (SCRIPTS_DIR / 'pam.d-racecar-terminal').read_text()
+        assert '@include common-auth' in pam and 'pam_faildelay.so' in pam
+        setup = (SCRIPTS_DIR / 'setup_user_env.sh').read_text()
+        assert 'PAM_DST="/etc/pam.d/racecar-terminal"' in setup
+
+
 class TestLinterInstall:
     """setup_dev_tools.sh pins the linters behind `racecar lint`."""
 

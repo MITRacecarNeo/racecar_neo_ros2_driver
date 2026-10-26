@@ -54,20 +54,21 @@ import webui  # noqa: E402
 
 PORT = 8080
 
-# Home page apps. Core apps start at boot. Utilities start when opened and
-# stop with Clear apps, which needs scripts/polkit/49-racecar-dashboards.rules.
+# Home page apps. Core apps start at boot, except Terminal, which starts when
+# opened. Utilities start when opened and stop with Clear apps. Starting and
+# stopping needs scripts/polkit/49-racecar-dashboards.rules.
 # `exclusive` utilities publish /drive, so one runs at a time. An app with no
 # unit is shown but opens nothing.
 APPS: list[dict[str, Any]] = [
     {
-        'id': 'terminator',
-        'name': 'Terminator',
+        'id': 'terminal',
+        'name': 'Terminal',
         'icon': 'terminal',
-        'port': None,
+        'port': 8086,
         'group': 'core',
-        'unit': None,
+        'unit': 'racecar-terminal',
         'exclusive': False,
-        'startable': False,
+        'startable': True,
         'desc': 'Open a terminal',
     },
     {
