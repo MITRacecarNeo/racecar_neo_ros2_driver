@@ -226,6 +226,10 @@ class PitNode(Node):
         self.declare_parameter('odom_child_frame_id', 'base_link')
         self.declare_parameter('dotmatrix_topic', '/dotmatrix/frame')
         self.declare_parameter('led_topic', '/led/pixels')
+        # Low-battery alert frames (scripts/battery_guard.py) win over the
+        # frames above and the override flash while they are fresh.
+        self.declare_parameter('dotmatrix_alert_topic', '/dotmatrix/alert')
+        self.declare_parameter('led_alert_topic', '/led/alert')
         # A display command counts as "active" (sets the SystemState flag the
         # Teensy watches) only while received within this window.
         self.declare_parameter('display_timeout_sec', 0.5)
@@ -303,6 +307,8 @@ class PitNode(Node):
         self._rc_link_topic = self.get_parameter('rc_link_topic').value
         self._dotmatrix_topic = self.get_parameter('dotmatrix_topic').value
         self._led_topic = self.get_parameter('led_topic').value
+        self._dot_alert_topic = self.get_parameter('dotmatrix_alert_topic').value
+        self._led_alert_topic = self.get_parameter('led_alert_topic').value
         self._display_timeout = float(self.get_parameter('display_timeout_sec').value)
         self._led_startup = float(self.get_parameter('led_startup_sec').value)
         self._gamepad_btn = int(self.get_parameter('gamepad_enable_button').value)
@@ -346,6 +352,8 @@ class PitNode(Node):
         self.create_subscription(AckermannDriveStamped, '/motor', self._motor_cb, qos)
         self.create_subscription(UInt8MultiArray, self._dotmatrix_topic, self._dot_cb, qos)
         self.create_subscription(UInt8MultiArray, self._led_topic, self._led_cb, qos)
+        self.create_subscription(UInt8MultiArray, self._dot_alert_topic, self._dot_alert_cb, qos)
+        self.create_subscription(UInt8MultiArray, self._led_alert_topic, self._led_alert_cb, qos)
         self.create_subscription(Joy, '/joy', self._joy_cb, qos)
         self.create_subscription(
             Bool,
@@ -367,6 +375,10 @@ class PitNode(Node):
         self._led_frame: bytes | None = None
         self._override = False
         self._led_stamp = 0.0
+        self._dot_alert: bytes | None = None
+        self._dot_alert_stamp = 0.0
+        self._led_alert: bytes | None = None
+        self._led_alert_stamp = 0.0
         self._joy_buttons: list[int] = []
         self._start_time = time.monotonic()
         self._ser: serial.Serial | None = None
@@ -416,6 +428,16 @@ class PitNode(Node):
         self._led_frame = data.ljust(LED_FRAME_LEN, b'\x00')
         self._led_stamp = time.monotonic()
 
+    def _dot_alert_cb(self, msg: UInt8MultiArray) -> None:
+        data = bytes(bytearray(msg.data))[:DOT_FRAME_LEN]
+        self._dot_alert = data.ljust(DOT_FRAME_LEN, b'\x00')
+        self._dot_alert_stamp = time.monotonic()
+
+    def _led_alert_cb(self, msg: UInt8MultiArray) -> None:
+        data = bytes(bytearray(msg.data))[:LED_FRAME_LEN]
+        self._led_alert = data.ljust(LED_FRAME_LEN, b'\x00')
+        self._led_alert_stamp = time.monotonic()
+
     def _joy_cb(self, msg: Joy) -> None:
         self._joy_buttons = list(msg.buttons)
 
@@ -429,13 +451,23 @@ class PitNode(Node):
         )
         state = _MODE_BITS.get(mode, SYS_MODE_IDLE)
 
+        def fresh(frame: bytes | None, stamp: float) -> bool:
+            return frame is not None and (now - stamp) <= self._display_timeout
+
+        # Order: low-battery alert, then the user's frame, then the override flash.
         dot = None
-        if self._dot_frame is not None and (now - self._dot_stamp) <= self._display_timeout:
+        if fresh(self._dot_alert, self._dot_alert_stamp):
+            dot = self._dot_alert
+            state |= SYS_DOTMATRIX_ACTIVE
+        elif fresh(self._dot_frame, self._dot_stamp):
             dot = self._dot_frame
             state |= SYS_DOTMATRIX_ACTIVE
 
         led = None
-        if self._led_frame is not None and (now - self._led_stamp) <= self._display_timeout:
+        if fresh(self._led_alert, self._led_alert_stamp):
+            led = self._led_alert
+            state |= SYS_LED_ACTIVE
+        elif fresh(self._led_frame, self._led_stamp):
             led = self._led_frame
             state |= SYS_LED_ACTIVE
         elif self._override:

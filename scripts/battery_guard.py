@@ -46,6 +46,7 @@ from typing import Any, IO
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from battery_alert import Announcer  # noqa: E402
+import battery_display  # noqa: E402
 from racecar_neo_ros2_driver import car_profile, data_root  # noqa: E402
 from racecar_neo_ros2_driver.battery import (  # noqa: E402
     BatteryConfig,
@@ -59,6 +60,8 @@ from racecar_neo_ros2_driver.battery import (  # noqa: E402
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 TICK_SEC = 1.0
+# pit_node drops an alert frame 0.5 s after it arrives.
+DISPLAY_SEC = 0.05
 HOLD_SEC = 60.0
 FLOOR_MEDIAN_SEC = 30.0
 COUNTDOWN_SEC = 60.0
@@ -340,7 +343,7 @@ def main(argv: list[str] | None = None) -> int:
     from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
     from diagnostic_msgs.msg import DiagnosticStatus, KeyValue
     from sensor_msgs.msg import BatteryState
-    from std_msgs.msg import Empty
+    from std_msgs.msg import Empty, UInt8MultiArray
 
     cfg = load_config(args.floor_cell_volts)
     guard = Guard(cfg)
@@ -394,7 +397,21 @@ def main(argv: list[str] | None = None) -> int:
             self._pub = self.create_publisher(DiagnosticStatus, '/battery/estimate', latched)
             self.create_subscription(BatteryState, '/battery/state', self._on_state, 10)
             self.create_subscription(Empty, '/battery/cancel_shutdown', self._on_cancel, 10)
+            self._pub_dot = self.create_publisher(UInt8MultiArray, '/dotmatrix/alert', 1)
+            self._pub_led = self.create_publisher(UInt8MultiArray, '/led/alert', 1)
             self.create_timer(TICK_SEC, self._tick)
+            self.create_timer(DISPLAY_SEC, self._display)
+
+        def _display(self) -> None:
+            now = time.time()
+            with lock:
+                level, shutdown_at = guard.level, guard.shutdown_at
+            dot = battery_display.dot_frame(level, shutdown_at, now)
+            led = battery_display.led_frame(level, shutdown_at, now)
+            if dot is not None:
+                self._pub_dot.publish(UInt8MultiArray(data=list(dot)))
+            if led is not None:
+                self._pub_led.publish(UInt8MultiArray(data=list(led)))
 
         def _on_state(self, msg: BatteryState) -> None:
             with lock:
@@ -435,8 +452,12 @@ def main(argv: list[str] | None = None) -> int:
                 threading.Thread(target=self._shutdown, daemon=True).start()
 
         def _shutdown(self) -> None:
-            # The final message reaches the terminals before anything stops.
+            # The final message reaches the terminals, and SHUT and DOWN show on
+            # the dot matrix, before anything stops.
             announcements.join()
+            with lock:
+                shown_until = (guard.shutdown_at or 0.0) + battery_display.SHUTDOWN_FRAMES_SEC
+            time.sleep(max(0.0, shown_until - time.time()))
             if not args.dry_run:
                 write_last_shutdown(folder, guard.trigger, time.time(), guard)
 

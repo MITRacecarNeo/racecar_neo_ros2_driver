@@ -116,6 +116,10 @@ class _Pit:
         self._dot_stamp = 0.0
         self._led_frame = None
         self._led_stamp = 0.0
+        self._dot_alert = None
+        self._dot_alert_stamp = 0.0
+        self._led_alert = None
+        self._led_alert_stamp = 0.0
         self._display_timeout = 0.5
         self._start_time = start
         self._led_startup = 10.0
@@ -147,6 +151,37 @@ class TestBuildDisplay:
         pit._dot_frame, pit._dot_stamp = b'\x01', 99.0
         pit._led_frame, pit._led_stamp = b'\x02', 99.0
         assert pit._build_display(100.0) == (SYS_MODE_IDLE, None, None)
+
+    def test_alert_beats_a_fresh_user_frame(self):
+        pit = _Pit()
+        pit._dot_frame, pit._dot_stamp = b'\x01' * 192, 99.9
+        pit._led_frame, pit._led_stamp = b'\x02' * 252, 99.9
+        pit._dot_alert, pit._dot_alert_stamp = b'\x03' * 192, 99.9
+        pit._led_alert, pit._led_alert_stamp = b'\x04' * 252, 99.9
+        state, dot, led = pit._build_display(100.0)
+        assert state == SYS_DOTMATRIX_ACTIVE | SYS_LED_ACTIVE
+        assert dot == b'\x03' * 192
+        assert led == b'\x04' * 252
+
+    def test_stale_alert_falls_back_to_the_user_frame(self):
+        pit = _Pit()
+        pit._dot_frame, pit._dot_stamp = b'\x01' * 192, 99.9
+        pit._dot_alert, pit._dot_alert_stamp = b'\x03' * 192, 99.0
+        assert pit._build_display(100.0)[1] == b'\x01' * 192
+
+    def test_alert_beats_the_override_flash(self):
+        pit = _Pit()
+        pit._override = True
+        pit._led_alert, pit._led_alert_stamp = b'\x04' * 252, 100.0
+        assert pit._build_display(100.0)[2] == b'\x04' * 252
+        pit._led_alert_stamp = 99.0
+        assert pit._build_display(100.0)[2] == override_led_frame(100.0)
+
+    def test_alert_alone_sets_the_flags(self):
+        pit = _Pit()
+        pit._dot_alert, pit._dot_alert_stamp = b'\x03' * 192, 100.0
+        pit._led_alert, pit._led_alert_stamp = b'\x04' * 252, 100.0
+        assert pit._build_display(100.0)[0] == SYS_DOTMATRIX_ACTIVE | SYS_LED_ACTIVE
 
     def test_driver_starting_flag_during_the_startup_window(self):
         pit = _Pit(start=100.0)
