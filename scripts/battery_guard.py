@@ -34,6 +34,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import queue
 import signal
 import subprocess
 import sys
@@ -42,8 +43,11 @@ import time
 from types import FrameType
 from typing import Any, IO
 
-from racecar_neo_ros2_driver import car_profile, data_root
-from racecar_neo_ros2_driver.battery import (
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from battery_alert import Announcer  # noqa: E402
+from racecar_neo_ros2_driver import car_profile, data_root  # noqa: E402
+from racecar_neo_ros2_driver.battery import (  # noqa: E402
     BatteryConfig,
     CapacityLearner,
     detect_cells,
@@ -350,6 +354,28 @@ def main(argv: list[str] | None = None) -> int:
 
     lock = threading.Lock()
     pending: list[Sample] = []
+    # Terminal messages go out in order on one thread, so a slow tmux call
+    # never holds up the tick.
+    announcer = Announcer()
+    announcements: queue.Queue[tuple[list[str], str, float | None, float | None, float]] = (
+        queue.Queue()
+    )
+
+    def announce_worker() -> None:
+        while True:
+            item = announcements.get()
+            try:
+                announcer.update(*item)
+            except Exception:  # noqa: BLE001
+                log.exception('Terminal message failed')
+            finally:
+                announcements.task_done()
+
+    threading.Thread(target=announce_worker, daemon=True).start()
+
+    def announce(events: list[str], now: float) -> None:
+        announcements.put((events, guard.level, guard.shutdown_at, guard.last.minutes_left, now))
+
     LEVELS = {'ok': DiagnosticStatus.OK, 'warn': DiagnosticStatus.WARN}
 
     class BatteryGuardNode(Node):
@@ -374,6 +400,7 @@ def main(argv: list[str] | None = None) -> int:
                 if guard.cancel(time.time()):
                     log.warning('Shutdown canceled')
                     csv_log.write(csv_row(None, guard, 'canceled'))
+                    announce(['canceled'], time.time())
 
         def _tick(self) -> None:
             now = time.time()
@@ -392,6 +419,7 @@ def main(argv: list[str] | None = None) -> int:
                     log.warning('Battery %s (%s)', event, status_values(guard, now))
                     csv_log.write(csv_row(None, guard, event))
                 values = status_values(guard, now)
+                announce(events, now)
             msg = DiagnosticStatus()
             msg.name = 'battery'
             msg.level = LEVELS.get(guard.level, DiagnosticStatus.ERROR)
@@ -402,6 +430,8 @@ def main(argv: list[str] | None = None) -> int:
                 threading.Thread(target=self._shutdown, daemon=True).start()
 
         def _shutdown(self) -> None:
+            # The final message reaches the terminals before anything stops.
+            announcements.join()
             if not args.dry_run:
                 write_last_shutdown(folder, guard.trigger, time.time(), guard)
             for line in shutdown_sequence(dry_run=args.dry_run):
