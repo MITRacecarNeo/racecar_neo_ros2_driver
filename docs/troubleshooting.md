@@ -27,6 +27,7 @@ comment in the source can point here instead of carrying the full account.
 - [Localizer choice](#localizer-choice)
 - [Data drive missing at boot](#data-drive-missing-at-boot)
 - [Lab dashboards](#lab-dashboards)
+- [Low-battery shutdown](#low-battery-shutdown)
 - [WiFi persistence](#wifi-persistence)
 - [Boot brownout with ethernet attached](#boot-brownout-with-ethernet-attached)
   - [Not a flat battery](#not-a-flat-battery)
@@ -528,6 +529,35 @@ checkouts under `scripts/dashboards/` are gitignored and left in place.
 
 Saved tuning lives in the car profile's `dashboards/<name>.yaml`, never in
 the shipped `<name>.yaml`, so updating the driver keeps a car's tuning.
+
+## Low-battery shutdown
+
+`scripts/battery_guard.py`, `racecar-battery-guard.service`,
+`config/battery.yaml`.
+
+The car turned off on its own:
+
+1. Turn off the power switch.
+2. Charge or swap the battery, then turn the car on.
+3. Run `journalctl -u racecar-battery-guard -b -1` to see the warning, the
+   countdown, its trigger (`floor` or `estimate`), and each shutdown step.
+4. The guard log `<data root>/health/battery/<start>_guard.csv` has one row
+   a second; the `event` column marks the warning, countdown, and steps.
+
+No time or power in the 8080 header: the guard is not running, or it has
+read under 30 s of the battery. `systemctl status racecar-battery-guard`
+shows which. Teleop must be running, since `pit_node` reads the battery.
+
+"Unknown battery" in the journal: the first voltage fits no cell count
+(3.3 to 4.35 V per cell). The guard still applies a floor for the nearest
+count. Set `cells` in `params/battery.yaml` for a battery it cannot read.
+
+The countdown has no Cancel shutdown button: a countdown at the 7.1 V floor
+cannot be canceled. Turn the car off and change the battery.
+
+A terminal shows the red line but no prompt: the shell redraws its prompt
+right after the line. A full-screen program (vim, htop) keeps the line until
+it next redraws.
 
 ## WiFi persistence
 

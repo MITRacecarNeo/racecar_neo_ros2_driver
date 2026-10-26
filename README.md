@@ -18,6 +18,7 @@ This package is the v2 successor to [`racecar-neo-ros2-backend`](https://github.
 - [Web dashboard](#web-dashboard)
 - [Lab dashboards](#lab-dashboards)
 - [Autonomy gate](#autonomy-gate)
+- [Low-battery shutdown](#low-battery-shutdown)
 - [Car data](#car-data)
 - [Bag recording](#bag-recording)
 - [Maps](#maps)
@@ -70,8 +71,9 @@ Display node subscribes:
 Safety and uptime layers:
 - **Mux** enforces speed/steer limits and gates commands behind controller bumpers; zeroes output on joystick disconnect (500 ms timeout).
 - **Watchdog** (`scripts/watchdog.py`) supervises 7 nodes with two liveness signals (ROS topic + the node's entry-point path in `/proc`) and restarts a node when either fails. A 60 s startup grace, backoff of 30, 60, 120 and 240 s between restarts, and a give-up after 5 restarts that do not hold 60 s, re-armed by replugging the device or restarting teleop. Logs on state changes only, skips subsystems disabled at launch, and writes `~/logs/latest/watchdog_state.json`, which `racecar status` and the dashboard read. SIGTERM to SIGKILL escalation, FastRTPS SHM orphan sweep every 60 s, Pi 5 PMIC under-voltage alarm. Restart is skipped when the device is physically missing.
-- **Six core systemd units** (`racecar-{data,teleop,watchdog,dashboard,jupyter,mapview}.service`), enabled at boot. `racecar-data` records the data root first; the watchdog is wired with `BindsTo=` so it stops with teleop, and `Wants=` so it starts with teleop. `racecar-autonomy.service` installs disabled and starts on demand. Four more units carry the lab dashboards; they install disabled and start from the 8080 apps page.
+- **Seven core systemd units** (`racecar-{data,teleop,watchdog,dashboard,jupyter,mapview,battery-guard}.service`), enabled at boot. `racecar-data` records the data root first; the watchdog is wired with `BindsTo=` so it stops with teleop, and `Wants=` so it starts with teleop. `racecar-autonomy.service` installs disabled and starts on demand. Four more units carry the lab dashboards; they install disabled and start from the 8080 apps page.
 - **Launch wrapper** (`scripts/launch_teleop.sh`) creates `~/logs/<timestamp>/`, updates `~/logs/latest` atomically, sweeps FastRTPS SHM orphans, and `exec`s `ros2 launch` so systemd tracks the launch PID directly.
+- **Battery guard** (`scripts/battery_guard.py`, `racecar-battery-guard.service`) warns at 15 minutes of battery left and turns the car off safely at 7.1 V; see [Low-battery shutdown](#low-battery-shutdown).
 - **Web dashboard** at `http://<robot>:8080`: 9 node cards, 9 topic-rate rows, System Health (data drive, RTC battery, Pi under-voltage alarm), watchdog log tail. Auto-refresh.
 - **JupyterLab** at `http://<robot>:8888` with PYTHONPATH/AMENT_PREFIX_PATH pre-set so `import rclpy` works in notebooks.
 - **`colcon test` suite** covering the nodes, scripts, setup phases and attached peripherals, with fix commands in the failure messages.
@@ -394,8 +396,8 @@ Once `racecar-teleop.service` is running, browse to `http://<robot>:8080`.
 **Apps.** One tile per app, in two groups. Hover over a tile for what it
 does. A white border means the app is running.
 
-- Core: map viewer and JupyterLab, which start at boot, and the safety
-  override (below).
+- Core: map viewer and JupyterLab, which start at boot, the safety
+  override, and Turn Off (below).
 - Utilities: web teleop, line follow, wall follow, and camera label.
 - Tap a tile to open the app in a new tab. A stopped utility is started
   first, and the tab shows a loading bar until the app is ready. Cancel
@@ -440,6 +442,25 @@ the tile turns red and:
 
 The car may start moving without warning. Do not leave it unattended.
 
+**Battery.** The header shows the battery: time left, and average power
+over the last 5 minutes. Click the time to switch between percent left,
+time left, and the time the car turns off ("until 12:32"). The page
+remembers the choice. Both hide until the battery guard has an estimate,
+about 30 s after boot.
+
+- With 15 minutes or less left, a red banner shows on this page and on
+  every app page.
+- During a shutdown countdown the banner counts down each second.
+  Cancel shutdown shows when the countdown came from the time estimate.
+  It works once per boot. A countdown at 7.1 V cannot be canceled.
+
+See [Low-battery shutdown](#low-battery-shutdown).
+
+**Turn Off.** The Turn Off tile shuts the car down safely. It asks first.
+It stops a recording, the driving apps, autonomy (saving a map being
+built), and teleop, then powers off. Turn off the power switch after the
+car is off.
+
 **Overview.** Expand it to see the car live: color camera, depth camera,
 lidar (seen from above, forward up), IMU rotation rates and encoder speed over
 the last 30 s, battery voltage and current over the last 30 minutes, and CPU
@@ -460,7 +481,8 @@ The 2-hour history starts over when the dashboard service restarts.
   under-voltage alarm),
   topic rates, autonomy, and the watchdog log. Clear log hides the lines so
   far; the log file is kept.
-- The header shows "System OK" or "Check system".
+- The header shows "System OK", "Check system", "Low battery", or
+  "Shutting down".
 
 The page refreshes every 3 s; Refresh at the bottom updates it at once. Topic
 rates are measured only while the page is open, so they read "measuring" for
@@ -521,6 +543,41 @@ The gamepad bumpers govern: LB for manual, RB for autonomy, neither or both
 for idle. The safety override on the 8080 page lets `/drive` through with no
 gamepad. An optional FlySky transmitter can hold the gate instead; see
 [FlySky transmitter](#flysky-transmitter).
+
+## Low-battery shutdown
+
+`racecar-battery-guard.service` watches the battery from boot and turns the
+car off safely before the battery runs flat. It runs on its own, apart from
+teleop.
+
+| When | What happens |
+|---|---|
+| 15 minutes left | A red line on every terminal and in the tmux status bar: "Low battery: 14 min left. Charge or swap the battery." A banner on 8080 and every app page. LOW, BATT, and "!" on the dot matrix. The LED strip flashes orange, then red. |
+| Battery at 7.1 V (3.55 V per cell) | A 60 s countdown: "Shutting down in 30 s." on terminals and pages, the seconds left on the dot matrix from 20 s, faster LED flashing. |
+| 0 s | "Turning the car off now. Turn off the power switch." SHUT and DOWN on the dot matrix. The guard stops a `racecar log` recording, the driving apps, autonomy (saving a map being built), and teleop, then powers off. |
+
+After a shutdown, turn off the power switch. The PIT board and the halted Pi
+still draw about 100 to 200 mA until the switch is off, so the battery keeps
+draining. Do not leave the car unattended on battery.
+
+The time left comes from a measured discharge curve of the Gens ace 5000 mAh
+2S battery and the current over the last 5 minutes. The PIT firmware's LED
+charge bar uses the same curve. The guard reads the cell count at boot and
+measures the capacity of the battery in the car as it runs. A shutdown at
+5 minutes left is built in but off (`shutdown_enabled: false`); the
+15-minute warning still shows.
+
+- Status: `/battery/estimate` (`diagnostic_msgs/DiagnosticStatus`, latched,
+  1 Hz). `journalctl -u racecar-battery-guard -f` shows the warning,
+  countdown, and each shutdown step.
+- Log: `<data root>/health/battery/<start>_guard.csv`, one line a second,
+  saved line by line.
+- Settings: `config/battery.yaml`; see
+  [docs/advanced-settings.md](./docs/advanced-settings.md), "Battery guard".
+- Bench test without powering off: stop the service, run
+  `python3 scripts/battery_guard.py --dry-run --floor-cell-volts 4.3` from the
+  driver folder, then start the service again. The countdown starts about
+  25 s in and the shutdown steps are logged, not run.
 
 ## Car data
 
@@ -1059,8 +1116,12 @@ switch it to slow mode before mapping.
 
 Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
 
-- **Unreleased**: `speed_cap` in `throttle.yaml` clips speed for every source
-  (1.0, off, by default).
+- **Unreleased**: low-battery warning and safe shutdown
+  (`racecar-battery-guard.service`: time left, a red line on terminals,
+  banners on 8080 and the app pages, LED strip and dot-matrix alerts, a
+  60 s countdown at 7.1 V); battery time and power in the 8080 header; a
+  Turn Off tile; `speed_cap` in `throttle.yaml` clips speed for every
+  source (1.0, off, by default).
 - **0.9.0** (2026-10-24): 2D SLAM beside teleop (`racecar map` to build, save,
   load, extend, and recover maps through `racecar-autonomy.service`;
   `racecar launch autonomy`: slam_toolbox mapping, AMCL or slam_toolbox

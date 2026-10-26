@@ -17,6 +17,7 @@ and what supervises them. Companion to the operational instructions in
 - [Frame tree](#frame-tree)
 - [Process model](#process-model)
 - [Supervision and observability](#supervision-and-observability)
+- [Battery guard](#battery-guard)
 - [Configuration](#configuration)
 - [Data root](#data-root)
 - [Calibration data flow](#calibration-data-flow)
@@ -87,7 +88,7 @@ Eight nodes ship in this package (`setup.py` console scripts):
 
 | Node | Responsibility |
 |---|---|
-| `pit_node` | Sole owner of the Teensy UART. Encodes drive commands, decodes telemetry, forwards display and LED frames, and integrates odometry (`odometry.py`) into `odom -> base_link`. |
+| `pit_node` | Sole owner of the Teensy UART. Encodes drive commands, decodes telemetry, forwards display and LED frames (a fresh low-battery alert frame first, then the user's frame, then the override flash), and integrates odometry (`odometry.py`) into `odom -> base_link`. |
 | `mux_node` | Arbitrates teleop against autonomy, enforces speed and steering limits, gates on the controller or on a live FlySky transmitter, zeroes output when the joystick drops. |
 | `throttle_node` | Clamps `/mux_out` to `[-1, 1]` and applies per-direction speed and steering caps onto `/motor`; while `/autonomy/status` reports mapping, clips speed to `mapping_speed_cap` and steering to `mapping_steering_cap`; clips speed to `speed_cap` at all times (1.0, off). The Teensy maps the normalized command to PWM. |
 | `gamepad_node` | Maps `/joy` axes into an Ackermann drive command. |
@@ -270,8 +271,12 @@ rather than on the rate gate. `diagnose.py`'s nominal for
 
 ```
   /dotmatrix/text ──┐
-  /dotmatrix/pixels ├─▶ dotmatrix_node ─ /dotmatrix/frame ─▶ pit_node ─▶ Teensy ─▶ MAX7219 x3
-  /joy ─────────────┘   (glyph fallback)
+  /dotmatrix/pixels ├─▶ dotmatrix_node ─ /dotmatrix/frame ─┐
+  /joy ─────────────┘   (glyph fallback)                    │
+  battery_guard ─ /dotmatrix/alert ─────────────────────────┤
+                                                            ├─▶ pit_node ─▶ Teensy ─▶ MAX7219 x3, LED strip
+  /led/pixels (user code, teleop dashboard) ────────────────┤   (alert > user frame > override flash)
+  battery_guard ─ /led/alert ───────────────────────────────┘
 ```
 
 `dotmatrix_node` uses `luma` only for font rasterization. Text times out and
@@ -296,7 +301,9 @@ patterns on `/dotmatrix/pixels`.
 | `/imu/fused` | `sensor_msgs/Imu` | `imu_fusion_node` | user code |
 | `/encoder/speed` | `std_msgs/Float32` | `pit_node` | user code |
 | `/battery/voltage`, `/battery/current` | `std_msgs/Float32` | `pit_node` | user code |
-| `/battery/state` | `sensor_msgs/BatteryState` (1 Hz means; discharge current negative) | `pit_node` | dashboard |
+| `/battery/state` | `sensor_msgs/BatteryState` (1 Hz means; discharge current negative) | `pit_node` | dashboard, `battery_guard.py` |
+| `/battery/estimate` | `diagnostic_msgs/DiagnosticStatus` (latched, 1 Hz) | `battery_guard.py` | dashboard |
+| `/battery/cancel_shutdown` | `std_msgs/Empty` | dashboard (Cancel shutdown) | `battery_guard.py` |
 | `/rc/channels` | `std_msgs/Float32MultiArray` | `pit_node` | `mux_node` (when `rc_authority_enable`), user code |
 | `/rc/link` | `std_msgs/Bool` | `pit_node` | `mux_node` (when `rc_authority_enable`) |
 | `/odom` | `nav_msgs/Odometry` | `pit_node` | lab dashboards, user code |
@@ -307,6 +314,7 @@ patterns on `/dotmatrix/pixels`.
 | `/edgetpu/inference` | `vision_msgs/Detection2DArray` | `edgetpu_node` | `webteleop`, user code |
 | `/dotmatrix/text`, `/dotmatrix/pixels` | `std_msgs/String`, `UInt8MultiArray` | user code | `dotmatrix_node` |
 | `/dotmatrix/frame`, `/led/pixels` | `std_msgs/UInt8MultiArray` | `dotmatrix_node`, user code | `pit_node` |
+| `/dotmatrix/alert`, `/led/alert` | `std_msgs/UInt8MultiArray` (8 x 24 pixels, one byte each; 84 RGB triplets) | `battery_guard.py` | `pit_node` |
 | `/diagnostics` | `diagnostic_msgs/DiagnosticArray` | camera, `edgetpu_node` | dashboard, `diagnose.py` |
 | `/tf_static` | `tf2_msgs/TFMessage` | `robot_state_publisher`, `realsense2_camera_node` | TF consumers, viewers |
 | `/robot_description` | `std_msgs/String` | `robot_state_publisher` | viewers (RViz, Foxglove) |
@@ -485,7 +493,7 @@ it as dead.
 
 ## Process model
 
-Six core systemd units, all `User=racecar`:
+Seven core systemd units, all `User=racecar`:
 
 ```
 racecar-data.service        (oneshot at boot, before the others)
@@ -497,6 +505,7 @@ racecar-teleop.service ──── Wants= ───▶ racecar-watchdog.service
 racecar-dashboard.service   (independent, port 8080)
 racecar-jupyter.service     (independent, port 8888)
 racecar-mapview.service     (independent, port 8084)
+racecar-battery-guard.service (independent; Restart=always)
 ```
 
 `Wants=` pulls the watchdog up when teleop starts; `BindsTo=` takes it down
@@ -633,6 +642,43 @@ the under-voltage alarm path, SoC temperature, throttling flags, CPU time,
 the ARM clock, memory, disk, uptime, clock sync, the RealSense `/diagnostics`
 rate parser and a subprocess helper. Each reading has one definition.
 
+## Battery guard
+
+`scripts/battery_guard.py`, run by `racecar-battery-guard.service` from boot,
+apart from teleop, so a teleop restart never stops it. Modules:
+
+| File | Role |
+|---|---|
+| `racecar_neo_ros2_driver/battery.py` | Charge from the measured curve (per cell), power and time left over 5 minutes, cell count, `CapacityLearner`; no ROS |
+| `scripts/battery_guard.py` | `Guard` state machine (ok, warn, countdown, off), `/battery/estimate`, the CSV log, the alert frames at 20 Hz |
+| `scripts/battery_alert.py` | Red line on every terminal of the user and in the tmux status bar (default and `racecar-terminal` sockets) |
+| `scripts/battery_display.py` | Dot-matrix and LED frames for each level |
+| `scripts/safe_shutdown.py` | Shutdown steps, shared with the 8080 Turn Off tile |
+
+```
+  /battery/state ─▶ battery_guard ─┬─▶ /battery/estimate ─▶ dashboard ─▶ 8080 pills, banner; /api/battery ─▶ /ui/battery.js
+       (1 Hz)                      ├─▶ terminals, tmux status bar
+                                   ├─▶ /dotmatrix/alert, /led/alert ─▶ pit_node
+                                   ├─▶ <data root>/health/battery/<start>_guard.csv
+                                   └─▶ safe_shutdown ─▶ racecar log stop, driving apps, autonomy, teleop, power off
+  dashboard (Cancel shutdown) ─▶ /battery/cancel_shutdown ─▶ battery_guard
+```
+
+Levels: warn at `warn_min` (15) minutes left, held 60 s. Countdown (60 s)
+when the 30 s median voltage reaches `floor_cell_volts` times the cell count
+(7.1 V on 2S), or, with `shutdown_enabled`, at `shutdown_min` (5) minutes
+left held 60 s; only the second can be canceled, once per boot. Readings
+that are stale or outside 3.0 to 4.3 V per cell never warn or start a
+countdown; a countdown already running finishes. After the countdown the
+guard holds 2 s for SHUT and DOWN on the dot matrix, then runs the steps.
+Stopping teleop ends `pit_node`, so the displays go dark before power off.
+
+`49-racecar-power.rules` lets the racecar user stop teleop and power off
+with other sessions open or inhibitors held; the other rules cover the lab
+apps and autonomy. The power switch is the only battery disconnect: after
+power off, the PIT board (its own 5 V regulator from the main bus) and the
+halted Pi still draw about 100 to 200 mA.
+
 ## Configuration
 
 One YAML per node under `config/`, keyed by node name and loaded through the
@@ -656,6 +702,7 @@ node's `<name>_config` launch argument.
 | `amcl.yaml` | `amcl`, `map_server`, `lifecycle_manager_localization` | motion and laser models, particles, beam skipping, update distances |
 | `foxglove.yaml` | `foxglove_bridge` (autonomy launch, when on) | port, topic whitelist, `/initialpose` as the only client topic |
 | `foxglove_layout.json` | Lichtblick, imported by hand (not a node file) | 3D view, status table, pose plot |
+| `battery.yaml` | `battery_guard.py` | capacity, measured curve, cell count, floor per cell, warning and shutdown minutes, capacity learning, `shutdown_enabled` |
 | `frames.yaml` | `frames.launch.py` (not a node parameter file) | frame offsets in mm and deg, fleet base values; see [Frame tree](#frame-tree) |
 
 Per-car values (calibration, an enabled RC gate) live in the car profile
@@ -700,7 +747,7 @@ under the root, created if absent. The student library's
 | `dashboards/<name>/` | lab dashboard CSV logs |
 | `slam_eval/` | `scripts/validation/slam_eval.py`, `slam_session.py` |
 | `images/` | lab programs, through the library's `rc_utils.get_data_dir("images")` |
-| `health/` | `racecar health` reports |
+| `health/` | `racecar health` reports; `battery/`: battery guard logs |
 
 The root is fixed for the boot. `data_root.session_problem()` makes a new
 `racecar log start` or `racecar map start`, `load`, or `resume` refuse when

@@ -21,6 +21,7 @@ setting cuts your current connection.
 - [Foxglove bridge](#foxglove-bridge)
 - [Mapping limits](#mapping-limits)
 - [Speed cap](#speed-cap)
+- [Battery guard](#battery-guard)
 - [Golden image preparation](#golden-image-preparation)
 
 ## Ethernet addressing
@@ -242,6 +243,32 @@ it clips instead of scaling, so a command below the cap drives as before.
 With the field firmware (4.0 m/s ceiling), 0.15 holds the car to about
 1.0 m/s. While mapping, the lower of `speed_cap` and `mapping_speed_cap`
 applies.
+
+## Battery guard
+
+| | |
+|---|---|
+| Default | `config/battery.yaml`: 4700 mAh usable, floor 3.55 V per cell (7.1 V on 2S), warning at 15 min left, shutdown at 5 min left off |
+| Change | `params/battery.yaml` in the car profile, under `battery_guard: ros__parameters:`; then `sudo systemctl restart racecar-battery-guard` |
+| Revert | remove the key, restart the guard |
+| Safe path | any |
+
+Keys:
+
+- `capacity_mah`: charge usable down to the curve's empty point (7.0 V on
+  2S). The guard measures the battery in the car as it runs and moves
+  toward that value (`learn_*` keys), so this is the starting point.
+- `cells`: 0 reads the count from the first voltage; a number forces it.
+- `curve_mv`, `curve_pct`, `curve_cells`: charge left against voltage under
+  load. The PIT firmware's LED charge bar uses the same table.
+- `floor_cell_volts`: the countdown starts here whatever the estimate
+  says. Higher leaves more margin for the voltage dip while driving.
+- `warn_min`, `shutdown_min`, `shutdown_enabled`: minutes left for the
+  warning and for the estimate countdown; with `shutdown_enabled: false`
+  the estimate only warns.
+
+A lower floor or a disabled guard lets the battery run below its safe
+voltage and the Pi brown out.
 
 ## Golden image preparation
 

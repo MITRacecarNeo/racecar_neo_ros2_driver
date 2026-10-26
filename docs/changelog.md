@@ -6,12 +6,38 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Added
 
+- Low-battery warning and safe shutdown: `scripts/battery_guard.py`, run
+  by `racecar-battery-guard.service` from boot, apart from teleop. It
+  estimates charge and time left from a measured discharge curve of the
+  Gens ace 5000 mAh 2S battery (`racecar_neo_ros2_driver/battery.py`,
+  `config/battery.yaml`), reads the cell count at boot, and measures the
+  capacity of the battery in the car as it runs. Warns at 15 minutes
+  left. At 7.1 V (3.55 V per cell, 30 s median) it counts down 60 s, then
+  stops a recording, the driving apps, autonomy, and teleop, and powers
+  off (`scripts/safe_shutdown.py`, `scripts/polkit/49-racecar-power.rules`).
+  A shutdown at 5 minutes left is built in, off by default
+  (`shutdown_enabled`). Publishes `/battery/estimate`; logs a CSV under
+  `<data root>/health/battery/`.
+- Low-battery messages: a red line on every terminal of the car's user and
+  in the tmux status bar, with the shell prompt redrawn after it
+  (`scripts/battery_alert.py`); LOW / BATT / "!", the seconds left, and
+  SHUT / DOWN on the dot matrix, and orange and red flashing on the LED
+  strip (`scripts/battery_display.py`).
+- `pit_node` inputs `/dotmatrix/alert` and `/led/alert`, shown ahead of the
+  user's frames and the override flash while fresh.
+- 8080 home page: battery time left (click for percent or the time the car
+  turns off) and average power in the header, "Low battery" and "Shutting
+  down" in the status pill, a countdown banner with Cancel shutdown, and a
+  Turn Off tile in Core (`POST /api/shutdown`). `GET /api/battery`;
+  `/ui/battery.js` shows the banner on the map viewer, the launch page, and
+  the lab dashboards.
 - `speed_cap` in `throttle.yaml`: speed clipped for every source at all
   times, 1.0 (off) by default; about 0.15 with the field firmware holds the
   car to about 1.0 m/s. The lowest active cap wins while mapping.
 
 ### Changed
 
+- 8080 hover tips end without a period.
 - The lab dashboards in `scripts/dashboards/` (web teleop, line follow,
   wall follow, camera label) are held to the package's lint rules: flake8,
   pep257, ruff, black, and mypy (typed signatures). Only the retired
