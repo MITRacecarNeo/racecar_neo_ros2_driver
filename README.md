@@ -20,6 +20,7 @@ This package is the v2 successor to [`racecar-neo-ros2-backend`](https://github.
 - [Autonomy gate](#autonomy-gate)
 - [Low-battery shutdown](#low-battery-shutdown)
 - [Terminal app](#terminal-app)
+- [Hardware health](#hardware-health)
 - [Car data](#car-data)
 - [Bag recording](#bag-recording)
 - [Maps](#maps)
@@ -221,6 +222,7 @@ racecar cleanup [--force]           # list / kill stale racecar processes + SHM 
 racecar status                      # full diagnostic (devices, sensors, autonomy, system, network)
 racecar status --quick              # host checks only; skips the ROS sampling phase
 racecar status --strict             # exit non-zero on any WARN or SKIP as well
+racecar health                      # power and data drive over time, with a saved report
 racecar eth status                  # eth0 addressing mode + conflict checks
 racecar wifi list                   # visible networks on wlan0
 racecar desktop status              # GNOME on/off for the next boot
@@ -633,6 +635,42 @@ tmux -L racecar-terminal attach -t rcn-main   # Ctrl+B, then D, to detach
 ```
 
 `racecar service stop terminal` stops the app and every terminal.
+
+## Hardware health
+
+`racecar health` (`scripts/health.py`) checks the power supply and the data
+drive over time and saves a report. `racecar status` takes one reading of
+each; `racecar health` samples and tests.
+
+```sh
+racecar health          # power, then nvme
+racecar health power    # the Pi's 5 V input for 30 s, throttling, the battery
+racecar health nvme     # the data drive: mount, speed, SMART, kernel log
+```
+
+| Step | Checks | FAIL when |
+|---|---|---|
+| `power` | EXT5V (the Pi's 5 V input) about 140 times a second for 30 s: min, mean, share under 4.75 V; throttle bits before and after; the PMIC under-voltage alarm; the ARM clock; battery voltage and current from `/battery/state` | any sample under 4.75 V; throttling now or during the run; the battery under the guard's floor (3.55 V per cell) |
+| `nvme` | drive on PCIe, mounted at `/mnt/nvme`, the data root on it; a 256 MB write and read back that bypasses the page cache, with MB/s; free space; SMART temperature, wear, media errors, and unsafe shutdowns (a count; the switch makes one); NVMe and PCIe errors in this boot's kernel log | no drive; not mounted; the data root on the SD card; a read-back mismatch; SMART critical warning or media errors; any kernel log error |
+
+Under 4.85 V, sticky throttle bits from earlier in the boot, a slow drive
+(under 100 MB/s write or 150 MB/s read) warn.
+The battery row needs teleop running; without it the row is skipped.
+
+Each run writes `report.md`, `report.json`, and `samples.csv` (every EXT5V
+sample) to `health/<time>/` under the data root. The exit code is 1 when a
+check fails.
+
+`racecar status` has `ext5v` and `nvme` rows: one EXT5V reading, and the
+drive's temperature, wear, and media errors. SMART needs root; setup installs
+`/etc/sudoers.d/racecar-nvme` (`scripts/sudoers.d-racecar-nvme`), which allows
+`nvme smart-log -o json /dev/nvme0` without a password and nothing else.
+
+On the 8080 home page, the Power chip shows the 5 V input, read once a second
+while a page is open, and the lowest reading since the page opened. It warns
+under 4.85 V or after a dip earlier in the boot, and turns red under 4.75 V or
+on under-voltage now. The Data chip adds the drive's temperature (warns at 70
+C, red at 80 C).
 
 ## Car data
 
@@ -1171,7 +1209,11 @@ switch it to slow mode before mapping.
 
 Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
 
-- **Unreleased**: low-battery warning and safe shutdown
+- **Unreleased**: `racecar health` (power and data drive checks over time,
+  with a saved report), `ext5v` and `nvme` rows in `racecar status`, and
+  the 5 V input on the 8080 Power chip; a terminal app on port 8086 (tmux
+  terminals in the browser behind the racecar password, layouts and presets
+  saved on the car); low-battery warning and safe shutdown
   (`racecar-battery-guard.service`: time left, a red line on terminals,
   banners on 8080 and the app pages, LED strip and dot-matrix alerts, a
   60 s countdown at 7.1 V); battery time and power in the 8080 header; a

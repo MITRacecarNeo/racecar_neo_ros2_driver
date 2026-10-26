@@ -749,3 +749,35 @@ class TestTerminalCheck:
 
     def test_battery_guard_is_a_service_row(self, diag):
         assert 'racecar-battery-guard' in diag.SERVICE_UNITS
+
+
+class TestPowerAndDriveRows:
+    @pytest.mark.parametrize(
+        'volts,status', [(4.91, 'OK'), (4.80, 'WARN'), (4.70, 'FAIL'), (None, 'SKIP')]
+    )
+    def test_ext5v(self, diag, volts, status):
+        assert diag.ext5v_check(volts).status == status
+
+    def test_no_drive_skips(self, diag):
+        assert diag.nvme_check(False, None, None).status == 'SKIP'
+
+    def test_healthy_drive(self, diag):
+        c = diag.nvme_check(True, 57.0, {'percent_used': 2, 'media_errors': 0})
+        assert (c.status, c.detail) == ('OK', '57 C, 2% worn, 0 media errors')
+
+    def test_smart_unreadable_warns(self, diag):
+        c = diag.nvme_check(True, 57.0, None)
+        assert c.status == 'WARN' and 'setup_user_env.sh' in c.detail
+
+    @pytest.mark.parametrize(
+        'temp,smart,status',
+        [
+            (72.0, {}, 'WARN'),
+            (81.0, {}, 'FAIL'),
+            (50.0, {'media_errors': 3}, 'FAIL'),
+            (50.0, {'critical_warning': 2}, 'FAIL'),
+            (50.0, {'percent_used': 95}, 'WARN'),
+        ],
+    )
+    def test_limits(self, diag, temp, smart, status):
+        assert diag.nvme_check(True, temp, smart).status == status

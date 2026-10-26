@@ -606,8 +606,12 @@ their cards as `unsupervised` rather than dead when they are down.
 resolve from topic advertisement; rate rows come from raw subscriptions
 (counted without deserializing) except the three RealSense streams, which are
 read from the camera's `/diagnostics` output. System Health reports the data
-drive (`data_root_health`), the RTC backup cell voltage, and the sticky PMIC
-under-voltage alarm. The Autonomy card
+drive (`data_root_health`, with the drive's hwmon temperature) and the RTC
+backup cell voltage every 15 s, and Power (`power_view`) every tick: EXT5V,
+the live and sticky throttle bits, and the PMIC alarm. `Ext5vWatch` reads
+EXT5V once a second on its own thread while a page is open and hands the
+lowest reading since the last tick to the page, which keeps the lowest since
+it opened. The Autonomy card
 reads only `/autonomy/status` (1 Hz, latched) for mode, map, localized, scan
 fit, and spread (`autonomy_view`), and links to the map viewer; the 20 Hz pose
 is left to the viewer, which subscribes only while a browser is open.
@@ -637,11 +641,33 @@ with `--quick` or `--section` is distinct from a check failing to run and
 affects neither mode. A car with teleop stopped still fails: its topics are
 absent from the graph, and an absent topic is a `FAIL`, not a `SKIP`.
 
+`scripts/health.py` is the sampling counterpart behind `racecar health`: it
+reuses `diagnose.Check`, its status words, and `nvme_check`, but measures
+over time and keeps a record.
+
+```
+racecar health [power|nvme]
+  power ── sample_ext5v (vcgencmd, ~140/s, 30 s) ─┐
+         ├ get_throttled before and after         │
+         ├ BatterySampler (/battery/state, rclpy) ├─► Check rows ─┐
+  nvme ─ ├ mount, data root (data_root.current)   │               │
+         ├ speed_test (O_DIRECT 256 MB, read back)│               ▼
+         ├ read_nvme_smart (sudo -n, one rule)    │   <data root>/health/<time>/
+         └ journalctl -k -b (NVMe, PCIe errors) ──┘     report.md, report.json,
+                                                        samples.csv
+```
+
+The newest earlier `report.json` with a SMART snapshot gives the baseline
+for the count of new unsafe shutdowns. `report.json` is the machine-readable form for
+later tools.
+
 `scripts/sysinfo.py` holds the host readings the dashboard, `diagnose.py`,
 `watchdog.py` and `eth_monitor.py` share: RTC thresholds and classification,
 the under-voltage alarm path, SoC temperature, throttling flags, CPU time,
-the ARM clock, memory, disk, uptime, clock sync, the RealSense `/diagnostics`
-rate parser and a subprocess helper. Each reading has one definition.
+the ARM clock, memory, disk, uptime, clock sync, the PMIC rails
+(`read_pmic_rails`, `read_ext5v`, `classify_ext5v`), the NVMe drive's
+temperature and SMART log, the RealSense `/diagnostics` rate parser and a
+subprocess helper. Each reading has one definition.
 
 ## Battery guard
 
@@ -862,6 +888,7 @@ racecar_neo_ros2_driver/
 │                              racecar_map and map_control (`racecar map`),
 │                              racecar_profile (`racecar profile`),
 │                              racecar_disk (`racecar disk`, `racecar data`),
+│                              health (`racecar health`), sudoers.d-racecar-nvme,
 │                              autonomy unit launcher and stop step,
 │                              systemd units, udev, polkit and modprobe rules,
 │   │                          Coral overlay and gasket patch

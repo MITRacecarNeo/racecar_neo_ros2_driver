@@ -1108,6 +1108,11 @@ __RC_CLEANUP_HELP__
             python3 "${RACECAR_MAP_SCRIPT:-$pkg_dir/scripts/racecar_map.py}" "$@"
             ;;
 
+        health)
+            # Hardware checks over time with a saved report; see scripts/health.py.
+            python3 "${RACECAR_HEALTH_SCRIPT:-$pkg_dir/scripts/health.py}" "$@"
+            ;;
+
         status)
             # Whole-car diagnostic. Read-only: it observes topics and reads
             # sysfs, and never commands the hardware. Exits non-zero when a
@@ -1217,6 +1222,16 @@ Commands:
                           --section a,b       devices, sensors, actuators,
                                               system, services, network
                           --window SEC        ROS sample window (default 5.0)
+    health [step]       Hardware checks over time; each run saves a report to
+                        health/ under the data root. Exits 1 when a check fails.
+                          all       power, then nvme (default)
+                          power     the Pi's 5 V input sampled for 30 s,
+                                    throttling, the PMIC alarm, the ARM
+                                    clock, the battery (teleop running)
+                          nvme      the data drive: mount, data root, a
+                                    256 MB write and read, free space,
+                                    SMART, kernel log errors
+                        --seconds N sets the power sample time.
     calibrate [steps]   Calibrate the sensors on the car via a guided session.
                         Sensors to calibrate include:
                           imu         LSM9DS1 accel bias and scale, gyro bias
@@ -1326,7 +1341,7 @@ _racecar_complete() {
     local sub="${COMP_WORDS[1]:-}"
 
     if [[ $COMP_CWORD -eq 1 ]]; then
-        COMPREPLY=( $(compgen -W "build test source cd teleop launch lint udev watchdog service setup eth wifi desktop library log calibrate profile disk data cleanup map status help" -- "$cur") )
+        COMPREPLY=( $(compgen -W "build test source cd teleop launch lint udev watchdog service setup eth wifi desktop library log calibrate profile disk data cleanup map status health help" -- "$cur") )
         return
     fi
 
@@ -1376,6 +1391,9 @@ _racecar_complete() {
             ;;
         disk)
             COMPREPLY=( $(compgen -W "status setup format check" -- "$cur") )
+            ;;
+        health)
+            COMPREPLY=( $(compgen -W "all power nvme --seconds --help" -- "$cur") )
             ;;
         data)
             COMPREPLY=( $(compgen -W "path" -- "$cur") )

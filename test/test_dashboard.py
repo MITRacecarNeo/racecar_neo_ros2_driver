@@ -151,26 +151,66 @@ class TestMeasureHz:
 
 class TestSystemHealth:
     def test_collect_system_health_keys(self, dashboard):
-        # Without vcgencmd or rpi_volt both entries still exist, as unavailable.
+        # Without vcgencmd every entry still exists, as unavailable.
         health = dashboard._collect_system_health()
-        assert set(health) == {'data', 'rtc', 'under_voltage'}
+        assert set(health) == {'data', 'rtc'}
         for entry in health.values():
             assert {'label', 'status', 'detail'} <= set(entry)
             assert entry['status'] in ('healthy', 'stale', 'dead')
 
     @pytest.mark.parametrize(
-        'alarm,status,detail',
-        [
-            (None, 'dead', 'UNAVAILABLE'),
-            (True, 'dead', 'TRIPPED (5V dipped this boot)'),
-            (False, 'healthy', 'OK'),
-        ],
+        'temp,status,tail',
+        [(None, 'healthy', 'free'), (57.0, 'healthy', '57 C'), (72.0, 'stale', 'Drive hot')],
     )
-    def test_under_voltage_states(self, dashboard, monkeypatch, alarm, status, detail):
-        monkeypatch.setattr(dashboard, '_read_under_voltage_alarm', lambda: alarm)
-        monkeypatch.setattr(dashboard, '_read_battery_voltage', lambda: 2.9)
-        entry = dashboard._collect_system_health()['under_voltage']
-        assert (entry['status'], entry['detail']) == (status, detail)
+    def test_data_drive_temperature(self, dashboard, monkeypatch, tmp_path, temp, status, tail):
+        from racecar_neo_ros2_driver import data_root
+
+        monkeypatch.setattr(data_root, 'resolve', lambda: (tmp_path, ''))
+        monkeypatch.setattr(data_root, 'on_nvme', lambda p: True)
+        monkeypatch.setattr(dashboard.shutil, 'disk_usage', lambda p: SimpleNamespace(free=400e9))
+        entry = dashboard.data_root_health(temp)
+        assert entry['status'] == status and entry['detail'].endswith(tail)
+
+
+class TestPower:
+    def test_steady_input(self, dashboard):
+        v = dashboard.power_view(4.91, 4.89, 0, False)
+        assert (v['status'], v['detail'], v['low']) == ('healthy', '4.91 V', 4.89)
+        assert v['limits'] == [4.75, 4.85]
+
+    def test_dip_between_ticks_warns_or_fails(self, dashboard):
+        assert dashboard.power_view(4.91, 4.80, 0, False)['status'] == 'stale'
+        assert dashboard.power_view(4.91, 4.70, 0, False)['status'] == 'dead'
+
+    def test_under_voltage_now_fails(self, dashboard):
+        v = dashboard.power_view(4.91, None, 0x50005, True)
+        assert v['status'] == 'dead'
+        assert v['detail'] == '4.91 V. Under-voltage now. Low earlier this boot'
+
+    def test_earlier_dip_warns(self, dashboard):
+        v = dashboard.power_view(4.91, None, 0x50000, False)
+        assert (v['status'], v['notes']) == ('stale', 'Low earlier this boot')
+
+    def test_throttled_now_warns(self, dashboard):
+        assert dashboard.power_view(4.91, None, 0x4, False)['notes'] == 'Throttled now'
+
+    def test_no_reading(self, dashboard):
+        assert dashboard.power_view(None, None, None, None)['status'] == 'dead'
+
+    def test_watch_keeps_the_lowest_until_taken(self, dashboard):
+        readings = iter([4.9, 4.7, 4.95, None, 4.88])
+        watch = dashboard.Ext5vWatch(lambda: next(readings))
+        for _ in range(4):
+            watch.sample()
+        assert watch.take() == (4.95, 4.7)
+        watch.sample()
+        assert watch.take() == (4.88, 4.88)
+        assert watch.take() == (4.88, None)
+
+    def test_page_keeps_the_lowest_since_it_opened(self, dashboard):
+        html = dashboard.DASHBOARD_HTML
+        assert "['health', 'power', 'bolt', 'Power', 'compute']" in html
+        assert 'powerLow = Math.min(' in html and 'h.limits' in html
 
 
 class TestDashboardHTML:

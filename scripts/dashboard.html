@@ -505,7 +505,7 @@ const INDICATORS = [
   ['node', 'edgetpu', 'pulse', 'Coral', 'compute'],
   ['health', 'data', 'layers', 'Data', 'compute'],
   ['health', 'rtc', 'clock', 'RTC', 'compute'],
-  ['health', 'under_voltage', 'bolt', 'Power', 'compute'],
+  ['health', 'power', 'bolt', 'Power', 'compute'],
   ['node', 'throttle', 'gauge', 'Throttle', 'actuation'],
   ['node', 'mux', 'merge', 'Mux', 'actuation'],
   ['node', 'dotmatrix', 'grid', 'Display', 'actuation'],
@@ -514,6 +514,7 @@ const INDICATORS = [
 ];
 const hz = (r) => (r && r.hz !== null && r.hz !== undefined ? r.hz : null);
 let openChip = null;  // key of the chip whose explanation is open (touch)
+let powerLow = null;  // lowest 5 V input since this page opened
 function chip(key, glyph, word, kind, num, unit, text) {
   // Hover tips end without a period.
   const tip = text.replace(/\.$/, '');
@@ -548,7 +549,14 @@ function renderBasic(data) {
         rr.warming ? `${label}: measuring.` : `${label}: ${r !== null ? `${r.toFixed(1)} Hz` : 'no data'}.`));
     } else if (kind === 'health') {
       const h = (data.system_health || {})[key];
-      if (h) groups[group].push(chip(key, glyph, word, STATUS[h.status] || 'off', null, '', `${h.label}: ${h.detail}.`));
+      if (h && key === 'power' && h.volts !== null) {
+        powerLow = Math.min(powerLow === null ? h.low : powerLow, h.low);
+        // The chip keeps the lowest reading since the page opened, so a dip stays visible.
+        const [floor, margin] = h.limits;
+        const kind = powerLow < floor ? 'err' : (STATUS[h.status] === 'ok' && powerLow < margin ? 'warn' : (STATUS[h.status] || 'off'));
+        groups[group].push(chip(key, glyph, word, kind, h.volts.toFixed(2), 'V',
+          `Power: ${h.volts.toFixed(2)} V, lowest ${powerLow.toFixed(2)} V.${h.notes ? ` ${h.notes}.` : ''}`));
+      } else if (h) groups[group].push(chip(key, glyph, word, STATUS[h.status] || 'off', null, '', `${h.label}: ${h.detail}.`));
     } else {
       const a = data.autonomy || {};
       if (a.status) groups[group].push(chip(key, glyph, word, STATUS[a.status] || 'off', null, '', [a.headline, ...(a.lines || [])].join('. ')));

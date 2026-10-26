@@ -71,6 +71,19 @@ else
     echo "  installed $PAM_DST"
 fi
 
+# sudoers rule: the NVMe SMART log without a password, read-only
+# (racecar status, racecar health, racecar disk). Checked with visudo first.
+SUDOERS_SRC="${SCRIPT_DIR}/sudoers.d-racecar-nvme"
+SUDOERS_DST="/etc/sudoers.d/racecar-nvme"
+if sudo cmp -s "$SUDOERS_SRC" "$SUDOERS_DST" 2>/dev/null; then
+    echo "  $SUDOERS_DST already up to date"
+elif sudo visudo -cf "$SUDOERS_SRC" >/dev/null; then
+    sudo install -m 0440 -o root -g root "$SUDOERS_SRC" "$SUDOERS_DST"
+    echo "  installed $SUDOERS_DST"
+else
+    echo "  WARNING: $SUDOERS_SRC failed visudo; not installed." >&2
+fi
+
 BASHRC="$USER_HOME/.bashrc"
 
 # Each run rewrites its blocks rather than testing for a marker, so hand edits

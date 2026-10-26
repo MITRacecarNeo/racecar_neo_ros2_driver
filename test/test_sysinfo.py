@@ -102,6 +102,63 @@ class TestRtcVoltage:
         assert sysinfo.read_rtc_voltage() is None
 
 
+PMIC = """ 3V7_WL_SW_A current(0)=0.10247270A
+  VDD_CORE_A current(7)=4.61681000A
+  VDD_CORE_V volt(15)=0.86119580V
+     EXT5V_V volt(24)=4.91512000V
+      BATT_V volt(25)=3.00598000V
+"""
+
+
+class TestPmicRails:
+    def test_parses_volts_and_amps(self):
+        rails = sysinfo.parse_pmic_adc(PMIC)
+        assert rails['EXT5V_V'] == pytest.approx(4.91512)
+        assert rails['VDD_CORE_A'] == pytest.approx(4.61681)
+        assert len(rails) == 5
+
+    def test_garbage_is_empty(self):
+        assert sysinfo.parse_pmic_adc('error=1 error_msg="Command not registered"') == {}
+
+    def test_read_ext5v_asks_for_one_rail(self, fake_run):
+        fake_run.result = _completed('     EXT5V_V volt(24)=4.80000000V\n')
+        assert sysinfo.read_ext5v() == pytest.approx(4.8)
+        assert fake_run.calls[-1] == ['vcgencmd', 'pmic_read_adc', 'EXT5V_V']
+
+    def test_unreadable_is_none(self, fake_run):
+        fake_run.result = _completed('', returncode=255)
+        assert sysinfo.read_ext5v() is None
+
+    @pytest.mark.parametrize(
+        'volts,status',
+        [(None, 'dead'), (4.70, 'dead'), (4.75, 'stale'), (4.849, 'stale'), (4.85, 'healthy')],
+    )
+    def test_classify(self, volts, status):
+        assert sysinfo.classify_ext5v(volts) == status
+
+
+class TestNvme:
+    def test_temperature_from_hwmon(self, tmp_path):
+        (tmp_path / 'hwmon3').mkdir()
+        (tmp_path / 'hwmon3' / 'temp1_input').write_text('56850\n')
+        assert sysinfo.read_nvme_temp(tmp_path) == pytest.approx(56.85)
+
+    def test_no_hwmon_is_none(self, tmp_path):
+        assert sysinfo.read_nvme_temp(tmp_path) is None
+
+    def test_smart_kelvin_to_celsius(self):
+        def run(argv, **_kw):
+            assert argv == sysinfo.NVME_SMART_ARGV
+            return _completed('{"temperature": 330, "percent_used": 2, "media_errors": 0}')
+
+        smart = sysinfo.read_nvme_smart(run)
+        assert smart == {'temperature': 57, 'percent_used': 2, 'media_errors': 0}
+
+    @pytest.mark.parametrize('result', [_completed('', 1), _completed('not json')])
+    def test_smart_unreadable_is_none(self, result):
+        assert sysinfo.read_nvme_smart(lambda argv, **kw: result) is None
+
+
 class TestUnderVoltageAlarm:
     def test_missing_hwmon_is_none(self, monkeypatch):
         monkeypatch.setattr(sysinfo, 'under_voltage_alarm_path', lambda: None)

@@ -888,6 +888,34 @@ class TestTerminalUnit:
         assert 'PAM_DST="/etc/pam.d/racecar-terminal"' in setup
 
 
+class TestNvmeSudoers:
+    """setup_user_env.sh installs the one sudoers rule SMART reads need."""
+
+    RULE = SCRIPTS_DIR / 'sudoers.d-racecar-nvme'
+
+    def test_rule_allows_only_the_smart_read(self):
+        text = self.RULE.read_text()
+        lines = [ln for ln in text.splitlines() if ln.strip() and not ln.startswith('#')]
+        assert lines == [
+            'racecar ALL=(root) NOPASSWD: /usr/sbin/nvme smart-log -o json /dev/nvme0'
+        ]
+
+    def test_rule_matches_the_command_the_tools_run(self):
+        import sys
+
+        sys.path.insert(0, str(SCRIPTS_DIR))
+        import sysinfo
+
+        assert sysinfo.NVME_SMART_ARGV[:2] == ['sudo', '-n']
+        assert ' '.join(sysinfo.NVME_SMART_ARGV[3:]) in self.RULE.read_text()
+
+    def test_setup_checks_with_visudo_and_installs_0440(self):
+        setup = (SCRIPTS_DIR / 'setup_user_env.sh').read_text()
+        assert 'sudo visudo -cf "$SUDOERS_SRC"' in setup
+        assert 'install -m 0440 -o root -g root "$SUDOERS_SRC" "$SUDOERS_DST"' in setup
+        assert 'SUDOERS_DST="/etc/sudoers.d/racecar-nvme"' in setup
+
+
 class TestLinterInstall:
     """setup_dev_tools.sh pins the linters behind `racecar lint`."""
 

@@ -52,9 +52,28 @@ All notable changes to this project will be documented in this file. The format 
   menu of every interface, its network, and address.
 - `racecar status` rows for the battery guard and the terminal app;
   `racecar service status` lists both.
+- `racecar health` (`scripts/health.py`): `power` samples EXT5V for 30 s
+  and checks throttling, the PMIC alarm, the ARM clock, and the battery
+  against the guard's floor; `nvme` checks the drive's mount and the data
+  root, writes and reads back 256 MB, and reads free space, SMART (new
+  unsafe shutdowns since the last report, counted, not warned), and kernel log errors. Each run
+  saves `report.md`, `report.json`, and `samples.csv` under
+  `<data root>/health/`; exit 1 on a FAIL.
+- `racecar status` rows `ext5v` (one reading against 4.75 V and 4.85 V)
+  and `nvme` (temperature, wear, media errors).
+- `scripts/sudoers.d-racecar-nvme`, installed by `setup_user_env.sh` after a
+  `visudo` check: `nvme smart-log -o json /dev/nvme0` without a password,
+  for `racecar status`, `racecar health`, and `racecar disk`.
+- `sysinfo.read_pmic_rails()`, `read_ext5v()`, `read_nvme_temp()`, and
+  `read_nvme_smart()`.
 
 ### Changed
 
+- 8080 Power chip: the Pi's 5 V input, read once a second while a page is
+  open, with the lowest reading since the page opened; under-voltage and
+  throttling now. An under-voltage alarm from earlier in the boot warns
+  instead of showing red. The Data chip adds the drive's temperature; both
+  it and the RTC chip refresh every 15 s instead of 60 s.
 - 8080 hover tips end without a period.
 - The lab dashboards in `scripts/dashboards/` (web teleop, line follow,
   wall follow, camera label) are held to the package's lint rules: flake8,

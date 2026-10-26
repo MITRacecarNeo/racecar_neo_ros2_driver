@@ -309,6 +309,8 @@ def check_system(cpu_interval: float = CPU_SAMPLE_SEC) -> list[Check]:
         status = FAIL if live else WARN
         out.append(Check(g, 'throttling', status, f'0x{flags:x}: {", ".join(active)}'))
 
+    out.append(ext5v_check(sysinfo.read_ext5v()))
+
     mem = sysinfo.read_memory()
     if mem is None:
         out.append(Check(g, 'memory', SKIP, 'unreadable'))
@@ -355,7 +357,55 @@ def check_system(cpu_interval: float = CPU_SAMPLE_SEC) -> list[Check]:
 
     out.append(check_profile())
     out.append(check_data_root())
+    present = sysinfo.NVME_SYS.exists()
+    out.append(
+        nvme_check(
+            present,
+            sysinfo.read_nvme_temp() if present else None,
+            sysinfo.read_nvme_smart() if present else None,
+        )
+    )
     return out
+
+
+def ext5v_check(volts: float | None) -> Check:
+    """One reading of the Pi's 5 V input; `racecar health power` samples it for 30 s."""
+    if volts is None:
+        return Check('system', 'ext5v', SKIP, 'vcgencmd unavailable')
+    status = {'healthy': OK, 'stale': WARN, 'dead': FAIL}[sysinfo.classify_ext5v(volts)]
+    detail = f'{volts:.2f} V'
+    if status != OK:
+        detail += f', Pi minimum {sysinfo.EXT5V_MIN_VOLTS:.2f} V'
+    return Check('system', 'ext5v', status, detail)
+
+
+def nvme_check(present: bool, temp: float | None, smart: dict[str, Any] | None) -> Check:
+    """Report the NVMe drive: temperature, and wear and errors when SMART can be read."""
+    g = 'system'
+    if not present:
+        return Check(g, 'nvme', SKIP, 'no drive fitted')
+    if smart is not None and temp is None:
+        temp = smart.get('temperature')
+    parts = [f'{temp:.0f} C' if temp is not None else 'temperature unreadable']
+    status = OK
+    if temp is not None and temp >= sysinfo.NVME_TEMP_FAIL_C:
+        status = FAIL
+    elif temp is not None and temp >= sysinfo.NVME_TEMP_WARN_C:
+        status = WARN
+    if smart is None:
+        parts.append('SMART unreadable: rerun scripts/setup_user_env.sh')
+        return Check(g, 'nvme', worst(status, WARN), ', '.join(parts))
+    used = smart.get('percent_used', 0)
+    errors = smart.get('media_errors', 0)
+    critical = smart.get('critical_warning', 0)
+    parts.append(f'{used}% worn, {errors} media errors')
+    if critical or errors:
+        status = FAIL
+        if critical:
+            parts.append(f'critical warning 0x{critical:x}')
+    elif used >= sysinfo.NVME_WEAR_WARN_PCT:
+        status = worst(status, WARN)
+    return Check(g, 'nvme', status, ', '.join(parts))
 
 
 # The data root warns at this share used or below this much free.

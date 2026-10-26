@@ -37,11 +37,19 @@ from battery_alert import Announcer, final_message  # noqa: E402, I100  sibling 
 import features  # noqa: E402
 from safe_shutdown import shutdown_sequence  # noqa: E402
 from sysinfo import (  # noqa: E402
+    classify_ext5v,
     classify_rtc as _classify_rtc,
+    EXT5V_MIN_VOLTS,
+    EXT5V_WARN_VOLTS,
+    NVME_TEMP_FAIL_C,
+    NVME_TEMP_WARN_C,
     read_diagnostic_rates,
+    read_ext5v as _read_ext5v,
     read_memory as _read_memory,
+    read_nvme_temp as _read_nvme_temp,
     read_rtc_voltage as _read_battery_voltage,
     read_soc_temp as _read_soc_temp,
+    read_throttled as _read_throttled,
     read_under_voltage_alarm as _read_under_voltage_alarm,
     read_watchdog_state,
     REALSENSE_DIAGNOSTIC_NAMES,
@@ -172,7 +180,11 @@ RATE_WINDOW_SEC = 3.0
 MAPVIEW_PORT = 8084
 # /autonomy/status arrives at 1 Hz; older than this, the node has stopped.
 AUTONOMY_STALE_SEC = 5.0
-SYSTEM_HEALTH_REFRESH_SEC = 60.0
+# The Data and RTC chips; the Power chip refreshes every tick.
+SYSTEM_HEALTH_REFRESH_SEC = 15.0
+# The Power chip's 5 V input is read this often while a page polls; the lowest
+# reading between ticks goes to the page.
+EXT5V_SAMPLE_SEC = 1.0
 # The network pill: NetworkManager and `ip` are read this often while a page polls.
 NETWORK_REFRESH_SEC = 15.0
 # Rates, nodes, and app states are measured only while a page polls: the rate
@@ -769,8 +781,15 @@ def clear_watchdog_log() -> tuple[bool, str]:
     return True, 'Log cleared.'
 
 
-def data_root_health() -> dict[str, str]:
-    """Report where data goes now: the NVMe, or the SD card when the drive is missing."""
+RANK = {'healthy': 0, 'stale': 1, 'dead': 2}
+
+
+def _worse(a: str, b: str) -> str:
+    return a if RANK[a] >= RANK[b] else b
+
+
+def data_root_health(temp: float | None = None) -> dict[str, str]:
+    """Report where data goes now, free space, and the drive's temperature."""
     from racecar_neo_ros2_driver import data_root
 
     root, warning = data_root.resolve()
@@ -782,36 +801,95 @@ def data_root_health() -> dict[str, str]:
         return {'label': 'Data drive', 'status': 'dead', 'detail': f'{root} missing'}
     where = 'NVMe' if data_root.on_nvme(root) else 'SD card'
     detail = f'{root} ({where}), {free:.0f} GB free'
+    status = 'healthy' if free >= 10 else 'stale'
     if warning:
         detail = f'{warning} {free:.0f} GB free'
-        return {'label': 'Data drive', 'status': 'stale', 'detail': detail}
-    return {
-        'label': 'Data drive',
-        'status': 'healthy' if free >= 10 else 'stale',
-        'detail': detail,
-    }
+        status = 'stale'
+    if temp is not None:
+        detail += f', {temp:.0f} C'
+        if temp >= NVME_TEMP_FAIL_C:
+            status, detail = 'dead', f'{detail}. Drive too hot'
+        elif temp >= NVME_TEMP_WARN_C:
+            status, detail = _worse(status, 'stale'), f'{detail}. Drive hot'
+    return {'label': 'Data drive', 'status': status, 'detail': detail}
 
 
 def _collect_system_health() -> dict[str, dict[str, str]]:
-    """Slow-refresh diagnostics: data drive, RTC battery, Pi under-voltage alarm."""
-    volts = _read_battery_voltage()
-    rtc_status, rtc_label = _classify_rtc(volts)
-    uv_alarm = _read_under_voltage_alarm()
-    if uv_alarm is None:
-        uv_status, uv_label = ('dead', 'UNAVAILABLE')
-    elif uv_alarm:
-        uv_status, uv_label = ('dead', 'TRIPPED (5V dipped this boot)')
-    else:
-        uv_status, uv_label = ('healthy', 'OK')
+    """Slow-refresh diagnostics: data drive and RTC battery."""
+    rtc_status, rtc_label = _classify_rtc(_read_battery_voltage())
     return {
-        'data': data_root_health(),
+        'data': data_root_health(_read_nvme_temp()),
         'rtc': {'label': 'RTC battery', 'status': rtc_status, 'detail': rtc_label},
-        'under_voltage': {
-            'label': 'Pi under-voltage alarm',
-            'status': uv_status,
-            'detail': uv_label,
-        },
     }
+
+
+class Ext5vWatch:
+    """The Pi's 5 V input: the last reading and the lowest since the last take()."""
+
+    def __init__(self, read: Callable[[], float | None] = _read_ext5v) -> None:
+        self._read = read
+        self._lock = threading.Lock()
+        self._now: float | None = None
+        self._low: float | None = None
+
+    def sample(self) -> None:
+        volts = self._read()
+        if volts is None:
+            return
+        with self._lock:
+            self._now = volts
+            self._low = volts if self._low is None else min(self._low, volts)
+
+    def take(self) -> tuple[float | None, float | None]:
+        with self._lock:
+            now, low = self._now, self._low
+            self._low = None
+        return now, low
+
+
+_ext5v = Ext5vWatch()
+
+
+def power_view(
+    volts: float | None, low: float | None, flags: int | None, alarm: bool | None
+) -> dict[str, Any]:
+    """
+    Return the Power chip: the Pi's 5 V input, under-voltage and throttling.
+
+    `low` is the lowest reading since the last tick; the page keeps the
+    lowest since it opened.
+    """
+    if volts is None:
+        return {'label': 'Power', 'status': 'dead', 'detail': 'No reading', 'volts': None}
+    low = volts if low is None else min(low, volts)
+    status = classify_ext5v(low)
+    notes = []
+    flags = flags or 0
+    if flags & 0x1:
+        status = 'dead'
+        notes.append('Under-voltage now')
+    elif flags & 0x6:
+        status = _worse(status, 'stale')
+        notes.append('Throttled now')
+    if alarm or flags & 0x10000:
+        status = _worse(status, 'stale')
+        notes.append('Low earlier this boot')
+    return {
+        'label': 'Power',
+        'status': status,
+        'detail': '. '.join([f'{volts:.2f} V', *notes]),
+        'volts': volts,
+        'low': low,
+        'notes': '. '.join(notes),
+        'limits': [EXT5V_MIN_VOLTS, EXT5V_WARN_VOLTS],
+    }
+
+
+def _ext5v_loop() -> None:
+    while _monitor_running:
+        if viewing():
+            _ext5v.sample()
+        time.sleep(EXT5V_SAMPLE_SEC)
 
 
 # Watchdog states that change a card; healthy and starting leave the
@@ -1193,7 +1271,7 @@ def viewing() -> bool:
 def _monitor_loop() -> None:
     """Background thread that refreshes the cached status snapshot while a page polls."""
     last_system_health = 0.0
-    system_health = _collect_system_health()
+    slow_health = _collect_system_health()
     last_network = 0.0
     network: list[dict[str, str]] = []
     while _monitor_running:
@@ -1257,8 +1335,15 @@ def _monitor_loop() -> None:
                 network = network_view()
                 last_network = now
             if now - last_system_health >= SYSTEM_HEALTH_REFRESH_SEC:
-                system_health = _collect_system_health()
+                slow_health = _collect_system_health()
                 last_system_health = now
+            _ext5v.sample()
+            system_health = {
+                **slow_health,
+                'power': power_view(
+                    *_ext5v.take(), _read_throttled()[0], _read_under_voltage_alarm()
+                ),
+            }
 
             snapshot = {
                 'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
@@ -1526,6 +1611,7 @@ def main() -> None:
 
     monitor = threading.Thread(target=_monitor_loop, daemon=True)
     monitor.start()
+    threading.Thread(target=_ext5v_loop, daemon=True).start()
     log.info('Background monitor started')
 
     server = ThreadingHTTPServer(('0.0.0.0', PORT), DashboardHandler)

@@ -26,6 +26,7 @@ comment in the source can point here instead of carrying the full account.
 - [Localization state](#localization-state)
 - [Localizer choice](#localizer-choice)
 - [Data drive missing at boot](#data-drive-missing-at-boot)
+- [Health report failures](#health-report-failures)
 - [Lab dashboards](#lab-dashboards)
 - [Low-battery shutdown](#low-battery-shutdown)
 - [Terminal app](#terminal-app)
@@ -515,6 +516,35 @@ Data written to `~/data` during the fallback stays there. A drive that drops
 out after boot leaves the root on `/mnt/nvme/data`; new `racecar log` and
 `racecar map` sessions refuse until a reboot.
 
+## Health report failures
+
+`scripts/health.py`, `scripts/sysinfo.py`, `scripts/sudoers.d-racecar-nvme`.
+
+`ext5v` FAIL: the 5 V input dipped under 4.75 V. See
+[Boot brownout with ethernet attached](#boot-brownout-with-ethernet-attached)
+for the supply chain and the contacts that caused it before. `samples.csv` in
+the report folder has every sample, for a plot of when the dips happened.
+
+`smart` WARN "SMART unreadable": the sudoers rule is missing. Run
+`scripts/setup_user_env.sh`, or check `sudo -n nvme smart-log -o json
+/dev/nvme0` by hand.
+
+`kernel log` FAIL with `I/O tag ... timeout, completion polled`: the drive
+did not answer a read for 30 s, and the kernel found the read complete when
+it polled: the drive finished, but its interrupt never arrived. It has been
+seen about once a boot, from the first reads to several minutes in. The
+FAIL holds until the next boot, since the check
+reads the whole boot's log. Repeated timeouts, `resetting controller`, or
+AER errors point at the drive's seating or its PCIe ribbon.
+
+`unsafe shutdowns` counts each time power was lost with the Pi running: a
+battery pulled or the switch turned off. It never warns, since the switch is
+the usual way to turn the car off; a jump with no switch-offs points at
+brownouts.
+
+`data root` FAIL: the car fell back to `~/data` with a drive fitted. See
+[Data drive missing at boot](#data-drive-missing-at-boot).
+
 ## Lab dashboards
 
 `scripts/setup_dashboards.sh`, `scripts/dashboards/`.
@@ -759,6 +789,7 @@ Margin: the buck sits near the low end of its tolerance, so the rail has about
 Check after any work on the power harness, and after a drive:
 
 ```bash
+racecar health power                          # 30 s of EXT5V, throttling, the battery; saved report
 vcgencmd get_throttled                        # 0x0; bits 16 and 18 are sticky since boot
 vcgencmd pmic_read_adc EXT5V_V                # above 4.80 V under teleop load
 journalctl -b -k | grep -ci undervoltage      # 0

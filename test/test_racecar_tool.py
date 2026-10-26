@@ -182,6 +182,21 @@ def test_status_forwards_flags():
     assert 'unknown section' in result.stderr
 
 
+def test_health_dispatches_to_its_script(tmp_path, monkeypatch):
+    stub = tmp_path / 'health.py'
+    stub.write_text('import sys; print("health", *sys.argv[1:])\n')
+    monkeypatch.setenv('RACECAR_HEALTH_SCRIPT', str(stub))
+    result = _run('health', 'power', '--seconds', '5')
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == 'health power --seconds 5'
+
+
+def test_health_in_help_and_completion():
+    text = TOOL.read_text()
+    assert 'health [step]' in text
+    assert 'COMPREPLY=( $(compgen -W "all power nvme --seconds --help"' in text
+
+
 class TestService:
     def test_default_action_is_status(self):
         result = _run('service')
