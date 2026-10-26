@@ -4,13 +4,22 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RACECAR Neo</title>
-<link rel="stylesheet" href="/ui/rcn.css?v=12">
-<script src="/ui/charts.js?v=12"></script>
+<link rel="stylesheet" href="/ui/rcn.css?v=13">
+<script src="/ui/charts.js?v=13"></script>
 <link rel="icon" href="/ui/brand/app-icon-32.png">
 <link rel="apple-touch-icon" href="/ui/brand/app-icon-180.png">
 <style>
   .rcn-header .host { font: 600 16px/24px var(--rcn-font-sans); color: var(--rcn-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rcn-header { position: relative; }
   .rcn-header .batt { white-space: nowrap; }
+  #clock { position: absolute; left: 50%; transform: translateX(-50%); font: 600 16px/24px var(--rcn-font-sans); white-space: nowrap; }
+  @media (max-width: 900px) { #clock { display: none; } }
+  .net { position: relative; }
+  #net-pill { cursor: pointer; }
+  #net-menu { position: absolute; right: 0; top: calc(100% + 8px); z-index: 20; min-width: 300px; background: var(--rcn-surface); border: 1px solid var(--rcn-steel); border-radius: var(--rcn-radius-md); padding: var(--rcn-space-2) var(--rcn-space-3); }
+  #net-menu table { border-collapse: collapse; width: 100%; font: 400 14px/20px var(--rcn-font-sans); }
+  #net-menu td { padding: 4px 8px 4px 0; white-space: nowrap; }
+  #net-menu td.dim { color: var(--rcn-text-muted); }
   #batt-time { cursor: pointer; }
   @media (max-width: 480px) { #batt-power { display: none; } }
   main { max-width: 1100px; margin: 0 auto; padding: var(--rcn-space-6) var(--rcn-space-4) var(--rcn-space-8); }
@@ -104,7 +113,12 @@
 <header class="rcn-header">
   <img class="rcn-mark" src="/ui/brand/mark.png" alt="RACECAR Neo">
   <span class="host" id="host"></span>
+  <span id="clock" aria-label="Car time"></span>
   <span class="rcn-spacer"></span>
+  <span class="net">
+    <span class="rcn-status off" id="net-pill" role="button" tabindex="0" aria-haspopup="true" aria-expanded="false" hidden></span>
+    <div id="net-menu" hidden><table id="net-table"></table></div>
+  </span>
   <span class="rcn-status off batt" id="batt-time" role="button" tabindex="0" hidden></span>
   <span class="rcn-status off batt" id="batt-power" hidden></span>
   <span class="rcn-status off" id="overall"><svg class="rcn-icon"><use href="/ui/icons.svg#info"/></svg>Loading</span>
@@ -712,6 +726,54 @@ $('poweroff').onclick = async () => {
   setOverall('err', 'Shutting down');
 };
 
+// Clock: the car's time, ticking here between updates.
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+let carClock = null;  // { offsetMs: car minus this device, utcOffset: car's UTC offset in s, zone }
+function setClock(c) {
+  if (c) carClock = { offsetMs: c.epoch * 1000 - Date.now(), utcOffset: c.utc_offset, zone: c.zone };
+  renderClock();
+}
+function renderClock() {
+  if (!carClock) return;
+  // Shift to the car's zone, then read the fields in UTC.
+  const t = new Date(Date.now() + carClock.offsetMs + carClock.utcOffset * 1000);
+  const h = t.getUTCHours() % 12 || 12;
+  const two = (n) => String(n).padStart(2, '0');
+  $('clock').textContent = `${DAYS[t.getUTCDay()]} ${MONTHS[t.getUTCMonth()]} ${t.getUTCDate()} `
+    + `${h}:${two(t.getUTCMinutes())}:${two(t.getUTCSeconds())} ${t.getUTCHours() < 12 ? 'AM' : 'PM'} ${carClock.zone}`;
+}
+setInterval(renderClock, 1000);
+
+// Network: the pill names the client network; the menu lists every interface.
+function networkLabel(rows) {
+  const client = rows.find((r) => r.kind === 'Wi-Fi' && r.state === 'connected');
+  if (client) return client.network;
+  if (rows.some((r) => r.kind === 'Ethernet' && r.state === 'connected')) return 'Ethernet';
+  if (rows.some((r) => r.kind === 'Access point' && r.state === 'connected')) return 'Access point';
+  return 'No network';
+}
+function renderNetwork(rows) {
+  const pill = $('net-pill');
+  pill.hidden = !(rows && rows.length);
+  if (pill.hidden) return;
+  const online = rows.some((r) => r.kind !== 'Access point' && r.state === 'connected');
+  pill.className = `rcn-status ${online ? 'ok' : 'off'}`;
+  pill.innerHTML = icon('wifi') + esc(networkLabel(rows));
+  const state = (r) => (r.state === 'connected' ? r.network : (r.state === 'unavailable' && r.kind === 'Ethernet' ? 'No cable' : 'Not connected'));
+  setHtml('net-table', rows.map((r) => `<tr><td>${esc(r.device)}</td><td class="dim">${esc(r.kind)}</td>`
+    + `<td>${esc(state(r))}</td><td class="dim">${esc(r.address.split('/')[0])}</td></tr>`).join(''));
+}
+function toggleNetMenu(open) {
+  const menu = $('net-menu');
+  menu.hidden = open === undefined ? !menu.hidden : !open;
+  $('net-pill').setAttribute('aria-expanded', String(!menu.hidden));
+}
+$('net-pill').onclick = (ev) => { ev.stopPropagation(); toggleNetMenu(); };
+$('net-pill').onkeydown = (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); toggleNetMenu(); } };
+document.addEventListener('click', (ev) => { if (!$('net-menu').contains(ev.target)) toggleNetMenu(false); });
+document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') toggleNetMenu(false); });
+
 function update(refresh) {
   return fetch(refresh ? '/api/status?refresh=1' : '/api/status')
     .then((r) => r.json())
@@ -722,6 +784,8 @@ function update(refresh) {
       renderFeatures(data.features);
       renderBasic(data);
       renderAdvanced(data);
+      setClock(data.clock);
+      renderNetwork(data.network);
       renderBattery(data.battery);
       renderOverall(data);
       $('timestamp').textContent = `Updated ${data.timestamp}`;

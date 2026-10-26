@@ -172,6 +172,8 @@ MAPVIEW_PORT = 8084
 # /autonomy/status arrives at 1 Hz; older than this, the node has stopped.
 AUTONOMY_STALE_SEC = 5.0
 SYSTEM_HEALTH_REFRESH_SEC = 60.0
+# The network pill: NetworkManager and `ip` are read this often while a page polls.
+NETWORK_REFRESH_SEC = 15.0
 # Rates, nodes, and app states are measured only while a page polls: the rate
 # subscriptions wake the process for every message, a large share of a core.
 # They stop VIEW_IDLE_SEC after the last request.
@@ -416,6 +418,70 @@ def battery_view(now: float, estimate: dict[str, Any] | None = None) -> dict[str
 def current_battery() -> dict[str, Any] | None:
     estimate = estimate_view(*(_sampler.estimate() if _sampler else (None, None)))
     return battery_view(time.time(), estimate)
+
+
+NETWORK_KINDS = {'ethernet': 'Ethernet', 'wifi': 'Wi-Fi'}
+
+
+def _cmd(argv: list[str], run: Callable[..., Any]) -> str:
+    try:
+        r = run(argv, capture_output=True, text=True, timeout=3)
+    except (OSError, subprocess.TimeoutExpired):
+        return ''
+    return r.stdout if r.returncode == 0 else ''
+
+
+def network_view(run: Callable[..., Any] = subprocess.run) -> list[dict[str, str]]:
+    """
+    Return one row per Ethernet and Wi-Fi interface for the 8080 network pill.
+
+    Each row: device, kind (Ethernet, Wi-Fi, Access point), state
+    (connected or NetworkManager's state), network (SSID or connection
+    name), and address (IPv4 with prefix, or '').
+    """
+    addresses: dict[str, str] = {}
+    for line in _cmd(['ip', '-4', '-o', 'addr'], run).splitlines():
+        parts = line.split()
+        if len(parts) >= 4 and parts[1] not in addresses:
+            addresses[parts[1]] = parts[3]
+    rows = []
+    devices = _cmd(['nmcli', '-t', '-f', 'DEVICE,TYPE,STATE,CONNECTION', 'device'], run)
+    for line in devices.splitlines():
+        device, kind, state, connection = (line.split(':', 3) + ['', '', ''])[:4]
+        if kind not in NETWORK_KINDS:
+            continue
+        label, network = NETWORK_KINDS[kind], connection
+        if kind == 'wifi' and connection:
+            mode, _, ssid = _cmd(
+                [
+                    'nmcli',
+                    '-g',
+                    '802-11-wireless.mode,802-11-wireless.ssid',
+                    'con',
+                    'show',
+                    connection,
+                ],
+                run,
+            ).partition('\n')
+            network = ssid.strip() or connection
+            if mode.strip() == 'ap':
+                label = 'Access point'
+        rows.append(
+            {
+                'device': device,
+                'kind': label,
+                'state': 'connected' if state.startswith('connected') else state,
+                'network': network,
+                'address': addresses.get(device, ''),
+            }
+        )
+    return rows
+
+
+def clock_view(now: float) -> dict[str, Any]:
+    """Return the car's time, UTC offset, and zone name, so the page shows the car's clock."""
+    local = time.localtime(now)
+    return {'epoch': now, 'utc_offset': float(local.tm_gmtoff), 'zone': local.tm_zone}
 
 
 def page_origin(origin: str | None, host: str | None) -> bool:
@@ -1127,6 +1193,8 @@ def _monitor_loop() -> None:
     """Background thread that refreshes the cached status snapshot while a page polls."""
     last_system_health = 0.0
     system_health = _collect_system_health()
+    last_network = 0.0
+    network: list[dict[str, str]] = []
     while _monitor_running:
         try:
             sample_system(time.time())
@@ -1184,6 +1252,9 @@ def _monitor_loop() -> None:
                     rates[topic] = {'hz': hz, 'stale': hz is None or hz < 0.5}
 
             now = time.monotonic()
+            if now - last_network >= NETWORK_REFRESH_SEC:
+                network = network_view()
+                last_network = now
             if now - last_system_health >= SYSTEM_HEALTH_REFRESH_SEC:
                 system_health = _collect_system_health()
                 last_system_health = now
@@ -1200,6 +1271,7 @@ def _monitor_loop() -> None:
                 'autonomy': autonomy_view(*(_sampler.autonomy() if _sampler else (None, None))),
                 'apps': app_list(unit_states(_app_units())),
                 'battery': current_battery(),
+                'network': network,
                 'host': socket.gethostname(),
             }
 
@@ -1271,6 +1343,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 {
                     **get_status(),
                     'battery': current_battery(),
+                    'clock': clock_view(time.time()),
                     'override': _override.view(time.monotonic()),
                     'features': features_view(),
                 },

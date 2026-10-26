@@ -1000,3 +1000,73 @@ class TestBatteryPage:
         assert 'until ${at.toLocaleTimeString' in html
         assert "store.set('rcn-battery-view', pillView)" in html
         assert 'Turning the car off now. Turn off the power switch.' in html
+
+
+NMCLI_DEVICES = """wlan1:wifi:connected:racecar-neo-ap
+wlan0:wifi:connected:Duck
+lo:loopback:connected (externally):lo
+p2p-dev-wlan0:wifi-p2p:disconnected:
+eth0:ethernet:unavailable:
+"""
+IP_ADDR = """1: lo    inet 127.0.0.1/8 scope host lo
+3: wlan0    inet 10.0.0.198/24 brd 10.0.0.255 scope global dynamic wlan0
+4: wlan1    inet 10.42.0.1/24 brd 10.42.0.255 scope global wlan1
+"""
+
+
+def _fake_network(argv, **kwargs):
+    if argv[:2] == ['ip', '-4']:
+        out = IP_ADDR
+    elif argv[-2:] == ['show', 'racecar-neo-ap']:
+        out = 'ap\nracecar-neo-0\n'
+    elif argv[-2:] == ['show', 'Duck']:
+        out = 'infrastructure\nDuck\n'
+    else:
+        out = NMCLI_DEVICES
+    return SimpleNamespace(returncode=0, stdout=out)
+
+
+class TestNetwork:
+    def test_rows(self, dashboard):
+        assert dashboard.network_view(_fake_network) == [
+            {
+                'device': 'wlan1',
+                'kind': 'Access point',
+                'state': 'connected',
+                'network': 'racecar-neo-0',
+                'address': '10.42.0.1/24',
+            },
+            {
+                'device': 'wlan0',
+                'kind': 'Wi-Fi',
+                'state': 'connected',
+                'network': 'Duck',
+                'address': '10.0.0.198/24',
+            },
+            {
+                'device': 'eth0',
+                'kind': 'Ethernet',
+                'state': 'unavailable',
+                'network': '',
+                'address': '',
+            },
+        ]
+
+    def test_no_networkmanager(self, dashboard):
+        def run(argv, **kwargs):
+            raise OSError('no nmcli')
+
+        assert dashboard.network_view(run) == []
+
+    def test_clock(self, dashboard):
+        clock = dashboard.clock_view(1000.0)
+        assert clock['epoch'] == 1000.0
+        assert clock['utc_offset'] == time.localtime(1000.0).tm_gmtoff
+        assert clock['zone'] == time.localtime(1000.0).tm_zone
+
+    def test_page_has_the_clock_and_network_pill(self, dashboard):
+        html = dashboard._load_dashboard_html()
+        for element in ('clock', 'net-pill', 'net-menu', 'net-table'):
+            assert f'id="{element}"' in html
+        assert "['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']" in html
+        assert "'PM'} ${carClock.zone}`" in html
