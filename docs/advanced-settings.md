@@ -22,6 +22,7 @@ setting cuts your current connection.
 - [Mapping limits](#mapping-limits)
 - [Speed cap](#speed-cap)
 - [Battery guard](#battery-guard)
+- [Terminal access from the LAN](#terminal-access-from-the-lan)
 - [Golden image preparation](#golden-image-preparation)
 
 ## Ethernet addressing
@@ -269,6 +270,19 @@ Keys:
 
 A lower floor or a disabled guard lets the battery run below its safe
 voltage and the Pi brown out.
+
+## Terminal access from the LAN
+
+| | |
+|---|---|
+| Default | logins to the terminal app (port 8086) only from the car's access point |
+| Change | `terminal: {allow_lan: true}` in the car profile's `car.yaml`; then `racecar service stop terminal` and open the Terminal tile |
+| Revert | remove the key, stop the app, open it again |
+| Safe path | any |
+
+The login sends the racecar password over plain HTTP. On the access point,
+WPA2 protects it; on a shared LAN anyone on that network can read it. Turn
+this on only on a network you trust.
 
 ## Golden image preparation
 

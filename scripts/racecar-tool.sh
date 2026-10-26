@@ -110,14 +110,14 @@ racecar() {
             shift || true
             local -a core_units=("racecar-teleop" "racecar-watchdog"
                                  "racecar-dashboard" "racecar-jupyter"
-                                 "racecar-mapview")
+                                 "racecar-mapview" "racecar-battery-guard")
             # Lab dashboards, installed by setup_dashboards.sh. All three
             # publish /drive; a second publisher fights the mux, so starting
             # one stops the others.
             local -a dash_units=("racecar-webteleop" "racecar-linefollow"
                                  "racecar-wallfollow")
-            # Dashboards that do not drive; they run alongside the above.
-            local -a app_units=("racecar-camlabel")
+            # Apps that do not drive; they run alongside the above.
+            local -a app_units=("racecar-camlabel" "racecar-terminal")
             case "$action" in
                 install)
                     bash "$pkg_dir/scripts/setup_services.sh"
@@ -216,15 +216,15 @@ actions:
                   Starting a lab dashboard stops the other /drive publishers first.
   stop [name]     Stop racecar-<name>; default = teleop
   restart [name]  Restart racecar-<name>; default = teleop
-  enable [name]   Enable one unit, or with no name the five core units
-  disable [name]  Disable one unit, or with no name the five core units
+  enable [name]   Enable one unit, or with no name the six core units
+  disable [name]  Disable one unit, or with no name the six core units
   logs [name]     journalctl -u racecar-<name> -f; default = teleop
   status          active/enabled snapshot, core, autonomy, and dashboards (default)
-core units: teleop, watchdog, dashboard(8080), jupyter(8888), mapview(8084)
+core units: teleop, watchdog, dashboard(8080), jupyter(8888), mapview(8084), battery-guard
 autonomy: started and stopped by `racecar map` or the map viewer, not at boot
 dashboards: webteleop(8081) linefollow(8082) wallfollow(8083) camlabel(8085)
 webteleop, linefollow and wallfollow publish /drive. Of those, only one runs at a time;
-starting one stops the others. camlabel runs alongside them.
+starting one stops the others. camlabel and terminal(8086) run alongside them.
 __RC_SVC_HELP__
                     ;;
                 *)
@@ -1194,7 +1194,9 @@ Commands:
                           enable|disable [name] one unit, or the core units
                           logs [name]          journalctl -f for racecar-<name>
                           status               active/enabled summary (default)
-                        Core units: teleop, watchdog, dashboard, jupyter
+                        Core units: teleop, watchdog, dashboard, jupyter, mapview,
+                          battery-guard
+                        Apps: camlabel, terminal (port 8086)
                         Dashboards: webteleop, linefollow, wallfollow, camlabel
                         Starting a driving dashboard stops the other /drive publishers.
                         Bare enable/disable covers the core units only.

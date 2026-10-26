@@ -532,7 +532,8 @@ class Context:
     ) -> None:
         self.sock = sock
         self.layout = layout or LayoutStore(layout_path())
-        self.close = close
+        self._close = close
+        self.closed: set[str] = set()
         self.presets = presets or PresetStore(*presets_paths())
         self.start = start or (
             lambda tree: start_terminals(tree, CONFIG_DIR / 'terminal.tmux.conf', start_dir())
@@ -544,6 +545,12 @@ class Context:
         self.guard = LoginGuard()
         self.authenticate = authenticate
         self.allow_lan = allow_lan
+
+    def close(self, pane_id: str) -> bool:
+        # A page on another device reconnects a closed terminal before it sees
+        # the new layout; ttyd would start a new session under the old name.
+        self.closed.add(pane_id)
+        return self._close(pane_id)
 
 
 def make_handler(ctx: Context) -> type[BaseHTTPRequestHandler]:
@@ -732,6 +739,9 @@ def make_handler(ctx: Context) -> type[BaseHTTPRequestHandler]:
                 self._send(403, b'Not allowed from this page.', 'text/plain')
                 return
             pane, ttyd_path = target
+            if pane in ctx.closed:
+                self._send(404, b'No such terminal.', 'text/plain')
+                return
             request = upstream_request('GET', ttyd_path, pane, list(self.headers.items()), upgrade)
             try:
                 upstream = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)

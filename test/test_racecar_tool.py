@@ -210,6 +210,8 @@ class TestService:
             'racecar-linefollow',
             'racecar-wallfollow',
             'racecar-camlabel',
+            'racecar-terminal',
+            'racecar-battery-guard',
         ):
             assert unit in result.stdout, f'status missing {unit}'
 
@@ -260,7 +262,7 @@ class TestService:
     def test_camlabel_is_not_a_drive_dashboard(self):
         text = TOOL.read_text()
         apps = text.split('local -a app_units=')[1].split('\n')[0]
-        assert 'racecar-camlabel' in apps
+        assert 'racecar-camlabel' in apps and 'racecar-terminal' in apps
 
     def test_no_retired_dashboard_is_named_anywhere(self):
         text = TOOL.read_text()

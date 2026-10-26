@@ -136,6 +136,10 @@ class TestRules:
             '-s',
         ]
 
+    def test_tmux_conf_fills_blank(self):
+        conf = (Path(term.CONFIG_DIR) / 'terminal.tmux.conf').read_text()
+        assert 'set -gw fill-character " "' in conf
+
     def test_start_dir(self, tmp_path):
         assert term.start_dir(tmp_path) == tmp_path
         assert term.start_dir(tmp_path / 'missing') == Path.home()
@@ -391,6 +395,13 @@ class TestLayoutApi:
         assert self._post(client, '/api/pane/close', {'id': 'b'}, cookie)[0].status == 200
         assert self._post(client, '/api/pane/close', {'id': 'gone'}, cookie)[0].status == 404
         assert client.closed == ['b', 'gone']
+
+    def test_closed_terminal_does_not_reconnect(self, client):
+        cookie = self._cookie(client)
+        assert client('GET', '/pane/b/', headers={'Cookie': cookie})[0].status == 200
+        self._post(client, '/api/pane/close', {'id': 'b'}, cookie)
+        assert client('GET', '/pane/b/', headers={'Cookie': cookie})[0].status == 404
+        assert client('GET', '/pane/c/', headers={'Cookie': cookie})[0].status == 200
 
     def test_page_places_panes_without_moving_iframes(self):
         html = (Path(__file__).resolve().parent.parent / 'scripts' / 'terminal.html').read_text()

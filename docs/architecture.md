@@ -18,6 +18,7 @@ and what supervises them. Companion to the operational instructions in
 - [Process model](#process-model)
 - [Supervision and observability](#supervision-and-observability)
 - [Battery guard](#battery-guard)
+- [Terminal app](#terminal-app)
 - [Configuration](#configuration)
 - [Data root](#data-root)
 - [Calibration data flow](#calibration-data-flow)
@@ -679,6 +680,51 @@ apps and autonomy. The power switch is the only battery disconnect: after
 power off, the PIT board (its own 5 V regulator from the main bus) and the
 halted Pi still draw about 100 to 200 mA.
 
+## Terminal app
+
+`scripts/terminal.py` on port 8086, run by `racecar-terminal.service` (not at
+boot; started from the 8080 Terminal tile through
+`49-racecar-dashboards.rules`). Standard library only.
+
+```
+  browser ─ :8086 ─▶ terminal.py ─┬─ login (PAM, racecar-terminal) ─▶ session cookie
+                                  ├─ /api/layout, /api/presets/*, /api/scrollback
+                                  └─ /pane/<id>/ ─▶ /run/racecar-terminal/ttyd.sock ─▶ ttyd
+                                                        ─▶ tmux -L racecar-terminal new-session -A -s rcn-<id>
+```
+
+- `ttyd` is one child process on a Unix socket in a 0700 folder (systemd
+  `RuntimeDirectory`), so 8086 is the only TCP listener. Its flags:
+  `-b /pane -W -a -d 3`.
+- The proxy checks the session, the terminal id (`[a-z0-9]{1,16}`), and on a
+  WebSocket upgrade that `Origin` matches `Host`. It replaces the query with
+  `?arg=rcn-<id>`, so a client cannot pass tmux arguments, then copies bytes
+  both ways without parsing frames. Reads block; a watcher thread closes
+  both sockets when the session ends.
+- Each terminal is a tmux session `rcn-<id>` on the socket `racecar-terminal`
+  (`config/terminal.tmux.conf`), started in `~/jupyter_ws`. The tmux server
+  runs in the unit's cgroup (`KillMode=control-group`), so stopping the app
+  ends every terminal.
+- Login: the password of the account running the unit, through PAM service
+  `racecar-terminal` (`scripts/pam.d-racecar-terminal`, 3 s fail delay).
+  Five failures lock the login for 60 s. Sessions are in memory and end
+  after 30 minutes without requests or traffic. Logins come from the access
+  point subnet (10.42.0.0/24) and the car only, unless `car.yaml` sets
+  `terminal.allow_lan`.
+- Layout: a tree of terminals and splits in the profile's
+  `terminal/layout.json`, versioned; a save over an older version returns
+  409 and the current layout. The page places every terminal absolutely
+  from the tree, since moving an iframe reloads it.
+- Presets: layouts whose terminals may carry a start command.
+  `config/terminal_presets.json` ships the built-ins; the profile's
+  `terminal/presets.json` holds the car's. Applying one creates each tmux
+  session with `new-session -d`, types its command with `send-keys -l`, saves
+  the layout, and closes the old terminals.
+- Export: `tmux capture-pane -p -J -S -`, returned to the page and written to
+  `<data root>/terminal/<stamp>-<title>.txt`.
+- The battery guard's low-battery line reaches the terminals through the
+  tmux status bar on this socket.
+
 ## Configuration
 
 One YAML per node under `config/`, keyed by node name and loaded through the
@@ -703,6 +749,7 @@ node's `<name>_config` launch argument.
 | `foxglove.yaml` | `foxglove_bridge` (autonomy launch, when on) | port, topic whitelist, `/initialpose` as the only client topic |
 | `foxglove_layout.json` | Lichtblick, imported by hand (not a node file) | 3D view, status table, pose plot |
 | `battery.yaml` | `battery_guard.py` | capacity, measured curve, cell count, floor per cell, warning and shutdown minutes, capacity learning, `shutdown_enabled` |
+| `terminal.tmux.conf`, `terminal_presets.json` | `scripts/terminal.py` (not node files) | tmux settings for the terminal app; built-in presets |
 | `frames.yaml` | `frames.launch.py` (not a node parameter file) | frame offsets in mm and deg, fleet base values; see [Frame tree](#frame-tree) |
 
 Per-car values (calibration, an enabled RC gate) live in the car profile
@@ -748,6 +795,7 @@ under the root, created if absent. The student library's
 | `slam_eval/` | `scripts/validation/slam_eval.py`, `slam_session.py` |
 | `images/` | lab programs, through the library's `rc_utils.get_data_dir("images")` |
 | `health/` | `racecar health` reports; `battery/`: battery guard logs |
+| `terminal/` | terminal app exports |
 
 The root is fixed for the boot. `data_root.session_problem()` makes a new
 `racecar log start` or `racecar map start`, `load`, or `resume` refuse when

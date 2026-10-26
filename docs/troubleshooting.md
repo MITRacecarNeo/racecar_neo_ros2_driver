@@ -28,6 +28,7 @@ comment in the source can point here instead of carrying the full account.
 - [Data drive missing at boot](#data-drive-missing-at-boot)
 - [Lab dashboards](#lab-dashboards)
 - [Low-battery shutdown](#low-battery-shutdown)
+- [Terminal app](#terminal-app)
 - [WiFi persistence](#wifi-persistence)
 - [Boot brownout with ethernet attached](#boot-brownout-with-ethernet-attached)
   - [Not a flat battery](#not-a-flat-battery)
@@ -558,6 +559,34 @@ cannot be canceled. Turn the car off and change the battery.
 A terminal shows the red line but no prompt: the shell redraws its prompt
 right after the line. A full-screen program (vim, htop) keeps the line until
 it next redraws.
+
+## Terminal app
+
+`scripts/terminal.py`, `racecar-terminal.service`, `scripts/pam.d-racecar-terminal`.
+
+"Not allowed from this network.": the browser is not on the car's access
+point. Join the access point, or set `allow_lan` (docs/advanced-settings.md,
+"Terminal access from the LAN").
+
+"Too many tries.": five wrong passwords lock the login for a minute.
+
+The login page comes back after a while: a login ends after 30 minutes
+without use, and every login ends when the app restarts.
+
+The terminals are gone: stopping the app (`racecar service stop terminal`,
+a reboot) ends every terminal. The layout is kept, so the page opens new
+shells in the same places.
+
+A terminal shrinks with blank space at the side: it is open on a smaller
+screen too, and takes the size of the device that typed last. Type in it to
+fill this screen again.
+
+Ctrl+Shift+W closes the Chrome window: Chrome keeps that key. Use Close in
+the terminal's bar.
+
+"The terminal is starting.": ttyd has not opened its socket yet, or
+restarted. Reload after a few seconds; `journalctl -u racecar-terminal`
+shows why it stopped.
 
 ## WiFi persistence
 

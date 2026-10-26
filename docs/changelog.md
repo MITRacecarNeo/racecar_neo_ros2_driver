@@ -41,12 +41,17 @@ All notable changes to this project will be documented in this file. The format 
   session on its own socket (`tmux -L racecar-terminal`), so it survives a
   reload and can be attached from SSH; new terminals start in `~/jupyter_ws`.
   Logins come from the access point only unless `car.yaml` sets
-  `terminal: {allow_lan: true}`. Opened from the Terminal tile in Core,
-  which replaces the Terminator placeholder. `ttyd` and `python3-pampy`
-  join the setup packages.
+  `terminal: {allow_lan: true}`. Split, resize, maximize, close, and Reset;
+  Ctrl+Shift+E, O, X, and W; the layout is saved on the car, so a reload or
+  another device shows the same terminals. Presets with start commands
+  (four built in, the car's own saved, export and import), and Export of a
+  terminal's text. Opened from the Terminal tile in Core, which replaces
+  the Terminator placeholder. `ttyd` and `python3-pampy` join the setup
+  packages; setup turns off the package's own `ttyd.service`.
 - 8080 header: the car's date, time, and zone, and a network pill with a
   menu of every interface, its network, and address.
-- `racecar status` rows for the battery guard and the terminal app.
+- `racecar status` rows for the battery guard and the terminal app;
+  `racecar service status` lists both.
 
 ### Changed
 

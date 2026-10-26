@@ -19,6 +19,7 @@ This package is the v2 successor to [`racecar-neo-ros2-backend`](https://github.
 - [Lab dashboards](#lab-dashboards)
 - [Autonomy gate](#autonomy-gate)
 - [Low-battery shutdown](#low-battery-shutdown)
+- [Terminal app](#terminal-app)
 - [Car data](#car-data)
 - [Bag recording](#bag-recording)
 - [Maps](#maps)
@@ -578,6 +579,60 @@ measures the capacity of the battery in the car as it runs. A shutdown at
   `python3 scripts/battery_guard.py --dry-run --floor-cell-volts 4.3` from the
   driver folder, then start the service again. The countdown starts about
   25 s in and the shutdown steps are logged, not run.
+
+## Terminal app
+
+Shells on the car in a browser, at `http://<robot>:8086`. Open it from the
+Terminal tile in Core on 8080; the first tap starts it.
+
+**Login.** Use the racecar password. Five wrong tries lock the login for a
+minute. A login lasts until Log out, or 30 minutes without use. Logins work
+from the car's access point. To log in from another network, add this to
+`~/.config/racecar/car.yaml` and restart the app:
+
+```yaml
+terminal:
+  allow_lan: true
+```
+
+The password crosses the network unencrypted, so allow it only on a network
+you trust.
+
+**Terminals.** Each new terminal opens in `~/jupyter_ws`. Up to 8 fit on the
+page.
+
+- Each terminal's bar: Split right, Split down, Max, Export, and Close.
+  Double-click a title to rename it. Drag the gap between two terminals to
+  resize them.
+- The header: Presets, Reset (closes all but Terminal 1), A- and A+ (text
+  size), and Log out.
+- The layout is saved on the car. A reload, or the page on another device,
+  shows the same terminals, still running. They run until the app stops.
+
+| Shortcut | Action |
+|---|---|
+| Ctrl+Shift+E | Split right |
+| Ctrl+Shift+O | Split down |
+| Ctrl+Shift+X | Maximize or restore |
+| Ctrl+Shift+W | Close (Chrome keeps this key for closing the window; use Close there) |
+
+**Presets.** A preset is a layout with a command for some terminals, typed
+once when it opens. Built in: One terminal, Teleop logs, Car status, and
+Four terminals. Save layout as preset keeps your own on the car
+(`~/.config/racecar/terminal/presets.json`, up to 20). Export presets and
+Import presets move them between cars as a file.
+
+**Export.** Export in a terminal's bar downloads its text. The car keeps a
+copy in `<data root>/terminal/`.
+
+**SSH.** Each terminal is a tmux session on its own socket:
+
+```bash
+tmux -L racecar-terminal ls                   # rcn-<id> per terminal
+tmux -L racecar-terminal attach -t rcn-main   # Ctrl+B, then D, to detach
+```
+
+`racecar service stop terminal` stops the app and every terminal.
 
 ## Car data
 
