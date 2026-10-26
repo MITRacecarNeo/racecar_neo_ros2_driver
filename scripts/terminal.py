@@ -2,19 +2,19 @@
 """
 Terminal app on port 8086: shells on the car in the browser.
 
-Each pane is a tmux session `rcn-<id>` on the separate tmux socket
+Each terminal is a tmux session `rcn-<id>` on the separate tmux socket
 `racecar-terminal`, so the user's own tmux sessions are never touched and a
-pane outlives a reload or a dropped link (from SSH:
+terminal outlives a reload or a dropped link (from SSH:
 `tmux -L racecar-terminal attach -t rcn-<id>`). One ttyd child serves every
-pane on a Unix socket in a 0700 folder; this server is the only TCP listener.
+terminal on a Unix socket in a 0700 folder; this server is the only TCP listener.
 
 - Login: the password of the account running the server, checked through
   PAM (service `racecar-terminal`). Five failures lock the login for 60 s.
 - Session: a random cookie (HttpOnly, SameSite=Strict) kept in memory, ended
-  after 30 minutes without requests or pane traffic.
+  after 30 minutes without requests or terminal traffic.
 - Network: logins only from the car's access point (and this machine),
   unless the car profile's car.yaml sets `terminal: {allow_lan: true}`.
-- Proxy: /pane/<id>/ goes to ttyd with the pane id as its tmux argument. A
+- Proxy: /pane/<id>/ goes to ttyd with the terminal id as its tmux argument. A
   WebSocket upgrade also needs an Origin that matches the Host; the bytes are
   copied both ways without parsing frames.
 
@@ -27,6 +27,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import ipaddress
+import json
 import logging
 import os
 from pathlib import Path
@@ -63,7 +64,13 @@ AP_NETWORK = ipaddress.ip_network('10.42.0.0/24')
 PANE_BASE = '/pane'
 TTYD_RESTART_SEC = 2.0
 IDLE_CHECK_SEC = 5.0
-# New panes start here (the student workspace), else in the home folder.
+# Layout limits: terminals on screen, and split depth.
+MAX_PANES = 8
+MAX_DEPTH = 6
+MAX_TITLE = 40
+RATIO_RANGE = (0.1, 0.9)
+DEFAULT_LAYOUT: dict[str, Any] = {'type': 'pane', 'id': 'main', 'title': ''}
+# New terminals start here (the student workspace), else in the home folder.
 START_DIR = Path.home() / 'jupyter_ws'
 
 log = logging.getLogger('terminal')
@@ -149,7 +156,7 @@ def origin_ok(origin: str | None, host: str | None) -> bool:
 
 
 def pane_target(path: str) -> tuple[str, str] | None:
-    """Return (pane id, ttyd path) for /pane/<id>/<rest>, or None for a bad path or id."""
+    """Return (terminal id, ttyd path) for /pane/<id>/<rest>, or None for a bad path or id."""
     parsed = urlparse(path)
     parts = parsed.path.split('/', 3)
     if len(parts) < 3 or parts[1] != PANE_BASE.strip('/') or not PANE_ID.match(parts[2]):
@@ -164,7 +171,7 @@ def upstream_request(
     """
     Return the request for ttyd.
 
-    The query is replaced by the pane's tmux session name (ttyd -a passes it to
+    The query is replaced by the terminal's tmux session name (ttyd -a passes it to
     tmux), so a client cannot add tmux arguments. A plain request asks ttyd to
     close the connection after the reply.
     """
@@ -181,6 +188,103 @@ def upstream_request(
 
 def start_dir(preferred: Path = START_DIR) -> Path:
     return preferred if preferred.is_dir() else Path.home()
+
+
+def validate_layout(node: Any, depth: int = 0) -> dict[str, Any]:
+    """
+    Return a clean copy of a layout tree, or raise ValueError.
+
+    A node is a pane {type: pane, id, title} or a split {type: split, dir: row
+    (side by side) or col (stacked), ratio: share of the first child, a, b}.
+    """
+    if not isinstance(node, dict) or depth > MAX_DEPTH:
+        raise ValueError('bad layout')
+    if node.get('type') == 'pane':
+        pane_id, title = node.get('id'), node.get('title', '')
+        if not isinstance(pane_id, str) or not PANE_ID.match(pane_id):
+            raise ValueError('bad terminal id')
+        if not isinstance(title, str):
+            raise ValueError('bad title')
+        return {'type': 'pane', 'id': pane_id, 'title': title[:MAX_TITLE]}
+    if node.get('type') == 'split' and node.get('dir') in ('row', 'col'):
+        try:
+            ratio = float(node.get('ratio', 0.5))
+        except (TypeError, ValueError) as exc:
+            raise ValueError('bad ratio') from exc
+        low, high = RATIO_RANGE
+        tree = {
+            'type': 'split',
+            'dir': node['dir'],
+            'ratio': min(high, max(low, ratio)),
+            'a': validate_layout(node.get('a'), depth + 1),
+            'b': validate_layout(node.get('b'), depth + 1),
+        }
+        if depth == 0:
+            ids = pane_ids(tree)
+            if len(ids) > MAX_PANES or len(set(ids)) != len(ids):
+                raise ValueError('too many or repeated terminals')
+        return tree
+    raise ValueError('bad layout node')
+
+
+def pane_ids(node: dict[str, Any]) -> list[str]:
+    if node['type'] == 'pane':
+        return [node['id']]
+    return pane_ids(node['a']) + pane_ids(node['b'])
+
+
+class LayoutStore:
+    """The terminal layout in the car profile, versioned so a second device's save is not lost."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._lock = threading.Lock()
+
+    def load(self) -> dict[str, Any]:
+        try:
+            data = json.loads(self.path.read_text())
+            return {'version': int(data['version']), 'layout': validate_layout(data['layout'])}
+        except (OSError, ValueError, KeyError, TypeError):
+            return {'version': 0, 'layout': dict(DEFAULT_LAYOUT)}
+
+    def save(self, base: int, layout: Any) -> tuple[bool, dict[str, Any]]:
+        """
+        Save `layout` over version `base`; return (saved, the stored state).
+
+        A save over an older version is refused and returns the current one.
+        """
+        clean = validate_layout(layout)
+        with self._lock:
+            current = self.load()
+            if base != current['version']:
+                return False, current
+            state = {'version': current['version'] + 1, 'layout': clean}
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.path.with_name(f'.{self.path.name}.tmp')
+            tmp.write_text(json.dumps(state))
+            tmp.replace(self.path)
+            return True, state
+
+
+def close_pane(pane_id: str, run: Callable[..., Any] = subprocess.run) -> bool:
+    """End the terminal's tmux session; return False for a bad id or a failed call."""
+    if not PANE_ID.match(pane_id):
+        return False
+    try:
+        r = run(
+            ['tmux', '-L', TMUX_SOCKET, 'kill-session', '-t', f'{PANE_PREFIX}{pane_id}'],
+            capture_output=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return r.returncode == 0
+
+
+def layout_path() -> Path:
+    from racecar_neo_ros2_driver import car_profile
+
+    return car_profile.profile_dir() / 'terminal' / 'layout.json'
 
 
 def ttyd_argv(sock: Path, tmux_conf: Path, cwd: Path) -> list[str]:
@@ -269,8 +373,12 @@ class Context:
         sock: Path,
         authenticate: Callable[[str, str], bool] = pam_authenticate,
         allow_lan: Callable[[], bool] = allow_lan_setting,
+        layout: LayoutStore | None = None,
+        close: Callable[[str], bool] = close_pane,
     ) -> None:
         self.sock = sock
+        self.layout = layout or LayoutStore(layout_path())
+        self.close = close
         self.user = pwd.getpwuid(os.getuid()).pw_name
         self.sessions = Sessions()
         self.guard = LoginGuard()
@@ -327,13 +435,53 @@ def make_handler(ctx: Context) -> type[BaseHTTPRequestHandler]:
             if path.startswith(f'{PANE_BASE}/'):
                 self._pane(now)
                 return
+            if path == '/api/layout':
+                if not ctx.sessions.touch(self._token(), now):
+                    self._json(401, {'message': 'Log in first.'})
+                    return
+                self._json(200, ctx.layout.load())
+                return
             self._send(404, b'Not found.', 'text/plain')
+
+        def _json(self, code: int, data: Any) -> None:
+            self._send(code, json.dumps(data).encode(), 'application/json')
+
+        def _api_post(self, path: str) -> None:
+            """Layout and terminal calls from the page: a session and this page's Origin."""
+            if not ctx.sessions.touch(self._token(), time.time()):
+                self._json(401, {'message': 'Log in first.'})
+                return
+            origin = self.headers.get('Origin')
+            if origin and not origin_ok(origin, self.headers.get('Host')):
+                self._json(403, {'message': 'Not allowed from this page.'})
+                return
+            try:
+                length = min(int(self.headers.get('Content-Length') or 0), 65536)
+                body = json.loads(self.rfile.read(length) or b'{}')
+            except ValueError:
+                self._json(400, {'message': 'Bad request.'})
+                return
+            if path == '/api/layout':
+                try:
+                    saved, state = ctx.layout.save(
+                        int(body.get('version', -1)), body.get('layout')
+                    )
+                except (ValueError, TypeError):
+                    self._json(400, {'message': 'Bad layout.'})
+                    return
+                self._json(200 if saved else 409, state)
+                return
+            ok = ctx.close(str(body.get('id', '')))
+            self._json(200 if ok else 404, {'ok': ok})
 
         def do_POST(self) -> None:  # noqa: N802
             if not self._allowed():
                 self._send(403, b'Not allowed from this network.', 'text/plain')
                 return
             path = urlparse(self.path).path
+            if path in ('/api/layout', '/api/pane/close'):
+                self._api_post(path)
+                return
             if path == '/logout':
                 ctx.sessions.drop(self._token())
                 self._redirect('/', {'Set-Cookie': f'{COOKIE}=; Max-Age=0; Path=/'})
@@ -366,7 +514,7 @@ def make_handler(ctx: Context) -> type[BaseHTTPRequestHandler]:
                 return
             target = pane_target(self.path)
             if target is None:
-                self._send(404, b'No such pane.', 'text/plain')
+                self._send(404, b'No such terminal.', 'text/plain')
                 return
             upgrade = (self.headers.get('Upgrade') or '').lower() == 'websocket'
             if upgrade and not origin_ok(self.headers.get('Origin'), self.headers.get('Host')):

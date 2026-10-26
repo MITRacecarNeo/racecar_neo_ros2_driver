@@ -428,13 +428,13 @@ def check_services() -> list[Check]:
 
 
 def terminal_check(active: str, sessions: str) -> Check:
-    """Summarize the terminal app: running with its pane count, stopped, or not installed."""
+    """Summarize the terminal app: running with its terminal count, stopped, or not installed."""
     if not active:
         return Check('services', TERMINAL_UNIT, SKIP, 'unit not installed')
     if active != 'active':
         return Check('services', TERMINAL_UNIT, OK, f'{active} (starts from the Terminal tile)')
-    panes = sum(1 for line in sessions.splitlines() if line.startswith('rcn-'))
-    return Check('services', TERMINAL_UNIT, OK, f'active, {panes} pane(s)')
+    count = sum(1 for line in sessions.splitlines() if line.startswith('rcn-'))
+    return Check('services', TERMINAL_UNIT, OK, f'active, {count} terminal(s)')
 
 
 def watchdog_check(state: dict[str, Any] | None) -> Check:

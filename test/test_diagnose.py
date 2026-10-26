@@ -745,7 +745,7 @@ class TestTerminalCheck:
 
     def test_running_counts_panes(self, diag):
         check = diag.terminal_check('active', 'rcn-main\nrcn-t1\nother\n')
-        assert check.status == diag.OK and check.detail == 'active, 2 pane(s)'
+        assert check.status == diag.OK and check.detail == 'active, 2 terminal(s)'
 
     def test_battery_guard_is_a_service_row(self, diag):
         assert 'racecar-battery-guard' in diag.SERVICE_UNITS

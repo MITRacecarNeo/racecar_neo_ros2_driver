@@ -2,10 +2,12 @@
 
 import http.client
 from http.server import ThreadingHTTPServer
+import json
 import os
 from pathlib import Path
 import socket
 import threading
+from types import SimpleNamespace
 
 from conftest import load_script
 import pytest
@@ -173,7 +175,14 @@ class _FakeTtyd:
 def client(tmp_path):
     sock = tmp_path / 'ttyd.sock'
     fake = _FakeTtyd(sock)
-    ctx = term.Context(sock, authenticate=lambda u, p: p == 'right', allow_lan=lambda: False)
+    closed = []
+    ctx = term.Context(
+        sock,
+        authenticate=lambda u, p: p == 'right',
+        allow_lan=lambda: False,
+        layout=term.LayoutStore(tmp_path / 'profile' / 'terminal' / 'layout.json'),
+        close=lambda pane: closed.append(pane) or pane != 'gone',
+    )
     srv = ThreadingHTTPServer(('127.0.0.1', 0), term.make_handler(ctx))
     srv.daemon_threads = True
     threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -195,6 +204,7 @@ def client(tmp_path):
 
     request.login = login
     request.port = srv.server_address[1]
+    request.closed = closed
     yield request
     srv.shutdown()
     srv.server_close()
@@ -227,7 +237,7 @@ class TestServer:
     def test_app_page_with_a_session(self, client):
         cookie = client.login().getheader('Set-Cookie').split(';')[0]
         resp, body = client('GET', '/', headers={'Cookie': cookie})
-        assert b'/pane/main/' in body
+        assert b'id="area"' in body
 
     def test_pane_goes_to_ttyd_with_the_session_name(self, client):
         cookie = client.login().getheader('Set-Cookie').split(';')[0]
@@ -261,3 +271,126 @@ class TestServer:
     def test_shared_assets(self, client):
         resp, _ = client('GET', '/ui/rcn.css')
         assert resp.status == 200
+
+
+def _split(a, b, d='row', ratio=0.5):
+    return {'type': 'split', 'dir': d, 'ratio': ratio, 'a': a, 'b': b}
+
+
+def _pane(i, title=''):
+    return {'type': 'pane', 'id': i, 'title': title}
+
+
+class TestLayout:
+    def test_valid_tree(self):
+        tree = _split(_pane('main'), _split(_pane('b'), _pane('c'), 'col', 0.3))
+        assert term.validate_layout(tree) == tree
+        assert term.pane_ids(tree) == ['main', 'b', 'c']
+
+    def test_ratio_clamped_and_title_cut(self):
+        tree = term.validate_layout(_split(_pane('a', 'x' * 60), _pane('b'), ratio=0.99))
+        assert tree['ratio'] == 0.9 and len(tree['a']['title']) == 40
+
+    @pytest.mark.parametrize(
+        'tree',
+        [
+            None,
+            {'type': 'pane', 'id': 'BAD'},
+            {'type': 'pane', 'id': 'a', 'title': 3},
+            {'type': 'split', 'dir': 'diag', 'a': _pane('a'), 'b': _pane('b')},
+            _split(_pane('a'), _pane('a')),
+            _split(_pane('a'), _pane('b'), ratio='wide'),
+        ],
+    )
+    def test_rejects(self, tree):
+        with pytest.raises(ValueError):
+            term.validate_layout(tree)
+
+    def test_pane_limit(self):
+        tree = _pane('p0')
+        for i in range(1, 9):
+            tree = _split(tree, _pane(f'p{i}'))
+        with pytest.raises(ValueError):
+            term.validate_layout(tree)
+
+    def test_store_default_save_and_conflict(self, tmp_path):
+        store = term.LayoutStore(tmp_path / 't' / 'layout.json')
+        assert store.load() == {'version': 0, 'layout': term.DEFAULT_LAYOUT}
+        tree = _split(_pane('main'), _pane('b'))
+        saved, state = store.save(0, tree)
+        assert saved and state == {'version': 1, 'layout': tree}
+        assert store.load() == state
+        saved, state = store.save(0, _pane('main'))
+        assert not saved and state['layout'] == tree
+
+    def test_store_survives_a_bad_file(self, tmp_path):
+        path = tmp_path / 'layout.json'
+        path.write_text('{not json')
+        assert term.LayoutStore(path).load()['version'] == 0
+
+    def test_close_pane(self):
+        calls = []
+
+        def run(argv, **kwargs):
+            calls.append(argv)
+            return SimpleNamespace(returncode=0)
+
+        assert term.close_pane('b', run)
+        assert calls == [['tmux', '-L', 'racecar-terminal', 'kill-session', '-t', 'rcn-b']]
+        assert not term.close_pane('-t evil', run) and len(calls) == 1
+
+
+class TestLayoutApi:
+    def _cookie(self, client):
+        return client.login().getheader('Set-Cookie').split(';')[0]
+
+    def _post(self, client, path, body, cookie, origin=None):
+        headers = {'Cookie': cookie, 'Content-Type': 'application/json'}
+        if origin:
+            headers['Origin'] = origin
+        return client('POST', path, json.dumps(body), headers)
+
+    def test_needs_a_session(self, client):
+        assert client('GET', '/api/layout')[0].status == 401
+        assert client('POST', '/api/layout', '{}')[0].status == 401
+
+    def test_load_and_save(self, client):
+        cookie = self._cookie(client)
+        resp, body = client('GET', '/api/layout', headers={'Cookie': cookie})
+        assert json.loads(body) == {'version': 0, 'layout': term.DEFAULT_LAYOUT}
+        tree = _split(_pane('main'), _pane('b'))
+        resp, body = self._post(client, '/api/layout', {'version': 0, 'layout': tree}, cookie)
+        assert resp.status == 200 and json.loads(body)['version'] == 1
+        resp, body = self._post(client, '/api/layout', {'version': 0, 'layout': tree}, cookie)
+        assert resp.status == 409 and json.loads(body)['version'] == 1
+
+    def test_bad_layout(self, client):
+        cookie = self._cookie(client)
+        resp, _ = self._post(client, '/api/layout', {'version': 0, 'layout': {'x': 1}}, cookie)
+        assert resp.status == 400
+
+    def test_other_site(self, client):
+        cookie = self._cookie(client)
+        resp, _ = self._post(
+            client, '/api/layout', {'version': 0, 'layout': _pane('a')}, cookie, 'http://evil'
+        )
+        assert resp.status == 403
+
+    def test_close(self, client):
+        cookie = self._cookie(client)
+        assert self._post(client, '/api/pane/close', {'id': 'b'}, cookie)[0].status == 200
+        assert self._post(client, '/api/pane/close', {'id': 'gone'}, cookie)[0].status == 404
+        assert client.closed == ['b', 'gone']
+
+    def test_page_places_panes_without_moving_iframes(self):
+        html = (Path(__file__).resolve().parent.parent / 'scripts' / 'terminal.html').read_text()
+        assert 'frame.src = `/pane/${id}/`' in html
+        assert 'Ctrl+Shift+E' in html and 'Ctrl+Shift+O' in html
+        assert 'attachCustomKeyEventHandler' in html
+        assert 'data-tip' not in html
+        # The first load must draw even the unsaved default layout (version 0).
+        assert 'let version = -1;' in html
+        assert '`Terminal ${i + 1}`' in html and 'Pane ${' not in html
+        assert '.xterm-viewport::-webkit-scrollbar-thumb' in html
+        assert 'id="reset"' in html and 'Close every terminal except Terminal 1?' in html
+        assert 'shell' not in html.lower().split('<script>')[1].split('confirm(')[1][:80]
