@@ -1,0 +1,5 @@
+# RACECAR Neo terminal app login (scripts/terminal.py).
+# Installed to /etc/pam.d/racecar-terminal by scripts/setup_user_env.sh.
+auth     optional   pam_faildelay.so delay=3000000
+@include common-auth
+@include common-account

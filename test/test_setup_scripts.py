@@ -852,6 +852,13 @@ otg_mode=1
         assert out.endswith('dtparam=rtc_bbat_vchg=3000000\n')
 
 
+def test_terminal_app_packages_are_installed_by_setup():
+    # A fresh car must get what scripts/terminal.py runs: ttyd, PAM for Python, tmux.
+    text = (SCRIPTS_DIR / 'setup_dev_tools.sh').read_text()
+    for package in ('ttyd', 'python3-pampy', 'tmux'):
+        assert f' {package}' in text, package
+
+
 class TestLinterInstall:
     """setup_dev_tools.sh pins the linters behind `racecar lint`."""
 
