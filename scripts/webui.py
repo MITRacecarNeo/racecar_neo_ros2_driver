@@ -17,7 +17,7 @@ PREFIX = '/ui/'
 CACHE_CONTROL = 'max-age=300'
 # Pages link the shared files as /ui/<file>?v=ASSET_VERSION; bump it when
 # rcn.css, charts.js, or lost.js changes, so browsers fetch the new copy at once.
-ASSET_VERSION = '11'
+ASSET_VERSION = '12'
 TYPES = {
     '.css': 'text/css; charset=utf-8',
     '.js': 'text/javascript; charset=utf-8',

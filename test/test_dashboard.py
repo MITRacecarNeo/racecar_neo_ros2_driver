@@ -6,6 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import threading
+import time
 from types import SimpleNamespace
 
 from conftest import load_script
@@ -493,6 +494,7 @@ class TestHistory:
             'amps': 2.0,
             'age': 2.0,
             'stale': False,
+            'estimate': None,
         }
         assert dashboard.battery_view(110.0)['stale']
 
@@ -830,3 +832,171 @@ class TestDrivingAppsAndAutonomy:
     def test_page_asks_before_stopping_autonomy(self, dashboard):
         html = dashboard._load_dashboard_html()
         assert 'Save it, stop it, and open' in html and 'will close.' in html
+
+
+GUARD_VALUES = {
+    'level': 'countdown',
+    'trigger': 'estimate',
+    'valid': 'true',
+    'volts': '7.12',
+    'soc': '3',
+    'power_w': '17.4',
+    'minutes_left': '2',
+    'shutdown_in': '42',
+    'cancel_used': 'false',
+}
+
+
+class TestBatteryEstimate:
+    def test_view(self, dashboard):
+        view = dashboard.estimate_view(GUARD_VALUES, 0.5)
+        assert view == {
+            'level': 'countdown',
+            'trigger': 'estimate',
+            'minutes_left': 2.0,
+            'power_w': 17.4,
+            'soc': 3.0,
+            'shutdown_in': 42.0,
+            'can_cancel': True,
+        }
+
+    def test_stale_or_missing(self, dashboard):
+        assert dashboard.estimate_view(GUARD_VALUES, 6.0) is None
+        assert dashboard.estimate_view(None, None) is None
+
+    def test_empty_values_are_none(self, dashboard):
+        view = dashboard.estimate_view({'level': 'ok', 'minutes_left': ''}, 0.5)
+        assert view['minutes_left'] is None and view['level'] == 'ok'
+
+    @pytest.mark.parametrize(
+        'changes',
+        [{'trigger': 'floor'}, {'cancel_used': 'true'}, {'level': 'warn'}],
+    )
+    def test_cancel_only_for_an_estimate_countdown_once(self, dashboard, changes):
+        assert not dashboard.estimate_view({**GUARD_VALUES, **changes}, 0.5)['can_cancel']
+
+
+class TestOrigins:
+    @pytest.mark.parametrize(
+        'origin, host, allowed',
+        [
+            (None, 'car.local:8080', True),
+            ('http://car.local:8080', 'car.local:8080', True),
+            ('http://car.local:8081', 'car.local:8080', False),
+            ('http://evil.example:8080', 'car.local:8080', False),
+        ],
+    )
+    def test_page_origin(self, dashboard, origin, host, allowed):
+        assert dashboard.page_origin(origin, host) is allowed
+
+    @pytest.mark.parametrize(
+        'origin, allowed',
+        [
+            ('http://car.local:8084', True),
+            ('http://car.local:8085', True),
+            ('http://car.local:8089', False),
+            ('http://other:8084', False),
+        ],
+    )
+    def test_lab_origin(self, dashboard, origin, allowed):
+        assert (dashboard.lab_origin(origin, 'car.local:8080') is not None) is allowed
+
+
+class TestTurnOff:
+    def test_terminals_first_then_the_sequence(self, dashboard, monkeypatch):
+        order = []
+
+        class FakeAnnouncer:
+            def __init__(self, run):
+                pass
+
+            def deliver(self, msg):
+                order.append(('message', msg.text))
+
+        monkeypatch.setattr(dashboard, 'Announcer', FakeAnnouncer)
+        monkeypatch.setattr(
+            dashboard, 'shutdown_sequence', lambda run, report: order.append(('sequence',)) or []
+        )
+        dashboard.turn_off()
+        assert order == [
+            ('message', 'Turning the car off now. Turn off the power switch.'),
+            ('sequence',),
+        ]
+
+
+class TestBatteryEndpoints:
+    @pytest.fixture
+    def server(self, dashboard, monkeypatch):
+        calls = []
+        monkeypatch.setattr(dashboard, 'turn_off', lambda: calls.append('turn_off'))
+        monkeypatch.setattr(
+            dashboard,
+            '_sampler',
+            SimpleNamespace(
+                cancel_shutdown=lambda: calls.append('cancel'),
+                estimate=lambda: (GUARD_VALUES, 0.5),
+            ),
+        )
+        srv = ThreadingHTTPServer(('127.0.0.1', 0), dashboard.DashboardHandler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+        def request(method, path, headers=None):
+            conn = http.client.HTTPConnection('127.0.0.1', srv.server_address[1], timeout=5)
+            conn.request(
+                method, path, body=b'{}' if method == 'POST' else None, headers=headers or {}
+            )
+            resp = conn.getresponse()
+            request.cors = resp.getheader('Access-Control-Allow-Origin')
+            return resp.status, json.loads(resp.read())
+
+        request.calls = calls
+        yield request
+        srv.shutdown()
+        srv.server_close()
+
+    def test_shutdown(self, server):
+        status, body = server('POST', '/api/shutdown')
+        assert status == 200
+        assert body['message'] == 'Turning the car off now. Turn off the power switch.'
+        time.sleep(0.2)
+        assert server.calls == ['turn_off']
+
+    def test_shutdown_refuses_another_site(self, server):
+        status, _ = server('POST', '/api/shutdown', {'Origin': 'http://evil.example'})
+        assert status == 403
+        time.sleep(0.2)
+        assert server.calls == []
+
+    def test_cancel(self, server):
+        assert server('POST', '/api/battery/cancel')[0] == 200
+        assert server.calls == ['cancel']
+
+    def test_battery_for_a_lab_page(self, server, dashboard, monkeypatch):
+        h = dashboard.History()
+        h.add(time.time(), 7.12, 2.4)
+        monkeypatch.setattr(dashboard, '_battery', h)
+        status, body = server('GET', '/api/battery', {'Origin': 'http://127.0.0.1:8084'})
+        assert status == 200 and server.cors == 'http://127.0.0.1:8084'
+        assert body['battery']['estimate']['shutdown_in'] == 42.0
+
+
+class TestBatteryPage:
+    def test_turn_off_tile_next_to_the_override(self, dashboard):
+        html = dashboard._load_dashboard_html()
+        assert html.index('id="override"') < html.index('id="poweroff"')
+        assert html.index('id="poweroff"') < html.index('id="apps-utilities"')
+        assert "confirm('Turn the car off?')" in html
+        assert '/api/shutdown' in html
+
+    def test_header_pills_banner_and_cancel(self, dashboard):
+        html = dashboard._load_dashboard_html()
+        for element in ('batt-time', 'batt-power', 'battery-banner', 'battery-cancel'):
+            assert f'id="{element}"' in html
+        assert '/api/battery/cancel' in html
+
+    def test_time_pill_switches_views(self, dashboard):
+        html = dashboard._load_dashboard_html()
+        assert "const PILL_VIEWS = ['percent', 'time', 'clock'];" in html
+        assert 'until ${at.toLocaleTimeString' in html
+        assert "store.set('rcn-battery-view', pillView)" in html
+        assert 'Turning the car off now. Turn off the power switch.' in html

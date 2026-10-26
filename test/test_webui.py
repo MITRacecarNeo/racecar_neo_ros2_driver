@@ -80,7 +80,7 @@ def test_pages_link_shared_files_with_the_asset_version(webui):
     ]
     for page in pages:
         text = page.read_text()
-        for name in ('rcn.css', 'charts.js', 'lost.js', 'override.js'):
+        for name in ('rcn.css', 'charts.js', 'lost.js', 'override.js', 'battery.js'):
             for link in re.findall(rf'"/ui/{re.escape(name)}[^"]*"', text):
                 assert link == f'"/ui/{name}?v={webui.ASSET_VERSION}"', (page.name, link)
 
@@ -106,3 +106,18 @@ def test_driving_lab_pages_keep_the_override_alive():
         'wallfollow_dashboard/wallfollow.html',
     ):
         assert '/ui/override.js?v=' in (dashboards / page).read_text(), page
+
+
+def test_app_pages_show_the_low_battery_banner():
+    # The 8080 home page draws its own banner with the cancel button.
+    scripts = Path(__file__).resolve().parent.parent / 'scripts'
+    for page in (
+        'dashboard_launch.html',
+        'mapview.html',
+        'dashboards/teleop_dashboard/teleop.html',
+        'dashboards/linefollow_dashboard/linefollow.html',
+        'dashboards/wallfollow_dashboard/wallfollow.html',
+        'dashboards/camlabel_dashboard/camlabel.html',
+    ):
+        assert '/ui/battery.js?v=' in (scripts / page).read_text(), page
+    assert '/ui/battery.js' not in (scripts / 'dashboard.html').read_text()

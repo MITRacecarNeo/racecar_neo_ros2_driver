@@ -27,13 +27,15 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import BatteryState
-from std_msgs.msg import Bool, UInt32
+from std_msgs.msg import Bool, Empty, UInt32
 
 # Shared with scripts/diagnose.py. Both are run by path rather than imported
 # as a package, so the sibling has to be put on the path explicitly.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import features  # noqa: E402, I100  sibling script, after the path insert
+from battery_alert import Announcer, final_message  # noqa: E402, I100  sibling scripts
+import features  # noqa: E402
+from safe_shutdown import shutdown_sequence  # noqa: E402
 from sysinfo import (  # noqa: E402
     classify_rtc as _classify_rtc,
     read_diagnostic_rates,
@@ -99,7 +101,7 @@ APPS: list[dict[str, Any]] = [
         'unit': 'racecar-webteleop',
         'exclusive': True,
         'startable': True,
-        'desc': 'Drive from the browser with camera and lidar.',
+        'desc': 'Drive from the browser with camera and lidar',
     },
     {
         'id': 'linefollow',
@@ -110,7 +112,7 @@ APPS: list[dict[str, Any]] = [
         'unit': 'racecar-linefollow',
         'exclusive': True,
         'startable': True,
-        'desc': 'Follow a colored line with the camera.',
+        'desc': 'Follow a colored line with the camera',
         'needs': 'camera',
     },
     {
@@ -122,7 +124,7 @@ APPS: list[dict[str, Any]] = [
         'unit': 'racecar-wallfollow',
         'exclusive': True,
         'startable': True,
-        'desc': 'Follow walls with the lidar.',
+        'desc': 'Follow walls with the lidar',
     },
     {
         'id': 'camlabel',
@@ -133,7 +135,7 @@ APPS: list[dict[str, Any]] = [
         'unit': 'racecar-camlabel',
         'exclusive': False,
         'startable': True,
-        'desc': 'Capture camera frames and label them for training.',
+        'desc': 'Capture camera frames and label them for training',
         'needs': 'camera',
     },
 ]
@@ -154,7 +156,7 @@ FEATURES: list[dict[str, Any]] = [
         'icon': 'target',
         'desc': 'Turn on/off the detection node',
     },
-    {'id': 'autonomy', 'name': 'Autonomy', 'icon': 'radar', 'desc': 'Mapping or localization.'},
+    {'id': 'autonomy', 'name': 'Autonomy', 'icon': 'radar', 'desc': 'Mapping or localization'},
 ]
 TELEOP_UNIT = 'racecar-teleop.service'
 AUTONOMY_UNIT = 'racecar-autonomy.service'
@@ -180,6 +182,10 @@ MONITOR_PERIOD_SEC = 3.0
 BATTERY_WINDOW_SEC = 2 * 3600
 BATTERY_BUCKET_SEC = 10
 BATTERY_STALE_SEC = 5.0
+# racecar-battery-guard publishes /battery/estimate at 1 Hz; older than this
+# it has stopped, and the page shows no estimate.
+ESTIMATE_STALE_SEC = 5.0
+FINAL_MESSAGE = 'Turning the car off now. Turn off the power switch.'
 
 # supervised: the watchdog restarts this node. An unsupervised card that loses
 # its topic shows gray instead of red.
@@ -367,13 +373,76 @@ def override_origin(origin: str | None, host: str | None) -> str | None:
     return None
 
 
-def battery_view(now: float) -> dict[str, Any] | None:
+def estimate_view(values: dict[str, str] | None, age: float | None) -> dict[str, Any] | None:
+    """Return the battery guard's /battery/estimate for the page, or None when it is stale."""
+    if values is None or age is None or age > ESTIMATE_STALE_SEC:
+        return None
+
+    def num(key: str) -> float | None:
+        try:
+            return float(values.get(key, ''))
+        except ValueError:
+            return None
+
+    level = values.get('level', 'ok')
+    trigger = values.get('trigger', '')
+    cancel_used = values.get('cancel_used') == 'true'
+    return {
+        'level': level,
+        'trigger': trigger,
+        'minutes_left': num('minutes_left'),
+        'power_w': num('power_w'),
+        'soc': num('soc'),
+        'shutdown_in': num('shutdown_in'),
+        'can_cancel': level == 'countdown' and trigger == 'estimate' and not cancel_used,
+    }
+
+
+def battery_view(now: float, estimate: dict[str, Any] | None = None) -> dict[str, Any] | None:
     """Return the current battery values for the status snapshot; stale after BATTERY_STALE_SEC."""
     latest = _battery.latest(now)
     if latest is None:
         return None
     (volts, amps), age = latest
-    return {'volts': volts, 'amps': amps, 'age': age, 'stale': age > BATTERY_STALE_SEC}
+    return {
+        'volts': volts,
+        'amps': amps,
+        'age': age,
+        'stale': age > BATTERY_STALE_SEC,
+        'estimate': estimate,
+    }
+
+
+def current_battery() -> dict[str, Any] | None:
+    estimate = estimate_view(*(_sampler.estimate() if _sampler else (None, None)))
+    return battery_view(time.time(), estimate)
+
+
+def page_origin(origin: str | None, host: str | None) -> bool:
+    """Return True for a request from this page (same host and port) or not from a browser."""
+    if not origin:
+        return True
+    return bool(host) and urlparse(origin).netloc == host
+
+
+def lab_origin(origin: str | None, host: str | None) -> str | None:
+    """Return `origin` when an app page on this car (its own port) may read /api/battery."""
+    if not origin or not host:
+        return None
+    o, h = urlparse(origin), urlparse(f'//{host}')
+    ports = {a['port'] for a in APPS if a['port']}
+    if o.scheme == 'http' and o.hostname == h.hostname and o.port in ports:
+        return origin
+    return None
+
+
+def turn_off(run: Callable[..., Any] = subprocess.run) -> list[str]:
+    """Tell every terminal, then run the safe shutdown sequence."""
+    try:
+        Announcer(run=run).deliver(final_message())
+    except Exception:  # noqa: BLE001
+        log.exception('Terminal message failed')
+    return shutdown_sequence(run=run, report=lambda line: log.warning('Shutdown: %s', line))
 
 
 def sample_system(now: float) -> None:
@@ -414,6 +483,7 @@ class _RateSampler(Node):
         )
         # 1 Hz and latched: the autonomy card costs one small message a second.
         self._autonomy: tuple[dict[str, str], float] | None = None
+        self._estimate: tuple[dict[str, str], float] | None = None
         latched = QoSProfile(
             depth=1,
             reliability=QoSReliabilityPolicy.RELIABLE,
@@ -422,6 +492,10 @@ class _RateSampler(Node):
         self._autonomy_sub = self.create_subscription(
             DiagnosticStatus, '/autonomy/status', self._record_autonomy, latched
         )
+        self._estimate_sub = self.create_subscription(
+            DiagnosticStatus, '/battery/estimate', self._record_estimate, latched
+        )
+        self._cancel_pub = self.create_publisher(Empty, '/battery/cancel_shutdown', 10)
         # 1 Hz means from pit_node; the raw 150 Hz /battery/* topics cost too much here.
         self._battery_sub = self.create_subscription(
             BatteryState, '/battery/state', self._record_battery, 10
@@ -466,6 +540,22 @@ class _RateSampler(Node):
         values = {kv.key: kv.value for kv in msg.values}
         with self._lock:
             self._autonomy = (values, time.monotonic())
+
+    def _record_estimate(self, msg: DiagnosticStatus) -> None:
+        values = {kv.key: kv.value for kv in msg.values}
+        with self._lock:
+            self._estimate = (values, time.monotonic())
+
+    def estimate(self) -> tuple[dict[str, str] | None, float | None]:
+        """Return the last /battery/estimate values and their age in seconds."""
+        with self._lock:
+            if self._estimate is None:
+                return None, None
+            values, at = self._estimate
+            return dict(values), time.monotonic() - at
+
+    def cancel_shutdown(self) -> None:
+        self._cancel_pub.publish(Empty())
 
     def autonomy(self) -> tuple[dict[str, str] | None, float | None]:
         """Return the last /autonomy/status values and their age in seconds."""
@@ -1109,7 +1199,7 @@ def _monitor_loop() -> None:
                 'log_dir': str(Path.home() / 'logs' / 'latest'),
                 'autonomy': autonomy_view(*(_sampler.autonomy() if _sampler else (None, None))),
                 'apps': app_list(unit_states(_app_units())),
-                'battery': battery_view(time.time()),
+                'battery': current_battery(),
                 'host': socket.gethostname(),
             }
 
@@ -1180,10 +1270,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 200,
                 {
                     **get_status(),
+                    'battery': current_battery(),
                     'override': _override.view(time.monotonic()),
                     'features': features_view(),
                 },
             )
+        elif url.path == '/api/battery':
+            origin = lab_origin(self.headers.get('Origin'), self.headers.get('Host'))
+            cors = {'Access-Control-Allow-Origin': origin, 'Vary': 'Origin'} if origin else {}
+            self._send_json(200, {'battery': current_battery()}, cors)
         elif url.path == '/api/history':
             now = time.time()
             self._send_json(
@@ -1252,6 +1347,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if self.path == '/api/clear-log':
             ok, message = clear_watchdog_log()
             self._send_json(200 if ok else 400, {'ok': ok, 'message': message})
+            return
+        if self.path in ('/api/shutdown', '/api/battery/cancel'):
+            if not page_origin(self.headers.get('Origin'), self.headers.get('Host')):
+                self._send_json(403, {'ok': False, 'message': 'Not allowed from this page.'})
+                return
+            if self.path == '/api/battery/cancel':
+                if _sampler is not None:
+                    _sampler.cancel_shutdown()
+                log.warning('Shutdown cancel requested from %s', self.client_address[0])
+                self._send_json(200, {'ok': True, 'message': 'Shutdown canceled.'})
+                return
+            log.warning('Turn off requested from %s', self.client_address[0])
+            self._send_json(200, {'ok': True, 'message': FINAL_MESSAGE})
+            threading.Thread(target=turn_off, daemon=True).start()
             return
         if self.path not in ('/api/open', '/api/override', '/api/feature'):
             self.send_error(404)

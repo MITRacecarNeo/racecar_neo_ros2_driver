@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import argparse
 from collections import deque
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 import csv
 from dataclasses import dataclass, field
 import json
@@ -36,7 +36,6 @@ import os
 from pathlib import Path
 import queue
 import signal
-import subprocess
 import sys
 import threading
 import time
@@ -56,8 +55,7 @@ from racecar_neo_ros2_driver.battery import (  # noqa: E402
     estimate,
     Sample,
 )
-
-SCRIPT_DIR = Path(__file__).resolve().parent
+from safe_shutdown import shutdown_sequence  # noqa: E402
 
 TICK_SEC = 1.0
 # pit_node drops an alert frame 0.5 s after it arrives.
@@ -83,14 +81,6 @@ CSV_FIELDS = (
     'event',
 )
 
-DRIVING_UNITS = (
-    'racecar-webteleop.service',
-    'racecar-linefollow.service',
-    'racecar-wallfollow.service',
-)
-AUTONOMY_UNIT = 'racecar-autonomy.service'
-TELEOP_UNIT = 'racecar-teleop.service'
-STEP_TIMEOUT_SEC = 30.0
 
 log = logging.getLogger('battery_guard')
 
@@ -271,43 +261,6 @@ def csv_row(sample: Sample | None, guard: Guard, event: str) -> list[str]:
         guard.level,
         event,
     ]
-
-
-def shutdown_sequence(
-    run: Callable[..., Any] = subprocess.run,
-    dry_run: bool = False,
-    report: Callable[[str], None] = lambda line: None,
-) -> list[str]:
-    """
-    Stop recording, driving, autonomy, and teleop, then power off.
-
-    Each step is bounded and its failure does not stop the next; the car is
-    turned off whatever happened. Each step's line goes to `report` as soon as
-    it finishes, and all of them are returned.
-    """
-    steps: list[tuple[str, list[str]]] = [
-        ('stop recording', [sys.executable, str(SCRIPT_DIR / 'racecar_log.py'), 'stop']),
-        *[
-            (f'stop {u}', ['systemctl', '--no-ask-password', 'stop', u])
-            for u in (*DRIVING_UNITS, AUTONOMY_UNIT, TELEOP_UNIT)
-        ],
-        ('power off', ['systemctl', '--no-ask-password', '--check-inhibitors=no', 'poweroff']),
-    ]
-    lines = []
-    for name, argv in steps:
-        if dry_run:
-            line = f'{name}: dry run, not run'
-        else:
-            try:
-                r = run(argv, capture_output=True, text=True, timeout=STEP_TIMEOUT_SEC)
-                ok = r.returncode == 0
-                detail = '' if ok else f' ({(r.stderr or r.stdout or "").strip()[:200]})'
-                line = f'{name}: {"ok" if ok else "failed"}{detail}'
-            except (OSError, subprocess.TimeoutExpired) as exc:
-                line = f'{name}: failed ({exc})'
-        report(line)
-        lines.append(line)
-    return lines
 
 
 def write_last_shutdown(folder: Path, trigger: str, now: float, guard: Guard) -> Path:
