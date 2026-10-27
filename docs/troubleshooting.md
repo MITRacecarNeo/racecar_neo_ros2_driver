@@ -608,7 +608,13 @@ shows which. Teleop must be running, since `pit_node` reads the battery.
 count. Set `cells` in `params/battery.yaml` for a battery it cannot read.
 
 The countdown has no Cancel shutdown button: a countdown at the 7.1 V floor
-cannot be canceled. Turn the car off and change the battery.
+cannot be canceled. Turn the car off and change the battery. A countdown at
+5 minutes left can be canceled once per boot; the floor still shuts the car
+down.
+
+Time left jumps between driving and standing: the load correction is off or
+wrong for this battery. Run `python3 scripts/battery_curve.py` on its guard
+log; the r_internal line gives the drop per amp to set as `r_internal_ohm`.
 
 A terminal shows the red line but no prompt: the shell redraws its prompt
 right after the line. A full-screen program (vim, htop) keeps the line until

@@ -20,9 +20,12 @@ battery_guard:
     curve_pct: [100, 100, 95, 90, 80, 70, 60, 50,
                 40, 30, 20, 10, 5, 2, 0]
 
-    # Added to the voltage as amps times this before the curve. 0 because the
-    # curve is already under load.
-    r_internal_ohm: 0.0
+    # The curve was measured at curve_amps (the car idling with teleop). Each
+    # reading is raised by r_internal_ohm times its current above that, so the
+    # sag while driving does not read as charge used. 0.030: fitted from the
+    # voltage against the current on idle and driving discharges.
+    r_internal_ohm: 0.030
+    curve_amps: 2.3
 
     # Power and mean current average over window_sec; charge uses the median
     # voltage over soc_window_sec. No estimate until min_samples are in the
@@ -55,5 +58,7 @@ battery_guard:
     warn_min: 15.0
     shutdown_min: 5.0
 
-    # false: the shutdown_min estimate only warns; the floor still shuts down.
-    shutdown_enabled: false
+    # true: the countdown also starts at shutdown_min left (held 60 s, can be
+    # canceled once). false: that estimate only warns; the floor still shuts
+    # down.
+    shutdown_enabled: true

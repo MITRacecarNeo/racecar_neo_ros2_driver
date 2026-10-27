@@ -113,7 +113,7 @@ class TestFloor:
 
 class TestEstimateShutdown:
     def test_warns_only_when_disabled(self):
-        guard = bg.Guard(BatteryConfig())
+        guard = bg.Guard(BatteryConfig(shutdown_enabled=False))
         _, events = _run(guard, SHORT_V, 400, 0.0)
         assert guard.level == 'warn' and events == ['warn']
 

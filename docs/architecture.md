@@ -691,6 +691,7 @@ apart from teleop, so a teleop restart never stops it. Modules:
 | `scripts/battery_alert.py` | Red line on every terminal of the user and in the tmux status bar (default and `racecar-terminal` sockets) |
 | `scripts/battery_display.py` | Dot-matrix and LED frames for each level |
 | `scripts/safe_shutdown.py` | Shutdown steps, shared with the 8080 Turn Off tile |
+| `scripts/battery_curve.py` | Offline analysis of guard logs: charge, capacity, drop per amp (20 s window fits), curve check, and the `Guard` replayed with the estimate shutdown off, scored at 15 and 5 minutes |
 
 ```
   /battery/state ─▶ battery_guard ─┬─▶ /battery/estimate ─▶ dashboard ─▶ 8080 pills, banner; /api/battery ─▶ /ui/battery.js
@@ -784,7 +785,7 @@ node's `<name>_config` launch argument.
 | `amcl.yaml` | `amcl`, `map_server`, `lifecycle_manager_localization` | motion and laser models, particles, beam skipping, update distances |
 | `foxglove.yaml` | `foxglove_bridge` (autonomy launch, when on) | port, topic whitelist, `/initialpose` as the only client topic |
 | `foxglove_layout.json` | Lichtblick, imported by hand (not a node file) | 3D view, status table, pose plot |
-| `battery.yaml` | `battery_guard.py` | capacity, measured curve, cell count, floor per cell, warning and shutdown minutes, capacity learning, `shutdown_enabled` |
+| `battery.yaml` | `battery_guard.py` | capacity, measured curve, cell count, load correction (`r_internal_ohm` above `curve_amps`), floor per cell, warning and shutdown minutes, capacity learning, `shutdown_enabled` |
 | `health.yaml` | `scripts/health.py` (not a node file) | connectors for `racecar health poke`, in prompt order |
 | `terminal.tmux.conf`, `terminal_presets.json` | `scripts/terminal.py` (not node files) | tmux settings for the terminal app; built-in presets |
 | `frames.yaml` | `frames.launch.py` (not a node parameter file) | frame offsets in mm and deg, fleet base values; see [Frame tree](#frame-tree) |

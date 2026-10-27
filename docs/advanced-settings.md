@@ -249,7 +249,7 @@ applies.
 
 | | |
 |---|---|
-| Default | `config/battery.yaml`: 4700 mAh usable, floor 3.55 V per cell (7.1 V on 2S), warning at 15 min left, shutdown at 5 min left off |
+| Default | `config/battery.yaml`: 4700 mAh usable, floor 3.55 V per cell (7.1 V on 2S), warning at 15 min left, shutdown at 5 min left, 30 mOhm load correction above 2.3 A |
 | Change | `params/battery.yaml` in the car profile, under `battery_guard: ros__parameters:`; then `sudo systemctl restart racecar-battery-guard` |
 | Revert | remove the key, restart the guard |
 | Safe path | any |
@@ -262,6 +262,11 @@ Keys:
 - `cells`: 0 reads the count from the first voltage; a number forces it.
 - `curve_mv`, `curve_pct`, `curve_cells`: charge left against voltage under
   load. The PIT firmware's LED charge bar uses the same table.
+- `r_internal_ohm`, `curve_amps`: each reading is raised by
+  `r_internal_ohm` times its current above `curve_amps`, the current the
+  curve was measured at. Without it, driving reads as charge used and the
+  warning comes early. `python3 scripts/battery_curve.py` on a guard log
+  fits the drop per amp for another battery.
 - `floor_cell_volts`: the countdown starts here whatever the estimate
   says. Higher leaves more margin for the voltage dip while driving.
 - `warn_min`, `shutdown_min`, `shutdown_enabled`: minutes left for the

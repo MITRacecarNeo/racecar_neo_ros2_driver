@@ -121,7 +121,8 @@ class TestConfig:
 
 
 class TestEstimate:
-    cfg = BatteryConfig()
+    # The curve and window math without the load correction.
+    cfg = BatteryConfig(r_internal_ohm=0.0)
 
     def test_steady_discharge(self):
         est = estimate(_steady(7.545, 2.0), NOW, self.cfg, cells=2)
@@ -173,10 +174,20 @@ class TestEstimate:
         samples[-5:] = [(t, 7.2, 8.0) for t, _, _ in samples[-5:]]
         assert estimate(samples, NOW, self.cfg, cells=2).soc == pytest.approx(50.0)
 
-    def test_r_internal_raises_the_voltage(self):
-        cfg = BatteryConfig(r_internal_ohm=0.0375)
-        # 7.47 V + 2 A * 0.0375 = 7.545 V, 50%.
-        assert estimate(_steady(7.47, 2.0), NOW, cfg, cells=2).soc == pytest.approx(50.0)
+    def test_r_internal_raises_the_voltage_above_the_curve_current(self):
+        cfg = BatteryConfig(r_internal_ohm=0.03, curve_amps=2.3)
+        # 7.425 V + (6.8 - 2.3) A * 0.03 = 7.56 V; 7.545 V is 50%.
+        assert estimate(_steady(7.425, 6.8), NOW, cfg, cells=2).soc == pytest.approx(
+            estimate(_steady(7.56, 2.3), NOW, cfg, cells=2).soc
+        )
+
+    def test_reading_at_the_curve_current_is_taken_as_is(self):
+        cfg = BatteryConfig(r_internal_ohm=0.03, curve_amps=2.0)
+        assert estimate(_steady(7.545, 2.0), NOW, cfg, cells=2).soc == pytest.approx(50.0)
+
+    def test_shipped_defaults_correct_and_shut_down(self):
+        cfg = BatteryConfig()
+        assert (cfg.r_internal_ohm, cfg.curve_amps, cfg.shutdown_enabled) == (0.030, 2.3, True)
 
     @pytest.mark.parametrize('volts', [7.1, 7.05, 7.0])
     def test_no_time_left_at_or_below_the_floor(self, volts):

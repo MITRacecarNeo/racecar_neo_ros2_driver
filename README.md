@@ -556,6 +556,7 @@ teleop.
 | When | What happens |
 |---|---|
 | 15 minutes left | A red line on every terminal and in the tmux status bar: "Low battery: 14 min left. Charge or swap the battery." A banner on 8080 and every app page. LOW, BATT, and "!" on the dot matrix. The LED strip flashes orange, then red. |
+| 5 minutes left | The same 60 s countdown, with Cancel shutdown on 8080 (once per boot). |
 | Battery at 7.1 V (3.55 V per cell) | A 60 s countdown: "Shutting down in 30 s." on terminals and pages, the seconds left on the dot matrix from 20 s, faster LED flashing. |
 | 0 s | "Turning the car off now. Turn off the power switch." SHUT and DOWN on the dot matrix. The guard stops a `racecar log` recording, the driving apps, autonomy (saving a map being built), and teleop, then powers off. |
 
@@ -566,15 +567,21 @@ draining. Do not leave the car unattended on battery.
 The time left comes from a measured discharge curve of the Gens ace 5000 mAh
 2S battery and the current over the last 5 minutes. The PIT firmware's LED
 charge bar uses the same curve. The guard reads the cell count at boot and
-measures the capacity of the battery in the car as it runs. A shutdown at
-5 minutes left is built in but off (`shutdown_enabled: false`); the
-15-minute warning still shows.
+measures the capacity of the battery in the car as it runs. The curve was
+measured with the car idling; while driving, the guard adds back the
+voltage sag for the current above idle (30 mOhm times the extra amps), so
+time left holds steady between driving and standing. Tested on full
+batteries idle (115 to 121 min) and driving (67 min): within 3 minutes of
+the actual time at the 15 and 5 minute marks.
 
 - Status: `/battery/estimate` (`diagnostic_msgs/DiagnosticStatus`, latched,
   1 Hz). `journalctl -u racecar-battery-guard -f` shows the warning,
   countdown, and each shutdown step.
 - Log: `<data root>/health/battery/<start>_guard.csv`, one line a second,
   saved line by line.
+- Analysis: `python3 scripts/battery_curve.py <log> [<log> ...]` reports
+  charge used, capacity, the voltage drop per amp, the curve against the
+  charge actually left, and the time-left estimate replayed over the log.
 - Settings: `config/battery.yaml`; see
   [docs/advanced-settings.md](./docs/advanced-settings.md), "Battery guard".
 - Bench test without powering off: stop the service, run
@@ -1239,7 +1246,7 @@ Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
   (`racecar-battery-guard.service`: time left, a red line on terminals,
   banners on 8080 and the app pages, LED strip and dot-matrix alerts, a
   60 s countdown at 7.1 V); battery time and power in the 8080 header; a
-  Turn Off tile; `speed_cap` in `throttle.yaml` clips speed for every
+  Turn Off tile; `battery_curve.py` for guard logs; `speed_cap` in `throttle.yaml` clips speed for every
   source (1.0, off, by default).
 - **0.9.0** (2026-10-24): 2D SLAM beside teleop (`racecar map` to build, save,
   load, extend, and recover maps through `racecar-autonomy.service`;

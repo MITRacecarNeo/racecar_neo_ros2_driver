@@ -15,8 +15,10 @@ All notable changes to this project will be documented in this file. The format 
   left. At 7.1 V (3.55 V per cell, 30 s median) it counts down 60 s, then
   stops a recording, the driving apps, autonomy, and teleop, and powers
   off (`scripts/safe_shutdown.py`, `scripts/polkit/49-racecar-power.rules`).
-  A shutdown at 5 minutes left is built in, off by default
-  (`shutdown_enabled`). Publishes `/battery/estimate`; logs a CSV under
+  The countdown also starts at 5 minutes left (`shutdown_enabled`), and
+  that one can be canceled once. Load correction: each reading is raised by
+  30 mOhm times its current above 2.3 A, the idle current the curve was
+  measured at (`r_internal_ohm`, `curve_amps`). Publishes `/battery/estimate`; logs a CSV under
   `<data root>/health/battery/`.
 - Low-battery messages: a red line on every terminal of the car's user and
   in the tmux status bar, with the shell prompt redrawn after it
@@ -59,6 +61,10 @@ All notable changes to this project will be documented in this file. The format 
   unsafe shutdowns since the last report, counted, not warned), and kernel log errors. Each run
   saves `report.md`, `report.json`, and `samples.csv` under
   `<data root>/health/`; exit 1 on a FAIL.
+- `scripts/battery_curve.py`: guard logs (joined across a restart) and
+  capture CSVs to charge, capacity, the voltage drop per amp, the curve
+  against the charge left, and the estimate replayed and scored at 15 and 5
+  minutes, with `--r-internal` for a candidate value.
 - `racecar health shake` and `poke` (`scripts/health_watch.py`): timed steps
   (each axis shaken and the deck tapped; each connector in
   `config/health.yaml` pressed and wiggled) while the 5 V input, throttling,

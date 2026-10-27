@@ -8,9 +8,11 @@ where a battery's cell count matters: the cell count is read from the first
 voltage (detect_cells) or set in the config, and the curve and limits scale
 with it.
 
-- Charge: median voltage over the last soc_window_sec, plus amps times
-  r_internal_ohm (0 by default; the curve is already under load), mapped
-  through the curve. The median keeps a throttle spike from moving it.
+- Charge: median voltage over the last soc_window_sec, each reading raised
+  by r_internal_ohm times its current above curve_amps, mapped through the
+  curve. The curve was measured at curve_amps, so a reading at that current
+  is taken as is, and the sag while driving is added back. The median keeps
+  a throttle spike from moving it.
 - Power: mean of volts times amps over window_sec.
 - Time left: the charge above the floor times the capacity over the mean
   current in the same window, so it reaches 0 when the guard turns the car
@@ -72,7 +74,8 @@ class BatteryConfig:
     curve_cells: int = 2
     curve_mv: tuple[int, ...] = CURVE_MV
     curve_pct: tuple[int, ...] = CURVE_PCT
-    r_internal_ohm: float = 0.0
+    r_internal_ohm: float = 0.030
+    curve_amps: float = 2.3
     window_sec: float = 300.0
     soc_window_sec: float = 60.0
     min_samples: int = 30
@@ -87,7 +90,7 @@ class BatteryConfig:
     learn_max_ratio: float = 1.2
     warn_min: float = 15.0
     shutdown_min: float = 5.0
-    shutdown_enabled: bool = False
+    shutdown_enabled: bool = True
 
     def __post_init__(self) -> None:
         mv, pct = self.curve_mv, self.curve_pct
@@ -187,7 +190,9 @@ def estimate(
     if len(window) < cfg.min_samples:
         return Estimate(valid=True, volts=v_last)
 
-    recent = [v + a * cfg.r_internal_ohm for t, v, a in window if t >= now - cfg.soc_window_sec]
+    since = now - cfg.soc_window_sec
+    lift = cfg.r_internal_ohm
+    recent = [v + (a - cfg.curve_amps) * lift for t, v, a in window if t >= since]
     soc = battery_soc(median(recent), cells, cfg)
     power = sum(v * a for _, v, a in window) / len(window)
     amps = sum(a for _, _, a in window) / len(window)
