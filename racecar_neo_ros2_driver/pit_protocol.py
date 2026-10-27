@@ -28,6 +28,7 @@ precedes the 2-byte checksum field, magic included. Callers decide whether to
 enforce it (pit_node require_crc).
 """
 
+import binascii
 from dataclasses import dataclass
 import struct
 
@@ -63,12 +64,13 @@ _RX_MAGIC_LE = struct.pack('<I', RX_MAGIC)
 
 
 def crc16_ccitt(data: bytes, crc: int = 0xFFFF) -> int:
-    """CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF, no reflection)."""
-    for byte in data:
-        crc ^= byte << 8
-        for _ in range(8):
-            crc = ((crc << 1) ^ 0x1021) & 0xFFFF if (crc & 0x8000) else (crc << 1) & 0xFFFF
-    return crc
+    """
+    CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF, no reflection).
+
+    binascii.crc_hqx is the same CRC in C; a bitwise Python loop cost about
+    6 percent of a core at 200 frames and 60 commands a second.
+    """
+    return binascii.crc_hqx(data, crc)
 
 
 @dataclass

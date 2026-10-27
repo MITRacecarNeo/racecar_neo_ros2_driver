@@ -30,6 +30,8 @@ from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReli
 from sensor_msgs.msg import Joy
 from std_msgs.msg import Bool, Float32MultiArray, UInt32
 
+from .spin import spin
+
 
 class SafetyOverride:
     """
@@ -480,7 +482,7 @@ def main(args: list[str] | None = None) -> None:
     rclpy.init(args=args)
     node = MuxNode()
     try:
-        rclpy.spin(node)
+        spin(node)
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:

@@ -557,6 +557,29 @@ FastRTPS shared-memory orphans, sets `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`,
 and `exec`s `ros2 launch` so systemd tracks the launch PID directly rather than
 a wrapper shell.
 
+### Node CPU
+
+`pit_node`, `imu_fusion_node`, `mux_node`, and `throttle_node` spin on
+rclpy's `EventsExecutor` (`racecar_neo_ros2_driver/spin.py`; under
+`rclpy.experimental` in Jazzy, with a fallback to the default executor). The
+default executor rebuilds its wait set over every entity on each wake-up,
+which at 200 Hz inputs cost more than the callbacks. Measured at idle, one
+core = 100%:
+
+| Node | Default executor | Now |
+|---|---|---|
+| `pit_node` | 56.7% | 13.9% |
+| `imu_fusion_node` | 42.8% | 10.4% |
+| `mux_node` | 9.5% | 2.6% |
+| `throttle_node` | 5.8% | 2.1% |
+
+`pit_node` builds and publishes a telemetry topic only while it has a
+subscriber, read once a second (`LISTENER_REFRESH_SEC`); a new subscriber
+gets the full rate about 2 s after it subscribes (discovery plus that
+second). `/battery/state` and `/diagnostics` always publish. The protocol
+CRC is `binascii.crc_hqx`. `imu_fusion_node` subscribes raw and decodes and
+calibrates only the newest message of each source at its 100 Hz publish.
+
 ## Supervision and observability
 
 `scripts/watchdog.py` supervises seven nodes (pit, throttle, mux, gamepad,

@@ -1,7 +1,10 @@
 """Unit tests for imu_fusion_node: source freshness and the fusion step."""
 
+import numpy as np
 import pytest
-from racecar_neo_ros2_driver.imu_fusion_node import fresh_sources, fuse
+from racecar_neo_ros2_driver.imu_fusion_node import fresh_sources, fuse, ImuFusionNode
+from rclpy.serialization import serialize_message
+from sensor_msgs.msg import Imu
 
 SOURCES = ['/imu/realsense', '/imu/lsm9ds1']
 
@@ -47,3 +50,37 @@ class TestFuse:
     def test_returns_plain_floats(self):
         accel, gyro = fuse([((1, 2, 3), (4, 5, 6))])
         assert all(type(v) is float for v in accel + gyro)
+
+
+class _Fusion:
+    """ImuFusionNode._sample over plain attributes, without rclpy."""
+
+    _sample = ImuFusionNode._sample
+
+    def __init__(self):
+        self._rs_topic = '/imu/realsense'
+        self._rs_accel_bias = np.array([0.1, 0.0, -0.2])
+        self._rs_accel_scale = np.array([1.0, 2.0, 1.0])
+        self._rs_gyro_bias = np.array([0.01, 0.02, 0.03])
+        self._rs_order = [1, 0, 2]
+        self._rs_sign = [1.0, -1.0, 1.0]
+
+
+def _raw(accel, gyro):
+    msg = Imu()
+    msg.linear_acceleration.x, msg.linear_acceleration.y, msg.linear_acceleration.z = accel
+    msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z = gyro
+    return serialize_message(msg)
+
+
+class TestSample:
+    def test_realsense_is_calibrated_then_remapped(self):
+        raw = _raw((1.1, 2.0, 9.8), (0.11, 0.22, 0.33))
+        accel, gyro = _Fusion()._sample('/imu/realsense', raw)
+        # (raw - bias) * scale = (1.0, 4.0, 10.0); order [1, 0, 2], sign [+, -, +].
+        assert accel == pytest.approx((4.0, -1.0, 10.0))
+        assert gyro == pytest.approx((0.2, -0.1, 0.3))
+
+    def test_other_source_passes_through(self):
+        accel, gyro = _Fusion()._sample('/imu/lsm9ds1', _raw((1.0, 2.0, 3.0), (0.1, 0.2, 0.3)))
+        assert accel == pytest.approx((1.0, 2.0, 3.0)) and gyro == pytest.approx((0.1, 0.2, 0.3))

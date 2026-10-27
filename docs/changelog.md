@@ -89,6 +89,13 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Changed
 
+- Driver CPU at idle from about 1.15 cores to 0.29: `pit_node`,
+  `imu_fusion_node`, `mux_node`, and `throttle_node` spin on rclpy's
+  `EventsExecutor` (`racecar_neo_ros2_driver/spin.py`); `pit_node` skips
+  telemetry topics with no subscriber (a new subscriber gets data within
+  about 2 s, at the full rate) and computes the protocol CRC with
+  `binascii.crc_hqx`; `imu_fusion_node` decodes only the newest sample of
+  each source at its publish rate. Topics, rates, and messages are unchanged.
 - The PIT frame rate on 8080 and in `racecar status` comes from `pit_node`'s
   link report instead of counting `/imu/lsm9ds1`; the six PIT topics are
   checked against 200 Hz (the firmware's telemetry timer) with an 80 percent

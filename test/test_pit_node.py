@@ -298,3 +298,54 @@ class TestOverrideDisplay:
         pit._override = True
         pit._joy_buttons = [0, 0, 0, 0, 1, 0, 0, 0]
         assert pit._build_display(100.0)[0] & SYS_MODE_MASK == SYS_MODE_MANUAL
+
+
+class _Pub:
+    def __init__(self, subscribers):
+        self.subscribers = subscribers
+
+    def get_subscription_count(self):
+        return self.subscribers
+
+
+class _Gate:
+    """PitNode's subscriber gate over plain publishers."""
+
+    _refresh_listeners = PitNode._refresh_listeners
+    _wanted = PitNode._wanted
+
+    def __init__(self, pubs):
+        self.pubs = pubs
+        self._listened = {}
+        self._listeners_at = 0.0
+
+    def _gated_publishers(self):
+        return self.pubs
+
+
+class TestSubscriberGate:
+    def test_publishes_until_the_first_count(self):
+        pub = _Pub(0)
+        assert _Gate([pub])._wanted(pub)
+
+    def test_topic_with_no_subscriber_is_skipped(self, monkeypatch):
+        listened, idle = _Pub(1), _Pub(0)
+        gate = _Gate([listened, idle])
+        monkeypatch.setattr('racecar_neo_ros2_driver.pit_node.time.monotonic', lambda: 100.0)
+        gate._refresh_listeners()
+        assert gate._wanted(listened) and not gate._wanted(idle)
+        assert not gate._wanted(None)
+
+    def test_new_subscriber_is_seen_at_the_next_refresh(self, monkeypatch):
+        pub = _Pub(0)
+        gate = _Gate([pub])
+        clock = [100.0]
+        monkeypatch.setattr('racecar_neo_ros2_driver.pit_node.time.monotonic', lambda: clock[0])
+        gate._refresh_listeners()
+        pub.subscribers = 1
+        clock[0] = 100.5
+        gate._refresh_listeners()
+        assert not gate._wanted(pub)
+        clock[0] = 101.0
+        gate._refresh_listeners()
+        assert gate._wanted(pub)

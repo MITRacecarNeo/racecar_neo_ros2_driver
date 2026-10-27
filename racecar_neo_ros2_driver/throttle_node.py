@@ -19,6 +19,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 
 from .limits import clamp
+from .spin import spin
 
 
 def scale_speed(speed: float, max_fwd: float, max_back: float) -> float:
@@ -113,7 +114,7 @@ def main(args: list[str] | None = None) -> None:
     rclpy.init(args=args)
     node = ThrottleNode()
     try:
-        rclpy.spin(node)
+        spin(node)
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:

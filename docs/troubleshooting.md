@@ -7,6 +7,7 @@ comment in the source can point here instead of carrying the full account.
 ## Contents
 
 - [Diagnostic rate checks](#diagnostic-rate-checks)
+- [Telemetry topic start](#telemetry-topic-start)
 - [CPU busy share](#cpu-busy-share)
 - [eth0 addressing](#eth0-addressing)
 - [AP isolation dispatcher](#ap-isolation-dispatcher)
@@ -89,6 +90,16 @@ v0.8.2 the floor itself was the fail line, so a Coral delivering 8.6 of its
 still feeds the car; a stopped one does not, and the exit code now separates
 them. A car whose stack is down entirely shows every topic as not published,
 which fails rather than skips.
+
+## Telemetry topic start
+
+`racecar_neo_ros2_driver/pit_node.py` (`LISTENER_REFRESH_SEC`).
+
+A telemetry topic from `pit_node` (`/mag`, `/imu/lsm9ds1/raw`,
+`/battery/voltage`, `/rc/channels`, `/tf`, and the rest) takes about 2 s to
+start after a program subscribes: `pit_node` publishes a topic only while it
+has a subscriber and reads the counts once a second. It then runs at the full
+rate.
 
 ## CPU busy share
 

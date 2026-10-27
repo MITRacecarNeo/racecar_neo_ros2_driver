@@ -22,6 +22,7 @@ from collections.abc import Sequence
 import math
 import threading
 import time
+from typing import Any
 
 from ackermann_msgs.msg import AckermannDriveStamped
 from builtin_interfaces.msg import Time as TimeMsg
@@ -49,6 +50,7 @@ from . import pit_protocol as pit
 from .limits import clamp
 from .mux_node import MuxMode, select_mode, shown_mode
 from .odometry import OdomIntegrator, OdomState, yaw_quaternion
+from .spin import spin
 from .teensy_clock import TeensyClock
 
 # RxPacket.SystemState bit layout; mirror of the firmware cfg::SYS_STATE.
@@ -160,6 +162,34 @@ def remap_axes(
     v = np.asarray(vec, dtype=float)
     return np.array([sign[i] * v[order[i]] for i in range(3)]) * scale
 
+
+def build_imu(stamp: TimeMsg, frame: str, accel: Sequence[float], gyro: Sequence[float]) -> Imu:
+    msg = Imu()
+    msg.header.stamp = stamp
+    msg.header.frame_id = frame
+    msg.linear_acceleration.x = float(accel[0])
+    msg.linear_acceleration.y = float(accel[1])
+    msg.linear_acceleration.z = float(accel[2])
+    msg.angular_velocity.x = float(gyro[0])
+    msg.angular_velocity.y = float(gyro[1])
+    msg.angular_velocity.z = float(gyro[2])
+    return msg
+
+
+def build_mag(stamp: TimeMsg, frame: str, field: Sequence[float]) -> MagneticField:
+    msg = MagneticField()
+    msg.header.stamp = stamp
+    msg.header.frame_id = frame
+    msg.magnetic_field.x = float(field[0])
+    msg.magnetic_field.y = float(field[1])
+    msg.magnetic_field.z = float(field[2])
+    return msg
+
+
+# Topics with no subscriber are neither built nor published, which is most of
+# the per-frame work at 200 Hz. Subscriber counts are read this often, so a new
+# subscriber gets data within this time.
+LISTENER_REFRESH_SEC = 1.0
 
 # Odometry: logged when the gyro bias estimate moves by more than this.
 ODOM_BIAS_LOG_STEP = math.radians(0.05)
@@ -368,6 +398,8 @@ class PitNode(Node):
             ),
         )
         self._setup_odometry(qos)
+        self._listened: dict[int, bool] = {}
+        self._listeners_at = 0.0
 
         self._latest_speed = 0.0
         self._latest_steer = 0.0
@@ -505,6 +537,7 @@ class PitNode(Node):
         buffer = bytearray()
         while self._running:
             self._report_link()
+            self._refresh_listeners()
             if self._ser is None or not self._ser.is_open:
                 time.sleep(self._reconnect_period)
                 self._open_serial()
@@ -529,6 +562,35 @@ class PitNode(Node):
                     break
                 else:
                     self._link.skipped(consumed)
+
+    def _gated_publishers(self) -> list[Any]:
+        pubs = [
+            self._pub_imu,
+            self._pub_imu_raw,
+            self._pub_encoder,
+            self._pub_odom,
+            self._pub_voltage,
+            self._pub_current,
+            self._pub_rc,
+            self._pub_rc_link,
+            self._pub_mag,
+            self._pub_mag_raw,
+        ]
+        if self._odometry is not None:
+            pubs += [self._pub_odom_integrated, self._tf.pub_tf]
+        return [p for p in pubs if p is not None]
+
+    def _refresh_listeners(self) -> None:
+        """Read each telemetry topic's subscriber count once a LISTENER_REFRESH_SEC."""
+        now = time.monotonic()
+        if now - self._listeners_at < LISTENER_REFRESH_SEC:
+            return
+        self._listeners_at = now
+        self._listened = {id(p): p.get_subscription_count() > 0 for p in self._gated_publishers()}
+
+    def _wanted(self, pub: Any) -> bool:
+        """Return True when `pub` has a subscriber, or before the first count."""
+        return pub is not None and self._listened.get(id(pub), True)
 
     def _report_link(self) -> None:
         """Publish the link statistics once a second (pit_link.py)."""
@@ -612,9 +674,15 @@ class PitNode(Node):
         state = self._odometry.state
         if state.t is None:
             return
+        send_tf = self._wanted(self._tf.pub_tf)
+        send_odom = self._wanted(self._pub_odom_integrated)
+        if not send_tf and not send_odom:
+            return
         tf, odom = build_integrated_odom(state, self._odom_frame, self._odom_child_frame)
-        self._tf.sendTransform(tf)
-        self._pub_odom_integrated.publish(odom)
+        if send_tf:
+            self._tf.sendTransform(tf)
+        if send_odom:
+            self._pub_odom_integrated.publish(odom)
 
     def _telemetry_stamp(self, timestamp_us: int) -> TimeMsg:
         now = self.get_clock().now()
@@ -641,79 +709,50 @@ class PitNode(Node):
         accel = (raw_accel - self._accel_bias) * self._accel_cal_scale
         gyro = raw_gyro - self._gyro_bias
 
-        imu = Imu()
-        imu.header.stamp = stamp
-        imu.header.frame_id = self._frame
-        imu.linear_acceleration.x = float(accel[0])
-        imu.linear_acceleration.y = float(accel[1])
-        imu.linear_acceleration.z = float(accel[2])
-        imu.angular_velocity.x = float(gyro[0])
-        imu.angular_velocity.y = float(gyro[1])
-        imu.angular_velocity.z = float(gyro[2])
-        self._pub_imu.publish(imu)
-
-        imu_raw = Imu()
-        imu_raw.header.stamp = stamp
-        imu_raw.header.frame_id = self._frame
-        imu_raw.linear_acceleration.x = float(raw_accel[0])
-        imu_raw.linear_acceleration.y = float(raw_accel[1])
-        imu_raw.linear_acceleration.z = float(raw_accel[2])
-        imu_raw.angular_velocity.x = float(raw_gyro[0])
-        imu_raw.angular_velocity.y = float(raw_gyro[1])
-        imu_raw.angular_velocity.z = float(raw_gyro[2])
-        self._pub_imu_raw.publish(imu_raw)
+        if self._wanted(self._pub_imu):
+            self._pub_imu.publish(build_imu(stamp, self._frame, accel, gyro))
+        if self._wanted(self._pub_imu_raw):
+            self._pub_imu_raw.publish(build_imu(stamp, self._frame, raw_accel, raw_gyro))
 
         if self._odometry is not None:
             stamp_ns = stamp.sec * 10**9 + stamp.nanosec
             self._integrate_odometry(stamp_ns, float(telem.encoder), gyro)
 
         # Encoder telemetry is vehicle speed in m/s (firmware getCurrentSpeed()).
-        enc = Float32()
-        enc.data = float(telem.encoder)
-        self._pub_encoder.publish(enc)
+        if self._wanted(self._pub_encoder):
+            self._pub_encoder.publish(Float32(data=float(telem.encoder)))
 
-        if self._pub_odom is not None:
+        if self._wanted(self._pub_odom):
+            assert self._pub_odom is not None
             odom = build_odom(telem.encoder, self._odom_frame, self._odom_child_frame)
             odom.header.stamp = stamp
             self._pub_odom.publish(odom)
 
-        volt = Float32()
-        volt.data = float(telem.voltage_v)
-        self._pub_voltage.publish(volt)
-        curr = Float32()
-        curr.data = float(telem.current_a)
-        self._pub_current.publish(curr)
+        if self._wanted(self._pub_voltage):
+            self._pub_voltage.publish(Float32(data=float(telem.voltage_v)))
+        if self._wanted(self._pub_current):
+            self._pub_current.publish(Float32(data=float(telem.current_a)))
         means = self._power_avg.add(time.monotonic(), telem.voltage_v, telem.current_a)
         if means is not None:
             battery = build_battery_state(*means)
             battery.header.stamp = stamp
             self._pub_battery.publish(battery)
-        rc = Float32MultiArray()
-        rc.data = [float(c) for c in telem.rc_normalized]
-        self._pub_rc.publish(rc)
-        rc_link = Bool()
-        rc_link.data = bool(telem.rc_link_up)
-        self._pub_rc_link.publish(rc_link)
+        if self._wanted(self._pub_rc):
+            rc = Float32MultiArray()
+            rc.data = [float(c) for c in telem.rc_normalized]
+            self._pub_rc.publish(rc)
+        if self._wanted(self._pub_rc_link):
+            self._pub_rc_link.publish(Bool(data=bool(telem.rc_link_up)))
 
-        if self._publish_mag:
+        want_mag = self._wanted(self._pub_mag)
+        want_mag_raw = self._wanted(self._pub_mag_raw)
+        if self._publish_mag and (want_mag or want_mag_raw):
             raw_mag = remap_axes(telem.mag, self._mag_order, self._mag_sign, self._mag_scale)
-            mag_vec = self._mag_soft @ (raw_mag - self._mag_hard)
-
-            mag = MagneticField()
-            mag.header.stamp = stamp
-            mag.header.frame_id = self._frame
-            mag.magnetic_field.x = float(mag_vec[0])
-            mag.magnetic_field.y = float(mag_vec[1])
-            mag.magnetic_field.z = float(mag_vec[2])
-            self._pub_mag.publish(mag)
-
-            mag_raw = MagneticField()
-            mag_raw.header.stamp = stamp
-            mag_raw.header.frame_id = self._frame
-            mag_raw.magnetic_field.x = float(raw_mag[0])
-            mag_raw.magnetic_field.y = float(raw_mag[1])
-            mag_raw.magnetic_field.z = float(raw_mag[2])
-            self._pub_mag_raw.publish(mag_raw)
+            if want_mag:
+                mag_vec = self._mag_soft @ (raw_mag - self._mag_hard)
+                self._pub_mag.publish(build_mag(stamp, self._frame, mag_vec))
+            if want_mag_raw:
+                self._pub_mag_raw.publish(build_mag(stamp, self._frame, raw_mag))
 
     def _close_serial(self) -> None:
         try:
@@ -738,7 +777,7 @@ def main(args: list[str] | None = None) -> None:
     rclpy.init(args=args)
     node = PitNode()
     try:
-        rclpy.spin(node)
+        spin(node)
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
