@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-10-26
+
 ### Added
 
 - Low-battery warning and safe shutdown: `scripts/battery_guard.py`, run
@@ -1567,7 +1569,8 @@ Design notes and migration from v1:
 - Parameter YAMLs: `config/gamepad.yaml`, `mux.yaml`, `throttle.yaml`, `pwm.yaml`
 - Project files: `README.md`, `LICENSE` (GPLv3), `.gitignore`, `.gitattributes`
 
-[Unreleased]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.8.3...v0.9.0
 [0.8.3]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.8.1...v0.8.2

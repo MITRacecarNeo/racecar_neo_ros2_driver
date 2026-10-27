@@ -1249,16 +1249,19 @@ switch it to slow mode before mapping.
 
 Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
 
-- **Unreleased**: `racecar health` (power and data drive checks over time,
-  shake and poke tests for loose contacts, with a saved report), `ext5v` and `nvme` rows in `racecar status`, and
-  the 5 V input on the 8080 Power chip; a terminal app on port 8086 (tmux
+- **0.9.1** (2026-10-26): low-battery warning and safe shutdown
+  (`racecar-battery-guard.service`: time left corrected for the sag while
+  driving, a red line on terminals, banners on 8080 and the app pages, LED
+  strip and dot-matrix alerts, a 60 s countdown at 5 minutes left or 7.1 V);
+  battery time and power in the 8080 header and a Turn Off tile;
+  `battery_curve.py` for guard logs; a terminal app on port 8086 (tmux
   terminals in the browser behind the racecar password, layouts and presets
-  saved on the car); low-battery warning and safe shutdown
-  (`racecar-battery-guard.service`: time left, a red line on terminals,
-  banners on 8080 and the app pages, LED strip and dot-matrix alerts, a
-  60 s countdown at 7.1 V); battery time and power in the 8080 header; a
-  Turn Off tile; `battery_curve.py` for guard logs; `speed_cap` in `throttle.yaml` clips speed for every
-  source (1.0, off, by default).
+  saved on the car); `racecar health` (power, the Teensy link, and the data
+  drive over time; shake and poke tests for loose contacts; a saved report),
+  with `ext5v`, `nvme`, and `teensy link` rows in `racecar status` and Power
+  and Link chips on 8080; driver CPU at idle from about 1.15 cores to 0.29;
+  `speed_cap` in `throttle.yaml` clips speed for every source (1.0, off, by
+  default).
 - **0.9.0** (2026-10-24): 2D SLAM beside teleop (`racecar map` to build, save,
   load, extend, and recover maps through `racecar-autonomy.service`;
   `racecar launch autonomy`: slam_toolbox mapping, AMCL or slam_toolbox
