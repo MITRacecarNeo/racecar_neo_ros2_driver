@@ -1,5 +1,7 @@
 """Unit tests for throttle math helpers."""
 
+from pathlib import Path
+
 from diagnostic_msgs.msg import DiagnosticStatus, KeyValue
 import pytest
 from racecar_neo_ros2_driver.throttle_node import (
@@ -8,6 +10,7 @@ from racecar_neo_ros2_driver.throttle_node import (
     scale_steering,
     status_mode,
 )
+import yaml
 
 
 class TestScaleSpeed:
@@ -93,3 +96,21 @@ class TestMappingSteeringCap:
 
     def test_no_cap_by_default(self):
         assert scale_steering(1.0, 1.0) == 1.0
+
+
+class TestSpeedCap:
+    def test_off_at_one(self):
+        assert cap_speed(scale_speed(1.0, 1.0, 1.0), 1.0) == pytest.approx(1.0)
+
+    @pytest.mark.parametrize('speed,expected', [(1.0, 0.15), (-1.0, -0.15), (0.1, 0.1)])
+    def test_clips_without_scaling(self, speed, expected):
+        assert cap_speed(scale_speed(speed, 1.0, 1.0), 0.15) == pytest.approx(expected)
+
+    def test_lowest_cap_wins_while_mapping(self):
+        assert cap_speed(cap_speed(1.0, 0.15), 0.02) == pytest.approx(0.02)
+        assert cap_speed(cap_speed(1.0, 0.01), 0.02) == pytest.approx(0.01)
+
+    def test_shipped_default_is_off(self):
+        cfg = Path(__file__).resolve().parents[1] / 'config' / 'throttle.yaml'
+        params = yaml.safe_load(cfg.read_text())['throttle_node']['ros__parameters']
+        assert params['speed_cap'] == 1.0

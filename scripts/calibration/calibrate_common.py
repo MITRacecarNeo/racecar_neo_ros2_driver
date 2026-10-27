@@ -50,6 +50,14 @@ def install_config_dir() -> Path | None:
     return share if share.is_dir() else None
 
 
+def stack_config_dir() -> Path:
+    """Return the config dir the running stack loaded: installed share, else source."""
+    d = install_config_dir() or source_config_dir()
+    if d is None:
+        raise FileNotFoundError('no config directory found')
+    return d
+
+
 def source_config_dir(script: Path | None = None) -> Path | None:
     """
     Return the package's source config dir, or None.

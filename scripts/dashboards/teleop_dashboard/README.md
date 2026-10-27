@@ -99,7 +99,7 @@ teleop.yaml:
 | cmd_timeout | seconds without a command before the service drives zero; not on the dashboard |
 | camera_topic, preview_width, preview_quality | `/camera/color` on the latest driver, `/camera` on older cars; live view size and jpeg quality, shared by both views |
 | depth_topic | `/camera/depth` on a D435i. Empty on a car whose camera is color only, which drops the depth pane rather than subscribing to a topic nobody publishes |
-| depth_max_m | far end of the depth ramp, metres; anything past it clamps to the dark end instead of dropping out |
+| depth_max_m | far end of the depth ramp, meters; anything past it clamps to the dark end instead of dropping out |
 | detections_topic | `vision_msgs/Detection2DArray` for the Detections switch, `/edgetpu/inference` on this driver. Empty on a car with no detector, which disables the switch |
 
 Save rewrites the numbers in place, so the comments in the yaml survive.

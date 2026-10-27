@@ -49,12 +49,11 @@ from calibrate_common import (  # noqa: E402, I100
     CalibratorNode,
     Criterion,
     finish_check,
-    install_config_dir,
     node_params,
     read_line,
     run_sequence,
-    source_config_dir,
     spin_until_done,
+    stack_config_dir,
     write_local_yaml,
 )
 from scan_match import (  # noqa: E402, I100
@@ -267,7 +266,7 @@ class OdomCalibrator(CalibratorNode):
         self.sign = float(params.get('odometry.yaw_rate_sign', 1.0))
         self.yaw_scale = float(params.get('odometry.yaw_rate_scale', 1.0))
         self.speed_scale = float(params.get('odometry.speed_scale', 1.0))
-        frames = load_frames(install_config_dir() or source_config_dir())
+        frames = load_frames(stack_config_dir())
         self.laser: Pose = (
             frames['laser_x_mm'] * 1e-3,
             frames['laser_y_mm'] * 1e-3,

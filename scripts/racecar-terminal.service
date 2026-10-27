@@ -1,0 +1,27 @@
+[Unit]
+Description=RACECAR Neo Terminal (port 8086)
+Wants=racecar-data.service
+After=racecar-data.service
+
+[Service]
+Type=exec
+User=racecar
+Group=racecar
+ExecStart=/bin/bash -c '\
+    source /opt/ros/jazzy/setup.bash && \
+    source /home/racecar/ros2_ws/install/setup.bash && \
+    exec python3 /home/racecar/ros2_ws/src/racecar_neo_ros2_driver/scripts/terminal.py'
+# The ttyd socket lives here, mode 0700, removed when the app stops.
+RuntimeDirectory=racecar-terminal
+RuntimeDirectoryMode=0700
+# Stopping the app ends every pane: the tmux server is in this cgroup.
+KillMode=control-group
+Restart=on-failure
+RestartSec=5
+Environment=HOME=/home/racecar
+EnvironmentFile=-/run/racecar/environment
+Environment=ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
+WorkingDirectory=/home/racecar
+
+[Install]
+WantedBy=multi-user.target

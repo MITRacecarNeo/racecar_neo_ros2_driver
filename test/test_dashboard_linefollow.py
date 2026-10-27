@@ -28,9 +28,9 @@ _spec.loader.exec_module(lf)
 SHIPPED = None  # yaml as committed, restored after any test that writes it
 
 W, H = 640, 480
-BLUE = (255, 80, 0)      # BGR; hue about 105 in OpenCV's 0..179
+BLUE = (255, 80, 0)  # BGR; hue about 105 in OpenCV's 0..179
 BLUE_HSV = {'h_low': 95, 'h_high': 125, 's_low': 100, 's_high': 255, 'v_low': 100, 'v_high': 255}
-RED = (0, 0, 255)        # hue 0, on the wrap
+RED = (0, 0, 255)  # hue 0, on the wrap
 
 
 class Recorder:
@@ -63,12 +63,15 @@ def params(monkeypatch, tmp_path):
 @pytest.fixture
 def node(monkeypatch):
     monkeypatch.setattr(lf.Node, '__init__', lambda self, name: None)
-    monkeypatch.setattr(lf.LineFollowNode, 'create_publisher',
-                        lambda self, *a, **k: Recorder(), raising=False)
-    monkeypatch.setattr(lf.LineFollowNode, 'create_subscription',
-                        lambda self, *a, **k: None, raising=False)
-    monkeypatch.setattr(lf.LineFollowNode, 'create_timer',
-                        lambda self, *a, **k: None, raising=False)
+    monkeypatch.setattr(
+        lf.LineFollowNode, 'create_publisher', lambda self, *a, **k: Recorder(), raising=False
+    )
+    monkeypatch.setattr(
+        lf.LineFollowNode, 'create_subscription', lambda self, *a, **k: None, raising=False
+    )
+    monkeypatch.setattr(
+        lf.LineFollowNode, 'create_timer', lambda self, *a, **k: None, raising=False
+    )
     return lf.LineFollowNode()
 
 
@@ -97,6 +100,7 @@ def feed(node, img):
 
 # ---- parameters ----
 
+
 def test_speed_is_capped():
     assert lf.set_max_speed(5.0) == lf.MAX_SPEED
     assert lf.set_max_speed(-1.0) == 0.0
@@ -108,6 +112,7 @@ def test_shipped_yaml_cannot_drive():
 
 def yaml_value(key):
     import yaml
+
     return yaml.safe_load(SHIPPED)[key]
 
 
@@ -117,7 +122,7 @@ def test_save_keeps_comments_and_types(params):
     text = lf.YAML_PATH.read_text()
     assert (BASE / 'linefollow.yaml').read_text() == SHIPPED  # defaults untouched
     assert 'Raise this if the car weaves.' in text  # comments survive
-    assert 'h_low: 12\n' in text                     # ints stay ints
+    assert 'h_low: 12\n' in text  # ints stay ints
     lf._params.clear()
     lf.load_params()
     assert lf._params['h_low'] == 12
@@ -149,6 +154,7 @@ def test_update_marks_only_real_changes(params):
 
 # ---- threshold and contour ----
 
+
 def test_threshold_wraps_hue_for_red(params):
     hsv = cv2.cvtColor(np.full((4, 4, 3), RED, np.uint8), cv2.COLOR_BGR2HSV)
     params.update(h_low=170, h_high=10, s_low=100, s_high=255, v_low=100, v_high=255)
@@ -159,12 +165,12 @@ def test_threshold_wraps_hue_for_red(params):
 
 def test_find_line_takes_the_largest_contour_in_the_band():
     mask = np.zeros((240, 320), np.uint8)
-    cv2.rectangle(mask, (40, 150), (60, 230), 255, -1)    # small, in band
+    cv2.rectangle(mask, (40, 150), (60, 230), 255, -1)  # small, in band
     cv2.rectangle(mask, (200, 150), (260, 230), 255, -1)  # large, in band
-    cv2.rectangle(mask, (150, 0), (170, 100), 255, -1)    # above the band
+    cv2.rectangle(mask, (150, 0), (170, 100), 255, -1)  # above the band
     contour, (cx, cy), area = lf.find_line(mask, 144, 240, 30)
     assert 225 <= cx <= 235
-    assert 185 <= cy <= 195          # in full-mask rows, not band rows
+    assert 185 <= cy <= 195  # in full-mask rows, not band rows
     assert contour[:, 0, 1].min() >= 144
 
 
@@ -176,11 +182,12 @@ def test_find_line_ignores_specks():
 
 # ---- controller ----
 
+
 def test_line_right_of_center_steers_right(node, params):
     params['angle_kp'] = 1.0
     feed(node, frame([(0.75, 40, BLUE, 0.6, 1.0)]))
     assert node._found
-    assert node._error == pytest.approx(0.5, abs=0.05)   # student convention: + is right
+    assert node._error == pytest.approx(0.5, abs=0.05)  # student convention: + is right
     assert node._steer_cmd == pytest.approx(0.5, abs=0.05)
 
 
@@ -257,6 +264,7 @@ def test_lost_rows_are_flagged(node):
 
 
 # ---- actuation ----
+
 
 def test_actuate_negates_steering_and_caps_speed(node):
     node._steer_cmd, node._speed_cmd = 0.4, 99.0

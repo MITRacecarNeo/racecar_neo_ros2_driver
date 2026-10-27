@@ -12,8 +12,10 @@
 #   racecar-dashboard.service web status page (port 8080)
 #   racecar-jupyter.service   JupyterLab (port 8888)
 #   racecar-mapview.service   web map viewer (port 8084)
+#   racecar-battery-guard.service  low-battery warning and safe shutdown
 # Installed, not enabled (started on demand):
 #   racecar-autonomy.service  SLAM mapping or localization, BindsTo=teleop
+#   racecar-terminal.service  terminal app (port 8086), from the 8080 tile
 #
 # After install: `sudo systemctl start racecar-teleop` or reboot.
 set -eo pipefail
@@ -27,10 +29,13 @@ SERVICES=(
     racecar-dashboard.service
     racecar-jupyter.service
     racecar-mapview.service
+    racecar-battery-guard.service
 )
-# Mapping at boot would build an unsaved map and take CPU from every lab.
+# Mapping at boot would build an unsaved map and take CPU from every lab; the
+# terminal app starts when its tile is opened.
 INSTALL_ONLY=(
     racecar-autonomy.service
+    racecar-terminal.service
 )
 
 changed=0

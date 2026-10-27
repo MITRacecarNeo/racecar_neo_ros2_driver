@@ -1,0 +1,18 @@
+# Connectors for `racecar health poke` (scripts/health.py), in prompt order.
+# `where` finishes the prompt "Press and wiggle ...". A car's own list in the
+# car profile, params/health.yaml with the same `poke:` key, replaces this one.
+poke:
+  - name: battery
+    where: the battery plug and its lead to the power switch
+  - name: buck output
+    where: the wires from the 5 V regulator to the Pi
+  - name: Pi 5 V input
+    where: the 5 V and ground wires on the Pi's GPIO header
+  - name: Teensy UART
+    where: the Teensy's UART wires between the PIT board and the Pi
+  - name: lidar USB
+    where: the lidar's USB cable, at the lidar and at the Pi
+  - name: RealSense USB-C
+    where: the USB-C cable at the RealSense camera
+  - name: NVMe ribbon
+    where: the flat ribbon cable between the Pi and the NVMe board

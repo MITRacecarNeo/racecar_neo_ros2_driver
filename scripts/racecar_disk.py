@@ -29,6 +29,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+from typing import Any
 
 from racecar_neo_ros2_driver import data_root
 
@@ -90,7 +91,7 @@ class Drive:
         return None
 
 
-def run_command(argv: Sequence[str], **kw: object) -> subprocess.CompletedProcess:
+def run_command(argv: Sequence[str], **kw: Any) -> subprocess.CompletedProcess:
     return subprocess.run(list(argv), capture_output=True, text=True, check=False, **kw)
 
 
@@ -122,8 +123,16 @@ def parse_lsblk(text: str) -> Drive | None:
 def read_drive(device: str = DEVICE, run: Run = run_command) -> Drive | None:
     if not Path(device).exists():
         return None
-    r = run(['lsblk', '-J', '-b', '-o',
-             'NAME,PATH,TYPE,SIZE,FSTYPE,LABEL,UUID,MOUNTPOINTS,MODEL,SERIAL', device])
+    r = run(
+        [
+            'lsblk',
+            '-J',
+            '-b',
+            '-o',
+            'NAME,PATH,TYPE,SIZE,FSTYPE,LABEL,UUID,MOUNTPOINTS,MODEL,SERIAL',
+            device,
+        ]
+    )
     if r.returncode != 0:
         raise DiskError(f'lsblk failed: {r.stderr.strip()}')
     return parse_lsblk(r.stdout)
@@ -133,8 +142,7 @@ def fstab_line(uuid: str, mount: Path = MOUNT) -> str:
     return f'UUID={uuid}  {mount}  ext4  {MOUNT_OPTIONS}  0  2'
 
 
-def rewrite_fstab(text: str, uuid: str, mount: Path = MOUNT,
-                  old_uuids: Sequence[str] = ()) -> str:
+def rewrite_fstab(text: str, uuid: str, mount: Path = MOUNT, old_uuids: Sequence[str] = ()) -> str:
     """
     Return fstab with one line for the data drive at `mount`.
 
@@ -146,8 +154,11 @@ def rewrite_fstab(text: str, uuid: str, mount: Path = MOUNT,
     kept = []
     for line in text.splitlines():
         fields = line.split()
-        if fields and not fields[0].startswith('#') and (
-                fields[0] in names or (len(fields) > 1 and fields[1] in targets)):
+        if (
+            fields
+            and not fields[0].startswith('#')
+            and (fields[0] in names or (len(fields) > 1 and fields[1] in targets))
+        ):
             continue
         kept.append(line)
     while kept and not kept[-1].strip():
@@ -217,8 +228,11 @@ class Steps:
 
     def sudo(self, *argv: str, input_text: str | None = None) -> str:
         self.out(f'  sudo {shlex.join(argv)}')
-        r = self.run(['sudo', *argv], input=input_text) if input_text is not None \
+        r = (
+            self.run(['sudo', *argv], input=input_text)
+            if input_text is not None
             else self.run(['sudo', *argv])
+        )
         if r.returncode != 0:
             raise DiskError(f'{argv[0]} failed: {(r.stderr or r.stdout).strip()}')
         return r.stdout
@@ -239,8 +253,10 @@ class Steps:
         r = self.run(['sudo', 'umount', mount])
         if r.returncode != 0:
             users = self.run(['sudo', 'fuser', '-vm', mount])
-            raise DiskError(f'{mount} is busy; close what is using it and retry.\n'
-                            f'{(users.stderr or users.stdout).strip()}')
+            raise DiskError(
+                f'{mount} is busy; close what is using it and retry.\n'
+                f'{(users.stderr or users.stdout).strip()}'
+            )
         self.out(f'  sudo umount {mount}')
 
     def write_fstab(self, text: str, now: datetime) -> None:
@@ -260,8 +276,9 @@ class Steps:
     def partition_and_format(self, drive: Drive) -> str:
         self.sudo('wipefs', '--all', drive.path)
         self.sudo('sgdisk', '--zap-all', drive.path)
-        self.sudo('sgdisk', '--new=1:0:0', '--typecode=1:8300',
-                  f'--change-name=1:{LABEL}', drive.path)
+        self.sudo(
+            'sgdisk', '--new=1:0:0', '--typecode=1:8300', f'--change-name=1:{LABEL}', drive.path
+        )
         self.sudo('partprobe', drive.path)
         self.run(['udevadm', 'settle'])
         part = f'{drive.path}p1'
@@ -329,15 +346,16 @@ def health_lines(device: str, run: Run = run_command) -> list[str]:
     ]
 
 
-def status(run: Run = run_command, out: Callable[[str], None] = print,
-           fstab: Path = FSTAB) -> int:
+def status(run: Run = run_command, out: Callable[[str], None] = print, fstab: Path = FSTAB) -> int:
     drive = read_drive(run=run)
     if drive is None:
         out(f'No NVMe drive at {DEVICE}.')
         data_command([], out)
         return 1
-    out(f'Drive: {drive.model or "unknown model"}, serial {drive.serial or "unknown"}, '
-        f'{human(drive.size)}')
+    out(
+        f'Drive: {drive.model or "unknown model"}, serial {drive.serial or "unknown"}, '
+        f'{human(drive.size)}'
+    )
     part = drive.ours()
     for p in drive.partitions:
         mounted = ', '.join(p.mounts) or 'not mounted'
@@ -365,8 +383,9 @@ def ask(prompt: str) -> str:
         return ''
 
 
-def copy_home_data(steps: Steps, home_data: Path, root: Path,
-                   ask_fn: Callable[[str], str] = ask) -> None:
+def copy_home_data(
+    steps: Steps, home_data: Path, root: Path, ask_fn: Callable[[str], str] = ask
+) -> None:
     """Copy ~/data to the new root, then compare sizes; ~/data is left in place."""
     if not home_data.is_dir() or not any(home_data.iterdir()):
         return
@@ -381,9 +400,11 @@ def copy_home_data(steps: Steps, home_data: Path, root: Path,
             raise DiskError(f'copying {item} failed: {r.stderr.strip()}')
     src = steps.run(['du', '-sb', str(home_data)]).stdout.split()[:1]
     dst = steps.run(['du', '-sb', str(root)]).stdout.split()[:1]
-    steps.out(f'Copied: {home_data} {human(float(src[0] if src else 0))}, '
-              f'{root} now {human(float(dst[0] if dst else 0))}. '
-              f'Clear {home_data} by hand once you have checked the copy.')
+    steps.out(
+        f'Copied: {home_data} {human(float(src[0] if src else 0))}, '
+        f'{root} now {human(float(dst[0] if dst else 0))}. '
+        f'Clear {home_data} by hand once you have checked the copy.'
+    )
 
 
 def move_old_contents(steps: Steps) -> None:
@@ -400,8 +421,12 @@ def move_old_contents(steps: Steps) -> None:
     steps.out(f'Moved {len(top)} item(s) from the old {OLD_MOUNT} into {bags}.')
 
 
-def setup(run: Run = run_command, out: Callable[[str], None] = print,
-          ask_fn: Callable[[str], str] = ask, now: datetime | None = None) -> int:
+def setup(
+    run: Run = run_command,
+    out: Callable[[str], None] = print,
+    ask_fn: Callable[[str], str] = ask,
+    now: datetime | None = None,
+) -> int:
     steps = Steps(run, out)
     now = now or datetime.now()
     drive = read_drive(run=run)
@@ -415,8 +440,10 @@ def setup(run: Run = run_command, out: Callable[[str], None] = print,
     if part is not None and str(MOUNT) in part.mounts:
         out(f'{drive.path} is set up at {MOUNT}.')
     elif part is not None:
-        out(f'{drive.path} ({drive.model}, {human(drive.size)}) holds a racecar-data '
-            f'filesystem, mounted at {", ".join(part.mounts) or "nothing"}.')
+        out(
+            f'{drive.path} ({drive.model}, {human(drive.size)}) holds a racecar-data '
+            f'filesystem, mounted at {", ".join(part.mounts) or "nothing"}.'
+        )
         if ask_fn(f'Move it to {MOUNT}? Nothing is erased. [y/N] ').lower() != 'y':
             out('Nothing changed.')
             return 1
@@ -432,10 +459,13 @@ def setup(run: Run = run_command, out: Callable[[str], None] = print,
     else:
         sigs = run(['sudo', 'wipefs', '-n', drive.path]).stdout.strip()
         if sigs:
-            raise DiskError(f'{drive.path} carries signatures:\n{sigs}\n'
-                            'To erase it: racecar disk format')
-        out(f'Blank drive: {drive.path}, {drive.model}, {human(drive.size)}, '
-            f'serial {drive.serial}.')
+            raise DiskError(
+                f'{drive.path} carries signatures:\n{sigs}\n' 'To erase it: racecar disk format'
+            )
+        out(
+            f'Blank drive: {drive.path}, {drive.model}, {human(drive.size)}, '
+            f'serial {drive.serial}.'
+        )
         if ask_fn(f'Set it up at {MOUNT}? [y/N] ').lower() != 'y':
             out('Nothing changed.')
             return 1
@@ -460,8 +490,12 @@ def describe_contents(mounts: Sequence[str], run: Run = run_command) -> list[str
     return lines
 
 
-def format_drive(run: Run = run_command, out: Callable[[str], None] = print,
-                 ask_fn: Callable[[str], str] = ask, now: datetime | None = None) -> int:
+def format_drive(
+    run: Run = run_command,
+    out: Callable[[str], None] = print,
+    ask_fn: Callable[[str], str] = ask,
+    now: datetime | None = None,
+) -> int:
     steps = Steps(run, out)
     now = now or datetime.now()
     drive = read_drive(run=run)
@@ -523,10 +557,16 @@ def main(argv: list[str] | None = None) -> int:
             print(exc, file=sys.stderr)
             return 2
     parser = argparse.ArgumentParser(prog='racecar disk', description='The NVMe data drive.')
-    parser.add_argument('action', nargs='?', default='status',
-                        choices=('status', 'setup', 'format', 'check'))
+    parser.add_argument(
+        'action', nargs='?', default='status', choices=('status', 'setup', 'format', 'check')
+    )
     args = parser.parse_args(argv)
-    actions = {'status': status, 'setup': setup, 'format': format_drive, 'check': check}
+    actions: dict[str, Callable[[], int]] = {
+        'status': status,
+        'setup': setup,
+        'format': format_drive,
+        'check': check,
+    }
     try:
         return actions[args.action]()
     except DiskError as exc:

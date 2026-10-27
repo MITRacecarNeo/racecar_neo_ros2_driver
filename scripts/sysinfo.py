@@ -17,6 +17,23 @@ from typing import Any
 RTC_OK_VOLTS = 2.8
 RTC_LOW_VOLTS = 2.7
 
+# EXT5V, the Pi 5's 5 V input: 4.75 V is the Pi's own minimum; under
+# EXT5V_WARN_VOLTS the supply has little margin left.
+EXT5V_MIN_VOLTS = 4.75
+EXT5V_WARN_VOLTS = 4.85
+
+# The NVMe drive: its controller, and the temperature it reports to hwmon
+# without root. SMART needs root; setup installs a sudoers rule for exactly
+# NVME_SMART_ARGV (scripts/sudoers.d-racecar-nvme).
+NVME_SYS = Path('/sys/class/nvme/nvme0')
+NVME_CONTROLLER = '/dev/nvme0'
+NVME_SMART_ARGV = ['sudo', '-n', 'nvme', 'smart-log', '-o', 'json', NVME_CONTROLLER]
+# Consumer drives throttle from about 70 C and are rated to about 85 C.
+NVME_TEMP_WARN_C = 70.0
+NVME_TEMP_FAIL_C = 80.0
+# SMART percentage_used: share of the rated write endurance spent.
+NVME_WEAR_WARN_PCT = 90
+
 # Bit meanings of `vcgencmd get_throttled`. The low bits are live conditions;
 # the 16+ bits are sticky and record that it happened at some point this boot.
 THROTTLE_BITS = {
@@ -30,11 +47,15 @@ THROTTLE_BITS = {
     19: 'soft temperature limit has occurred',
 }
 
-# RealSense publishes its per-stream rates on /diagnostics under these names.
-REALSENSE_DIAGNOSTIC_NAMES = {
+# Stream rates published on /diagnostics, by status name: the RealSense
+# driver's per-stream rates, and pit_node's Teensy link, whose frame rate is
+# the rate of every PIT topic (racecar_neo_ros2_driver/pit_link.py).
+LINK_STATUS_NAME = 'pit: teensy link'
+DIAGNOSTIC_RATE_NAMES = {
     'camera: color': '/camera/color',
     'camera: depth': '/camera/depth',
     'camera: gyro': '/imu/realsense',
+    LINK_STATUS_NAME: '/imu/lsm9ds1',
 }
 DIAGNOSTIC_RATE_KEY = 'Actual frequency (Hz)'
 
@@ -56,7 +77,7 @@ def run_cmd(cmd: list[str], timeout: float = 5.0) -> str:
 def read_diagnostic_rates(msg: Any, into: dict[str, float]) -> None:
     """Copy the RealSense per-stream rates from one DiagnosticArray into `into`."""
     for status in msg.status:
-        topic = REALSENSE_DIAGNOSTIC_NAMES.get(status.name.lower())
+        topic = DIAGNOSTIC_RATE_NAMES.get(status.name.lower())
         if topic is None:
             continue
         for value in status.values:
@@ -67,6 +88,30 @@ def read_diagnostic_rates(msg: Any, into: dict[str, float]) -> None:
             except (TypeError, ValueError):
                 pass
             break
+
+
+def read_link_status(msg: Any) -> dict[str, float] | None:
+    """
+    Return pit_node's Teensy link report from one DiagnosticArray, or None.
+
+    Keys: rate_hz, gap_ms (both the last second), longest_gap_ms, and the
+    counters since pit_node started (frames, crc_failures, dropped_frames,
+    skipped_bytes, reconnects, resets); level is 0 OK, 1 WARN, 2 ERROR.
+    """
+    for status in msg.status:
+        if status.name != LINK_STATUS_NAME:
+            continue
+        out: dict[str, float] = {}
+        for value in status.values:
+            try:
+                key = 'rate_hz' if value.key == DIAGNOSTIC_RATE_KEY else value.key
+                out[key] = float(value.value)
+            except (TypeError, ValueError):
+                continue
+        level = status.level
+        out['level'] = float(level[0] if isinstance(level, (bytes, bytearray)) else level)
+        return out
+    return None
 
 
 def read_rtc_voltage() -> float | None:
@@ -84,6 +129,68 @@ def read_rtc_voltage() -> float | None:
         return None
     m = re.search(r'BATT_V\s+volt\(\d+\)=([0-9.]+)V', r.stdout)
     return float(m.group(1)) if m else None
+
+
+def parse_pmic_adc(text: str) -> dict[str, float]:
+    """
+    Parse `vcgencmd pmic_read_adc` into {rail: value}.
+
+    Rails keep the PMIC's names: `EXT5V_V` in volts, `VDD_CORE_A` in amps.
+    """
+    return {
+        m.group(1): float(m.group(2))
+        for m in re.finditer(r'(\w+)\s+(?:volt|current)\(\d+\)=([-0-9.]+)[VA]', text)
+    }
+
+
+def read_pmic_rails(rail: str = '') -> dict[str, float]:
+    """Return every PMIC rail, or one rail when named; empty when unreadable."""
+    argv = ['vcgencmd', 'pmic_read_adc'] + ([rail] if rail else [])
+    return parse_pmic_adc(run_cmd(argv, timeout=3))
+
+
+def read_ext5v() -> float | None:
+    """Return the Pi 5's 5 V input in volts, or None."""
+    return read_pmic_rails('EXT5V_V').get('EXT5V_V')
+
+
+def classify_ext5v(volts: float | None) -> str:
+    """Return 'healthy', 'stale' (under EXT5V_WARN_VOLTS) or 'dead' (under EXT5V_MIN_VOLTS)."""
+    if volts is None or volts < EXT5V_MIN_VOLTS:
+        return 'dead'
+    return 'healthy' if volts >= EXT5V_WARN_VOLTS else 'stale'
+
+
+def read_nvme_temp(nvme_sys: Path = NVME_SYS) -> float | None:
+    """Return the NVMe drive's temperature in Celsius from hwmon, or None."""
+    for temp in sorted(nvme_sys.glob('hwmon*/temp1_input')):
+        try:
+            return int(temp.read_text().strip()) / 1000.0
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+def read_nvme_smart(run: Any = subprocess.run) -> dict[str, Any] | None:
+    """
+    Return the NVMe SMART log, or None when it cannot be read without a password.
+
+    `temperature` comes back in Celsius; nvme-cli reports Kelvin.
+    """
+    try:
+        r = run(NVME_SMART_ARGV, capture_output=True, text=True, timeout=5)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if r.returncode != 0:
+        return None
+    try:
+        log: dict[str, Any] = json.loads(r.stdout)
+    except ValueError:
+        return None
+    kelvin = log.get('temperature')
+    if isinstance(kelvin, (int, float)) and kelvin > 200:
+        log['temperature'] = kelvin - 273
+    return log
 
 
 def under_voltage_alarm_path() -> Path | None:

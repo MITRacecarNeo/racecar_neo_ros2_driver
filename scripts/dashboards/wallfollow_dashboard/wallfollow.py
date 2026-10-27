@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""RACECAR Neo wall-follow service: /scan -> PD steering -> /drive + web dashboard.
+"""
+RACECAR Neo wall-follow service: /scan -> PD steering -> /drive + web dashboard.
 
 Same pattern as the driver's dashboard.py (stdlib HTTP + rclpy) on port 8083.
 CAUTION: the RACECAR Neo mux gates /drive on the RB bumper and
@@ -29,31 +30,33 @@ import signal
 import sys
 import threading
 import time
+from typing import Any
 
 from ackermann_msgs.msg import AckermannDriveStamped
+from nav_msgs.msg import Odometry
 from racecar_neo_ros2_driver import car_profile, data_root
 import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
-from nav_msgs.msg import Odometry
 import yaml
 
 PORT = 8083
 BASE = Path(__file__).resolve().parent
 # The shared styles, fonts and logos are served from scripts/web/ (webui.py).
 sys.path.insert(0, str(BASE.parents[1]))
-import webui  # noqa: E402
+import webui  # noqa: E402, I100
+
 # Shipped defaults stay untouched; saved tuning goes to the per-car file,
 # which loads on top of them, in the car profile (dashboards/<name>.yaml).
 DEFAULTS_PATH = BASE / 'wallfollow.yaml'
 YAML_PATH = car_profile.dashboard_settings('wallfollow')
 LOG_DIR = data_root.current()[0] / 'dashboards' / 'wallfollow'
 
-MAX_SPEED = 1.0      # hard throttle cap, same idea as drive_real.set_max_speed
-SEARCH_STEP = 2      # degrees between candidate headings (dynamic)
-HALF_CLEAR = 0.21    # meters, car half-width plus margin, inflates obstacles
+MAX_SPEED = 1.0  # hard throttle cap, same idea as drive_real.set_max_speed
+SEARCH_STEP = 2  # degrees between candidate headings (dynamic)
+HALF_CLEAR = 0.21  # meters, car half-width plus margin, inflates obstacles
 CENTER_BIAS = 0.006  # score penalty per degree off-center, stops ping-pong
 
 # Raw scan angle that points at the car's nose, in degrees.
@@ -85,25 +88,33 @@ _marks: deque = deque(maxlen=40)
 _T0 = time.monotonic()
 
 
-def _now():
+def _now() -> float:
     return round(time.monotonic() - _T0, 2)
 
 
-def _add_mark(label):
+def _add_mark(label: str) -> None:
     # Coalesce rapid updates (the speed slider fires while dragging).
-    if _marks and _now() - _marks[-1][0] < 1.0 and _marks[-1][1].split(' ')[0] == label.split(' ')[0]:
+    if (
+        _marks
+        and _now() - _marks[-1][0] < 1.0
+        and _marks[-1][1].split(' ')[0] == label.split(' ')[0]
+    ):
         _marks[-1] = [_now(), label]
     else:
         _marks.append([_now(), label])
 
 
-def set_max_speed(speed):
-    """Clamp throttle to [0, MAX_SPEED]. Every speed that leaves this program
-    passes through here, so /drive can never carry more than 1.0."""
+def set_max_speed(speed: float) -> float:
+    """
+    Clamp throttle to [0, MAX_SPEED].
+
+    Every speed that leaves this program passes through here, so /drive can
+    never carry more than 1.0.
+    """
     return max(0.0, min(MAX_SPEED, float(speed)))
 
 
-def load_params():
+def load_params() -> None:
     with _lock:
         before = dict(_params)
         _params.update(yaml.safe_load(DEFAULTS_PATH.read_text()))
@@ -120,7 +131,7 @@ def load_params():
             _add_mark('yaml load')
 
 
-def save_params():
+def save_params() -> None:
     """Rewrite the numeric values in place so the yaml comments survive."""
     if not YAML_PATH.exists():
         car_profile.write_text(YAML_PATH, DEFAULTS_PATH.read_text())
@@ -137,7 +148,7 @@ def save_params():
 
 
 class WallFollowNode(Node):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__('wallfollow')
         self._pub = self.create_publisher(AckermannDriveStamped, '/drive', 1)
         self.create_subscription(LaserScan, '/scan', self._scan_cb, qos_profile_sensor_data)
@@ -149,23 +160,23 @@ class WallFollowNode(Node):
         self._trim = 0.0
         self._last_speed_error = 0.0
 
-    def _odom_cb(self, msg):
+    def _odom_cb(self, msg: Odometry) -> None:
         self._enc = msg.twist.twist.linear.x
         self._enc_stamp = time.monotonic()
 
     @staticmethod
-    def _index_at(msg, deg):
+    def _index_at(msg: LaserScan, deg: float) -> int:
         """Ray index for a student angle (0 = nose, positive = right)."""
         raw = math.radians(LIDAR_MOUNT_YAW_DEG - deg)
         return round((raw - msg.angle_min) / msg.angle_increment) % len(msg.ranges)
 
     @staticmethod
-    def _student_deg(msg, i):
+    def _student_deg(msg: LaserScan, i: int) -> float:
         """Student angle of ray `i`, wrapped to (-180, 180]."""
         raw = math.degrees(msg.angle_min + i * msg.angle_increment)
         return (LIDAR_MOUNT_YAW_DEG - raw + 180.0) % 360.0 - 180.0
 
-    def _mean_at(self, msg, deg, window):
+    def _mean_at(self, msg: LaserScan, deg: float, window: float) -> float:
         """Average range (m) in a `window`-deg cone at `deg` (0 = nose, + = right)."""
         n = len(msg.ranges)
         center = self._index_at(msg, deg)
@@ -175,7 +186,7 @@ class WallFollowNode(Node):
         # No return means open space, not zero. Zero would pull toward gaps.
         return sum(vals) / len(vals) if vals else msg.range_max
 
-    def _scan_cb(self, msg):
+    def _scan_cb(self, msg: LaserScan) -> None:
         with _lock:
             p = dict(_params)
 
@@ -194,16 +205,26 @@ class WallFollowNode(Node):
                 for i in range(max(0, j - span), min(len(degs), j + span + 1)):
                     if abs(degs[i] - degs[j]) <= block and d < corridor[i]:
                         corridor[i] = d
-            best = max(range(len(degs)), key=lambda i: corridor[i]
-                       - CENTER_BIAS * abs(degs[i]) + p['side_weight'] * degs[i])
+            best = max(
+                range(len(degs)),
+                key=lambda i: corridor[i]
+                - CENTER_BIAS * abs(degs[i])
+                + p['side_weight'] * degs[i],
+            )
             error = degs[best] / p['width']
             overlay = {'mode': 'dynamic', 'width': p['width'], 'target_deg': degs[best], 'la': la}
         else:
             left = min(self._mean_at(msg, -p['look_angle'], p['window']), la)
             right = min(self._mean_at(msg, p['look_angle'], p['window']), la)
             error = right - left  # >0: drifted left -> steer right
-            overlay = {'mode': 'static', 'look_angle': p['look_angle'], 'window': p['window'],
-                       'left': round(left, 2), 'right': round(right, 2), 'la': la}
+            overlay = {
+                'mode': 'static',
+                'look_angle': p['look_angle'],
+                'window': p['window'],
+                'left': round(left, 2),
+                'right': round(right, 2),
+                'la': la,
+            }
 
         cmd = p['kp'] * error + p['kd'] * (error - self._last_error)
         self._last_error = error
@@ -243,8 +264,9 @@ class WallFollowNode(Node):
             # Never integrate up while commanded but not moving (gated).
             blocked = self._enc < 0.05 and self._speed_cmd > 0.3
             if serr < 0 or not blocked:
-                self._trim += p['speed_kp'] * serr \
-                    + p['speed_kd'] * (serr - self._last_speed_error)
+                self._trim += p['speed_kp'] * serr + p['speed_kd'] * (
+                    serr - self._last_speed_error
+                )
             self._trim = max(-1.0, min(0.3, self._trim))
             self._speed_cmd = max(0.0, min(1.0, p['speed'] + self._trim))
         self._last_speed_error = serr
@@ -257,24 +279,38 @@ class WallFollowNode(Node):
         t = _now()
         _rows.append(f'{t},{error:.4f},{cmd:.4f},{self._speed_cmd:.3f},{self._enc:.3f}\n')
         _hist.append([t, round(error, 4)])
-        overlay.update({'error': round(error, 4), 'steer': round(cmd, 3),
-                        'speed_cmd': round(self._speed_cmd, 3)})
-        scan = [[round(self._student_deg(msg, i), 1), round(msg.ranges[i], 3)]
-                for i in range(0, len(msg.ranges), 3)
-                if msg.range_min < msg.ranges[i] < msg.range_max]
+        overlay.update(
+            {
+                'error': round(error, 4),
+                'steer': round(cmd, 3),
+                'speed_cmd': round(self._speed_cmd, 3),
+            }
+        )
+        scan = [
+            [round(self._student_deg(msg, i), 1), round(msg.ranges[i], 3)]
+            for i in range(0, len(msg.ranges), 3)
+            if msg.range_min < msg.ranges[i] < msg.range_max
+        ]
         with _lock:
-            _state.update({'scan': scan, 'overlay': overlay, 'hist': list(_hist),
-                           'marks': list(_marks), 'enc_speed': round(self._enc, 3)})
+            _state.update(
+                {
+                    'scan': scan,
+                    'overlay': overlay,
+                    'hist': list(_hist),
+                    'marks': list(_marks),
+                    'enc_speed': round(self._enc, 3),
+                }
+            )
 
 
-def _log_number(name):
+def _log_number(name: str) -> int:
     """Log7.csv -> 7, so lists sort numerically. Anything else sorts first."""
     m = re.match(r'Log(\d+)\.csv$', name)
     return int(m.group(1)) if m else 0
 
 
 class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
+    def do_GET(self) -> None:
         asset = webui.static_file(self.path)
         if asset is not None:
             self.send_response(200)
@@ -302,13 +338,23 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self.send_error(404)
 
-    def do_POST(self):
+    def do_POST(self) -> None:
         if self.path == '/params':
             data = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
             with _lock:
                 changed = []
-                for k in ('speed', 'kp', 'kd', 'speed_kp', 'speed_kd', 'window',
-                          'lookahead', 'look_angle', 'width', 'side_weight'):
+                for k in (
+                    'speed',
+                    'kp',
+                    'kd',
+                    'speed_kp',
+                    'speed_kd',
+                    'window',
+                    'lookahead',
+                    'look_angle',
+                    'width',
+                    'side_weight',
+                ):
                     if k in data:
                         v = float(data[k])
                         if k == 'speed':
@@ -339,25 +385,25 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send(b'ok', 'text/plain')
 
-    def _send(self, body, ctype):
+    def _send(self, body: bytes, ctype: str) -> None:
         self.send_response(200)
         self.send_header('Content-Type', ctype)
         self.send_header('Content-Length', str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, fmt, *args):
+    def log_message(self, fmt: str, *args: Any) -> None:
         pass
 
 
-def _spin(node):
+def _spin(node: Node) -> None:
     try:
         rclpy.spin(node)
     except ExternalShutdownException:
         pass
 
 
-def main():
+def main() -> None:
     load_params()
     rclpy.init()
     node = WallFollowNode()
@@ -370,7 +416,7 @@ def main():
     # signal until systemd's TimeoutStopSec expires and SIGKILLs it. Take the
     # signals back. shutdown() has to run off the serving thread or it
     # deadlocks waiting for the loop it is called from.
-    def stop(*_):
+    def stop(*_: Any) -> None:
         threading.Thread(target=server.shutdown, daemon=True).start()
 
     signal.signal(signal.SIGTERM, stop)

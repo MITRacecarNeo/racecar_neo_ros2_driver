@@ -254,6 +254,7 @@ class TestSystemdServices:
         'racecar-dashboard.service',
         'racecar-jupyter.service',
         'racecar-mapview.service',
+        'racecar-battery-guard.service',
     )
 
     @pytest.mark.parametrize('name', SERVICES)
@@ -343,11 +344,57 @@ class TestNetworkPolkitRule:
 
     def test_installed_by_setup_user_env(self):
         text = self.INSTALLER.read_text()
-        rules = ('49-racecar-network.rules 49-racecar-autonomy.rules '
-                 '49-racecar-dashboards.rules 49-racecar-teleop.rules')
+        rules = (
+            '49-racecar-network.rules 49-racecar-autonomy.rules '
+            '49-racecar-dashboards.rules 49-racecar-teleop.rules 49-racecar-power.rules'
+        )
         assert f'for rule in {rules}; do' in text
         assert 'POLKIT_SRC="${SCRIPT_DIR}/polkit/${rule}"' in text
         assert 'POLKIT_DST="/etc/polkit-1/rules.d/${rule}"' in text
+
+
+def test_battery_guard_independent_of_teleop():
+    # The guard must keep watching across teleop restarts and stop teleop itself.
+    text = (SCRIPTS_DIR / 'racecar-battery-guard.service').read_text()
+    assert 'teleop' not in text.split('[Service]')[0]
+    assert 'scripts/battery_guard.py' in text
+    assert 'Restart=always' in text
+
+
+def test_battery_guard_enabled_by_setup_services():
+    text = (SCRIPTS_DIR / 'setup_services.sh').read_text()
+    services = text.split('SERVICES=(')[1].split(')')[0]
+    assert 'racecar-battery-guard.service' in services
+
+
+class TestPowerPolkitRule:
+    """The polkit rule that lets the battery guard stop teleop and power the car off."""
+
+    RULE_FILE = SCRIPTS_DIR / 'polkit' / '49-racecar-power.rules'
+
+    @pytest.fixture
+    def text(self):
+        return self.RULE_FILE.read_text()
+
+    def test_sorts_ahead_of_the_polkit_default(self):
+        assert int(self.RULE_FILE.name.split('-')[0]) < 50
+
+    @pytest.mark.parametrize(
+        'action_id',
+        [
+            'org.freedesktop.login1.power-off',
+            'org.freedesktop.login1.power-off-multiple-sessions',
+            'org.freedesktop.login1.power-off-ignore-inhibit',
+        ],
+    )
+    def test_grants_power_off(self, text, action_id):
+        assert f'"{action_id}"' in text
+
+    def test_scoped_to_racecar_and_teleop_stop(self, text):
+        assert 'subject.user !== "racecar"' in text
+        assert 'action.lookup("unit") === "racecar-teleop.service"' in text
+        assert 'action.lookup("verb") === "stop"' in text
+        assert 'reboot' not in text.split('polkit.addRule')[1]
 
 
 class TestUdevRules:
@@ -613,11 +660,17 @@ class TestDashboardScript:
             assert f'scripts/dashboards/{kept_out}_dashboard/' in gitignore
         assert 'scripts/dashboards/*/*.local.yaml' in gitignore
 
-    def test_linters_exclude_the_dashboards(self):
-        flake8 = (SCRIPTS_DIR.parent / 'test' / 'test_flake8.py').read_text()
-        pep257 = (SCRIPTS_DIR.parent / 'test' / 'test_pep257.py').read_text()
-        assert 'dashboards' in flake8
-        assert 'dashboards' in pep257
+    def test_linters_exclude_only_the_retired_dashboards(self):
+        root = SCRIPTS_DIR.parent
+        flake8 = (root / 'test' / 'test_flake8.py').read_text()
+        pep257 = (root / 'test' / 'test_pep257.py').read_text()
+        pyproject = (root / 'pyproject.toml').read_text()
+        for retired in ('eps_dashboard', 'pursuit_dashboard', 'smartfollow_dashboard'):
+            assert retired in flake8
+            assert retired in pep257
+            assert pyproject.count(retired) == 3  # black, ruff, mypy
+        for shipped in ('teleop', 'linefollow', 'wallfollow', 'camlabel'):
+            assert f'{shipped}_dashboard' not in flake8 + pep257 + pyproject
 
     def _retired(self, tmp_path, installed):
         """Run the shipped remove_retired_unit() against a throwaway unit dir."""
@@ -709,8 +762,10 @@ otg_mode=1
         if not cfg.exists():
             cfg.write_text(config)
         assigns = ''.join(f'{k}={v}\n' for k, v in env.items())
-        script = (f'CONFIG_TXT={cfg}\nSUDO=\n{assigns}'
-                  f'ensure_all_setting() {{{helper}\n}}\n{func}() {{{body}\n}}\n{func}\n')
+        script = (
+            f'CONFIG_TXT={cfg}\nSUDO=\n{assigns}'
+            f'ensure_all_setting() {{{helper}\n}}\n{func}() {{{body}\n}}\n{func}\n'
+        )
         result = subprocess.run(['bash', '-c', script], capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
         return cfg.read_text()
@@ -750,10 +805,12 @@ otg_mode=1
         cfg.write_text(self.FIXTURE)
         text = self.SCRIPT.read_text()
         helper = text.split('ensure_all_setting() {', 1)[1].split('\n}\n', 1)[0]
-        script = (f'CONFIG_TXT={cfg}\nSUDO=\nensure_all_setting() {{{helper}\n}}\n'
-                  'ensure_all_setting usb_max_power_enable 1\n'
-                  'ensure_all_setting usb_max_power_enable 1\n'
-                  'ensure_all_setting dtparam=i2c_arm on\n')
+        script = (
+            f'CONFIG_TXT={cfg}\nSUDO=\nensure_all_setting() {{{helper}\n}}\n'
+            'ensure_all_setting usb_max_power_enable 1\n'
+            'ensure_all_setting usb_max_power_enable 1\n'
+            'ensure_all_setting dtparam=i2c_arm on\n'
+        )
         result = subprocess.run(['bash', '-c', script], capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
         scope = self._all_scope(cfg.read_text())
@@ -795,6 +852,70 @@ otg_mode=1
         assert out.endswith('dtparam=rtc_bbat_vchg=3000000\n')
 
 
+def test_terminal_app_packages_are_installed_by_setup():
+    # A fresh car must get what scripts/terminal.py runs: ttyd, PAM for Python, tmux.
+    text = (SCRIPTS_DIR / 'setup_dev_tools.sh').read_text()
+    for package in ('ttyd', 'python3-pampy', 'tmux'):
+        assert f' {package}' in text, package
+
+
+class TestTerminalUnit:
+    UNIT = SCRIPTS_DIR / 'racecar-terminal.service'
+
+    def test_installed_not_enabled(self):
+        text = (SCRIPTS_DIR / 'setup_services.sh').read_text()
+        install_only = text.split('INSTALL_ONLY=(')[1].split(')')[0]
+        enabled = text.split('SERVICES=(')[1].split(')')[0]
+        assert 'racecar-terminal.service' in install_only
+        assert 'racecar-terminal.service' not in enabled
+
+    def test_private_socket_folder_and_panes_end_with_the_app(self):
+        text = self.UNIT.read_text()
+        assert 'RuntimeDirectory=racecar-terminal' in text
+        assert 'RuntimeDirectoryMode=0700' in text
+        assert 'KillMode=control-group' in text
+        assert 'User=racecar' in text and 'scripts/terminal.py' in text
+
+    def test_packaged_ttyd_service_is_turned_off(self):
+        text = (SCRIPTS_DIR / 'setup_dev_tools.sh').read_text()
+        assert 'sudo systemctl disable --now ttyd.service' in text
+        assert text.index('ttyd python3-pampy') < text.index('disable --now ttyd.service')
+
+    def test_pam_file_installed_by_setup(self):
+        pam = (SCRIPTS_DIR / 'pam.d-racecar-terminal').read_text()
+        assert '@include common-auth' in pam and 'pam_faildelay.so' in pam
+        setup = (SCRIPTS_DIR / 'setup_user_env.sh').read_text()
+        assert 'PAM_DST="/etc/pam.d/racecar-terminal"' in setup
+
+
+class TestNvmeSudoers:
+    """setup_user_env.sh installs the one sudoers rule SMART reads need."""
+
+    RULE = SCRIPTS_DIR / 'sudoers.d-racecar-nvme'
+
+    def test_rule_allows_only_the_smart_read(self):
+        text = self.RULE.read_text()
+        lines = [ln for ln in text.splitlines() if ln.strip() and not ln.startswith('#')]
+        assert lines == [
+            'racecar ALL=(root) NOPASSWD: /usr/sbin/nvme smart-log -o json /dev/nvme0'
+        ]
+
+    def test_rule_matches_the_command_the_tools_run(self):
+        import sys
+
+        sys.path.insert(0, str(SCRIPTS_DIR))
+        import sysinfo
+
+        assert sysinfo.NVME_SMART_ARGV[:2] == ['sudo', '-n']
+        assert ' '.join(sysinfo.NVME_SMART_ARGV[3:]) in self.RULE.read_text()
+
+    def test_setup_checks_with_visudo_and_installs_0440(self):
+        setup = (SCRIPTS_DIR / 'setup_user_env.sh').read_text()
+        assert 'sudo visudo -cf "$SUDOERS_SRC"' in setup
+        assert 'install -m 0440 -o root -g root "$SUDOERS_SRC" "$SUDOERS_DST"' in setup
+        assert 'SUDOERS_DST="/etc/sudoers.d/racecar-nvme"' in setup
+
+
 class TestLinterInstall:
     """setup_dev_tools.sh pins the linters behind `racecar lint`."""
 
@@ -823,12 +944,25 @@ class TestOneShotSetup:
     def _all_setup_text(self):
         return '\n'.join((SCRIPTS_DIR / s).read_text() for s in [*PHASE_SCRIPTS, ORCHESTRATOR])
 
-    @pytest.mark.parametrize('package', [
-        'raspi-config', 'rpi-eeprom', 'libraspberrypi-bin', 'network-manager',
-        'avahi-daemon', 'polkitd', 'python3-matplotlib', 'ros-jazzy-xacro',
-        'ros-jazzy-robot-state-publisher', 'nvme-cli', 'gdisk',
-        'ros-jazzy-slam-toolbox', 'ros-jazzy-nav2-amcl', 'ros-jazzy-foxglove-bridge',
-    ])
+    @pytest.mark.parametrize(
+        'package',
+        [
+            'raspi-config',
+            'rpi-eeprom',
+            'libraspberrypi-bin',
+            'network-manager',
+            'avahi-daemon',
+            'polkitd',
+            'python3-matplotlib',
+            'ros-jazzy-xacro',
+            'ros-jazzy-robot-state-publisher',
+            'nvme-cli',
+            'gdisk',
+            'ros-jazzy-slam-toolbox',
+            'ros-jazzy-nav2-amcl',
+            'ros-jazzy-foxglove-bridge',
+        ],
+    )
     def test_runtime_packages_are_installed(self, package):
         assert package in self._all_setup_text(), package
 
@@ -872,7 +1006,7 @@ class TestOneShotSetup:
         named = set(re.findall(r'racecar-[a-z]+\.service', rules))
         installed = {p.name for p in SCRIPTS_DIR.glob('racecar-*.service')}
         templates = (SCRIPTS_DIR / 'dashboards').glob('*/racecar-*.service.in')
-        installed |= {p.name[:-len('.in')] for p in templates}
+        installed |= {p.name[: -len('.in')] for p in templates}
         assert named and named <= installed, named - installed
         user_env = (SCRIPTS_DIR / 'setup_user_env.sh').read_text()
         for rule in (SCRIPTS_DIR / 'polkit').glob('*.rules'):
@@ -880,9 +1014,15 @@ class TestOneShotSetup:
 
     def test_every_unit_the_tools_manage_is_installed(self):
         services = (SCRIPTS_DIR / 'setup_services.sh').read_text()
-        for unit in ('racecar-data.service', 'racecar-teleop.service', 'racecar-watchdog.service',
-                     'racecar-dashboard.service', 'racecar-jupyter.service',
-                     'racecar-mapview.service', 'racecar-autonomy.service'):
+        for unit in (
+            'racecar-data.service',
+            'racecar-teleop.service',
+            'racecar-watchdog.service',
+            'racecar-dashboard.service',
+            'racecar-jupyter.service',
+            'racecar-mapview.service',
+            'racecar-autonomy.service',
+        ):
             assert unit in services, unit
 
 

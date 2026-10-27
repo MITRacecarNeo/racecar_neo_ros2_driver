@@ -17,7 +17,7 @@ PREFIX = '/ui/'
 CACHE_CONTROL = 'max-age=300'
 # Pages link the shared files as /ui/<file>?v=ASSET_VERSION; bump it when
 # rcn.css, charts.js, or lost.js changes, so browsers fetch the new copy at once.
-ASSET_VERSION = '11'
+ASSET_VERSION = '13'
 TYPES = {
     '.css': 'text/css; charset=utf-8',
     '.js': 'text/javascript; charset=utf-8',
@@ -33,7 +33,7 @@ def static_file(request_path: str, root: Path = WEB_DIR) -> tuple[bytes, str] | 
     path = unquote(urlparse(request_path).path)
     if not path.startswith(PREFIX):
         return None
-    target = (root / path[len(PREFIX):]).resolve()
+    target = (root / path.removeprefix(PREFIX)).resolve()
     if root.resolve() not in target.parents or not target.is_file():
         return None
     kind = TYPES.get(target.suffix)

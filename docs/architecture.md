@@ -17,6 +17,8 @@ and what supervises them. Companion to the operational instructions in
 - [Frame tree](#frame-tree)
 - [Process model](#process-model)
 - [Supervision and observability](#supervision-and-observability)
+- [Battery guard](#battery-guard)
+- [Terminal app](#terminal-app)
 - [Configuration](#configuration)
 - [Data root](#data-root)
 - [Calibration data flow](#calibration-data-flow)
@@ -87,9 +89,9 @@ Eight nodes ship in this package (`setup.py` console scripts):
 
 | Node | Responsibility |
 |---|---|
-| `pit_node` | Sole owner of the Teensy UART. Encodes drive commands, decodes telemetry, forwards display and LED frames, and integrates odometry (`odometry.py`) into `odom -> base_link`. |
+| `pit_node` | Sole owner of the Teensy UART. Encodes drive commands, decodes telemetry, forwards display and LED frames (a fresh low-battery alert frame first, then the user's frame, then the override flash), and integrates odometry (`odometry.py`) into `odom -> base_link`. |
 | `mux_node` | Arbitrates teleop against autonomy, enforces speed and steering limits, gates on the controller or on a live FlySky transmitter, zeroes output when the joystick drops. |
-| `throttle_node` | Clamps `/mux_out` to `[-1, 1]` and applies per-direction speed and steering caps onto `/motor`; while `/autonomy/status` reports mapping, clips speed to `mapping_speed_cap` and steering to `mapping_steering_cap`. The Teensy maps the normalized command to PWM. |
+| `throttle_node` | Clamps `/mux_out` to `[-1, 1]` and applies per-direction speed and steering caps onto `/motor`; while `/autonomy/status` reports mapping, clips speed to `mapping_speed_cap` and steering to `mapping_steering_cap`; clips speed to `speed_cap` at all times (1.0, off). The Teensy maps the normalized command to PWM. |
 | `gamepad_node` | Maps `/joy` axes into an Ackermann drive command. |
 | `imu_fusion_node` | Merges the RealSense and LSM9DS1 IMUs into one stream; passes through when only one is live. |
 | `dotmatrix_node` | Renders text, student pixel buffers, a startup splash, or a mode glyph into a display frame. |
@@ -270,8 +272,12 @@ rather than on the rate gate. `diagnose.py`'s nominal for
 
 ```
   /dotmatrix/text ──┐
-  /dotmatrix/pixels ├─▶ dotmatrix_node ─ /dotmatrix/frame ─▶ pit_node ─▶ Teensy ─▶ MAX7219 x3
-  /joy ─────────────┘   (glyph fallback)
+  /dotmatrix/pixels ├─▶ dotmatrix_node ─ /dotmatrix/frame ─┐
+  /joy ─────────────┘   (glyph fallback)                    │
+  battery_guard ─ /dotmatrix/alert ─────────────────────────┤
+                                                            ├─▶ pit_node ─▶ Teensy ─▶ MAX7219 x3, LED strip
+  /led/pixels (user code, teleop dashboard) ────────────────┤   (alert > user frame > override flash)
+  battery_guard ─ /led/alert ───────────────────────────────┘
 ```
 
 `dotmatrix_node` uses `luma` only for font rasterization. Text times out and
@@ -296,7 +302,9 @@ patterns on `/dotmatrix/pixels`.
 | `/imu/fused` | `sensor_msgs/Imu` | `imu_fusion_node` | user code |
 | `/encoder/speed` | `std_msgs/Float32` | `pit_node` | user code |
 | `/battery/voltage`, `/battery/current` | `std_msgs/Float32` | `pit_node` | user code |
-| `/battery/state` | `sensor_msgs/BatteryState` (1 Hz means; discharge current negative) | `pit_node` | dashboard |
+| `/battery/state` | `sensor_msgs/BatteryState` (1 Hz means; discharge current negative) | `pit_node` | dashboard, `battery_guard.py` |
+| `/battery/estimate` | `diagnostic_msgs/DiagnosticStatus` (latched, 1 Hz) | `battery_guard.py` | dashboard |
+| `/battery/cancel_shutdown` | `std_msgs/Empty` | dashboard (Cancel shutdown) | `battery_guard.py` |
 | `/rc/channels` | `std_msgs/Float32MultiArray` | `pit_node` | `mux_node` (when `rc_authority_enable`), user code |
 | `/rc/link` | `std_msgs/Bool` | `pit_node` | `mux_node` (when `rc_authority_enable`) |
 | `/odom` | `nav_msgs/Odometry` | `pit_node` | lab dashboards, user code |
@@ -307,7 +315,8 @@ patterns on `/dotmatrix/pixels`.
 | `/edgetpu/inference` | `vision_msgs/Detection2DArray` | `edgetpu_node` | `webteleop`, user code |
 | `/dotmatrix/text`, `/dotmatrix/pixels` | `std_msgs/String`, `UInt8MultiArray` | user code | `dotmatrix_node` |
 | `/dotmatrix/frame`, `/led/pixels` | `std_msgs/UInt8MultiArray` | `dotmatrix_node`, user code | `pit_node` |
-| `/diagnostics` | `diagnostic_msgs/DiagnosticArray` | camera, `edgetpu_node` | dashboard, `diagnose.py` |
+| `/dotmatrix/alert`, `/led/alert` | `std_msgs/UInt8MultiArray` (8 x 24 pixels, one byte each; 84 RGB triplets) | `battery_guard.py` | `pit_node` |
+| `/diagnostics` | `diagnostic_msgs/DiagnosticArray` | camera, `edgetpu_node`, `pit_node` (Teensy link, 1 Hz) | dashboard, `diagnose.py`, `health.py` |
 | `/tf_static` | `tf2_msgs/TFMessage` | `robot_state_publisher`, `realsense2_camera_node` | TF consumers, viewers |
 | `/robot_description` | `std_msgs/String` | `robot_state_publisher` | viewers (RViz, Foxglove) |
 
@@ -485,7 +494,7 @@ it as dead.
 
 ## Process model
 
-Six core systemd units, all `User=racecar`:
+Seven core systemd units, all `User=racecar`:
 
 ```
 racecar-data.service        (oneshot at boot, before the others)
@@ -497,6 +506,7 @@ racecar-teleop.service ──── Wants= ───▶ racecar-watchdog.service
 racecar-dashboard.service   (independent, port 8080)
 racecar-jupyter.service     (independent, port 8888)
 racecar-mapview.service     (independent, port 8084)
+racecar-battery-guard.service (independent; Restart=always)
 ```
 
 `Wants=` pulls the watchdog up when teleop starts; `BindsTo=` takes it down
@@ -547,6 +557,29 @@ FastRTPS shared-memory orphans, sets `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`,
 and `exec`s `ros2 launch` so systemd tracks the launch PID directly rather than
 a wrapper shell.
 
+### Node CPU
+
+`pit_node`, `imu_fusion_node`, `mux_node`, and `throttle_node` spin on
+rclpy's `EventsExecutor` (`racecar_neo_ros2_driver/spin.py`; under
+`rclpy.experimental` in Jazzy, with a fallback to the default executor). The
+default executor rebuilds its wait set over every entity on each wake-up,
+which at 200 Hz inputs cost more than the callbacks. Measured at idle, one
+core = 100%:
+
+| Node | Default executor | Now |
+|---|---|---|
+| `pit_node` | 56.7% | 13.9% |
+| `imu_fusion_node` | 42.8% | 10.4% |
+| `mux_node` | 9.5% | 2.6% |
+| `throttle_node` | 5.8% | 2.1% |
+
+`pit_node` builds and publishes a telemetry topic only while it has a
+subscriber, read once a second (`LISTENER_REFRESH_SEC`); a new subscriber
+gets the full rate about 2 s after it subscribes (discovery plus that
+second). `/battery/state` and `/diagnostics` always publish. The protocol
+CRC is `binascii.crc_hqx`. `imu_fusion_node` subscribes raw and decodes and
+calibrates only the newest message of each source at its 100 Hz publish.
+
 ## Supervision and observability
 
 `scripts/watchdog.py` supervises seven nodes (pit, throttle, mux, gamepad,
@@ -596,8 +629,12 @@ their cards as `unsupervised` rather than dead when they are down.
 resolve from topic advertisement; rate rows come from raw subscriptions
 (counted without deserializing) except the three RealSense streams, which are
 read from the camera's `/diagnostics` output. System Health reports the data
-drive (`data_root_health`), the RTC backup cell voltage, and the sticky PMIC
-under-voltage alarm. The Autonomy card
+drive (`data_root_health`, with the drive's hwmon temperature) and the RTC
+backup cell voltage every 15 s, and Power (`power_view`) every tick: EXT5V,
+the live and sticky throttle bits, and the PMIC alarm. `Ext5vWatch` reads
+EXT5V once a second on its own thread while a page is open and hands the
+lowest reading since the last tick to the page, which keeps the lowest since
+it opened. The Autonomy card
 reads only `/autonomy/status` (1 Hz, latched) for mode, map, localized, scan
 fit, and spread (`autonomy_view`), and links to the map viewer; the 20 Hz pose
 is left to the viewer, which subscribes only while a browser is open.
@@ -627,11 +664,133 @@ with `--quick` or `--section` is distinct from a check failing to run and
 affects neither mode. A car with teleop stopped still fails: its topics are
 absent from the graph, and an absent topic is a `FAIL`, not a `SKIP`.
 
+`scripts/health.py` is the sampling counterpart behind `racecar health`: it
+reuses `diagnose.Check`, its status words, and `nvme_check`, but measures
+over time and keeps a record.
+
+```
+racecar health [power|nvme]
+  power ── sample_ext5v (vcgencmd, ~140/s, 30 s) ─┐
+         ├ get_throttled before and after         │
+         ├ BatterySampler (/battery/state, rclpy) ├─► Check rows ─┐
+  nvme ─ ├ mount, data root (data_root.current)   │               │
+         ├ speed_test (O_DIRECT 256 MB, read back)│               ▼
+         ├ read_nvme_smart (sudo -n, one rule)    │   <data root>/health/<time>/
+         └ journalctl -k -b (NVMe, PCIe errors) ──┘     report.md, report.json,
+                                                        samples.csv
+```
+
+`link` reads `pit_node`'s Teensy link report (`pit_link.LinkStats`, counted
+in the serial reader thread and published there once a second as
+`pit: teensy link` on `/diagnostics`; no timer). The report carries the
+frame rate under the RealSense driver's rate key, so `sysinfo`'s
+`DIAGNOSTIC_RATE_NAMES` gives the dashboard and `racecar status` the PIT
+rate without subscribing to the 200 Hz IMU topic.
+
+`shake` and `poke` run `health_watch.Watch`: four threads (EXT5V as fast as
+vcgencmd answers; a 1 s loop for throttle bits and a data-root write; a
+`journalctl -k -f` follower; an rclpy node on `/imu/lsm9ds1` stamps, `/scan`
+arrivals, and `/diagnostics` RealSense rates) append timestamped events.
+`run_steps` times each prompted step; `rate_drops` compares each step with
+the first, still one; `step_checks` charges each event to the step it falls
+in (with 1 s of grace after the step ends). The poke list is
+`config/health.yaml`, replaced whole by the car profile's
+`params/health.yaml`.
+
+The newest earlier `report.json` with a SMART snapshot gives the baseline
+for the count of new unsafe shutdowns. `report.json` is the machine-readable form for
+later tools.
+
 `scripts/sysinfo.py` holds the host readings the dashboard, `diagnose.py`,
 `watchdog.py` and `eth_monitor.py` share: RTC thresholds and classification,
 the under-voltage alarm path, SoC temperature, throttling flags, CPU time,
-the ARM clock, memory, disk, uptime, clock sync, the RealSense `/diagnostics`
-rate parser and a subprocess helper. Each reading has one definition.
+the ARM clock, memory, disk, uptime, clock sync, the PMIC rails
+(`read_pmic_rails`, `read_ext5v`, `classify_ext5v`), the NVMe drive's
+temperature and SMART log, the RealSense `/diagnostics` rate parser and a
+subprocess helper. Each reading has one definition.
+
+## Battery guard
+
+`scripts/battery_guard.py`, run by `racecar-battery-guard.service` from boot,
+apart from teleop, so a teleop restart never stops it. Modules:
+
+| File | Role |
+|---|---|
+| `racecar_neo_ros2_driver/battery.py` | Charge from the measured curve (per cell), power and time left over 5 minutes, cell count, `CapacityLearner`; no ROS |
+| `scripts/battery_guard.py` | `Guard` state machine (ok, warn, countdown, off), `/battery/estimate`, the CSV log, the alert frames at 20 Hz |
+| `scripts/battery_alert.py` | Red line on every terminal of the user and in the tmux status bar (default and `racecar-terminal` sockets) |
+| `scripts/battery_display.py` | Dot-matrix and LED frames for each level |
+| `scripts/safe_shutdown.py` | Shutdown steps, shared with the 8080 Turn Off tile |
+| `scripts/battery_curve.py` | Offline analysis of guard logs: charge, capacity, drop per amp (20 s window fits), curve check, and the `Guard` replayed with the estimate shutdown off, scored at 15 and 5 minutes |
+
+```
+  /battery/state ─▶ battery_guard ─┬─▶ /battery/estimate ─▶ dashboard ─▶ 8080 pills, banner; /api/battery ─▶ /ui/battery.js
+       (1 Hz)                      ├─▶ terminals, tmux status bar
+                                   ├─▶ /dotmatrix/alert, /led/alert ─▶ pit_node
+                                   ├─▶ <data root>/health/battery/<start>_guard.csv
+                                   └─▶ safe_shutdown ─▶ racecar log stop, driving apps, autonomy, teleop, power off
+  dashboard (Cancel shutdown) ─▶ /battery/cancel_shutdown ─▶ battery_guard
+```
+
+Levels: warn at `warn_min` (15) minutes left, held 60 s. Countdown (60 s)
+when the 30 s median voltage reaches `floor_cell_volts` times the cell count
+(7.1 V on 2S), or, with `shutdown_enabled`, at `shutdown_min` (5) minutes
+left held 60 s; only the second can be canceled, once per boot. Readings
+that are stale or outside 3.0 to 4.3 V per cell never warn or start a
+countdown; a countdown already running finishes. After the countdown the
+guard holds 2 s for SHUT and DOWN on the dot matrix, then runs the steps.
+Stopping teleop ends `pit_node`, so the displays go dark before power off.
+
+`49-racecar-power.rules` lets the racecar user stop teleop and power off
+with other sessions open or inhibitors held; the other rules cover the lab
+apps and autonomy. The power switch is the only battery disconnect: after
+power off, the PIT board (its own 5 V regulator from the main bus) and the
+halted Pi still draw about 100 to 200 mA.
+
+## Terminal app
+
+`scripts/terminal.py` on port 8086, run by `racecar-terminal.service` (not at
+boot; started from the 8080 Terminal tile through
+`49-racecar-dashboards.rules`). Standard library only.
+
+```
+  browser ─ :8086 ─▶ terminal.py ─┬─ login (PAM, racecar-terminal) ─▶ session cookie
+                                  ├─ /api/layout, /api/presets/*, /api/scrollback
+                                  └─ /pane/<id>/ ─▶ /run/racecar-terminal/ttyd.sock ─▶ ttyd
+                                                        ─▶ tmux -L racecar-terminal new-session -A -s rcn-<id>
+```
+
+- `ttyd` is one child process on a Unix socket in a 0700 folder (systemd
+  `RuntimeDirectory`), so 8086 is the only TCP listener. Its flags:
+  `-b /pane -W -a -d 3`.
+- The proxy checks the session, the terminal id (`[a-z0-9]{1,16}`), and on a
+  WebSocket upgrade that `Origin` matches `Host`. It replaces the query with
+  `?arg=rcn-<id>`, so a client cannot pass tmux arguments, then copies bytes
+  both ways without parsing frames. Reads block; a watcher thread closes
+  both sockets when the session ends.
+- Each terminal is a tmux session `rcn-<id>` on the socket `racecar-terminal`
+  (`config/terminal.tmux.conf`), started in `~/jupyter_ws`. The tmux server
+  runs in the unit's cgroup (`KillMode=control-group`), so stopping the app
+  ends every terminal.
+- Login: the password of the account running the unit, through PAM service
+  `racecar-terminal` (`scripts/pam.d-racecar-terminal`, 3 s fail delay).
+  Five failures lock the login for 60 s. Sessions are in memory and end
+  after 30 minutes without requests or traffic. Logins come from the access
+  point subnet (10.42.0.0/24) and the car only, unless `car.yaml` sets
+  `terminal.allow_lan`.
+- Layout: a tree of terminals and splits in the profile's
+  `terminal/layout.json`, versioned; a save over an older version returns
+  409 and the current layout. The page places every terminal absolutely
+  from the tree, since moving an iframe reloads it.
+- Presets: layouts whose terminals may carry a start command.
+  `config/terminal_presets.json` ships the built-ins; the profile's
+  `terminal/presets.json` holds the car's. Applying one creates each tmux
+  session with `new-session -d`, types its command with `send-keys -l`, saves
+  the layout, and closes the old terminals.
+- Export: `tmux capture-pane -p -J -S -`, returned to the page and written to
+  `<data root>/terminal/<stamp>-<title>.txt`.
+- The battery guard's low-battery line reaches the terminals through the
+  tmux status bar on this socket.
 
 ## Configuration
 
@@ -642,7 +801,7 @@ node's `<name>_config` launch argument.
 |---|---|---|
 | `pit.yaml` | `pit_node` | serial device, axis order and polarity, topic names, CRC toggle |
 | `mux.yaml` | `mux_node` | speed and steering limits, arming buttons, joystick timeout, RC gate |
-| `throttle.yaml` | `throttle_node` | forward, reverse, and steering caps as fractions of full scale; `mapping_speed_cap`, `mapping_steering_cap` |
+| `throttle.yaml` | `throttle_node` | forward, reverse, and steering caps as fractions of full scale; `mapping_speed_cap`, `mapping_steering_cap`, `speed_cap` |
 | `gamepad.yaml` | `gamepad_node` | axis indices and signs |
 | `imu_fusion.yaml` | `imu_fusion_node` | source topics, output topic, rate, staleness timeout |
 | `lidar.yaml` | `sllidar_node` | serial device, baud, scan mode |
@@ -656,6 +815,9 @@ node's `<name>_config` launch argument.
 | `amcl.yaml` | `amcl`, `map_server`, `lifecycle_manager_localization` | motion and laser models, particles, beam skipping, update distances |
 | `foxglove.yaml` | `foxglove_bridge` (autonomy launch, when on) | port, topic whitelist, `/initialpose` as the only client topic |
 | `foxglove_layout.json` | Lichtblick, imported by hand (not a node file) | 3D view, status table, pose plot |
+| `battery.yaml` | `battery_guard.py` | capacity, measured curve, cell count, load correction (`r_internal_ohm` above `curve_amps`), floor per cell, warning and shutdown minutes, capacity learning, `shutdown_enabled` |
+| `health.yaml` | `scripts/health.py` (not a node file) | connectors for `racecar health poke`, in prompt order |
+| `terminal.tmux.conf`, `terminal_presets.json` | `scripts/terminal.py` (not node files) | tmux settings for the terminal app; built-in presets |
 | `frames.yaml` | `frames.launch.py` (not a node parameter file) | frame offsets in mm and deg, fleet base values; see [Frame tree](#frame-tree) |
 
 Per-car values (calibration, an enabled RC gate) live in the car profile
@@ -700,7 +862,8 @@ under the root, created if absent. The student library's
 | `dashboards/<name>/` | lab dashboard CSV logs |
 | `slam_eval/` | `scripts/validation/slam_eval.py`, `slam_session.py` |
 | `images/` | lab programs, through the library's `rc_utils.get_data_dir("images")` |
-| `health/` | `racecar health` reports |
+| `health/` | `racecar health` reports; `battery/`: battery guard logs |
+| `terminal/` | terminal app exports |
 
 The root is fixed for the boot. `data_root.session_problem()` makes a new
 `racecar log start` or `racecar map start`, `load`, or `resume` refuse when
@@ -753,6 +916,7 @@ saves the profile to one `.tar.gz` for a fresh image or SD card swap.
 ```
 racecar_neo_ros2_driver/
 ├── racecar_neo_ros2_driver/   node implementations, launch_common, pit_protocol,
+│                              pit_link (Teensy link statistics),
 │                              limits (shared clamp), frames (frames.yaml loader),
 │                              car_profile (per-car settings in ~/.config/racecar),
 │                              data_root (where the car's data goes)
@@ -767,6 +931,8 @@ racecar_neo_ros2_driver/
 │                              racecar_map and map_control (`racecar map`),
 │                              racecar_profile (`racecar profile`),
 │                              racecar_disk (`racecar disk`, `racecar data`),
+│                              health and health_watch (`racecar health`),
+│                              sudoers.d-racecar-nvme,
 │                              autonomy unit launcher and stop step,
 │                              systemd units, udev, polkit and modprobe rules,
 │   │                          Coral overlay and gasket patch

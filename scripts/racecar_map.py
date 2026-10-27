@@ -94,8 +94,11 @@ def run(args: argparse.Namespace) -> int:
     if action == 'foxglove':
         return mc.set_foxglove(args.state == 'on')
     simple = {
-        'save': mc.save, 'stop': mc.stop, 'resume': mc.resume,
-        'status': mc.status, 'list': mc.list_maps,
+        'save': mc.save,
+        'stop': mc.stop,
+        'resume': mc.resume,
+        'status': mc.status,
+        'list': mc.list_maps,
     }
     return simple[action]()
 

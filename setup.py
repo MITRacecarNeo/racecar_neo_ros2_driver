@@ -6,15 +6,17 @@ package_name = 'racecar_neo_ros2_driver'
 
 setup(
     name=package_name,
-    version='0.9.0',
+    version='0.9.1',
     packages=find_packages(exclude=['test']),
     data_files=[
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', glob.glob('launch/*.launch.py')),
         # *.local.yaml: per-car files from before the car profile; never read.
-        ('share/' + package_name + '/config',
-         [f for f in glob.glob('config/*.yaml') if not f.endswith('.local.yaml')]),
+        (
+            'share/' + package_name + '/config',
+            [f for f in glob.glob('config/*.yaml') if not f.endswith('.local.yaml')],
+        ),
         ('share/' + package_name + '/config', glob.glob('config/*.json')),
         ('share/' + package_name + '/urdf', glob.glob('urdf/*.xacro')),
         (

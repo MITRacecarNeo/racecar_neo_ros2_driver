@@ -20,6 +20,9 @@ setting cuts your current connection.
 - [Per-car parameters](#per-car-parameters)
 - [Foxglove bridge](#foxglove-bridge)
 - [Mapping limits](#mapping-limits)
+- [Speed cap](#speed-cap)
+- [Battery guard](#battery-guard)
+- [Terminal access from the LAN](#terminal-access-from-the-lan)
 - [Golden image preparation](#golden-image-preparation)
 
 ## Ethernet addressing
@@ -225,6 +228,66 @@ from 65 to 47 deg/s; scans fit the finished map 97.9% within 0.1 m against
 94.7% without it, but the walls came out no thinner and a furnished room took
 many three-point turns. It suits a large open space. See
 docs/troubleshooting.md, "Map quality".
+
+## Speed cap
+
+| | |
+|---|---|
+| Default | off (`speed_cap` 1.0) |
+| Change | `speed_cap` in the car profile's `params/throttle.yaml`; restart teleop |
+| Revert | remove the key, restart teleop |
+| Safe path | any |
+
+`throttle_node` clips speed to `speed_cap` for the gamepad, the student
+library, and every other source, at all times. Unlike `max_speed_forward`,
+it clips instead of scaling, so a command below the cap drives as before.
+With the field firmware (4.0 m/s ceiling), 0.15 holds the car to about
+1.0 m/s. While mapping, the lower of `speed_cap` and `mapping_speed_cap`
+applies.
+
+## Battery guard
+
+| | |
+|---|---|
+| Default | `config/battery.yaml`: 4700 mAh usable, floor 3.55 V per cell (7.1 V on 2S), warning at 15 min left, shutdown at 5 min left, 30 mOhm load correction above 2.3 A |
+| Change | `params/battery.yaml` in the car profile, under `battery_guard: ros__parameters:`; then `sudo systemctl restart racecar-battery-guard` |
+| Revert | remove the key, restart the guard |
+| Safe path | any |
+
+Keys:
+
+- `capacity_mah`: charge usable down to the curve's empty point (7.0 V on
+  2S). The guard measures the battery in the car as it runs and moves
+  toward that value (`learn_*` keys), so this is the starting point.
+- `cells`: 0 reads the count from the first voltage; a number forces it.
+- `curve_mv`, `curve_pct`, `curve_cells`: charge left against voltage under
+  load. The PIT firmware's LED charge bar uses the same table.
+- `r_internal_ohm`, `curve_amps`: each reading is raised by
+  `r_internal_ohm` times its current above `curve_amps`, the current the
+  curve was measured at. Without it, driving reads as charge used and the
+  warning comes early. `python3 scripts/battery_curve.py` on a guard log
+  fits the drop per amp for another battery.
+- `floor_cell_volts`: the countdown starts here whatever the estimate
+  says. Higher leaves more margin for the voltage dip while driving.
+- `warn_min`, `shutdown_min`, `shutdown_enabled`: minutes left for the
+  warning and for the estimate countdown; with `shutdown_enabled: false`
+  the estimate only warns.
+
+A lower floor or a disabled guard lets the battery run below its safe
+voltage and the Pi brown out.
+
+## Terminal access from the LAN
+
+| | |
+|---|---|
+| Default | logins to the terminal app (port 8086) only from the car's access point |
+| Change | `terminal: {allow_lan: true}` in the car profile's `car.yaml`; then `racecar service stop terminal` and open the Terminal tile |
+| Revert | remove the key, stop the app, open it again |
+| Safe path | any |
+
+The login sends the racecar password over plain HTTP. On the access point,
+WPA2 protects it; on a shared LAN anyone on that network can read it. Turn
+this on only on a network you trust.
 
 ## Golden image preparation
 

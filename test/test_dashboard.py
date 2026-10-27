@@ -6,6 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import threading
+import time
 from types import SimpleNamespace
 
 from conftest import load_script
@@ -150,26 +151,66 @@ class TestMeasureHz:
 
 class TestSystemHealth:
     def test_collect_system_health_keys(self, dashboard):
-        # Without vcgencmd or rpi_volt both entries still exist, as unavailable.
+        # Without vcgencmd every entry still exists, as unavailable.
         health = dashboard._collect_system_health()
-        assert set(health) == {'data', 'rtc', 'under_voltage'}
+        assert set(health) == {'data', 'rtc'}
         for entry in health.values():
             assert {'label', 'status', 'detail'} <= set(entry)
             assert entry['status'] in ('healthy', 'stale', 'dead')
 
     @pytest.mark.parametrize(
-        'alarm,status,detail',
-        [
-            (None, 'dead', 'UNAVAILABLE'),
-            (True, 'dead', 'TRIPPED (5V dipped this boot)'),
-            (False, 'healthy', 'OK'),
-        ],
+        'temp,status,tail',
+        [(None, 'healthy', 'free'), (57.0, 'healthy', '57 C'), (72.0, 'stale', 'Drive hot')],
     )
-    def test_under_voltage_states(self, dashboard, monkeypatch, alarm, status, detail):
-        monkeypatch.setattr(dashboard, '_read_under_voltage_alarm', lambda: alarm)
-        monkeypatch.setattr(dashboard, '_read_battery_voltage', lambda: 2.9)
-        entry = dashboard._collect_system_health()['under_voltage']
-        assert (entry['status'], entry['detail']) == (status, detail)
+    def test_data_drive_temperature(self, dashboard, monkeypatch, tmp_path, temp, status, tail):
+        from racecar_neo_ros2_driver import data_root
+
+        monkeypatch.setattr(data_root, 'resolve', lambda: (tmp_path, ''))
+        monkeypatch.setattr(data_root, 'on_nvme', lambda p: True)
+        monkeypatch.setattr(dashboard.shutil, 'disk_usage', lambda p: SimpleNamespace(free=400e9))
+        entry = dashboard.data_root_health(temp)
+        assert entry['status'] == status and entry['detail'].endswith(tail)
+
+
+class TestPower:
+    def test_steady_input(self, dashboard):
+        v = dashboard.power_view(4.91, 4.89, 0, False)
+        assert (v['status'], v['detail'], v['low']) == ('healthy', '4.91 V', 4.89)
+        assert v['limits'] == [4.75, 4.85]
+
+    def test_dip_between_ticks_warns_or_fails(self, dashboard):
+        assert dashboard.power_view(4.91, 4.80, 0, False)['status'] == 'stale'
+        assert dashboard.power_view(4.91, 4.70, 0, False)['status'] == 'dead'
+
+    def test_under_voltage_now_fails(self, dashboard):
+        v = dashboard.power_view(4.91, None, 0x50005, True)
+        assert v['status'] == 'dead'
+        assert v['detail'] == '4.91 V. Under-voltage now. Low earlier this boot'
+
+    def test_earlier_dip_warns(self, dashboard):
+        v = dashboard.power_view(4.91, None, 0x50000, False)
+        assert (v['status'], v['notes']) == ('stale', 'Low earlier this boot')
+
+    def test_throttled_now_warns(self, dashboard):
+        assert dashboard.power_view(4.91, None, 0x4, False)['notes'] == 'Throttled now'
+
+    def test_no_reading(self, dashboard):
+        assert dashboard.power_view(None, None, None, None)['status'] == 'dead'
+
+    def test_watch_keeps_the_lowest_until_taken(self, dashboard):
+        readings = iter([4.9, 4.7, 4.95, None, 4.88])
+        watch = dashboard.Ext5vWatch(lambda: next(readings))
+        for _ in range(4):
+            watch.sample()
+        assert watch.take() == (4.95, 4.7)
+        watch.sample()
+        assert watch.take() == (4.88, 4.88)
+        assert watch.take() == (4.88, None)
+
+    def test_page_keeps_the_lowest_since_it_opened(self, dashboard):
+        html = dashboard.DASHBOARD_HTML
+        assert "['health', 'power', 'bolt', 'Power', 'compute']" in html
+        assert 'powerLow = Math.min(' in html and 'h.limits' in html
 
 
 class TestDashboardHTML:
@@ -274,13 +315,13 @@ class FakeRun:
 
 class TestHome:
     def test_apps_cover_the_six_dashboards(self, dashboard):
-        assert [a['port'] for a in dashboard.APPS] == [None, 8888, 8084, 8081, 8082, 8083, 8085]
+        assert [a['port'] for a in dashboard.APPS] == [8086, 8888, 8084, 8081, 8082, 8083, 8085]
         core = [a['id'] for a in dashboard.APPS if a['group'] == 'core']
-        assert core == ['terminator', 'jupyter', 'mapview']
+        assert core == ['terminal', 'jupyter', 'mapview']
         exclusive = [a['id'] for a in dashboard.APPS if a['exclusive']]
         assert exclusive == ['webteleop', 'linefollow', 'wallfollow']
         startable = [a['id'] for a in dashboard.APPS if a['startable']]
-        assert startable == ['webteleop', 'linefollow', 'wallfollow', 'camlabel']
+        assert startable == ['terminal', 'webteleop', 'linefollow', 'wallfollow', 'camlabel']
 
     def test_every_app_icon_exists(self, dashboard):
         scripts = Path(__file__).resolve().parent.parent / 'scripts'
@@ -288,13 +329,17 @@ class TestHome:
         for app in dashboard.APPS:
             assert f'id="{app["icon"]}"' in icons, app['icon']
 
-    def test_terminator_is_a_placeholder(self, dashboard):
+    def test_terminal_starts_when_opened(self, dashboard):
         run = FakeRun({})
-        assert dashboard.open_app('terminator', run) == (False, 'Terminator is not available.')
-        assert run.calls == []
-        states = dashboard.unit_states(dashboard._app_units(), FakeRun({}))
-        apps = {a['id']: a for a in dashboard.app_list(states)}
-        assert apps['terminator']['state'] == 'unavailable'
+        assert dashboard.open_app('terminal', run) == (True, 'Terminal started.')
+        assert run.states['racecar-terminal'] == 'active'
+        assert dashboard.open_app('terminal', run) == (True, 'Terminal is running.')
+
+    def test_clear_apps_leaves_the_terminal_running(self, dashboard):
+        run = FakeRun({'racecar-terminal': 'active', 'racecar-camlabel': 'active'})
+        dashboard.clear_apps(run)
+        assert run.states['racecar-terminal'] == 'active'
+        assert run.states['racecar-camlabel'] == 'inactive'
 
     def test_open_exclusive_stops_the_other_first(self, dashboard):
         run = FakeRun({'racecar-webteleop': 'active'})
@@ -322,9 +367,16 @@ class TestHome:
         assert not [c for c in run.calls if c[1] == '--no-ask-password']
 
     def test_clear_apps_stops_utilities_only(self, dashboard):
-        run = FakeRun({'racecar-mapview': 'active', 'racecar-jupyter': 'active',
-                       'racecar-webteleop': 'active', 'racecar-camlabel': 'active',
-                       'racecar-dashboard': 'active', 'racecar-teleop': 'active'})
+        run = FakeRun(
+            {
+                'racecar-mapview': 'active',
+                'racecar-jupyter': 'active',
+                'racecar-webteleop': 'active',
+                'racecar-camlabel': 'active',
+                'racecar-dashboard': 'active',
+                'racecar-teleop': 'active',
+            }
+        )
         assert dashboard.clear_apps(run) == (True, 'Utilities stopped.')
         assert run.states['racecar-webteleop'] == 'inactive'
         assert run.states['racecar-camlabel'] == 'inactive'
@@ -340,8 +392,9 @@ class TestHome:
     def test_clear_apps_with_none_running(self, dashboard):
         assert dashboard.clear_apps(FakeRun({})) == (True, 'No utilities running.')
 
-    def test_clear_log_hides_earlier_lines_and_keeps_the_file(self, dashboard, tmp_path,
-                                                              monkeypatch):
+    def test_clear_log_hides_earlier_lines_and_keeps_the_file(
+        self, dashboard, tmp_path, monkeypatch
+    ):
         log = tmp_path / 'watchdog.log'
         log.write_text('old 1\nold 2\n')
         monkeypatch.setattr(dashboard, 'WATCHDOG_LOG', log)
@@ -381,12 +434,14 @@ class TestHome:
         run = FakeRun({'racecar-mapview': 'active', 'racecar-jupyter': 'failed'})
         states = dashboard.unit_states(['racecar-mapview', 'racecar-jupyter', 'racecar-x'], run)
         assert states == {
-            'racecar-mapview': 'active', 'racecar-jupyter': 'failed', 'racecar-x': 'inactive'
+            'racecar-mapview': 'active',
+            'racecar-jupyter': 'failed',
+            'racecar-x': 'inactive',
         }
         apps = dashboard.app_list(states)
         by_id = {a['id']: a['state'] for a in apps}
         assert by_id['mapview'] == 'active' and by_id['webteleop'] == 'unknown'
-        assert by_id['terminator'] == 'unavailable'
+        assert by_id['terminal'] == 'unknown'
 
     def test_activate_stops_the_running_lab_first(self, dashboard):
         run = FakeRun({'racecar-webteleop': 'active', 'racecar-mapview': 'active'})
@@ -419,12 +474,22 @@ class TestHome:
     def test_polkit_rule_scope(self):
         scripts = Path(__file__).resolve().parent.parent / 'scripts'
         text = (scripts / 'polkit' / '49-racecar-dashboards.rules').read_text()
-        for unit in ('racecar-webteleop', 'racecar-linefollow', 'racecar-wallfollow',
-                     'racecar-camlabel'):
+        for unit in (
+            'racecar-webteleop',
+            'racecar-linefollow',
+            'racecar-wallfollow',
+            'racecar-camlabel',
+            'racecar-terminal',
+        ):
             assert f'"{unit}.service"' in text
         assert '["start", "stop"]' in text and 'subject.user === "racecar"' in text
-        for core in ('racecar-dashboard', 'racecar-teleop', 'racecar-autonomy',
-                     'racecar-mapview', 'racecar-jupyter'):
+        for core in (
+            'racecar-dashboard',
+            'racecar-teleop',
+            'racecar-autonomy',
+            'racecar-mapview',
+            'racecar-jupyter',
+        ):
             assert core not in text
         assert 'enable' not in text.split('polkit.addRule')[1]
         assert '49-racecar-dashboards.rules' in (scripts / 'setup_user_env.sh').read_text()
@@ -470,7 +535,11 @@ class TestHistory:
         h.add(100.0, 7.9, 2.0)
         monkeypatch.setattr(dashboard, '_battery', h)
         assert dashboard.battery_view(102.0) == {
-            'volts': 7.9, 'amps': 2.0, 'age': 2.0, 'stale': False
+            'volts': 7.9,
+            'amps': 2.0,
+            'age': 2.0,
+            'stale': False,
+            'estimate': None,
         }
         assert dashboard.battery_view(110.0)['stale']
 
@@ -596,8 +665,9 @@ class TestOverrideEndpoint:
 
         def send(action, headers=None):
             conn = http.client.HTTPConnection('127.0.0.1', server.server_address[1], timeout=5)
-            conn.request('POST', '/api/override', body=json.dumps({'action': action}),
-                         headers=headers or {})
+            conn.request(
+                'POST', '/api/override', body=json.dumps({'action': action}), headers=headers or {}
+            )
             resp = conn.getresponse()
             send.cors = resp.getheader('Access-Control-Allow-Origin')
             return resp.status, json.loads(resp.read())
@@ -630,14 +700,17 @@ class TestOverrideEndpoint:
 
 
 class TestOverrideOrigin:
-    @pytest.mark.parametrize('origin, host, allowed', [
-        ('http://car.local:8081', 'car.local:8080', True),
-        ('http://car.local:8083', 'car.local:8080', True),
-        ('http://car.local:8085', 'car.local:8080', False),
-        ('http://other:8081', 'car.local:8080', False),
-        ('https://car.local:8081', 'car.local:8080', False),
-        (None, 'car.local:8080', False),
-    ])
+    @pytest.mark.parametrize(
+        'origin, host, allowed',
+        [
+            ('http://car.local:8081', 'car.local:8080', True),
+            ('http://car.local:8083', 'car.local:8080', True),
+            ('http://car.local:8085', 'car.local:8080', False),
+            ('http://other:8081', 'car.local:8080', False),
+            ('https://car.local:8081', 'car.local:8080', False),
+            (None, 'car.local:8080', False),
+        ],
+    )
     def test_only_driving_lab_pages_on_this_host(self, dashboard, origin, host, allowed):
         assert (dashboard.override_origin(origin, host) is not None) is allowed
 
@@ -654,22 +727,32 @@ class TestFeatures:
     def test_states(self, dashboard):
         wanted = {'camera': True, 'detections': False}
         items = dashboard.feature_list(
-            {TELEOP: 'active', AUTONOMY: 'inactive'}, wanted, wanted, False, {})
+            {TELEOP: 'active', AUTONOMY: 'inactive'}, wanted, wanted, False, {}
+        )
         assert [i['state'] for i in items] == ['active', 'inactive', 'inactive']
 
     def test_pending_restart_shows_starting(self, dashboard):
         items = dashboard.feature_list(
-            {TELEOP: 'active'}, {'camera': True, 'detections': True},
-            {'camera': True, 'detections': False}, False, {})
+            {TELEOP: 'active'},
+            {'camera': True, 'detections': True},
+            {'camera': True, 'detections': False},
+            False,
+            {},
+        )
         assert items[1]['state'] == 'activating'
         items = dashboard.feature_list(
-            {TELEOP: 'active'}, dashboard.features.DEFAULTS, dashboard.features.DEFAULTS, True, {})
+            {TELEOP: 'active'}, dashboard.features.DEFAULTS, dashboard.features.DEFAULTS, True, {}
+        )
         assert items[0]['state'] == items[1]['state'] == 'activating'
 
     def test_teleop_down_reads_off(self, dashboard):
         items = dashboard.feature_list(
-            {TELEOP: 'inactive'}, dashboard.features.DEFAULTS, dashboard.features.DEFAULTS,
-            False, {})
+            {TELEOP: 'inactive'},
+            dashboard.features.DEFAULTS,
+            dashboard.features.DEFAULTS,
+            False,
+            {},
+        )
         assert items[0]['state'] == 'inactive'
 
     def test_last_run(self, dashboard, tmp_path):
@@ -720,7 +803,8 @@ class TestApplyFeatures:
     def test_autonomy_is_stopped_first_and_resumed(self, dashboard, tool):
         run = tool({TELEOP: 'active', AUTONOMY: 'active'})
         message = dashboard.apply_features(
-            {'camera': True, 'detections': True}, run, sleep=lambda s: None)
+            {'camera': True, 'detections': True}, run, sleep=lambda s: None
+        )
         restart = run.calls.index(['systemctl', '--no-ask-password', 'restart', TELEOP])
         assert run.tool == ['stop', 'resume'] and restart > 0
         assert message.endswith('resume done')
@@ -751,7 +835,9 @@ class TestFeatureEndpoint:
         assert dashboard.change_feature('autonomy', True, 'go')[0] is False
         assert job.start('busy', lambda: 'x' if __import__('time').sleep(0.3) is None else '')
         assert dashboard.change_feature('autonomy', True, 'resume') == (
-            False, 'Another change is running.')
+            False,
+            'Another change is running.',
+        )
 
     def test_page_has_features(self, dashboard):
         html = dashboard._load_dashboard_html()
@@ -791,3 +877,270 @@ class TestDrivingAppsAndAutonomy:
     def test_page_asks_before_stopping_autonomy(self, dashboard):
         html = dashboard._load_dashboard_html()
         assert 'Save it, stop it, and open' in html and 'will close.' in html
+
+
+GUARD_VALUES = {
+    'level': 'countdown',
+    'trigger': 'estimate',
+    'valid': 'true',
+    'volts': '7.12',
+    'soc': '3',
+    'power_w': '17.4',
+    'minutes_left': '2',
+    'shutdown_in': '42',
+    'cancel_used': 'false',
+}
+
+
+class TestBatteryEstimate:
+    def test_view(self, dashboard):
+        view = dashboard.estimate_view(GUARD_VALUES, 0.5)
+        assert view == {
+            'level': 'countdown',
+            'trigger': 'estimate',
+            'minutes_left': 2.0,
+            'power_w': 17.4,
+            'soc': 3.0,
+            'shutdown_in': 42.0,
+            'can_cancel': True,
+        }
+
+    def test_stale_or_missing(self, dashboard):
+        assert dashboard.estimate_view(GUARD_VALUES, 6.0) is None
+        assert dashboard.estimate_view(None, None) is None
+
+    def test_empty_values_are_none(self, dashboard):
+        view = dashboard.estimate_view({'level': 'ok', 'minutes_left': ''}, 0.5)
+        assert view['minutes_left'] is None and view['level'] == 'ok'
+
+    @pytest.mark.parametrize(
+        'changes',
+        [{'trigger': 'floor'}, {'cancel_used': 'true'}, {'level': 'warn'}],
+    )
+    def test_cancel_only_for_an_estimate_countdown_once(self, dashboard, changes):
+        assert not dashboard.estimate_view({**GUARD_VALUES, **changes}, 0.5)['can_cancel']
+
+
+class TestOrigins:
+    @pytest.mark.parametrize(
+        'origin, host, allowed',
+        [
+            (None, 'car.local:8080', True),
+            ('http://car.local:8080', 'car.local:8080', True),
+            ('http://car.local:8081', 'car.local:8080', False),
+            ('http://evil.example:8080', 'car.local:8080', False),
+        ],
+    )
+    def test_page_origin(self, dashboard, origin, host, allowed):
+        assert dashboard.page_origin(origin, host) is allowed
+
+    @pytest.mark.parametrize(
+        'origin, allowed',
+        [
+            ('http://car.local:8084', True),
+            ('http://car.local:8085', True),
+            ('http://car.local:8089', False),
+            ('http://other:8084', False),
+        ],
+    )
+    def test_lab_origin(self, dashboard, origin, allowed):
+        assert (dashboard.lab_origin(origin, 'car.local:8080') is not None) is allowed
+
+
+class TestTurnOff:
+    def test_terminals_first_then_the_sequence(self, dashboard, monkeypatch):
+        order = []
+
+        class FakeAnnouncer:
+            def __init__(self, run):
+                pass
+
+            def deliver(self, msg):
+                order.append(('message', msg.text))
+
+        monkeypatch.setattr(dashboard, 'Announcer', FakeAnnouncer)
+        monkeypatch.setattr(
+            dashboard, 'shutdown_sequence', lambda run, report: order.append(('sequence',)) or []
+        )
+        dashboard.turn_off()
+        assert order == [
+            ('message', 'Turning the car off now. Turn off the power switch.'),
+            ('sequence',),
+        ]
+
+
+class TestBatteryEndpoints:
+    @pytest.fixture
+    def server(self, dashboard, monkeypatch):
+        calls = []
+        monkeypatch.setattr(dashboard, 'turn_off', lambda: calls.append('turn_off'))
+        monkeypatch.setattr(
+            dashboard,
+            '_sampler',
+            SimpleNamespace(
+                cancel_shutdown=lambda: calls.append('cancel'),
+                estimate=lambda: (GUARD_VALUES, 0.5),
+            ),
+        )
+        srv = ThreadingHTTPServer(('127.0.0.1', 0), dashboard.DashboardHandler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+        def request(method, path, headers=None):
+            conn = http.client.HTTPConnection('127.0.0.1', srv.server_address[1], timeout=5)
+            conn.request(
+                method, path, body=b'{}' if method == 'POST' else None, headers=headers or {}
+            )
+            resp = conn.getresponse()
+            request.cors = resp.getheader('Access-Control-Allow-Origin')
+            return resp.status, json.loads(resp.read())
+
+        request.calls = calls
+        yield request
+        srv.shutdown()
+        srv.server_close()
+
+    def test_shutdown(self, server):
+        status, body = server('POST', '/api/shutdown')
+        assert status == 200
+        assert body['message'] == 'Turning the car off now. Turn off the power switch.'
+        time.sleep(0.2)
+        assert server.calls == ['turn_off']
+
+    def test_shutdown_refuses_another_site(self, server):
+        status, _ = server('POST', '/api/shutdown', {'Origin': 'http://evil.example'})
+        assert status == 403
+        time.sleep(0.2)
+        assert server.calls == []
+
+    def test_cancel(self, server):
+        assert server('POST', '/api/battery/cancel')[0] == 200
+        assert server.calls == ['cancel']
+
+    def test_battery_for_a_lab_page(self, server, dashboard, monkeypatch):
+        h = dashboard.History()
+        h.add(time.time(), 7.12, 2.4)
+        monkeypatch.setattr(dashboard, '_battery', h)
+        status, body = server('GET', '/api/battery', {'Origin': 'http://127.0.0.1:8084'})
+        assert status == 200 and server.cors == 'http://127.0.0.1:8084'
+        assert body['battery']['estimate']['shutdown_in'] == 42.0
+
+
+class TestBatteryPage:
+    def test_turn_off_tile_next_to_the_override(self, dashboard):
+        html = dashboard._load_dashboard_html()
+        assert html.index('id="override"') < html.index('id="poweroff"')
+        assert html.index('id="poweroff"') < html.index('id="apps-utilities"')
+        assert "confirm('Turn the car off?')" in html
+        assert '/api/shutdown' in html
+
+    def test_header_pills_banner_and_cancel(self, dashboard):
+        html = dashboard._load_dashboard_html()
+        for element in ('batt-time', 'batt-power', 'battery-banner', 'battery-cancel'):
+            assert f'id="{element}"' in html
+        assert '/api/battery/cancel' in html
+
+    def test_time_pill_switches_views(self, dashboard):
+        html = dashboard._load_dashboard_html()
+        assert "const PILL_VIEWS = ['percent', 'time', 'clock'];" in html
+        assert 'until ${at.toLocaleTimeString' in html
+        assert "store.set('rcn-battery-view', pillView)" in html
+        assert 'Turning the car off now. Turn off the power switch.' in html
+
+
+NMCLI_DEVICES = """wlan1:wifi:connected:racecar-neo-ap
+wlan0:wifi:connected:Duck
+lo:loopback:connected (externally):lo
+p2p-dev-wlan0:wifi-p2p:disconnected:
+eth0:ethernet:unavailable:
+"""
+IP_ADDR = """1: lo    inet 127.0.0.1/8 scope host lo
+3: wlan0    inet 10.0.0.198/24 brd 10.0.0.255 scope global dynamic wlan0
+4: wlan1    inet 10.42.0.1/24 brd 10.42.0.255 scope global wlan1
+"""
+
+
+def _fake_network(argv, **kwargs):
+    if argv[:2] == ['ip', '-4']:
+        out = IP_ADDR
+    elif argv[-2:] == ['show', 'racecar-neo-ap']:
+        out = 'ap\nracecar-neo-0\n'
+    elif argv[-2:] == ['show', 'Duck']:
+        out = 'infrastructure\nDuck\n'
+    else:
+        out = NMCLI_DEVICES
+    return SimpleNamespace(returncode=0, stdout=out)
+
+
+class TestNetwork:
+    def test_rows(self, dashboard):
+        assert dashboard.network_view(_fake_network) == [
+            {
+                'device': 'wlan1',
+                'kind': 'Access point',
+                'state': 'connected',
+                'network': 'racecar-neo-0',
+                'address': '10.42.0.1/24',
+            },
+            {
+                'device': 'wlan0',
+                'kind': 'Wi-Fi',
+                'state': 'connected',
+                'network': 'Duck',
+                'address': '10.0.0.198/24',
+            },
+            {
+                'device': 'eth0',
+                'kind': 'Ethernet',
+                'state': 'unavailable',
+                'network': '',
+                'address': '',
+            },
+        ]
+
+    def test_no_networkmanager(self, dashboard):
+        def run(argv, **kwargs):
+            raise OSError('no nmcli')
+
+        assert dashboard.network_view(run) == []
+
+    def test_clock(self, dashboard):
+        clock = dashboard.clock_view(1000.0)
+        assert clock['epoch'] == 1000.0
+        assert clock['utc_offset'] == time.localtime(1000.0).tm_gmtoff
+        assert clock['zone'] == time.localtime(1000.0).tm_zone
+
+    def test_page_has_the_clock_and_network_pill(self, dashboard):
+        html = dashboard._load_dashboard_html()
+        for element in ('clock', 'net-pill', 'net-menu', 'net-table'):
+            assert f'id="{element}"' in html
+        assert "['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']" in html
+        assert "'PM'} ${carClock.zone}`" in html
+
+
+class TestLink:
+    def _report(self, **kw):
+        return {'rate_hz': 200.0, 'level': 0.0, **kw}
+
+    def test_clean(self, dashboard):
+        v = dashboard.link_view(self._report(), 1.0, None)
+        assert (v['status'], v['detail']) == ('healthy', '200 Hz. No lost frames')
+
+    def test_recent_problem_holds_yellow(self, dashboard):
+        v = dashboard.link_view(self._report(dropped_frames=3, reconnects=1), 1.0, 20.0)
+        assert v['status'] == 'stale'
+        assert v['detail'] == '200 Hz. Since teleop started: 3 lost frames, 1 reconnects'
+
+    def test_old_problem_clears(self, dashboard):
+        v = dashboard.link_view(self._report(dropped_frames=3), 1.0, 90.0)
+        assert v['status'] == 'healthy'
+
+    def test_stale_or_missing_report_is_red(self, dashboard):
+        assert dashboard.link_view(None, None, None)['status'] == 'dead'
+        assert dashboard.link_view(self._report(), 10.0, None)['status'] == 'dead'
+        down = dashboard.link_view(self._report(level=2.0, rate_hz=0.0), 1.0, 0.5)
+        assert down['status'] == 'dead'
+
+    def test_pit_rate_comes_from_the_link_report(self, dashboard):
+        assert '/imu/lsm9ds1' not in dashboard.RATE_TOPICS
+        assert '/imu/lsm9ds1' in dashboard.DISPLAY_RATE_TOPICS
+        assert "['health', 'link', 'pulse', 'Link', 'compute']" in dashboard.DASHBOARD_HTML

@@ -175,6 +175,7 @@ class TestFraming:
     def test_strips_leading_garbage(self):
         pkt = _build_telemetry(timestamp=42)
         buf = bytearray(b'\xaa\xbb\xcc' + pkt)
+        assert pit.scan_for_packet(buf) == (None, 3)
         telem, consumed = pit.scan_for_packet(buf)
         assert telem.timestamp_us == 42
         assert consumed == pit.TX_PACKET_SIZE

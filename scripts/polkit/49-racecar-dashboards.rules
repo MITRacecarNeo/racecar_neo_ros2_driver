@@ -1,17 +1,20 @@
-// RACECAR Neo - start and stop the lab dashboards without sudo.
+// RACECAR Neo - start and stop the lab dashboards and the terminal app
+// without sudo.
 //
 // Installed to /etc/polkit-1/rules.d/ by scripts/setup_user_env.sh. The home
-// page on port 8080 runs as the racecar user: it starts each lab dashboard
-// when it is opened, keeps one /drive publisher at a time, and stops them all
-// with Clear apps. The grant covers those four units, that user, and start and
-// stop; enabling, masking, and every other unit still ask for authentication.
+// page on port 8080 runs as the racecar user: it starts each lab dashboard and
+// the terminal app when it is opened, keeps one /drive publisher at a time,
+// and stops the lab dashboards with Clear apps. The grant covers those five
+// units, that user, and start and stop; enabling, masking, and every other
+// unit still ask for authentication.
 
 polkit.addRule(function (action, subject) {
     if (action.id !== "org.freedesktop.systemd1.manage-units") {
         return polkit.Result.NOT_HANDLED;
     }
     var units = ["racecar-webteleop.service", "racecar-linefollow.service",
-                 "racecar-wallfollow.service", "racecar-camlabel.service"];
+                 "racecar-wallfollow.service", "racecar-camlabel.service",
+                 "racecar-terminal.service"];
     var verbs = ["start", "stop"];
     if (units.indexOf(action.lookup("unit")) !== -1 &&
         verbs.indexOf(action.lookup("verb")) !== -1 &&

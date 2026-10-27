@@ -28,6 +28,7 @@ precedes the 2-byte checksum field, magic included. Callers decide whether to
 enforce it (pit_node require_crc).
 """
 
+import binascii
 from dataclasses import dataclass
 import struct
 
@@ -63,12 +64,13 @@ _RX_MAGIC_LE = struct.pack('<I', RX_MAGIC)
 
 
 def crc16_ccitt(data: bytes, crc: int = 0xFFFF) -> int:
-    """CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF, no reflection)."""
-    for byte in data:
-        crc ^= byte << 8
-        for _ in range(8):
-            crc = ((crc << 1) ^ 0x1021) & 0xFFFF if (crc & 0x8000) else (crc << 1) & 0xFFFF
-    return crc
+    """
+    CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF, no reflection).
+
+    binascii.crc_hqx is the same CRC in C; a bitwise Python loop cost about
+    6 percent of a core at 200 frames and 60 commands a second.
+    """
+    return binascii.crc_hqx(data, crc)
 
 
 @dataclass
@@ -212,10 +214,11 @@ def scan_for_packet(buffer: bytearray) -> tuple[Telemetry | None, int]:
     """
     Extract the first complete telemetry frame from a rolling byte buffer.
 
-    Mutates buffer in place, discarding leading garbage. Returns
-    (Telemetry, consumed) for a decoded frame, (None, n) after discarding n
-    bytes that held no frame (scan again), or (None, 0) when more bytes are
-    needed. The last 3 bytes are kept when no magic is present, so a magic
+    Mutates buffer in place. Returns (Telemetry, consumed) for a decoded
+    frame, (None, n) after discarding n bytes that held no frame (scan
+    again), or (None, 0) when more bytes are needed. Bytes before a magic are
+    discarded on their own call, so every byte that held no frame is counted
+    in some n. The last 3 bytes are kept when no magic is present, so a magic
     split across reads is not lost.
     """
     idx = buffer.find(_TX_MAGIC_LE)
@@ -227,6 +230,7 @@ def scan_for_packet(buffer: bytearray) -> tuple[Telemetry | None, int]:
 
     if idx > 0:
         del buffer[:idx]
+        return None, idx
 
     if len(buffer) < TX_PACKET_SIZE:
         return None, 0

@@ -182,6 +182,21 @@ def test_status_forwards_flags():
     assert 'unknown section' in result.stderr
 
 
+def test_health_dispatches_to_its_script(tmp_path, monkeypatch):
+    stub = tmp_path / 'health.py'
+    stub.write_text('import sys; print("health", *sys.argv[1:])\n')
+    monkeypatch.setenv('RACECAR_HEALTH_SCRIPT', str(stub))
+    result = _run('health', 'power', '--seconds', '5')
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == 'health power --seconds 5'
+
+
+def test_health_in_help_and_completion():
+    text = TOOL.read_text()
+    assert 'health [step]' in text
+    assert 'COMPREPLY=( $(compgen -W "all power link nvme shake poke --seconds --help"' in text
+
+
 class TestService:
     def test_default_action_is_status(self):
         result = _run('service')
@@ -210,6 +225,8 @@ class TestService:
             'racecar-linefollow',
             'racecar-wallfollow',
             'racecar-camlabel',
+            'racecar-terminal',
+            'racecar-battery-guard',
         ):
             assert unit in result.stdout, f'status missing {unit}'
 
@@ -218,7 +235,9 @@ class TestService:
         assert result.returncode == 0
         assert 'update' not in result.stdout
         for name, port in (
-            ('webteleop', '8081'), ('linefollow', '8082'), ('wallfollow', '8083'),
+            ('webteleop', '8081'),
+            ('linefollow', '8082'),
+            ('wallfollow', '8083'),
             ('camlabel', '8085'),
         ):
             assert f'{name}({port})' in result.stdout
@@ -258,7 +277,7 @@ class TestService:
     def test_camlabel_is_not_a_drive_dashboard(self):
         text = TOOL.read_text()
         apps = text.split('local -a app_units=')[1].split('\n')[0]
-        assert 'racecar-camlabel' in apps
+        assert 'racecar-camlabel' in apps and 'racecar-terminal' in apps
 
     def test_no_retired_dashboard_is_named_anywhere(self):
         text = TOOL.read_text()

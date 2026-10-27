@@ -27,10 +27,16 @@ sudo apt-get install -y \
 #   avahi-daemon: racecar-neo.local on the network
 #   polkitd: the rules that let the dashboards and racecar map manage units
 #   python3-matplotlib: JupyterLab plots (setup_jupyter.sh keeps this version)
+#   ttyd, python3-pampy: the terminal app on port 8086 (scripts/terminal.py)
 sudo apt-get install -y \
     raspi-config rpi-eeprom libraspberrypi-bin \
     network-manager avahi-daemon polkitd \
-    python3-matplotlib
+    python3-matplotlib \
+    ttyd python3-pampy
+
+# The ttyd package enables its own login shell on localhost:7681. The terminal
+# app runs ttyd itself on a private socket, so that service stays off.
+sudo systemctl disable --now ttyd.service 2>/dev/null || true
 
 # Linters, pinned so every car agrees with pyproject.toml. Per-user install
 # (PEP 668 blocks system-wide); binaries land in ~/.local/bin, which

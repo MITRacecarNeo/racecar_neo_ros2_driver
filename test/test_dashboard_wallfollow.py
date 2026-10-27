@@ -101,8 +101,8 @@ class TestAngleMapping:
         # A handedness flip would swap these two and steer the car into the
         # wall it is trying to hold away from.
         msg = make_scan()
-        place_wedge(msg, 90.0, 5.0, 2.0)    # car's right
-        place_wedge(msg, -90.0, 5.0, 3.0)   # car's left
+        place_wedge(msg, 90.0, 5.0, 2.0)  # car's right
+        place_wedge(msg, -90.0, 5.0, 3.0)  # car's left
         assert N._mean_at(N, msg, 90, 4.0) == pytest.approx(2.0, abs=0.01)
         assert N._mean_at(N, msg, -90, 4.0) == pytest.approx(3.0, abs=0.01)
 

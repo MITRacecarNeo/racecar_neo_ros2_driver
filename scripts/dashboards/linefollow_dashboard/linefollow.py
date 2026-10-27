@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""RACECAR Neo line-follow service: HSV threshold and PD tuning for a
-visual-servo line follower, as a web dashboard.
+"""
+RACECAR Neo line-follow service: HSV threshold and PD tuning, as a web dashboard.
+
+The line follower is a visual-servo controller.
 
 Same pattern as the wallfollow, pursuit, and smartfollow dashboards (stdlib
 HTTP + rclpy) on port 8082. The controller is the one from the oneshot lab's
@@ -37,6 +39,7 @@ import signal
 import sys
 import threading
 import time
+from typing import Any
 
 from ackermann_msgs.msg import AckermannDriveStamped
 import cv2
@@ -54,40 +57,52 @@ PORT = 8082
 BASE = Path(__file__).resolve().parent
 # The shared styles, fonts and logos are served from scripts/web/ (webui.py).
 sys.path.insert(0, str(BASE.parents[1]))
-import webui  # noqa: E402
+import webui  # noqa: E402, I100
+
 # Shipped defaults stay untouched; saved tuning goes to the per-car file,
 # which loads on top of them, in the car profile (dashboards/<name>.yaml).
 DEFAULTS_PATH = BASE / 'linefollow.yaml'
 YAML_PATH = car_profile.dashboard_settings('linefollow')
 LOG_DIR = data_root.current()[0] / 'dashboards' / 'linefollow'
 
-MAX_SPEED = 1.0         # hard throttle cap, same idea as drive_real.set_max_speed
+MAX_SPEED = 1.0  # hard throttle cap, same idea as drive_real.set_max_speed
 PROCESS_RATE_HZ = 20.0  # frames thresholded per second; the camera runs at 60
 PUBLISH_RATE_HZ = 15.0  # /drive rate, independent of the camera
-MIN_BAND = 0.05         # crop_bottom - crop_top never below this fraction
+MIN_BAND = 0.05  # crop_bottom - crop_top never below this fraction
 # The live chart is 420 px wide; send an even sample of the history rather
 # than every row. The log csv keeps all of them.
 HIST_POINTS = 300
 # Overlay colors, BGR, matching the dashboard's tokens.
 GOLD = (0, 215, 255)
 RED = (51, 0, 255)
-GREY = (200, 200, 200)
+GRAY = (200, 200, 200)
 
 # Tunable from the dashboard, in the order the trackbars show them.
 HSV_KEYS = ('h_low', 'h_high', 's_low', 's_high', 'v_low', 'v_high')
-HSV_MAX = {'h_low': 179, 'h_high': 179, 's_low': 255, 's_high': 255,
-           'v_low': 255, 'v_high': 255}
-FLOAT_KEYS = ('speed', 'angle_kp', 'crop_top', 'crop_bottom', 'speed_kp',
-              'angle_kd')
+HSV_MAX = {'h_low': 179, 'h_high': 179, 's_low': 255, 's_high': 255, 'v_low': 255, 'v_high': 255}
+FLOAT_KEYS = ('speed', 'angle_kp', 'crop_top', 'crop_bottom', 'speed_kp', 'angle_kd')
 INT_KEYS = HSV_KEYS + ('min_area',)
 TUNE_KEYS = HSV_KEYS + FLOAT_KEYS + ('min_area',)
 
 _lock = threading.Lock()
 _params: dict = {}
-_state: dict = {'found': False, 'error': 0.0, 'steer': 0.0, 'speed_cmd': 0.0,
-                'cx': None, 'cy': None, 'area': 0, 'lost_for': None,
-                'res': [0, 0], 'proc_res': [0, 0], 'cam_fps': 0.0,
-                'proc_fps': 0.0, 'enc_speed': 0.0, 'hist': [], 'marks': []}
+_state: dict = {
+    'found': False,
+    'error': 0.0,
+    'steer': 0.0,
+    'speed_cmd': 0.0,
+    'cx': None,
+    'cy': None,
+    'area': 0,
+    'lost_for': None,
+    'res': [0, 0],
+    'proc_res': [0, 0],
+    'cam_fps': 0.0,
+    'proc_fps': 0.0,
+    'enc_speed': 0.0,
+    'hist': [],
+    'marks': [],
+}
 _preview_color = b''
 _preview_mask = b''
 _hist: deque = deque(maxlen=1200)
@@ -100,25 +115,33 @@ _marks: deque = deque(maxlen=40)
 _T0 = time.monotonic()
 
 
-def _now():
+def _now() -> float:
     return round(time.monotonic() - _T0, 2)
 
 
-def _add_mark(label):
+def _add_mark(label: str) -> None:
     # Coalesce rapid updates: every trackbar fires while it is dragged.
-    if _marks and _now() - _marks[-1][0] < 1.0 and _marks[-1][1].split(' ')[0] == label.split(' ')[0]:
+    if (
+        _marks
+        and _now() - _marks[-1][0] < 1.0
+        and _marks[-1][1].split(' ')[0] == label.split(' ')[0]
+    ):
         _marks[-1] = [_now(), label]
     else:
         _marks.append([_now(), label])
 
 
-def set_max_speed(speed):
-    """Clamp throttle to [0, MAX_SPEED]. Every speed that leaves this program
-    passes through here, so /drive can never carry more than 1.0."""
+def set_max_speed(speed: float) -> float:
+    """
+    Clamp throttle to [0, MAX_SPEED].
+
+    Every speed that leaves this program passes through here, so /drive can
+    never carry more than 1.0.
+    """
     return max(0.0, min(MAX_SPEED, float(speed)))
 
 
-def _clean(p):
+def _clean(p: dict[str, Any]) -> None:
     """Clamp every tunable into its range. Caller holds _lock."""
     for k in HSV_KEYS:
         p[k] = max(0, min(HSV_MAX[k], int(p[k])))
@@ -134,7 +157,7 @@ def _clean(p):
     p['crop_top'], p['crop_bottom'] = round(top, 3), round(bottom, 3)
 
 
-def load_params():
+def load_params() -> None:
     with _lock:
         before = json.dumps(_params, sort_keys=True)
         _params.update(yaml.safe_load(DEFAULTS_PATH.read_text()))
@@ -145,7 +168,7 @@ def load_params():
             _add_mark('yaml load')
 
 
-def save_params():
+def save_params() -> None:
     """Rewrite the numeric values in place so the yaml comments survive."""
     if not YAML_PATH.exists():
         car_profile.write_text(YAML_PATH, DEFAULTS_PATH.read_text())
@@ -164,7 +187,7 @@ def save_params():
     car_profile.write_text(YAML_PATH, ''.join(out))
 
 
-def update_params(data):
+def update_params(data: dict[str, Any]) -> list[str]:
     """Apply a posted subset of TUNE_KEYS. Returns the change labels."""
     with _lock:
         before = dict(_params)
@@ -178,9 +201,13 @@ def update_params(data):
     return changed
 
 
-def threshold(hsv, p):
-    """inRange over an HSV image. A hue low above its high wraps through 0,
-    so red (which straddles hue 0/179) is one range rather than two."""
+def threshold(hsv: np.ndarray, p: dict[str, Any]) -> np.ndarray:
+    """
+    Return the inRange mask of an HSV image.
+
+    A hue low above its high wraps through 0, so red (which straddles hue
+    0/179) is one range rather than two.
+    """
     lo = np.array([p['h_low'], p['s_low'], p['v_low']], np.uint8)
     hi = np.array([p['h_high'], p['s_high'], p['v_high']], np.uint8)
     if p['h_low'] <= p['h_high']:
@@ -190,11 +217,15 @@ def threshold(hsv, p):
     return cv2.bitwise_or(cv2.inRange(hsv, lo, hi), cv2.inRange(hsv, lo2, hi2))
 
 
-def find_line(mask, top, bottom, min_area):
-    """Largest contour in mask[top:bottom] with area >= min_area.
+def find_line(
+    mask: np.ndarray, top: int, bottom: int, min_area: float
+) -> tuple[np.ndarray, tuple[int, int], float] | None:
+    """
+    Largest contour in mask[top:bottom] with area >= min_area.
 
     Returns (contour in full-mask coordinates, (cx, cy), area) or None.
-    Same selection the student library's get_largest_contour makes."""
+    Same selection the student library's get_largest_contour makes.
+    """
     band = mask[top:bottom]
     if band.size == 0:
         return None
@@ -214,7 +245,7 @@ def find_line(mask, top, bottom, min_area):
 
 
 class LineFollowNode(Node):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__('linefollow')
         with _lock:
             cam_topic = _params['camera_topic']
@@ -231,16 +262,16 @@ class LineFollowNode(Node):
         self._steer_cmd = 0.0
         self._speed_cmd = 0.0
         self._found = False
-        self._last_seen = None
+        self._last_seen: float | None = None
         self._res = (0, 0)
         self._last_proc = 0.0
-        self._frame_stamps = []
-        self._proc_stamps = []
+        self._frame_stamps: list[float] = []
+        self._proc_stamps: list[float] = []
 
-    def _odom_cb(self, msg):
+    def _odom_cb(self, msg: Odometry) -> None:
         self._enc = msg.twist.twist.linear.x
 
-    def _image_cb(self, msg):
+    def _image_cb(self, msg: Image) -> None:
         now = time.monotonic()
         self._frame_stamps.append(now)
         self._frame_stamps = [t for t in self._frame_stamps if now - t < 2.0]
@@ -259,7 +290,7 @@ class LineFollowNode(Node):
         self._res = (arr.shape[1], arr.shape[0])
         self.process(arr)
 
-    def process(self, frame):
+    def process(self, frame: np.ndarray) -> None:
         """Threshold one BGR frame, update the command, and render the previews."""
         global _preview_color, _preview_mask
         with _lock:
@@ -283,7 +314,9 @@ class LineFollowNode(Node):
             self._steer_cmd = max(-1.0, min(1.0, cmd))
             # Constant throttle by default; speed_kp bleeds it off as the
             # line drifts from center so a sharp turn is taken slower.
-            self._speed_cmd = set_max_speed(p['speed'] * max(0.0, 1.0 - p['speed_kp'] * abs(error)))
+            self._speed_cmd = set_max_speed(
+                p['speed'] * max(0.0, 1.0 - p['speed_kp'] * abs(error))
+            )
             self._error = error
             self._found = True
             self._last_seen = now
@@ -297,46 +330,67 @@ class LineFollowNode(Node):
         self._proc_stamps = [t for t in self._proc_stamps if now - t < 2.0]
         t = _now()
         lost = 0 if self._found else 1
-        _rows.append(f'{t},{self._error:.4f},{self._steer_cmd:.4f},{self._speed_cmd:.3f},'
-                     f'{self._enc:.3f},{lost},{"" if cx is None else cx},{area:.0f}\n')
+        _rows.append(
+            f'{t},{self._error:.4f},{self._steer_cmd:.4f},{self._speed_cmd:.3f},'
+            f'{self._enc:.3f},{lost},{"" if cx is None else cx},{area:.0f}\n'
+        )
         _hist.append([t, round(self._error, 4), lost])
 
         # Previews: the color frame carries the band, the contour, and its
         # center; the mask is the whole frame so the threshold can be judged
         # on everything in view, with the band outlined.
-        color = img if int(p['preview_width']) == W else cv2.resize(
-            img, (int(p['preview_width']), max(1, round(int(p['preview_width']) * H / W))))
+        color = (
+            img
+            if int(p['preview_width']) == W
+            else cv2.resize(
+                img, (int(p['preview_width']), max(1, round(int(p['preview_width']) * H / W)))
+            )
+        )
         sx = color.shape[1] / W
         shade = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
         if shade.shape[1] != color.shape[1]:
-            shade = cv2.resize(shade, (color.shape[1], color.shape[0]), interpolation=cv2.INTER_NEAREST)
+            shade = cv2.resize(
+                shade, (color.shape[1], color.shape[0]), interpolation=cv2.INTER_NEAREST
+            )
         for view in (color, shade):
-            cv2.rectangle(view, (0, int(top * sx)), (view.shape[1] - 1, int(bottom * sx) - 1),
-                          GOLD, 1)
-        cv2.line(color, (color.shape[1] // 2, 0), (color.shape[1] // 2, color.shape[0]),
-                 GREY, 1)
+            cv2.rectangle(
+                view, (0, int(top * sx)), (view.shape[1] - 1, int(bottom * sx) - 1), GOLD, 1
+            )
+        cv2.line(color, (color.shape[1] // 2, 0), (color.shape[1] // 2, color.shape[0]), GRAY, 1)
         if contour is not None:
             cv2.drawContours(color, [(contour * sx).astype(np.int32)], -1, RED, 2)
             cv2.circle(color, (int(cx * sx), int(cy * sx)), 5, RED, -1)
-            cv2.line(color, (color.shape[1] // 2, int(cy * sx)), (int(cx * sx), int(cy * sx)),
-                     RED, 1)
+            cv2.line(
+                color, (color.shape[1] // 2, int(cy * sx)), (int(cx * sx), int(cy * sx)), RED, 1
+            )
         quality = [cv2.IMWRITE_JPEG_QUALITY, int(p['preview_quality'])]
         with _lock:
             _preview_color = cv2.imencode('.jpg', color, quality)[1].tobytes()
             _preview_mask = cv2.imencode('.jpg', shade, quality)[1].tobytes()
-            _state.update({
-                'found': self._found, 'error': round(self._error, 4),
-                'steer': round(self._steer_cmd, 3), 'speed_cmd': round(self._speed_cmd, 3),
-                'cx': cx, 'cy': cy, 'area': int(area),
-                'lost_for': None if self._found else (
-                    round(now - self._last_seen, 1) if self._last_seen else None),
-                'res': list(self._res), 'proc_res': [W, H],
-                'cam_fps': round(len(self._frame_stamps) / 2.0, 1),
-                'proc_fps': round(len(self._proc_stamps) / 2.0, 1),
-                'hist': _thin(_hist), 'marks': list(_marks),
-            })
+            _state.update(
+                {
+                    'found': self._found,
+                    'error': round(self._error, 4),
+                    'steer': round(self._steer_cmd, 3),
+                    'speed_cmd': round(self._speed_cmd, 3),
+                    'cx': cx,
+                    'cy': cy,
+                    'area': int(area),
+                    'lost_for': (
+                        None
+                        if self._found
+                        else (round(now - self._last_seen, 1) if self._last_seen else None)
+                    ),
+                    'res': list(self._res),
+                    'proc_res': [W, H],
+                    'cam_fps': round(len(self._frame_stamps) / 2.0, 1),
+                    'proc_fps': round(len(self._proc_stamps) / 2.0, 1),
+                    'hist': _thin(_hist),
+                    'marks': list(_marks),
+                }
+            )
 
-    def _actuate(self):
+    def _actuate(self) -> None:
         out = AckermannDriveStamped()
         out.drive.speed = set_max_speed(self._speed_cmd)
         out.drive.steering_angle = float(-self._steer_cmd)  # wire positive = left on this car
@@ -345,7 +399,7 @@ class LineFollowNode(Node):
             _state['enc_speed'] = round(self._enc, 3)
 
 
-def _thin(hist):
+def _thin(hist: deque) -> list:
     """Even sample of `hist` down to HIST_POINTS, newest row always kept."""
     rows = list(hist)
     stride = max(1, len(rows) // HIST_POINTS)
@@ -357,7 +411,7 @@ def _thin(hist):
     return sent
 
 
-def _log_number(name):
+def _log_number(name: str) -> int:
     """Log7.csv -> 7, so lists sort numerically. Anything else sorts first."""
     m = re.match(r'Log(\d+)\.csv$', name)
     return int(m.group(1)) if m else 0
@@ -366,7 +420,7 @@ def _log_number(name):
 class Handler(BaseHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
 
-    def do_GET(self):
+    def do_GET(self) -> None:
         asset = webui.static_file(self.path)
         if asset is not None:
             self.send_response(200)
@@ -401,7 +455,7 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self.send_error(404)
 
-    def do_POST(self):
+    def do_POST(self) -> None:
         if self.path == '/params':
             update_params(json.loads(self.rfile.read(int(self.headers['Content-Length']))))
         elif self.path == '/logs/save':
@@ -425,7 +479,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send(b'ok', 'text/plain')
 
-    def _send(self, body, ctype, cache=None):
+    def _send(self, body: bytes, ctype: str, cache: str | None = None) -> None:
         self.send_response(200)
         self.send_header('Content-Type', ctype)
         self.send_header('Content-Length', str(len(body)))
@@ -434,18 +488,18 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, fmt, *args):
+    def log_message(self, fmt: str, *args: Any) -> None:
         pass
 
 
-def _spin(node):
+def _spin(node: Node) -> None:
     try:
         rclpy.spin(node)
     except ExternalShutdownException:
         pass
 
 
-def main():
+def main() -> None:
     load_params()
     rclpy.init()
     node = LineFollowNode()
@@ -458,7 +512,7 @@ def main():
     # signal until systemd's TimeoutStopSec expires and SIGKILLs it. Take the
     # signals back. shutdown() has to run off the serving thread or it
     # deadlocks waiting for the loop it is called from.
-    def stop(*_):
+    def stop(*_: Any) -> None:
         threading.Thread(target=server.shutdown, daemon=True).start()
 
     signal.signal(signal.SIGTERM, stop)

@@ -46,10 +46,9 @@ from calibrate_common import (  # noqa: E402, I100
     CalibratorNode,
     Criterion,
     finish_check,
-    install_config_dir,
     read_line,
-    source_config_dir,
     spin_until_done,
+    stack_config_dir,
     update_local_values,
 )
 from scan_match import median_ranges, scan_points  # noqa: E402, I100
@@ -156,14 +155,6 @@ def check_criteria(fit: WallFit, yaw_deg: float) -> list[Criterion]:
     ]
 
 
-def config_dir() -> Path:
-    """Return the config dir the running stack loaded: installed share, else source."""
-    d = install_config_dir() or source_config_dir()
-    if d is None:
-        raise FileNotFoundError('no config directory found')
-    return d
-
-
 class LidarYawCalibrator(CalibratorNode):
     """Collect scans of a wall ahead, fit it, and correct laser_yaw_deg."""
 
@@ -184,7 +175,7 @@ class LidarYawCalibrator(CalibratorNode):
         log = self.get_logger()
         if not self.wait_for_first_message():
             return 1
-        frames = load_frames(config_dir())
+        frames = load_frames(stack_config_dir())
         lx, ly = frames['laser_x_mm'] * 1e-3, frames['laser_y_mm'] * 1e-3
         yaw_deg = frames['laser_yaw_deg']
         if max(abs(frames['laser_roll_deg']), abs(frames['laser_pitch_deg'])) > MAX_TILT_DEG:
@@ -341,7 +332,7 @@ def measure_legs(bag: Any, laser: Any) -> list[Leg]:
         elif abs(chord / odom_m - 1.0) > 0.15:
             problem = f'The lidar measured {chord:.2f} m and the odometry {odom_m:.2f} m.'
         yaw = math.nan
-        if not problem:
+        if not problem and true is not None:
             try:
                 direction_rad = math.atan2(rel[1], rel[0])
                 yaw = math.degrees(

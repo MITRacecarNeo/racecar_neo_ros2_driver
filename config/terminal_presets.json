@@ -1,0 +1,38 @@
+[
+  {
+    "name": "One terminal",
+    "layout": {"type": "pane", "id": "a", "title": ""}
+  },
+  {
+    "name": "Teleop logs",
+    "layout": {
+      "type": "split", "dir": "row", "ratio": 0.5,
+      "a": {"type": "pane", "id": "a", "title": ""},
+      "b": {"type": "pane", "id": "b", "title": "Teleop logs", "cmd": "racecar service logs teleop"}
+    }
+  },
+  {
+    "name": "Car status",
+    "layout": {
+      "type": "split", "dir": "row", "ratio": 0.5,
+      "a": {"type": "pane", "id": "a", "title": "Status", "cmd": "racecar status"},
+      "b": {"type": "pane", "id": "b", "title": "CPU and memory", "cmd": "htop"}
+    }
+  },
+  {
+    "name": "Four terminals",
+    "layout": {
+      "type": "split", "dir": "col", "ratio": 0.5,
+      "a": {
+        "type": "split", "dir": "row", "ratio": 0.5,
+        "a": {"type": "pane", "id": "a", "title": ""},
+        "b": {"type": "pane", "id": "b", "title": ""}
+      },
+      "b": {
+        "type": "split", "dir": "row", "ratio": 0.5,
+        "a": {"type": "pane", "id": "c", "title": ""},
+        "b": {"type": "pane", "id": "d", "title": ""}
+      }
+    }
+  }
+]

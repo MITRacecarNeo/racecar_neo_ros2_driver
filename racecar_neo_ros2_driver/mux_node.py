@@ -30,6 +30,8 @@ from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReli
 from sensor_msgs.msg import Joy
 from std_msgs.msg import Bool, Float32MultiArray, UInt32
 
+from .spin import spin
+
 
 class SafetyOverride:
     """
@@ -429,8 +431,11 @@ class MuxNode(Node):
             self._override_was = active
             self._override_pub.publish(Bool(data=active))
             log = self.get_logger().warn if active else self.get_logger().info
-            log('Safety override on: /drive forwarded without RB' if active
-                else 'Safety override off')
+            log(
+                'Safety override on: /drive forwarded without RB'
+                if active
+                else 'Safety override off'
+            )
         if not active:
             return None
         if self._joy_mode(now) == MuxMode.GAMEPAD:
@@ -477,7 +482,7 @@ def main(args: list[str] | None = None) -> None:
     rclpy.init(args=args)
     node = MuxNode()
     try:
-        rclpy.spin(node)
+        spin(node)
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:

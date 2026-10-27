@@ -18,6 +18,9 @@ This package is the v2 successor to [`racecar-neo-ros2-backend`](https://github.
 - [Web dashboard](#web-dashboard)
 - [Lab dashboards](#lab-dashboards)
 - [Autonomy gate](#autonomy-gate)
+- [Low-battery shutdown](#low-battery-shutdown)
+- [Terminal app](#terminal-app)
+- [Hardware health](#hardware-health)
 - [Car data](#car-data)
 - [Bag recording](#bag-recording)
 - [Maps](#maps)
@@ -70,8 +73,9 @@ Display node subscribes:
 Safety and uptime layers:
 - **Mux** enforces speed/steer limits and gates commands behind controller bumpers; zeroes output on joystick disconnect (500 ms timeout).
 - **Watchdog** (`scripts/watchdog.py`) supervises 7 nodes with two liveness signals (ROS topic + the node's entry-point path in `/proc`) and restarts a node when either fails. A 60 s startup grace, backoff of 30, 60, 120 and 240 s between restarts, and a give-up after 5 restarts that do not hold 60 s, re-armed by replugging the device or restarting teleop. Logs on state changes only, skips subsystems disabled at launch, and writes `~/logs/latest/watchdog_state.json`, which `racecar status` and the dashboard read. SIGTERM to SIGKILL escalation, FastRTPS SHM orphan sweep every 60 s, Pi 5 PMIC under-voltage alarm. Restart is skipped when the device is physically missing.
-- **Six core systemd units** (`racecar-{data,teleop,watchdog,dashboard,jupyter,mapview}.service`), enabled at boot. `racecar-data` records the data root first; the watchdog is wired with `BindsTo=` so it stops with teleop, and `Wants=` so it starts with teleop. `racecar-autonomy.service` installs disabled and starts on demand. Four more units carry the lab dashboards; they install disabled and start from the 8080 apps page.
+- **Seven core systemd units** (`racecar-{data,teleop,watchdog,dashboard,jupyter,mapview,battery-guard}.service`), enabled at boot. `racecar-data` records the data root first; the watchdog is wired with `BindsTo=` so it stops with teleop, and `Wants=` so it starts with teleop. `racecar-autonomy.service` installs disabled and starts on demand. Four more units carry the lab dashboards; they install disabled and start from the 8080 apps page.
 - **Launch wrapper** (`scripts/launch_teleop.sh`) creates `~/logs/<timestamp>/`, updates `~/logs/latest` atomically, sweeps FastRTPS SHM orphans, and `exec`s `ros2 launch` so systemd tracks the launch PID directly.
+- **Battery guard** (`scripts/battery_guard.py`, `racecar-battery-guard.service`) warns at 15 minutes of battery left and turns the car off safely at 7.1 V; see [Low-battery shutdown](#low-battery-shutdown).
 - **Web dashboard** at `http://<robot>:8080`: 9 node cards, 9 topic-rate rows, System Health (data drive, RTC battery, Pi under-voltage alarm), watchdog log tail. Auto-refresh.
 - **JupyterLab** at `http://<robot>:8888` with PYTHONPATH/AMENT_PREFIX_PATH pre-set so `import rclpy` works in notebooks.
 - **`colcon test` suite** covering the nodes, scripts, setup phases and attached peripherals, with fix commands in the failure messages.
@@ -218,6 +222,7 @@ racecar cleanup [--force]           # list / kill stale racecar processes + SHM 
 racecar status                      # full diagnostic (devices, sensors, autonomy, system, network)
 racecar status --quick              # host checks only; skips the ROS sampling phase
 racecar status --strict             # exit non-zero on any WARN or SKIP as well
+racecar health                      # power and data drive over time, with a saved report
 racecar eth status                  # eth0 addressing mode + conflict checks
 racecar wifi list                   # visible networks on wlan0
 racecar desktop status              # GNOME on/off for the next boot
@@ -394,8 +399,8 @@ Once `racecar-teleop.service` is running, browse to `http://<robot>:8080`.
 **Apps.** One tile per app, in two groups. Hover over a tile for what it
 does. A white border means the app is running.
 
-- Core: map viewer and JupyterLab, which start at boot, and the safety
-  override (below).
+- Core: map viewer and JupyterLab, which start at boot; Terminal, which
+  starts when opened; the safety override and Turn Off (below).
 - Utilities: web teleop, line follow, wall follow, and camera label.
 - Tap a tile to open the app in a new tab. A stopped utility is started
   first, and the tab shows a loading bar until the app is ready. Cancel
@@ -440,6 +445,25 @@ the tile turns red and:
 
 The car may start moving without warning. Do not leave it unattended.
 
+**Battery.** The header shows the battery: time left, and average power
+over the last 5 minutes. Click the time to switch between percent left,
+time left, and the time the car turns off ("until 12:32"). The page
+remembers the choice. Both hide until the battery guard has an estimate,
+about 30 s after boot.
+
+- With 15 minutes or less left, a red banner shows on this page and on
+  every app page.
+- During a shutdown countdown the banner counts down each second.
+  Cancel shutdown shows when the countdown came from the time estimate.
+  It works once per boot. A countdown at 7.1 V cannot be canceled.
+
+See [Low-battery shutdown](#low-battery-shutdown).
+
+**Turn Off.** The Turn Off tile shuts the car down safely. It asks first.
+It stops a recording, the driving apps, autonomy (saving a map being
+built), and teleop, then powers off. Turn off the power switch after the
+car is off.
+
 **Overview.** Expand it to see the car live: color camera, depth camera,
 lidar (seen from above, forward up), IMU rotation rates and encoder speed over
 the last 30 s, battery voltage and current over the last 30 minutes, and CPU
@@ -460,7 +484,8 @@ The 2-hour history starts over when the dashboard service restarts.
   under-voltage alarm),
   topic rates, autonomy, and the watchdog log. Clear log hides the lines so
   far; the log file is kept.
-- The header shows "System OK" or "Check system".
+- The header shows "System OK", "Check system", "Low battery", or
+  "Shutting down".
 
 The page refreshes every 3 s; Refresh at the bottom updates it at once. Topic
 rates are measured only while the page is open, so they read "measuring" for
@@ -521,6 +546,171 @@ The gamepad bumpers govern: LB for manual, RB for autonomy, neither or both
 for idle. The safety override on the 8080 page lets `/drive` through with no
 gamepad. An optional FlySky transmitter can hold the gate instead; see
 [FlySky transmitter](#flysky-transmitter).
+
+## Low-battery shutdown
+
+`racecar-battery-guard.service` watches the battery from boot and turns the
+car off safely before the battery runs flat. It runs on its own, apart from
+teleop.
+
+| When | What happens |
+|---|---|
+| 15 minutes left | A red line on every terminal and in the tmux status bar: "Low battery: 14 min left. Charge or swap the battery." A banner on 8080 and every app page. LOW, BATT, and "!" on the dot matrix. The LED strip flashes orange, then red. |
+| 5 minutes left | The same 60 s countdown, with Cancel shutdown on 8080 (once per boot). |
+| Battery at 7.1 V (3.55 V per cell) | A 60 s countdown: "Shutting down in 30 s." on terminals and pages, the seconds left on the dot matrix from 20 s, faster LED flashing. |
+| 0 s | "Turning the car off now. Turn off the power switch." SHUT and DOWN on the dot matrix. The guard stops a `racecar log` recording, the driving apps, autonomy (saving a map being built), and teleop, then powers off. |
+
+After a shutdown, turn off the power switch. The PIT board and the halted Pi
+still draw about 100 to 200 mA until the switch is off, so the battery keeps
+draining. Do not leave the car unattended on battery.
+
+The time left comes from a measured discharge curve of the Gens ace 5000 mAh
+2S battery and the current over the last 5 minutes. The PIT firmware's LED
+charge bar uses the same curve. The guard reads the cell count at boot and
+measures the capacity of the battery in the car as it runs. The curve was
+measured with the car idling; while driving, the guard adds back the
+voltage sag for the current above idle (30 mOhm times the extra amps), so
+time left holds steady between driving and standing. Tested on full
+batteries idle (115 to 121 min) and driving (67 min): within 3 minutes of
+the actual time at the 15 and 5 minute marks.
+
+- Status: `/battery/estimate` (`diagnostic_msgs/DiagnosticStatus`, latched,
+  1 Hz). `journalctl -u racecar-battery-guard -f` shows the warning,
+  countdown, and each shutdown step.
+- Log: `<data root>/health/battery/<start>_guard.csv`, one line a second,
+  saved line by line.
+- Analysis: `python3 scripts/battery_curve.py <log> [<log> ...]` reports
+  charge used, capacity, the voltage drop per amp, the curve against the
+  charge actually left, and the time-left estimate replayed over the log.
+- Settings: `config/battery.yaml`; see
+  [docs/advanced-settings.md](./docs/advanced-settings.md), "Battery guard".
+- Bench test without powering off: stop the service, run
+  `python3 scripts/battery_guard.py --dry-run --floor-cell-volts 4.3` from the
+  driver folder, then start the service again. The countdown starts about
+  25 s in and the shutdown steps are logged, not run.
+
+## Terminal app
+
+Shells on the car in a browser, at `http://<robot>:8086`. Open it from the
+Terminal tile in Core on 8080; the first tap starts it.
+
+**Login.** Use the racecar password. Five wrong tries lock the login for a
+minute. A login lasts until Log out, or 30 minutes without use. Logins work
+from the car's access point. To log in from another network, add this to
+`~/.config/racecar/car.yaml` and restart the app:
+
+```yaml
+terminal:
+  allow_lan: true
+```
+
+The password crosses the network unencrypted, so allow it only on a network
+you trust.
+
+**Terminals.** Each new terminal opens in `~/jupyter_ws`. Up to 8 fit on the
+page.
+
+- Each terminal's bar: Split right, Split down, Max, Export, and Close.
+  Double-click a title to rename it. Drag the gap between two terminals to
+  resize them.
+- The header: Presets, Reset (closes all but Terminal 1), A- and A+ (text
+  size), and Log out.
+- The layout is saved on the car. A reload, or the page on another device,
+  shows the same terminals, still running. They run until the app stops.
+
+| Shortcut | Action |
+|---|---|
+| Ctrl+Shift+E | Split right |
+| Ctrl+Shift+O | Split down |
+| Ctrl+Shift+X | Maximize or restore |
+| Ctrl+Shift+W | Close (Chrome keeps this key for closing the window; use Close there) |
+
+**Presets.** A preset is a layout with a command for some terminals, typed
+once when it opens. Built in: One terminal, Teleop logs, Car status, and
+Four terminals. Save layout as preset keeps your own on the car
+(`~/.config/racecar/terminal/presets.json`, up to 20). Export presets and
+Import presets move them between cars as a file.
+
+**Export.** Export in a terminal's bar downloads its text. The car keeps a
+copy in `<data root>/terminal/`.
+
+**SSH.** Each terminal is a tmux session on its own socket:
+
+```bash
+tmux -L racecar-terminal ls                   # rcn-<id> per terminal
+tmux -L racecar-terminal attach -t rcn-main   # Ctrl+B, then D, to detach
+```
+
+`racecar service stop terminal` stops the app and every terminal.
+
+## Hardware health
+
+`racecar health` (`scripts/health.py`) checks the power supply and the data
+drive over time and saves a report. `racecar status` takes one reading of
+each; `racecar health` samples and tests.
+
+```sh
+racecar health          # power, link, then nvme
+racecar health power    # the Pi's 5 V input for 30 s, throttling, the battery
+racecar health link     # the Teensy UART link for 30 s
+racecar health nvme     # the data drive: mount, speed, SMART, kernel log
+racecar health shake    # shake the car on each axis and tap the deck
+racecar health poke     # press and wiggle each connector, one at a time
+```
+
+| Step | Checks | FAIL when |
+|---|---|---|
+| `power` | EXT5V (the Pi's 5 V input) about 140 times a second for 30 s: min, mean, share under 4.75 V; throttle bits before and after; the PMIC under-voltage alarm; the ARM clock; battery voltage and current from `/battery/state` | any sample under 4.75 V; throttling now or during the run; the battery under the guard's floor (3.55 V per cell) |
+| `link` | `pit_node`'s Teensy link report for 30 s: frame rate (200 Hz), longest gap, lost frames, CRC failures, skipped bytes, reconnects, Teensy resets, and the totals since teleop started | a gap over 50 ms; a CRC failure, a reconnect, or a Teensy reset during the sample |
+| `nvme` | drive on PCIe, mounted at `/mnt/nvme`, the data root on it; a 256 MB write and read back that bypasses the page cache, with MB/s; free space; SMART temperature, wear, media errors, and unsafe shutdowns (a count; the switch makes one); NVMe and PCIe errors in this boot's kernel log | no drive; not mounted; the data root on the SD card; a read-back mismatch; SMART critical warning or media errors; any kernel log error |
+
+`shake` and `poke` look for a loose contact. Each prompts one step at a
+time; Enter starts the step, and it runs for a fixed time (10 s for shake, 5 s
+for poke) after a 5 s still step that sets the normal sensor rates. Teleop must
+be running. During every step they watch:
+
+| Watch | A fault |
+|---|---|
+| 5 V input | a sample under 4.75 V |
+| Throttling | a throttle bit not set at the start |
+| Kernel log | a USB disconnect or reset, under-voltage, an NVMe or PCIe error |
+| Data root | a 4 KB write that fails or takes over 1 s (one a second) |
+| PIT link | over 50 ms between `/imu/lsm9ds1` stamps (5 ms apart normally); a CRC failure, reconnect, or Teensy reset in `pit_node`'s link report |
+| Sensor rates | `/scan` (2 s bins) or a RealSense stream under half its still rate |
+
+A step with a fault FAILs and names it; the report adds an events table with
+the time, step, and line of each one. Shake asks you to hold the car with its
+wheels off the ground; poke wants it on a stand with the top deck off. The
+connectors are in `config/health.yaml`; a car with other wiring puts its own
+`poke:` list in the car profile as `params/health.yaml`, which replaces it.
+
+Under 4.85 V, sticky throttle bits from earlier in the boot, a slow drive
+(under 100 MB/s write or 150 MB/s read), a lost Teensy frame, skipped bytes,
+or a frame rate more than 2.5% off 200 Hz warn.
+The battery row needs teleop running; without it the row is skipped.
+
+Each run writes `report.md`, `report.json`, and `samples.csv` (every EXT5V
+sample) to `health/<time>/` under the data root. The exit code is 1 when a
+check fails.
+
+`pit_node` counts the Teensy link while it runs and reports it on
+`/diagnostics` once a second (`pit: teensy link`): frames, the frame rate,
+lost frames (from gaps in the Teensy's own timestamps), the longest gap, CRC
+failures, bytes skipped while finding a frame, reconnects, and Teensy
+resets. `racecar status` has a `teensy link` row from it, and the 8080 Link
+chip shows it: yellow for a minute after a lost frame, CRC failure,
+reconnect, or reset, red with no report.
+
+`racecar status` has `ext5v` and `nvme` rows: one EXT5V reading, and the
+drive's temperature, wear, and media errors. SMART needs root; setup installs
+`/etc/sudoers.d/racecar-nvme` (`scripts/sudoers.d-racecar-nvme`), which allows
+`nvme smart-log -o json /dev/nvme0` without a password and nothing else.
+
+On the 8080 home page, the Power chip shows the 5 V input, read once a second
+while a page is open, and the lowest reading since the page opened. It warns
+under 4.85 V or after a dip earlier in the boot, and turns red under 4.75 V or
+on under-voltage now. The Data chip adds the drive's temperature (warns at 70
+C, red at 80 C).
 
 ## Car data
 
@@ -1059,6 +1249,19 @@ switch it to slow mode before mapping.
 
 Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
 
+- **0.9.1** (2026-10-26): low-battery warning and safe shutdown
+  (`racecar-battery-guard.service`: time left corrected for the sag while
+  driving, a red line on terminals, banners on 8080 and the app pages, LED
+  strip and dot-matrix alerts, a 60 s countdown at 5 minutes left or 7.1 V);
+  battery time and power in the 8080 header and a Turn Off tile;
+  `battery_curve.py` for guard logs; a terminal app on port 8086 (tmux
+  terminals in the browser behind the racecar password, layouts and presets
+  saved on the car); `racecar health` (power, the Teensy link, and the data
+  drive over time; shake and poke tests for loose contacts; a saved report),
+  with `ext5v`, `nvme`, and `teensy link` rows in `racecar status` and Power
+  and Link chips on 8080; driver CPU at idle from about 1.15 cores to 0.29;
+  `speed_cap` in `throttle.yaml` clips speed for every source (1.0, off, by
+  default).
 - **0.9.0** (2026-10-24): 2D SLAM beside teleop (`racecar map` to build, save,
   load, extend, and recover maps through `racecar-autonomy.service`;
   `racecar launch autonomy`: slam_toolbox mapping, AMCL or slam_toolbox

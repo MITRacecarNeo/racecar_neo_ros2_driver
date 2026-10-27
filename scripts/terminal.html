@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>RACECAR Neo terminal</title>
+<link rel="stylesheet" href="/ui/rcn.css?v=13">
+<script src="/ui/battery.js?v=13" defer></script>
+<link rel="icon" href="/ui/brand/app-icon-32.png">
+<link rel="apple-touch-icon" href="/ui/brand/app-icon-180.png">
+<style>
+  html, body { height: 100%; }
+  body { display: flex; flex-direction: column; overflow: hidden; }
+  .rcn-header .tools { display: flex; align-items: center; gap: var(--rcn-space-2); }
+  #msg { font: 400 14px/20px var(--rcn-font-sans); color: var(--rcn-text-muted); }
+  main { flex: 1; min-height: 0; padding: var(--rcn-space-2); display: flex; flex-direction: column; }
+  #area { position: relative; flex: 1; min-height: 0; }
+  .pane { position: absolute; display: flex; flex-direction: column; border: 1px solid var(--rcn-steel); border-radius: var(--rcn-radius-md); overflow: hidden; background: #000; box-sizing: border-box; }
+  .pane.focused { border-color: var(--rcn-orange); }
+  .pane .bar { display: flex; align-items: center; gap: 4px; padding: 2px 4px 2px 8px; background: var(--rcn-surface); font: 600 13px/22px var(--rcn-font-sans); }
+  .pane .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
+  .pane .bar button { font: 600 12px/18px var(--rcn-font-sans); padding: 1px 6px; border-radius: 4px; border: 1px solid var(--rcn-steel); background: transparent; color: var(--rcn-text); cursor: pointer; }
+  .pane .bar button:hover { border-color: var(--rcn-orange); }
+  .presets { position: relative; }
+  #preset-menu { position: absolute; right: 0; top: calc(100% + 8px); z-index: 20; min-width: 240px; background: var(--rcn-surface); border: 1px solid var(--rcn-steel); border-radius: var(--rcn-radius-md); padding: var(--rcn-space-2); }
+  #preset-menu .group { font: 700 11px/18px var(--rcn-font-sans); text-transform: uppercase; color: var(--rcn-text-muted); padding: 6px 6px 2px; }
+  #preset-menu .row { display: flex; align-items: center; gap: 4px; }
+  #preset-menu button { flex: 1; text-align: left; font: 500 14px/20px var(--rcn-font-sans); padding: 4px 6px; border: 0; border-radius: 4px; background: transparent; color: var(--rcn-text); cursor: pointer; }
+  #preset-menu button:hover { background: var(--rcn-steel); }
+  #preset-menu button.delete { flex: none; color: var(--rcn-text-muted); }
+  #preset-menu hr { border: 0; border-top: 1px solid var(--rcn-steel); margin: 6px 0; }
+  .pane iframe { flex: 1; width: 100%; border: 0; display: block; background: #000; }
+  .divider { position: absolute; z-index: 5; }
+  .divider.row { width: 8px; margin-left: -4px; cursor: col-resize; }
+  .divider.col { height: 8px; margin-top: -4px; cursor: row-resize; }
+  .divider:hover, .divider.dragging { background: var(--rcn-orange); opacity: 0.6; }
+  /* Covers the terminals while a divider moves, so the iframes do not take the pointer. */
+  #shield { position: absolute; inset: 0; z-index: 4; }
+</style>
+</head>
+<body>
+<header class="rcn-header">
+  <img class="rcn-mark" src="/ui/brand/mark.png" alt="RACECAR Neo">
+  <span class="rcn-title">Terminal</span>
+  <span id="msg" role="status"></span>
+  <span class="rcn-spacer"></span>
+  <span class="tools">
+    <span class="presets">
+      <button class="rcn-btn quiet small" id="presets" aria-haspopup="true" aria-expanded="false">Presets</button>
+      <div id="preset-menu" hidden></div>
+    </span>
+    <input type="file" id="import-file" accept="application/json,.json" hidden>
+    <button class="rcn-btn quiet small" id="reset" title="Close all but Terminal 1">Reset</button>
+    <button class="rcn-btn quiet small" id="font-down" title="Smaller text">A-</button>
+    <button class="rcn-btn quiet small" id="font-up" title="Larger text">A+</button>
+    <form method="post" action="/logout"><button class="rcn-btn quiet small" type="submit">Log out</button></form>
+  </span>
+</header>
+<main>
+  <div id="area"><div id="shield" hidden></div></div>
+</main>
+<script>
+'use strict';
+// Layout: a tree of terminals and splits, saved on the car so a reload or another
+// device opens the same terminals. Terminals are placed absolutely from the tree and
+// never moved in the page: moving an iframe reloads it and reconnects.
+const $ = (id) => document.getElementById(id);
+const MAX_PANES = 8;
+const LOST = 'Lost contact with the car.';
+// Scroll bar inside each terminal in the theme's colors: steel thumb, orange on hover.
+const PANE_STYLE = `
+  .xterm-viewport { scrollbar-color: #505166 #000000; scrollbar-width: thin; }
+  .xterm-viewport::-webkit-scrollbar { width: 10px; }
+  .xterm-viewport::-webkit-scrollbar-track { background: #000000; }
+  .xterm-viewport::-webkit-scrollbar-thumb { background: #505166; border-radius: 5px; border: 2px solid #000000; }
+  .xterm-viewport::-webkit-scrollbar-thumb:hover { background: #f49a4b; }
+`;
+const FONT_SIZES = [10, 11, 12, 13, 14, 16, 18, 20, 24];
+const store = {
+  get: (k, d) => { try { return localStorage.getItem(k) ?? d; } catch (err) { return d; } },
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch (err) { /* not remembered */ } },
+};
+let layout = null;
+// -1 until the first load, so a car with no saved layout (version 0) still draws.
+let version = -1;
+let maximized = null;
+let focused = null;
+let dragging = false;
+let fontSize = Number(store.get('rcn-terminal-font', '14')) || 14;
+const panes = new Map();  // id -> { el, frame, title }
+
+function say(text) { $('msg').textContent = text; }
+function newId() { return Math.random().toString(36).slice(2, 8).padEnd(6, '0'); }
+function ids(node) { return node.type === 'pane' ? [node.id] : [...ids(node.a), ...ids(node.b)]; }
+
+// Rectangles in percent of the area: terminals, and one divider per split.
+function place(node, x, y, w, h, out) {
+  if (node.type === 'pane') { out.panes.push({ id: node.id, node, rect: [x, y, w, h] }); return out; }
+  if (node.dir === 'row') {
+    const wa = w * node.ratio;
+    place(node.a, x, y, wa, h, out);
+    place(node.b, x + wa, y, w - wa, h, out);
+    out.dividers.push({ node, dir: 'row', rect: [x + wa, y, 0, h], box: [x, y, w, h] });
+  } else {
+    const ha = h * node.ratio;
+    place(node.a, x, y, w, ha, out);
+    place(node.b, x, y + ha, w, h - ha, out);
+    out.dividers.push({ node, dir: 'col', rect: [x, y + ha, w, 0], box: [x, y, w, h] });
+  }
+  return out;
+}
+
+function setRect(el, [x, y, w, h]) {
+  el.style.left = `${x}%`; el.style.top = `${y}%`;
+  el.style.width = `${w}%`; el.style.height = `${h}%`;
+}
+
+function makePane(id) {
+  const el = document.createElement('div');
+  el.className = 'pane';
+  el.innerHTML = `<div class="bar"><span class="title"></span>
+    <button data-act="row" title="Split right (Ctrl+Shift+E)">Split right</button>
+    <button data-act="col" title="Split down (Ctrl+Shift+O)">Split down</button>
+    <button data-act="max" title="Maximize (Ctrl+Shift+X)">Max</button>
+    <button data-act="export" title="Save the text to a file">Export</button>
+    <button data-act="close" title="Close (Ctrl+Shift+W)">Close</button></div>`;
+  const frame = document.createElement('iframe');
+  frame.title = 'Terminal';
+  frame.src = `/pane/${id}/`;
+  el.append(frame);
+  el.querySelector('.bar').onclick = (ev) => {
+    const act = ev.target.dataset && ev.target.dataset.act;
+    if (act === 'row' || act === 'col') split(id, act);
+    else if (act === 'max') toggleMax(id);
+    else if (act === 'close') closePane(id);
+    else if (act === 'export') exportText(id);
+  };
+  el.querySelector('.title').ondblclick = () => rename(id);
+  frame.addEventListener('load', () => hookFrame(id, frame));
+  $('area').append(el);
+  return { el, frame };
+}
+
+// Shortcuts and focus inside a terminal: same origin, so the page can listen
+// there, and ttyd's xterm.js is told to leave the shortcut keys alone.
+function hookFrame(id, frame) {
+  const win = frame.contentWindow;
+  if (!win) return;
+  const style = win.document.createElement('style');
+  style.textContent = PANE_STYLE;
+  win.document.head.append(style);
+  win.addEventListener('keydown', (ev) => shortcut(ev, id), true);
+  win.addEventListener('focus', () => setFocus(id));
+  const attach = () => {
+    if (!win.term) { setTimeout(attach, 200); return; }
+    win.term.attachCustomKeyEventHandler((ev) => !isShortcut(ev));
+    applyFont(win);
+  };
+  attach();
+}
+
+function isShortcut(ev) {
+  return ev.ctrlKey && ev.shiftKey && ['KeyE', 'KeyO', 'KeyW', 'KeyX'].includes(ev.code);
+}
+function shortcut(ev, id) {
+  if (!isShortcut(ev) || ev.type !== 'keydown') return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  const target = id || focused || (layout && ids(layout)[0]);
+  if (!target) return;
+  if (ev.code === 'KeyE') split(target, 'row');
+  else if (ev.code === 'KeyO') split(target, 'col');
+  else if (ev.code === 'KeyW') closePane(target);
+  else if (ev.code === 'KeyX') toggleMax(target);
+}
+window.addEventListener('keydown', (ev) => shortcut(ev, null), true);
+
+function setFocus(id) {
+  focused = id;
+  for (const [pid, p] of panes) p.el.classList.toggle('focused', pid === id);
+}
+
+function applyFont(win) {
+  if (!win || !win.term) return;
+  win.term.options.fontSize = fontSize;
+  // ttyd fits the terminal to the frame on a window resize.
+  win.dispatchEvent(new Event('resize'));
+}
+function changeFont(step) {
+  const i = Math.max(0, Math.min(FONT_SIZES.length - 1, FONT_SIZES.indexOf(fontSize) + step));
+  fontSize = FONT_SIZES[i] || 14;
+  store.set('rcn-terminal-font', String(fontSize));
+  for (const p of panes.values()) applyFont(p.frame.contentWindow);
+}
+$('font-down').onclick = () => changeFont(-1);
+$('font-up').onclick = () => changeFont(1);
+
+function render() {
+  const out = place(layout, 0, 0, 100, 100, { panes: [], dividers: [] });
+  const live = new Set(out.panes.map((p) => p.id));
+  if (maximized && !live.has(maximized)) maximized = null;
+  for (const [id, p] of panes) {
+    if (!live.has(id)) { p.el.remove(); panes.delete(id); }
+  }
+  out.panes.forEach((p, i) => {
+    if (!panes.has(p.id)) panes.set(p.id, makePane(p.id));
+    const { el } = panes.get(p.id);
+    el.hidden = maximized !== null && maximized !== p.id;
+    setRect(el, maximized === p.id ? [0, 0, 100, 100] : p.rect);
+    el.querySelector('.title').textContent = p.node.title || `Terminal ${i + 1}`;
+    el.querySelector('[data-act="max"]').textContent = maximized === p.id ? 'Restore' : 'Max';
+  });
+  document.querySelectorAll('.divider').forEach((d) => d.remove());
+  if (maximized) return;
+  for (const d of out.dividers) {
+    const div = document.createElement('div');
+    div.className = `divider ${d.dir}`;
+    setRect(div, d.dir === 'row' ? [d.rect[0], d.rect[1], 0, d.rect[3]] : [d.rect[0], d.rect[1], d.rect[2], 0]);
+    if (d.dir === 'row') div.style.width = '8px'; else div.style.height = '8px';
+    div.onpointerdown = (ev) => startDrag(ev, div, d);
+    $('area').append(div);
+  }
+}
+
+function startDrag(ev, div, d) {
+  ev.preventDefault();
+  dragging = true;
+  $('shield').hidden = false;
+  div.classList.add('dragging');
+  const area = $('area').getBoundingClientRect();
+  const move = (e) => {
+    const [bx, by, bw, bh] = d.box;
+    const share = d.dir === 'row'
+      ? ((e.clientX - area.left) / area.width * 100 - bx) / bw
+      : ((e.clientY - area.top) / area.height * 100 - by) / bh;
+    d.node.ratio = Math.min(0.9, Math.max(0.1, share));
+    render();
+  };
+  const up = () => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+    dragging = false;
+    $('shield').hidden = true;
+    save();
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+}
+
+// Tree edits.
+function replaceNode(node, id, make) {
+  if (node.type === 'pane') return node.id === id ? make(node) : node;
+  return { ...node, a: replaceNode(node.a, id, make), b: replaceNode(node.b, id, make) };
+}
+function removePane(node, id) {
+  if (node.type === 'pane') return node.id === id ? null : node;
+  const a = removePane(node.a, id);
+  const b = removePane(node.b, id);
+  if (!a) return b;
+  if (!b) return a;
+  return { ...node, a, b };
+}
+function split(id, dir) {
+  if (ids(layout).length >= MAX_PANES) { say(`Up to ${MAX_PANES} terminals.`); return; }
+  const fresh = newId();
+  layout = replaceNode(layout, id, (pane) => ({ type: 'split', dir, ratio: 0.5, a: pane, b: { type: 'pane', id: fresh, title: '' } }));
+  maximized = null;
+  render();
+  save();
+}
+async function closePane(id) {
+  if (ids(layout).length === 1) { say('The last terminal stays open.'); return; }
+  if (!confirm('Close this terminal?')) return;
+  layout = removePane(layout, id);
+  render();
+  await save();
+  post('/api/pane/close', { id });
+}
+async function reset() {
+  const [keep, ...rest] = ids(layout);
+  if (!rest.length) { say('Only Terminal 1 is open.'); return; }
+  if (!confirm('Close every terminal except Terminal 1?')) return;
+  const node = place(layout, 0, 0, 100, 100, { panes: [], dividers: [] }).panes[0].node;
+  layout = { ...node, id: keep };
+  maximized = null;
+  render();
+  await save();
+  for (const id of rest) post('/api/pane/close', { id });
+}
+$('reset').onclick = reset;
+function toggleMax(id) {
+  maximized = maximized === id ? null : id;
+  render();
+}
+function rename(id) {
+  const node = place(layout, 0, 0, 100, 100, { panes: [], dividers: [] }).panes.find((p) => p.id === id).node;
+  const title = prompt('Terminal title', node.title || '');
+  if (title === null) return;
+  layout = replaceNode(layout, id, (pane) => ({ ...pane, title: title.slice(0, 40) }));
+  render();
+  save();
+}
+
+// Server state.
+// Export: the terminal's whole scrollback as a download; the car keeps a copy.
+function titleOf(id) {
+  const all = place(layout, 0, 0, 100, 100, { panes: [], dividers: [] }).panes;
+  const i = all.findIndex((p) => p.id === id);
+  return (all[i] && all[i].node.title) || `Terminal ${i + 1}`;
+}
+function download(name, text, type) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type }));
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+async function exportText(id) {
+  try {
+    const r = await post('/api/scrollback', { id, title: titleOf(id) });
+    const o = await r.json();
+    if (!r.ok) { say(o.message); return; }
+    download(o.name, o.text, 'text/plain');
+    say(`Saved to ${o.path}`);
+  } catch (err) { say(LOST); }
+}
+
+// Presets: built-in layouts with start commands, and this car's own.
+let presets = { builtin: [], user: [] };
+function presetRow(p, kind) {
+  const del = kind === 'user' ? `<button class="delete" data-del="${esc(p.name)}" title="Delete">x</button>` : '';
+  return `<div class="row"><button data-apply="${esc(p.name)}" data-kind="${kind}">${esc(p.name)}</button>${del}</div>`;
+}
+function esc(t) { return String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function renderPresets() {
+  const mine = presets.user.length
+    ? `<div class="group">Your presets</div>${presets.user.map((p) => presetRow(p, 'user')).join('')}` : '';
+  $('preset-menu').innerHTML = `<div class="group">Built in</div>${presets.builtin.map((p) => presetRow(p, 'builtin')).join('')}${mine}
+    <hr><div class="row"><button data-op="save">Save layout as preset</button></div>
+    <div class="row"><button data-op="export">Export presets</button></div>
+    <div class="row"><button data-op="import">Import presets</button></div>`;
+}
+async function loadPresets() {
+  try {
+    const r = await fetch('/api/presets');
+    if (r.ok) { presets = await r.json(); renderPresets(); }
+  } catch (err) { say(LOST); }
+}
+function toggleMenu(open) {
+  const menu = $('preset-menu');
+  menu.hidden = open === undefined ? !menu.hidden : !open;
+  $('presets').setAttribute('aria-expanded', String(!menu.hidden));
+  if (!menu.hidden) loadPresets();
+}
+$('presets').onclick = (ev) => { ev.stopPropagation(); toggleMenu(); };
+document.addEventListener('click', (ev) => { if (!$('preset-menu').contains(ev.target)) toggleMenu(false); });
+document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') toggleMenu(false); });
+$('preset-menu').onclick = async (ev) => {
+  const b = ev.target.closest('button');
+  if (!b) return;
+  if (b.dataset.apply) applyPreset(b.dataset.apply, b.dataset.kind);
+  else if (b.dataset.del) deletePreset(b.dataset.del);
+  else if (b.dataset.op === 'save') savePreset();
+  else if (b.dataset.op === 'export') download('terminal-presets.json', JSON.stringify(presets.user, null, 2), 'application/json');
+  else if (b.dataset.op === 'import') $('import-file').click();
+};
+async function applyPreset(name, kind) {
+  toggleMenu(false);
+  if (!confirm(`Replace the open terminals with ${name}?`)) return;
+  try {
+    const r = await post('/api/presets/apply', { name, kind });
+    const o = await r.json();
+    if (r.ok) { maximized = null; adopt(o); } else say(o.message || 'Could not open the preset.');
+  } catch (err) { say(LOST); }
+}
+async function savePreset() {
+  toggleMenu(false);
+  const name = prompt('Preset name');
+  if (!name || !name.trim()) return;
+  if (presets.user.some((p) => p.name === name.trim()) && !confirm(`Replace ${name.trim()}?`)) return;
+  try {
+    const r = await post('/api/presets/save', { name: name.trim(), layout });
+    if (r.ok) { presets = await r.json(); renderPresets(); say(`Saved ${name.trim()}.`); }
+    else say((await r.json()).message);
+  } catch (err) { say(LOST); }
+}
+async function deletePreset(name) {
+  if (!confirm(`Delete ${name}?`)) return;
+  try {
+    const r = await post('/api/presets/delete', { name });
+    if (r.ok) { presets = await r.json(); renderPresets(); }
+  } catch (err) { say(LOST); }
+}
+$('import-file').onchange = async () => {
+  const file = $('import-file').files[0];
+  $('import-file').value = '';
+  if (!file) return;
+  try {
+    const list = JSON.parse(await file.text());
+    const r = await post('/api/presets/import', { presets: list });
+    const o = await r.json();
+    if (r.ok) { presets = o; renderPresets(); say(`Imported ${o.imported} presets.`); } else say('That file has no presets.');
+  } catch (err) { say('That file has no presets.'); }
+};
+
+async function post(path, body) {
+  const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (r.status === 401) location.reload();
+  return r;
+}
+async function save() {
+  try {
+    const r = await post('/api/layout', { version, layout });
+    const state = await r.json();
+    if (r.ok || r.status === 409) adopt(state);
+    if (r.status === 409) say('Changed on another device.');
+  } catch (err) { say(LOST); }
+}
+function adopt(state) {
+  version = state.version;
+  layout = state.layout;
+  render();
+}
+async function poll() {
+  if (dragging) return;
+  try {
+    const r = await fetch('/api/layout');
+    if (r.status === 401) { location.reload(); return; }
+    const state = await r.json();
+    if (state.version !== version) adopt(state);
+    if ($('msg').textContent === LOST) say('');
+  } catch (err) { say(LOST); }
+}
+poll();
+setInterval(poll, 3000);
+</script>
+</body>
+</html>

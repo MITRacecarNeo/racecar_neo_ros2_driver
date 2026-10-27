@@ -39,7 +39,9 @@ done
 # racecar user, for the home page on port 8080.
 # 49-racecar-teleop: restart of racecar-teleop.service by the racecar user,
 # for the Features tiles on the home page.
-for rule in 49-racecar-network.rules 49-racecar-autonomy.rules 49-racecar-dashboards.rules 49-racecar-teleop.rules; do
+# 49-racecar-power: stop of racecar-teleop.service and power off by the
+# racecar user, for the battery guard's low-battery shutdown.
+for rule in 49-racecar-network.rules 49-racecar-autonomy.rules 49-racecar-dashboards.rules 49-racecar-teleop.rules 49-racecar-power.rules; do
     POLKIT_SRC="${SCRIPT_DIR}/polkit/${rule}"
     POLKIT_DST="/etc/polkit-1/rules.d/${rule}"
     if [ ! -f "$POLKIT_SRC" ]; then
@@ -57,6 +59,30 @@ for rule in 49-racecar-network.rules 49-racecar-autonomy.rules 49-racecar-dashbo
         echo "  installed $POLKIT_DST"
     fi
 done
+
+# PAM service for the terminal app's login (scripts/terminal.py): the racecar
+# password through common-auth, with a 3 s delay after a failure.
+PAM_SRC="${SCRIPT_DIR}/pam.d-racecar-terminal"
+PAM_DST="/etc/pam.d/racecar-terminal"
+if sudo cmp -s "$PAM_SRC" "$PAM_DST" 2>/dev/null; then
+    echo "  $PAM_DST already up to date"
+else
+    sudo install -m 0644 -o root -g root "$PAM_SRC" "$PAM_DST"
+    echo "  installed $PAM_DST"
+fi
+
+# sudoers rule: the NVMe SMART log without a password, read-only
+# (racecar status, racecar health, racecar disk). Checked with visudo first.
+SUDOERS_SRC="${SCRIPT_DIR}/sudoers.d-racecar-nvme"
+SUDOERS_DST="/etc/sudoers.d/racecar-nvme"
+if sudo cmp -s "$SUDOERS_SRC" "$SUDOERS_DST" 2>/dev/null; then
+    echo "  $SUDOERS_DST already up to date"
+elif sudo visudo -cf "$SUDOERS_SRC" >/dev/null; then
+    sudo install -m 0440 -o root -g root "$SUDOERS_SRC" "$SUDOERS_DST"
+    echo "  installed $SUDOERS_DST"
+else
+    echo "  WARNING: $SUDOERS_SRC failed visudo; not installed." >&2
+fi
 
 BASHRC="$USER_HOME/.bashrc"
 

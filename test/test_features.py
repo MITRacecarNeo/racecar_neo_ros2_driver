@@ -52,7 +52,9 @@ class TestChange:
 class TestLaunchArgs:
     def test_one_argument_per_subsystem(self, features):
         assert features.launch_args({'camera': True, 'detections': False}) == [
-            'realsense_enable:=true', 'edgetpu_enable:=false']
+            'realsense_enable:=true',
+            'edgetpu_enable:=false',
+        ]
 
     def test_given_arguments_win(self, features):
         out = features.launch_args(features.DEFAULTS, ['edgetpu_enable:=true'])
@@ -67,6 +69,7 @@ class TestLaunchArgs:
 
     def test_launch_script_passes_the_features(self):
         from pathlib import Path
+
         script = Path(__file__).resolve().parent.parent / 'scripts' / 'launch_teleop.sh'
         text = script.read_text()
         assert 'features.py" args "$@"' in text

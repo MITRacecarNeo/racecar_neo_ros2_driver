@@ -622,8 +622,9 @@ def resume(out: Out = print, timeout: float = READY_TIMEOUT_SEC) -> int:
     if mode not in ('mapping', 'localization') or not valid_name(name):
         raise MapError('no earlier run to resume. Start mapping or load a map in the map viewer.')
     if mode == 'localization':
-        return load(name, localizer=values.get('AUTONOMY_LOCALIZER') or 'amcl', out=out,
-                    timeout=timeout)
+        return load(
+            name, localizer=values.get('AUTONOMY_LOCALIZER') or 'amcl', out=out, timeout=timeout
+        )
     require_teleop()
     stop_driving_apps(out)
     _control('start')

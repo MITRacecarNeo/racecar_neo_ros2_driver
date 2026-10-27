@@ -12,11 +12,12 @@ page asks, at the page's rate rather than the sensor's.
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Callable
 import math
 from pathlib import Path
 import threading
 import time
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
 
@@ -77,8 +78,9 @@ def colorize_depth(depth_mm: np.ndarray, far_m: float = DEPTH_FAR_M) -> np.ndarr
     return out
 
 
-def scan_points(ranges: list[float], angle_min: float, angle_inc: float,
-                mount: tuple[float, float, float]) -> list[list[float]]:
+def scan_points(
+    ranges: list[float], angle_min: float, angle_inc: float, mount: tuple[float, float, float]
+) -> list[list[float]]:
     """Return lidar returns as [x, y] in base_link (x forward, y left), thinned."""
     lx, ly, yaw = mount
     out = []
@@ -101,8 +103,11 @@ def laser_mount_from_config(config_dir: Path | None) -> tuple[float, float, floa
 
             config_dir = Path(get_package_share_directory('racecar_neo_ros2_driver')) / 'config'
         f = load_frames(config_dir)
-        return (f.get('laser_x_mm', 0.0) / 1000.0, f.get('laser_y_mm', 0.0) / 1000.0,
-                math.radians(f.get('laser_yaw_deg', 0.0)))
+        return (
+            f.get('laser_x_mm', 0.0) / 1000.0,
+            f.get('laser_y_mm', 0.0) / 1000.0,
+            math.radians(f.get('laser_yaw_deg', 0.0)),
+        )
     except Exception:  # noqa: BLE001  the view still draws, unrotated
         return (0.0, 0.0, 0.0)
 
@@ -110,10 +115,16 @@ def laser_mount_from_config(config_dir: Path | None) -> tuple[float, float, floa
 class Overview:
     """On-demand feeds: latest frames, a thinned scan, and 30 s IMU and speed graphs."""
 
-    def __init__(self, node: Any, deserialize: Callable[[bytes, Any], Any] | None = None,
-                 config_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        node: Any,
+        deserialize: Callable[[bytes, Any], Any] | None = None,
+        config_dir: Path | None = None,
+    ) -> None:
         if deserialize is None:
-            from rclpy.serialization import deserialize_message as deserialize
+            from rclpy.serialization import deserialize_message
+
+            deserialize = deserialize_message
         self.node = node
         self._deserialize = deserialize
         self._lock = threading.Lock()
@@ -151,7 +162,11 @@ class Overview:
         for name in names:
             topic, type_path = FEEDS[name]
             self._handles[name] = self.node.create_subscription(
-                _msg_class(type_path), topic, self._store(name), qos_profile_sensor_data, raw=True,
+                _msg_class(type_path),
+                topic,
+                self._store(name),
+                qos_profile_sensor_data,
+                raw=True,
             )
 
     def _drop(self, names: list[str]) -> None:
@@ -173,6 +188,7 @@ class Overview:
     def _store(self, name: str) -> Callable[[bytes], None]:
         def cb(data: bytes) -> None:
             self._latest[name] = (data, time.monotonic())
+
         return cb
 
     def _decode(self, name: str) -> tuple[Any, float] | None:
@@ -211,10 +227,21 @@ class Overview:
             now = time.monotonic()
             ages = {k: round(now - v[1], 1) for k, v in self._latest.items()}
             scan = self._decode('scan')
-            points = scan_points(list(scan[0].ranges), scan[0].angle_min, scan[0].angle_increment,
-                                 self._mount) if scan else []
-            return {'now': time.time(), 'ages': ages, 'scan': points,
-                    'imu': list(self.imu), 'speed': list(self.speed), 'graph_sec': GRAPH_SEC}
+            points = (
+                scan_points(
+                    list(scan[0].ranges), scan[0].angle_min, scan[0].angle_increment, self._mount
+                )
+                if scan
+                else []
+            )
+            return {
+                'now': time.time(),
+                'ages': ages,
+                'scan': points,
+                'imu': list(self.imu),
+                'speed': list(self.speed),
+                'graph_sec': GRAPH_SEC,
+            }
 
     def jpeg(self, name: str, max_age: float = 0.25) -> bytes | None:
         """Return a small JPEG of the latest color or depth frame; cached for max_age s."""
@@ -233,8 +260,9 @@ class Overview:
         if name == 'depth':
             img = colorize_depth(img)
         scale = PREVIEW_WIDTH / img.shape[1]
-        small = cv2.resize(img, (PREVIEW_WIDTH, max(1, int(img.shape[0] * scale))),
-                           interpolation=cv2.INTER_AREA)
+        small = cv2.resize(
+            img, (PREVIEW_WIDTH, max(1, int(img.shape[0] * scale))), interpolation=cv2.INTER_AREA
+        )
         data = cv2.imencode('.jpg', small, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])[1].tobytes()
         with self._lock:
             self._jpeg[name] = (data, time.monotonic())

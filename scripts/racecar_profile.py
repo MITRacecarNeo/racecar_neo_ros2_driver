@@ -32,8 +32,9 @@ def show() -> int:
     if not root.is_dir():
         print('No profile yet. Calibrating the car, or racecar profile migrate, creates it.')
         return 0
-    files = sorted(p for p in root.rglob('*')
-                   if p.is_file() and 'history' not in p.relative_to(root).parts)
+    files = sorted(
+        p for p in root.rglob('*') if p.is_file() and 'history' not in p.relative_to(root).parts
+    )
     for path in files:
         stamp = datetime.fromtimestamp(path.stat().st_mtime).strftime('%Y-%m-%d %H:%M')
         print(f'  {stamp}  {path.relative_to(root)}')

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""RACECAR Neo camera label dashboard: collect frames, then label them, YOLO out.
+"""
+RACECAR Neo camera label dashboard: collect frames, then label them, YOLO out.
 
 Two-stage workflow on port 8085 (stdlib HTTP + rclpy, wallfollow pattern):
   Collect: Snap saves the current camera frame to unlabeled/.
@@ -23,6 +24,7 @@ import re
 import signal
 import sys
 import threading
+from typing import Any
 
 import cv2
 import numpy as np
@@ -38,7 +40,8 @@ PORT = 8085
 BASE = Path(__file__).resolve().parent
 # The shared styles, fonts and logos are served from scripts/web/ (webui.py).
 sys.path.insert(0, str(BASE.parents[1]))
-import webui  # noqa: E402
+import webui  # noqa: E402, I100
+
 # Dataset lives under the data root (data_root.py), outside the code tree, so
 # reinstalling or re-cloning never touches collected frames or labels.
 DATASET = data_root.current()[0] / 'datasets' / 'camlabel'
@@ -48,14 +51,14 @@ LABELS = DATASET / 'labels'
 
 CACHE_FOREVER = 'max-age=31536000, immutable'
 
-_lock = threading.Lock()      # latest frame
-_fs_lock = threading.Lock()   # file numbering and moves
+_lock = threading.Lock()  # latest frame
+_fs_lock = threading.Lock()  # file numbering and moves
 _live = b''
 _preview = b''
 _cam_res = [0, 0]
-_thumbs = {}
+_thumbs: dict[str, bytes] = {}
 
-_cfg = {'preview_width': 320, 'preview_quality': 45}
+_cfg: dict[str, Any] = {'preview_width': 320, 'preview_quality': 45}
 try:
     _cfg.update(yaml.safe_load((BASE / 'camlabel.yaml').read_text()) or {})
 except OSError:
@@ -63,11 +66,11 @@ except OSError:
 
 
 class CameraNode(Node):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__('camlabel')
         self.create_subscription(Image, '/camera/color', self._cb, qos_profile_sensor_data)
 
-    def _cb(self, msg):
+    def _cb(self, msg: Image) -> None:
         global _live, _preview, _cam_res
         if msg.encoding == 'jpeg':
             data = bytes(msg.data)
@@ -92,34 +95,41 @@ class CameraNode(Node):
             _cam_res = res
 
 
-def _num(name):
+def _num(name: str) -> int:
     """u7.jpg or img7.jpg -> 7."""
     m = re.search(r'(\d+)\.jpg$', name)
     return int(m.group(1)) if m else 0
 
 
-def _nums(folder, pattern):
+def _nums(folder: Path, pattern: str) -> list[int]:
     return sorted(_num(f.name) for f in folder.glob(pattern)) if folder.exists() else []
 
 
-def _entries(folder, pattern):
-    """[[number, mtime_ns], ...] so the browser can cache files forever yet
-    never show a stale image if a dataset is wiped and numbers restart."""
+def _entries(folder: Path, pattern: str) -> list[list[int]]:
+    """
+    Return [[number, mtime_ns], ...] for the files matching pattern.
+
+    The browser can cache files forever yet never show a stale image if a
+    dataset is wiped and numbers restart.
+    """
     if not folder.exists():
         return []
     return sorted([_num(f.name), f.stat().st_mtime_ns] for f in folder.glob(pattern))
 
 
-def _next_unlabeled_number():
-    """Monotonic counter so unlabeled names are never reused. Unique names
-    let the browser cache every image and thumbnail forever."""
+def _next_unlabeled_number() -> int:
+    """
+    Return the next unlabeled number; names are never reused.
+
+    Unique names let the browser cache every image and thumbnail forever.
+    """
     f = DATASET / 'ucounter'
     n = (int(f.read_text()) if f.exists() else 0) + 1
     f.write_text(str(n))
     return n
 
 
-def _class_id(name):
+def _class_id(name: str) -> int:
     """Index of name in classes.txt, appending it if new."""
     path = DATASET / 'classes.txt'
     classes = path.read_text().splitlines() if path.exists() else []
@@ -129,9 +139,12 @@ def _class_id(name):
     return classes.index(name)
 
 
-def _thumb(path):
-    """160-wide jpeg thumbnail, cached in memory. Safe because file names
-    are never reused within a dataset."""
+def _thumb(path: Path) -> bytes:
+    """
+    Return a 160-wide JPEG thumbnail, cached in memory.
+
+    Safe because file names are never reused within a dataset.
+    """
     key = f'{path}:{path.stat().st_mtime_ns}'
     t = _thumbs.get(key)
     if t is None:
@@ -152,10 +165,10 @@ class Handler(BaseHTTPRequestHandler):
     # handshake per request. Matters a lot on congested WiFi.
     protocol_version = 'HTTP/1.1'
 
-    def _query_n(self):
+    def _query_n(self) -> int:
         return int(self.path.split('n=')[1].split('&')[0])
 
-    def do_GET(self):
+    def do_GET(self) -> None:
         asset = webui.static_file(self.path)
         if asset is not None:
             self.send_response(200)
@@ -177,12 +190,14 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == '/info':
             with _lock:
                 res = list(_cam_res)
-            body = json.dumps({
-                'cam': res,
-                'preview_width': int(_cfg['preview_width']),
-                'unlabeled': _entries(UNLABELED, 'u*.jpg'),
-                'labeled': _entries(IMAGES, 'img*.jpg'),
-            })
+            body = json.dumps(
+                {
+                    'cam': res,
+                    'preview_width': int(_cfg['preview_width']),
+                    'unlabeled': _entries(UNLABELED, 'u*.jpg'),
+                    'labeled': _entries(IMAGES, 'img*.jpg'),
+                }
+            )
             self._send(body.encode(), 'application/json')
         elif self.path.startswith('/uimg?'):
             self._send_file(UNLABELED / f'u{self._query_n()}.jpg')
@@ -205,13 +220,20 @@ class Handler(BaseHTTPRequestHandler):
                 for line in f.read_text().splitlines():
                     i, cx, cy, w, h = line.split()
                     name = classes[int(i)] if int(i) < len(classes) else i
-                    boxes.append({'cls': name, 'cx': float(cx), 'cy': float(cy),
-                                  'w': float(w), 'h': float(h)})
+                    boxes.append(
+                        {
+                            'cls': name,
+                            'cx': float(cx),
+                            'cy': float(cy),
+                            'w': float(w),
+                            'h': float(h),
+                        }
+                    )
             self._send(json.dumps({'boxes': boxes}).encode(), 'application/json')
         else:
             self.send_error(404)
 
-    def do_POST(self):
+    def do_POST(self) -> None:
         if self.path == '/snap':
             with _lock:
                 data = _live
@@ -233,9 +255,11 @@ class Handler(BaseHTTPRequestHandler):
                 _ensure_dataset()
                 m = max(_nums(IMAGES, 'img*.jpg'), default=0) + 1
                 src.rename(IMAGES / f'img{m}.jpg')
-                lines = [f'{_class_id(b["cls"])} '
-                         f'{b["cx"]:.6f} {b["cy"]:.6f} {b["w"]:.6f} {b["h"]:.6f}'
-                         for b in req['boxes']]
+                lines = [
+                    f'{_class_id(b["cls"])} '
+                    f'{b["cx"]:.6f} {b["cy"]:.6f} {b["w"]:.6f} {b["h"]:.6f}'
+                    for b in req['boxes']
+                ]
                 (LABELS / f'img{m}.txt').write_text('\n'.join(lines) + '\n' if lines else '')
             self._send(json.dumps({'img': m}).encode(), 'application/json')
         elif self.path == '/dell':
@@ -254,13 +278,13 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self.send_error(404)
 
-    def _send_file(self, f):
+    def _send_file(self, f: Path) -> None:
         if f.is_file():
             self._send(f.read_bytes(), 'image/jpeg', cache=CACHE_FOREVER)
         else:
             self.send_error(404)
 
-    def _send(self, body, ctype, cache=None):
+    def _send(self, body: bytes, ctype: str, cache: str | None = None) -> None:
         self.send_response(200)
         self.send_header('Content-Type', ctype)
         self.send_header('Content-Length', str(len(body)))
@@ -269,23 +293,23 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, fmt, *args):
+    def log_message(self, fmt: str, *args: Any) -> None:
         pass
 
 
-def _ensure_dataset():
+def _ensure_dataset() -> None:
     for d in (UNLABELED, IMAGES, LABELS):
         d.mkdir(parents=True, exist_ok=True)
 
 
-def _spin(node):
+def _spin(node: Node) -> None:
     try:
         rclpy.spin(node)
     except ExternalShutdownException:
         pass
 
 
-def main():
+def main() -> None:
     _ensure_dataset()
     rclpy.init()
     node = CameraNode()
@@ -298,14 +322,16 @@ def main():
     # signal until systemd's TimeoutStopSec expires and SIGKILLs it. Take the
     # signals back. shutdown() has to run off the serving thread or it
     # deadlocks waiting for the loop it is called from.
-    def stop(*_):
+    def stop(*_: Any) -> None:
         threading.Thread(target=server.shutdown, daemon=True).start()
 
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
 
-    print(f'Camera label dashboard on http://0.0.0.0:{PORT} '
-          f'(preview {_cfg["preview_width"]}px, dataset {DATASET})')
+    print(
+        f'Camera label dashboard on http://0.0.0.0:{PORT} '
+        f'(preview {_cfg["preview_width"]}px, dataset {DATASET})'
+    )
     server.serve_forever()
 
     # Unwind the ROS wait before the interpreter tears the context down;

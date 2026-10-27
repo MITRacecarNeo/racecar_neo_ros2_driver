@@ -110,14 +110,14 @@ racecar() {
             shift || true
             local -a core_units=("racecar-teleop" "racecar-watchdog"
                                  "racecar-dashboard" "racecar-jupyter"
-                                 "racecar-mapview")
+                                 "racecar-mapview" "racecar-battery-guard")
             # Lab dashboards, installed by setup_dashboards.sh. All three
             # publish /drive; a second publisher fights the mux, so starting
             # one stops the others.
             local -a dash_units=("racecar-webteleop" "racecar-linefollow"
                                  "racecar-wallfollow")
-            # Dashboards that do not drive; they run alongside the above.
-            local -a app_units=("racecar-camlabel")
+            # Apps that do not drive; they run alongside the above.
+            local -a app_units=("racecar-camlabel" "racecar-terminal")
             case "$action" in
                 install)
                     bash "$pkg_dir/scripts/setup_services.sh"
@@ -216,15 +216,15 @@ actions:
                   Starting a lab dashboard stops the other /drive publishers first.
   stop [name]     Stop racecar-<name>; default = teleop
   restart [name]  Restart racecar-<name>; default = teleop
-  enable [name]   Enable one unit, or with no name the five core units
-  disable [name]  Disable one unit, or with no name the five core units
+  enable [name]   Enable one unit, or with no name the six core units
+  disable [name]  Disable one unit, or with no name the six core units
   logs [name]     journalctl -u racecar-<name> -f; default = teleop
   status          active/enabled snapshot, core, autonomy, and dashboards (default)
-core units: teleop, watchdog, dashboard(8080), jupyter(8888), mapview(8084)
+core units: teleop, watchdog, dashboard(8080), jupyter(8888), mapview(8084), battery-guard
 autonomy: started and stopped by `racecar map` or the map viewer, not at boot
 dashboards: webteleop(8081) linefollow(8082) wallfollow(8083) camlabel(8085)
 webteleop, linefollow and wallfollow publish /drive. Of those, only one runs at a time;
-starting one stops the others. camlabel runs alongside them.
+starting one stops the others. camlabel and terminal(8086) run alongside them.
 __RC_SVC_HELP__
                     ;;
                 *)
@@ -1108,6 +1108,11 @@ __RC_CLEANUP_HELP__
             python3 "${RACECAR_MAP_SCRIPT:-$pkg_dir/scripts/racecar_map.py}" "$@"
             ;;
 
+        health)
+            # Hardware checks over time with a saved report; see scripts/health.py.
+            python3 "${RACECAR_HEALTH_SCRIPT:-$pkg_dir/scripts/health.py}" "$@"
+            ;;
+
         status)
             # Whole-car diagnostic. Read-only: it observes topics and reads
             # sysfs, and never commands the hardware. Exits non-zero when a
@@ -1194,7 +1199,9 @@ Commands:
                           enable|disable [name] one unit, or the core units
                           logs [name]          journalctl -f for racecar-<name>
                           status               active/enabled summary (default)
-                        Core units: teleop, watchdog, dashboard, jupyter
+                        Core units: teleop, watchdog, dashboard, jupyter, mapview,
+                          battery-guard
+                        Apps: camlabel, terminal (port 8086)
                         Dashboards: webteleop, linefollow, wallfollow, camlabel
                         Starting a driving dashboard stops the other /drive publishers.
                         Bare enable/disable covers the core units only.
@@ -1215,6 +1222,28 @@ Commands:
                           --section a,b       devices, sensors, actuators,
                                               system, services, network
                           --window SEC        ROS sample window (default 5.0)
+    health [step]       Hardware checks over time; each run saves a report to
+                        health/ under the data root. Exits 1 when a check fails.
+                          all       power, link, then nvme (default)
+                          power     the Pi's 5 V input sampled for 30 s,
+                                    throttling, the PMIC alarm, the ARM
+                                    clock, the battery (teleop running)
+                          link      the Teensy UART link for 30 s: frame
+                                    rate, lost frames, gaps, CRC failures,
+                                    reconnects, resets (teleop running)
+                          nvme      the data drive: mount, data root, a
+                                    256 MB write and read, free space,
+                                    SMART, kernel log errors
+                          shake     hold the car and shake it on each axis,
+                                    then tap the deck, one timed step at a
+                                    time (teleop running)
+                          poke      press and wiggle each connector in
+                                    config/health.yaml, one at a time
+                                    (teleop running)
+                        Shake and poke watch the 5 V input, throttling, the
+                        PIT link, USB, the drive, data writes, and the sensor
+                        rates, and name the step a fault happened in.
+                        --seconds N sets the power and link time.
     calibrate [steps]   Calibrate the sensors on the car via a guided session.
                         Sensors to calibrate include:
                           imu         LSM9DS1 accel bias and scale, gyro bias
@@ -1324,7 +1353,7 @@ _racecar_complete() {
     local sub="${COMP_WORDS[1]:-}"
 
     if [[ $COMP_CWORD -eq 1 ]]; then
-        COMPREPLY=( $(compgen -W "build test source cd teleop launch lint udev watchdog service setup eth wifi desktop library log calibrate profile disk data cleanup map status help" -- "$cur") )
+        COMPREPLY=( $(compgen -W "build test source cd teleop launch lint udev watchdog service setup eth wifi desktop library log calibrate profile disk data cleanup map status health help" -- "$cur") )
         return
     fi
 
@@ -1374,6 +1403,9 @@ _racecar_complete() {
             ;;
         disk)
             COMPREPLY=( $(compgen -W "status setup format check" -- "$cur") )
+            ;;
+        health)
+            COMPREPLY=( $(compgen -W "all power link nvme shake poke --seconds --help" -- "$cur") )
             ;;
         data)
             COMPREPLY=( $(compgen -W "path" -- "$cur") )

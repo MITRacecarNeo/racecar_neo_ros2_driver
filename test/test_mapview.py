@@ -153,8 +153,13 @@ class TestActions:
             ({'action': 'recover', 'name': 'hall'}, ['recover', 'hall']),
             ({'action': 'start', 'name': 'hall', 'replace': True}, ['start', 'hall', '--force']),
             (
-                {'action': 'start', 'name': 'hall2', 'source': 'hall', 'pose': [0, 0, 0],
-                 'replace': True},
+                {
+                    'action': 'start',
+                    'name': 'hall2',
+                    'source': 'hall',
+                    'pose': [0, 0, 0],
+                    'replace': True,
+                },
                 ['start', 'hall2', '--pose=0.000,0.000,0.0000', '--from', 'hall', '--force'],
             ),
         ],

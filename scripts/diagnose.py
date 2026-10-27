@@ -55,7 +55,7 @@ GRAB_TIMEOUT = 1.0
 # RealSense reports its own per-stream rates here, so they need no
 # subscription. See docs/troubleshooting.md, "Diagnostic rate checks".
 DIAGNOSTICS_TOPIC = '/diagnostics'
-REALSENSE_DIAGNOSTIC_NAMES = sysinfo.REALSENSE_DIAGNOSTIC_NAMES
+DIAGNOSTIC_RATE_NAMES = sysinfo.DIAGNOSTIC_RATE_NAMES
 
 # A stream under its floor is degraded but delivering and warns. Under
 # STALL_HZ it has effectively stopped and fails, whatever its nominal rate.
@@ -93,23 +93,23 @@ class TopicSpec:
 
 # Nominal rates come from configuration where one is declared (mux.yaml sets
 # 50 Hz for the drive chain, imu_fusion.yaml 100 Hz for the fused IMU) and
-# from measurement on a running car otherwise. The PIT floor is wider than the
-# default because the Teensy frame rate moves with load.
+# from measurement on a running car otherwise. The Teensy sends its frame on
+# a 200 Hz timer, so the PIT topics take the default floor.
 # See docs/troubleshooting.md, "Diagnostic rate checks".
-PIT_FLOOR_FRAC = 0.65
+PIT_FLOOR_FRAC = 0.8
 
 SENSOR_TOPICS = [
     TopicSpec('/camera/color', 'RealSense color', 60.0),
     TopicSpec('/camera/depth', 'RealSense depth', 30.0),
     TopicSpec('/imu/realsense', 'RealSense IMU', 200.0),
     TopicSpec('/scan', 'RPLIDAR', 7.2),
-    TopicSpec('/imu/lsm9ds1', 'PIT IMU', 136.0, PIT_FLOOR_FRAC),
-    TopicSpec('/mag', 'PIT magnetometer', 136.0, PIT_FLOOR_FRAC),
+    TopicSpec('/imu/lsm9ds1', 'PIT IMU', 200.0, PIT_FLOOR_FRAC),
+    TopicSpec('/mag', 'PIT magnetometer', 200.0, PIT_FLOOR_FRAC),
     TopicSpec('/imu/fused', 'Fused IMU', 100.0),
-    TopicSpec('/encoder/speed', 'Encoder', 136.0, PIT_FLOOR_FRAC),
-    TopicSpec('/battery/voltage', 'Battery voltage', 136.0, PIT_FLOOR_FRAC),
-    TopicSpec('/battery/current', 'Battery current', 136.0, PIT_FLOOR_FRAC),
-    TopicSpec('/rc/channels', 'FlySky RC', 136.0, PIT_FLOOR_FRAC),
+    TopicSpec('/encoder/speed', 'Encoder', 200.0, PIT_FLOOR_FRAC),
+    TopicSpec('/battery/voltage', 'Battery voltage', 200.0, PIT_FLOOR_FRAC),
+    TopicSpec('/battery/current', 'Battery current', 200.0, PIT_FLOOR_FRAC),
+    TopicSpec('/rc/channels', 'FlySky RC', 200.0, PIT_FLOOR_FRAC),
     # Capped by edgetpu_node's inference_rate_hz, not by the camera.
     TopicSpec('/edgetpu/inference', 'Coral inference', 15.0),
     TopicSpec('/joy', 'Gamepad', 16.0),
@@ -126,7 +126,7 @@ PIT_TOPICS = {
 }
 
 # Rates read off /diagnostics rather than counted here.
-DIAGNOSTIC_SOURCED = set(REALSENSE_DIAGNOSTIC_NAMES.values())
+DIAGNOSTIC_SOURCED = set(DIAGNOSTIC_RATE_NAMES.values())
 
 ACTUATOR_TOPICS = [
     TopicSpec('/motor', 'Throttle output', 50.0),
@@ -146,7 +146,10 @@ SERVICE_UNITS = (
     'racecar-dashboard',
     'racecar-jupyter',
     'racecar-mapview',
+    'racecar-battery-guard',
 )
+# Started from the 8080 Terminal tile, not at boot, so stopped is fine.
+TERMINAL_UNIT = 'racecar-terminal'
 
 # Started by `racecar map` or the map viewer, never at boot, so it is not a
 # service row; the autonomy section samples these while it runs.
@@ -306,6 +309,8 @@ def check_system(cpu_interval: float = CPU_SAMPLE_SEC) -> list[Check]:
         status = FAIL if live else WARN
         out.append(Check(g, 'throttling', status, f'0x{flags:x}: {", ".join(active)}'))
 
+    out.append(ext5v_check(sysinfo.read_ext5v()))
+
     mem = sysinfo.read_memory()
     if mem is None:
         out.append(Check(g, 'memory', SKIP, 'unreadable'))
@@ -352,7 +357,55 @@ def check_system(cpu_interval: float = CPU_SAMPLE_SEC) -> list[Check]:
 
     out.append(check_profile())
     out.append(check_data_root())
+    present = sysinfo.NVME_SYS.exists()
+    out.append(
+        nvme_check(
+            present,
+            sysinfo.read_nvme_temp() if present else None,
+            sysinfo.read_nvme_smart() if present else None,
+        )
+    )
     return out
+
+
+def ext5v_check(volts: float | None) -> Check:
+    """One reading of the Pi's 5 V input; `racecar health power` samples it for 30 s."""
+    if volts is None:
+        return Check('system', 'ext5v', SKIP, 'vcgencmd unavailable')
+    status = {'healthy': OK, 'stale': WARN, 'dead': FAIL}[sysinfo.classify_ext5v(volts)]
+    detail = f'{volts:.2f} V'
+    if status != OK:
+        detail += f', Pi minimum {sysinfo.EXT5V_MIN_VOLTS:.2f} V'
+    return Check('system', 'ext5v', status, detail)
+
+
+def nvme_check(present: bool, temp: float | None, smart: dict[str, Any] | None) -> Check:
+    """Report the NVMe drive: temperature, and wear and errors when SMART can be read."""
+    g = 'system'
+    if not present:
+        return Check(g, 'nvme', SKIP, 'no drive fitted')
+    if smart is not None and temp is None:
+        temp = smart.get('temperature')
+    parts = [f'{temp:.0f} C' if temp is not None else 'temperature unreadable']
+    status = OK
+    if temp is not None and temp >= sysinfo.NVME_TEMP_FAIL_C:
+        status = FAIL
+    elif temp is not None and temp >= sysinfo.NVME_TEMP_WARN_C:
+        status = WARN
+    if smart is None:
+        parts.append('SMART unreadable: rerun scripts/setup_user_env.sh')
+        return Check(g, 'nvme', worst(status, WARN), ', '.join(parts))
+    used = smart.get('percent_used', 0)
+    errors = smart.get('media_errors', 0)
+    critical = smart.get('critical_warning', 0)
+    parts.append(f'{used}% worn, {errors} media errors')
+    if critical or errors:
+        status = FAIL
+        if critical:
+            parts.append(f'critical warning 0x{critical:x}')
+    elif used >= sysinfo.NVME_WEAR_WARN_PCT:
+        status = worst(status, WARN)
+    return Check(g, 'nvme', status, ', '.join(parts))
 
 
 # The data root warns at this share used or below this much free.
@@ -390,8 +443,12 @@ def check_profile() -> Check:
     left = car_profile.unmigrated(here.parent / 'config', here / 'dashboards')
     detail = f'{car_profile.car_info()["name"]}, {car_profile.profile_dir()}'
     if left:
-        return Check('system', 'car profile', WARN,
-                     f'{detail}; {len(left)} file(s) not used: racecar profile migrate')
+        return Check(
+            'system',
+            'car profile',
+            WARN,
+            f'{detail}; {len(left)} file(s) not used: racecar profile migrate',
+        )
     return Check('system', 'car profile', OK, detail)
 
 
@@ -410,8 +467,24 @@ def check_services() -> list[Check]:
             out.append(
                 Check('services', unit, WARN, f'active={active or "?"} enabled={enabled or "?"}')
             )
+    out.append(
+        terminal_check(
+            _run(['systemctl', 'is-active', TERMINAL_UNIT]).strip(),
+            _run(['tmux', '-L', 'racecar-terminal', 'ls', '-F', '#S']),
+        )
+    )
     out.append(watchdog_check(sysinfo.read_watchdog_state()))
     return out
+
+
+def terminal_check(active: str, sessions: str) -> Check:
+    """Summarize the terminal app: running with its terminal count, stopped, or not installed."""
+    if not active:
+        return Check('services', TERMINAL_UNIT, SKIP, 'unit not installed')
+    if active != 'active':
+        return Check('services', TERMINAL_UNIT, OK, f'{active} (starts from the Terminal tile)')
+    count = sum(1 for line in sessions.splitlines() if line.startswith('rcn-'))
+    return Check('services', TERMINAL_UNIT, OK, f'active, {count} terminal(s)')
 
 
 def watchdog_check(state: dict[str, Any] | None) -> Check:
@@ -680,6 +753,7 @@ class RosResult:
     present: set[str] = field(default_factory=set)
     values: dict[str, Any] = field(default_factory=dict)
     reported: dict[str, float] = field(default_factory=dict)
+    link: list[dict[str, float]] = field(default_factory=list)
 
 
 _read_diagnostic_rates = sysinfo.read_diagnostic_rates
@@ -755,6 +829,7 @@ def sample_ros(window: float, specs: list[TopicSpec]) -> RosResult:
         counts = dict.fromkeys(counted, 0)
         latest: dict[str, Any] = {}
         reported: dict[str, float] = {}
+        link: list[dict[str, float]] = []
         qos = QoSProfile(depth=10)
         qos.reliability = QoSReliabilityPolicy.BEST_EFFORT
         qos.durability = QoSDurabilityPolicy.VOLATILE
@@ -779,12 +854,13 @@ def sample_ros(window: float, specs: list[TopicSpec]) -> RosResult:
             try:
                 from diagnostic_msgs.msg import DiagnosticArray
 
-                node.create_subscription(
-                    DiagnosticArray,
-                    DIAGNOSTICS_TOPIC,
-                    lambda msg: _read_diagnostic_rates(msg, reported),
-                    qos,
-                )
+                def on_diagnostics(msg: Any) -> None:
+                    _read_diagnostic_rates(msg, reported)
+                    report = sysinfo.read_link_status(msg)
+                    if report is not None:
+                        link.append(report)
+
+                node.create_subscription(DiagnosticArray, DIAGNOSTICS_TOPIC, on_diagnostics, qos)
             except Exception:  # noqa: BLE001 - fall through to "no rate"
                 pass
 
@@ -820,6 +896,7 @@ def sample_ros(window: float, specs: list[TopicSpec]) -> RosResult:
         result.counts = dict(counts)
         result.values = latest
         result.reported = dict(reported)
+        result.link = list(link)
         result.available = True
     except Exception as exc:  # noqa: BLE001
         result.reason = f'{exc.__class__.__name__}: {exc}'
@@ -867,6 +944,43 @@ def rate_checks(group: str, specs: list[TopicSpec], ros: RosResult) -> list[Chec
     return out
 
 
+def link_check(ros: RosResult) -> Check:
+    """
+    Report pit_node's Teensy link over the window: rate, lost frames, reconnects, resets.
+
+    A reconnect or a Teensy reset in the window fails; a CRC failure, a lost
+    frame, or a gap over pit_link.STALL_MS warns. Totals since pit_node
+    started are listed after.
+    """
+    from racecar_neo_ros2_driver import pit_link
+
+    g, name = 'sensors', 'teensy link'
+    if not ros.available:
+        return Check(g, name, SKIP, ros.reason or 'no ROS graph')
+    if not ros.link:
+        return Check(g, name, FAIL, f'no report on {DIAGNOSTICS_TOPIC} from pit_node')
+    first, last = ros.link[0], ros.link[-1]
+
+    def new(key: str) -> int:
+        # The first report already holds its second's events.
+        base = 0 if len(ros.link) == 1 else first.get(key, 0)
+        return int(last.get(key, 0) - base)
+
+    rate = last.get('rate_hz', 0.0)
+    gap = max(r.get('gap_ms', 0.0) for r in ros.link)
+    totals = (
+        f'since start: {int(last.get("crc_failures", 0))} CRC failures, '
+        f'{int(last.get("dropped_frames", 0))} dropped frames, '
+        f'{int(last.get("reconnects", 0))} reconnects, {int(last.get("resets", 0))} resets'
+    )
+    detail = f'{rate:.0f} Hz, longest gap {gap:.0f} ms; {totals}'
+    if rate < STALL_HZ or new('reconnects') or new('resets'):
+        return Check(g, name, FAIL, detail)
+    if new('crc_failures') or new('dropped_frames') or gap > pit_link.STALL_MS:
+        return Check(g, name, WARN, detail)
+    return Check(g, name, OK, detail)
+
+
 def actuator_checks(ros: RosResult) -> list[Check]:
     """Drive chain plus the two display devices, observed rather than driven."""
     out = rate_checks('actuators', ACTUATOR_TOPICS, ros)
@@ -896,10 +1010,16 @@ FEATURE_ROWS = {
 def note_turned_off(checks: list[Check], running: dict[str, bool] | None = None) -> list[Check]:
     """Mark the rows of a subsystem teleop was started without as turned off, not failed."""
     running = features.running() if running is None else running
-    off = {name for feature, names in FEATURE_ROWS.items()
-           if not running.get(feature, True) for name in names}
-    return [Check(c.group, c.name, SKIP, 'turned off (Features on 8080)') if c.name in off else c
-            for c in checks]
+    off = {
+        name
+        for feature, names in FEATURE_ROWS.items()
+        if not running.get(feature, True)
+        for name in names
+    }
+    return [
+        Check(c.group, c.name, SKIP, 'turned off (Features on 8080)') if c.name in off else c
+        for c in checks
+    ]
 
 
 def note_mapping_pause(checks: list[Check], ros: RosResult) -> list[Check]:
@@ -1124,8 +1244,10 @@ def main() -> int:
     checks: list[Check] = []
     checks.extend(host.get('devices', []))
     if 'sensors' in requested:
-        checks.extend(note_turned_off(
-            note_mapping_pause(rate_checks('sensors', SENSOR_TOPICS, ros), ros)))
+        checks.extend(
+            note_turned_off(note_mapping_pause(rate_checks('sensors', SENSOR_TOPICS, ros), ros))
+        )
+        checks.append(link_check(ros))
     if 'actuators' in requested:
         checks.extend(actuator_checks(ros))
     if 'autonomy' in requested:

@@ -27,22 +27,33 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import BatteryState
-from std_msgs.msg import Bool, UInt32
+from std_msgs.msg import Bool, Empty, UInt32
 
 # Shared with scripts/diagnose.py. Both are run by path rather than imported
 # as a package, so the sibling has to be put on the path explicitly.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import features  # noqa: E402, I100  sibling script, after the path insert
+from battery_alert import Announcer, final_message  # noqa: E402, I100  sibling scripts
+import features  # noqa: E402
+from safe_shutdown import shutdown_sequence  # noqa: E402
 from sysinfo import (  # noqa: E402
+    classify_ext5v,
     classify_rtc as _classify_rtc,
+    DIAGNOSTIC_RATE_NAMES,
+    EXT5V_MIN_VOLTS,
+    EXT5V_WARN_VOLTS,
+    NVME_TEMP_FAIL_C,
+    NVME_TEMP_WARN_C,
     read_diagnostic_rates,
+    read_ext5v as _read_ext5v,
+    read_link_status,
     read_memory as _read_memory,
+    read_nvme_temp as _read_nvme_temp,
     read_rtc_voltage as _read_battery_voltage,
     read_soc_temp as _read_soc_temp,
+    read_throttled as _read_throttled,
     read_under_voltage_alarm as _read_under_voltage_alarm,
     read_watchdog_state,
-    REALSENSE_DIAGNOSTIC_NAMES,
 )
 import webui  # noqa: E402
 
@@ -52,44 +63,110 @@ import webui  # noqa: E402
 
 PORT = 8080
 
-# Home page apps. Core apps start at boot. Utilities start when opened and
-# stop with Clear apps, which needs scripts/polkit/49-racecar-dashboards.rules.
+# Home page apps. Core apps start at boot, except Terminal, which starts when
+# opened. Utilities start when opened and stop with Clear apps. Starting and
+# stopping needs scripts/polkit/49-racecar-dashboards.rules.
 # `exclusive` utilities publish /drive, so one runs at a time. An app with no
 # unit is shown but opens nothing.
 APPS: list[dict[str, Any]] = [
-    {'id': 'terminator', 'name': 'Terminator', 'icon': 'terminal', 'port': None,
-     'group': 'core', 'unit': None, 'exclusive': False, 'startable': False,
-     'desc': 'Open a terminal'},
-    {'id': 'jupyter', 'name': 'JupyterLab', 'icon': 'notebook', 'port': 8888,
-     'group': 'core', 'unit': 'racecar-jupyter', 'exclusive': False, 'startable': False,
-     'desc': 'Notebooks and code'},
-    {'id': 'mapview', 'name': 'Map Viewer', 'icon': 'map', 'port': 8084,
-     'group': 'core', 'unit': 'racecar-mapview', 'exclusive': False, 'startable': False,
-     'desc': 'Build and load maps'},
-    {'id': 'webteleop', 'name': 'Web Teleop', 'icon': 'gamepad', 'port': 8081,
-     'group': 'utilities', 'unit': 'racecar-webteleop', 'exclusive': True, 'startable': True,
-     'desc': 'Drive from the browser with camera and lidar.'},
-    {'id': 'linefollow', 'name': 'Line Follow', 'icon': 'line', 'port': 8082,
-     'group': 'utilities', 'unit': 'racecar-linefollow', 'exclusive': True, 'startable': True,
-     'desc': 'Follow a colored line with the camera.', 'needs': 'camera'},
-    {'id': 'wallfollow', 'name': 'Wall Follow', 'icon': 'wall', 'port': 8083,
-     'group': 'utilities', 'unit': 'racecar-wallfollow', 'exclusive': True, 'startable': True,
-     'desc': 'Follow walls with the lidar.'},
-    {'id': 'camlabel', 'name': 'Camera Label', 'icon': 'tag', 'port': 8085,
-     'group': 'utilities', 'unit': 'racecar-camlabel', 'exclusive': False, 'startable': True,
-     'desc': 'Capture camera frames and label them for training.', 'needs': 'camera'},
+    {
+        'id': 'terminal',
+        'name': 'Terminal',
+        'icon': 'terminal',
+        'port': 8086,
+        'group': 'core',
+        'unit': 'racecar-terminal',
+        'exclusive': False,
+        'startable': True,
+        'desc': 'Open a terminal',
+    },
+    {
+        'id': 'jupyter',
+        'name': 'JupyterLab',
+        'icon': 'notebook',
+        'port': 8888,
+        'group': 'core',
+        'unit': 'racecar-jupyter',
+        'exclusive': False,
+        'startable': False,
+        'desc': 'Notebooks and code',
+    },
+    {
+        'id': 'mapview',
+        'name': 'Map Viewer',
+        'icon': 'map',
+        'port': 8084,
+        'group': 'core',
+        'unit': 'racecar-mapview',
+        'exclusive': False,
+        'startable': False,
+        'desc': 'Build and load maps',
+    },
+    {
+        'id': 'webteleop',
+        'name': 'Web Teleop',
+        'icon': 'gamepad',
+        'port': 8081,
+        'group': 'utilities',
+        'unit': 'racecar-webteleop',
+        'exclusive': True,
+        'startable': True,
+        'desc': 'Drive from the browser with camera and lidar',
+    },
+    {
+        'id': 'linefollow',
+        'name': 'Line Follow',
+        'icon': 'line',
+        'port': 8082,
+        'group': 'utilities',
+        'unit': 'racecar-linefollow',
+        'exclusive': True,
+        'startable': True,
+        'desc': 'Follow a colored line with the camera',
+        'needs': 'camera',
+    },
+    {
+        'id': 'wallfollow',
+        'name': 'Wall Follow',
+        'icon': 'wall',
+        'port': 8083,
+        'group': 'utilities',
+        'unit': 'racecar-wallfollow',
+        'exclusive': True,
+        'startable': True,
+        'desc': 'Follow walls with the lidar',
+    },
+    {
+        'id': 'camlabel',
+        'name': 'Camera Label',
+        'icon': 'tag',
+        'port': 8085,
+        'group': 'utilities',
+        'unit': 'racecar-camlabel',
+        'exclusive': False,
+        'startable': True,
+        'desc': 'Capture camera frames and label them for training',
+        'needs': 'camera',
+    },
 ]
 
 # Features: parts of the car that cost CPU and can be turned off. The camera
 # and detections are teleop subsystems (scripts/features.py); changing one
 # restarts teleop. Autonomy is its own unit, started from the map viewer.
 FEATURES: list[dict[str, Any]] = [
-    {'id': 'camera', 'name': 'Camera', 'icon': 'camera',
-     'desc': 'Turn on/off the color and depth camera'},
-    {'id': 'detections', 'name': 'Detections', 'icon': 'target',
-     'desc': 'Turn on/off the detection node'},
-    {'id': 'autonomy', 'name': 'Autonomy', 'icon': 'radar',
-     'desc': 'Mapping or localization.'},
+    {
+        'id': 'camera',
+        'name': 'Camera',
+        'icon': 'camera',
+        'desc': 'Turn on/off the color and depth camera',
+    },
+    {
+        'id': 'detections',
+        'name': 'Detections',
+        'icon': 'target',
+        'desc': 'Turn on/off the detection node',
+    },
+    {'id': 'autonomy', 'name': 'Autonomy', 'icon': 'radar', 'desc': 'Mapping or localization'},
 ]
 TELEOP_UNIT = 'racecar-teleop.service'
 AUTONOMY_UNIT = 'racecar-autonomy.service'
@@ -104,7 +181,13 @@ RATE_WINDOW_SEC = 3.0
 MAPVIEW_PORT = 8084
 # /autonomy/status arrives at 1 Hz; older than this, the node has stopped.
 AUTONOMY_STALE_SEC = 5.0
-SYSTEM_HEALTH_REFRESH_SEC = 60.0
+# The Data and RTC chips; the Power chip refreshes every tick.
+SYSTEM_HEALTH_REFRESH_SEC = 15.0
+# The Power chip's 5 V input is read this often while a page polls; the lowest
+# reading between ticks goes to the page.
+EXT5V_SAMPLE_SEC = 1.0
+# The network pill: NetworkManager and `ip` are read this often while a page polls.
+NETWORK_REFRESH_SEC = 15.0
 # Rates, nodes, and app states are measured only while a page polls: the rate
 # subscriptions wake the process for every message, a large share of a core.
 # They stop VIEW_IDLE_SEC after the last request.
@@ -115,6 +198,10 @@ MONITOR_PERIOD_SEC = 3.0
 BATTERY_WINDOW_SEC = 2 * 3600
 BATTERY_BUCKET_SEC = 10
 BATTERY_STALE_SEC = 5.0
+# racecar-battery-guard publishes /battery/estimate at 1 Hz; older than this
+# it has stopped, and the page shows no estimate.
+ESTIMATE_STALE_SEC = 5.0
+FINAL_MESSAGE = 'Turning the car off now. Turn off the power switch.'
 
 # supervised: the watchdog restarts this node. An unsupervised card that loses
 # its topic shows gray instead of red.
@@ -128,8 +215,7 @@ MONITORED = {
     'realsense': {'topic': '/camera/color', 'label': 'RealSense D435i', 'supervised': True},
     'edgetpu': {'topic': '/edgetpu/inference', 'label': 'Coral EdgeTPU', 'supervised': False},
     'dotmatrix': {'topic': '/dotmatrix/frame', 'label': 'Dot matrix', 'supervised': False},
-    'led': {'topic': '/led/pixels', 'label': 'LED strip', 'supervised': False,
-            'publisher': True},
+    'led': {'topic': '/led/pixels', 'label': 'LED strip', 'supervised': False, 'publisher': True},
 }
 
 # Subscribed to and counted by the dashboard.
@@ -137,17 +223,22 @@ RATE_TOPICS = [
     '/motor',
     '/mux_out',
     '/imu/fused',
-    '/imu/lsm9ds1',
     '/scan',
     '/edgetpu/inference',
 ]
-# Every topic in the rates table; the RealSense ones come from /diagnostics.
+# Every topic in the rates table; the RealSense ones and the PIT frame rate
+# (pit_node's Teensy link report) come from /diagnostics.
 DISPLAY_RATE_TOPICS = [
     *RATE_TOPICS,
+    '/imu/lsm9ds1',
     '/imu/realsense',
     '/camera/color',
     '/camera/depth',
 ]
+# A lost frame, CRC failure, reconnect, or Teensy reset keeps the Link chip
+# yellow this long.
+LINK_PROBLEM_HOLD_SEC = 60.0
+LINK_STALE_SEC = 5.0
 
 log = logging.getLogger('dashboard')
 
@@ -273,8 +364,7 @@ class OverrideSession:
             if self.number and now - self._kept > OVERRIDE_KEEPALIVE_SEC:
                 self.number = 0
                 self.ended = 'Ended. The page stopped responding.'
-            if (self.number and not self._confirmed
-                    and now - self._started > OVERRIDE_CONFIRM_SEC):
+            if self.number and not self._confirmed and now - self._started > OVERRIDE_CONFIRM_SEC:
                 self.number = 0
                 self.ended = 'Teleop is not running.'
             return self.number
@@ -304,13 +394,140 @@ def override_origin(origin: str | None, host: str | None) -> str | None:
     return None
 
 
-def battery_view(now: float) -> dict[str, Any] | None:
+def estimate_view(values: dict[str, str] | None, age: float | None) -> dict[str, Any] | None:
+    """Return the battery guard's /battery/estimate for the page, or None when it is stale."""
+    if values is None or age is None or age > ESTIMATE_STALE_SEC:
+        return None
+
+    def num(key: str) -> float | None:
+        try:
+            return float(values.get(key, ''))
+        except ValueError:
+            return None
+
+    level = values.get('level', 'ok')
+    trigger = values.get('trigger', '')
+    cancel_used = values.get('cancel_used') == 'true'
+    return {
+        'level': level,
+        'trigger': trigger,
+        'minutes_left': num('minutes_left'),
+        'power_w': num('power_w'),
+        'soc': num('soc'),
+        'shutdown_in': num('shutdown_in'),
+        'can_cancel': level == 'countdown' and trigger == 'estimate' and not cancel_used,
+    }
+
+
+def battery_view(now: float, estimate: dict[str, Any] | None = None) -> dict[str, Any] | None:
     """Return the current battery values for the status snapshot; stale after BATTERY_STALE_SEC."""
     latest = _battery.latest(now)
     if latest is None:
         return None
     (volts, amps), age = latest
-    return {'volts': volts, 'amps': amps, 'age': age, 'stale': age > BATTERY_STALE_SEC}
+    return {
+        'volts': volts,
+        'amps': amps,
+        'age': age,
+        'stale': age > BATTERY_STALE_SEC,
+        'estimate': estimate,
+    }
+
+
+def current_battery() -> dict[str, Any] | None:
+    estimate = estimate_view(*(_sampler.estimate() if _sampler else (None, None)))
+    return battery_view(time.time(), estimate)
+
+
+NETWORK_KINDS = {'ethernet': 'Ethernet', 'wifi': 'Wi-Fi'}
+
+
+def _cmd(argv: list[str], run: Callable[..., Any]) -> str:
+    try:
+        r = run(argv, capture_output=True, text=True, timeout=3)
+    except (OSError, subprocess.TimeoutExpired):
+        return ''
+    return r.stdout if r.returncode == 0 else ''
+
+
+def network_view(run: Callable[..., Any] = subprocess.run) -> list[dict[str, str]]:
+    """
+    Return one row per Ethernet and Wi-Fi interface for the 8080 network pill.
+
+    Each row: device, kind (Ethernet, Wi-Fi, Access point), state
+    (connected or NetworkManager's state), network (SSID or connection
+    name), and address (IPv4 with prefix, or '').
+    """
+    addresses: dict[str, str] = {}
+    for line in _cmd(['ip', '-4', '-o', 'addr'], run).splitlines():
+        parts = line.split()
+        if len(parts) >= 4 and parts[1] not in addresses:
+            addresses[parts[1]] = parts[3]
+    rows = []
+    devices = _cmd(['nmcli', '-t', '-f', 'DEVICE,TYPE,STATE,CONNECTION', 'device'], run)
+    for line in devices.splitlines():
+        device, kind, state, connection = (line.split(':', 3) + ['', '', ''])[:4]
+        if kind not in NETWORK_KINDS:
+            continue
+        label, network = NETWORK_KINDS[kind], connection
+        if kind == 'wifi' and connection:
+            mode, _, ssid = _cmd(
+                [
+                    'nmcli',
+                    '-g',
+                    '802-11-wireless.mode,802-11-wireless.ssid',
+                    'con',
+                    'show',
+                    connection,
+                ],
+                run,
+            ).partition('\n')
+            network = ssid.strip() or connection
+            if mode.strip() == 'ap':
+                label = 'Access point'
+        rows.append(
+            {
+                'device': device,
+                'kind': label,
+                'state': 'connected' if state.startswith('connected') else state,
+                'network': network,
+                'address': addresses.get(device, ''),
+            }
+        )
+    return rows
+
+
+def clock_view(now: float) -> dict[str, Any]:
+    """Return the car's time, UTC offset, and zone name, so the page shows the car's clock."""
+    local = time.localtime(now)
+    return {'epoch': now, 'utc_offset': float(local.tm_gmtoff), 'zone': local.tm_zone}
+
+
+def page_origin(origin: str | None, host: str | None) -> bool:
+    """Return True for a request from this page (same host and port) or not from a browser."""
+    if not origin:
+        return True
+    return bool(host) and urlparse(origin).netloc == host
+
+
+def lab_origin(origin: str | None, host: str | None) -> str | None:
+    """Return `origin` when an app page on this car (its own port) may read /api/battery."""
+    if not origin or not host:
+        return None
+    o, h = urlparse(origin), urlparse(f'//{host}')
+    ports = {a['port'] for a in APPS if a['port']}
+    if o.scheme == 'http' and o.hostname == h.hostname and o.port in ports:
+        return origin
+    return None
+
+
+def turn_off(run: Callable[..., Any] = subprocess.run) -> list[str]:
+    """Tell every terminal, then run the safe shutdown sequence."""
+    try:
+        Announcer(run=run).deliver(final_message())
+    except Exception:  # noqa: BLE001
+        log.exception('Terminal message failed')
+    return shutdown_sequence(run=run, report=lambda line: log.warning('Shutdown: %s', line))
 
 
 def sample_system(now: float) -> None:
@@ -351,6 +568,9 @@ class _RateSampler(Node):
         )
         # 1 Hz and latched: the autonomy card costs one small message a second.
         self._autonomy: tuple[dict[str, str], float] | None = None
+        self._link: tuple[dict[str, float], float] | None = None
+        self._link_problem_at: float | None = None
+        self._estimate: tuple[dict[str, str], float] | None = None
         latched = QoSProfile(
             depth=1,
             reliability=QoSReliabilityPolicy.RELIABLE,
@@ -359,6 +579,10 @@ class _RateSampler(Node):
         self._autonomy_sub = self.create_subscription(
             DiagnosticStatus, '/autonomy/status', self._record_autonomy, latched
         )
+        self._estimate_sub = self.create_subscription(
+            DiagnosticStatus, '/battery/estimate', self._record_estimate, latched
+        )
+        self._cancel_pub = self.create_publisher(Empty, '/battery/cancel_shutdown', 10)
         # 1 Hz means from pit_node; the raw 150 Hz /battery/* topics cost too much here.
         self._battery_sub = self.create_subscription(
             BatteryState, '/battery/state', self._record_battery, 10
@@ -390,7 +614,12 @@ class _RateSampler(Node):
         if not updates:
             return
         now = time.monotonic()
+        link = read_link_status(msg)
         with self._lock:
+            if link is not None:
+                self._link = (link, now)
+                if link.get('level', 0) >= 1:
+                    self._link_problem_at = now
             self._diagnostic_rates.update(updates)
             for topic in updates:
                 self._diagnostic_last_update[topic] = now
@@ -403,6 +632,32 @@ class _RateSampler(Node):
         values = {kv.key: kv.value for kv in msg.values}
         with self._lock:
             self._autonomy = (values, time.monotonic())
+
+    def _record_estimate(self, msg: DiagnosticStatus) -> None:
+        values = {kv.key: kv.value for kv in msg.values}
+        with self._lock:
+            self._estimate = (values, time.monotonic())
+
+    def estimate(self) -> tuple[dict[str, str] | None, float | None]:
+        """Return the last /battery/estimate values and their age in seconds."""
+        with self._lock:
+            if self._estimate is None:
+                return None, None
+            values, at = self._estimate
+            return dict(values), time.monotonic() - at
+
+    def cancel_shutdown(self) -> None:
+        self._cancel_pub.publish(Empty())
+
+    def link(self) -> tuple[dict[str, float] | None, float | None, float | None]:
+        """Return the last Teensy link report, its age, and the age of its last problem."""
+        with self._lock:
+            now = time.monotonic()
+            problem = None if self._link_problem_at is None else now - self._link_problem_at
+            if self._link is None:
+                return None, None, problem
+            report, at = self._link
+            return dict(report), now - at, problem
 
     def autonomy(self) -> tuple[dict[str, str] | None, float | None]:
         """Return the last /autonomy/status values and their age in seconds."""
@@ -461,7 +716,7 @@ class _RateSampler(Node):
         """
         with self._lock:
             now = time.monotonic()
-            if topic in REALSENSE_DIAGNOSTIC_NAMES.values():
+            if topic in DIAGNOSTIC_RATE_NAMES.values():
                 last_update = self._diagnostic_last_update.get(topic)
                 if last_update is None or now - last_update > self._window:
                     return None
@@ -549,8 +804,15 @@ def clear_watchdog_log() -> tuple[bool, str]:
     return True, 'Log cleared.'
 
 
-def data_root_health() -> dict[str, str]:
-    """Report where data goes now: the NVMe, or the SD card when the drive is missing."""
+RANK = {'healthy': 0, 'stale': 1, 'dead': 2}
+
+
+def _worse(a: str, b: str) -> str:
+    return a if RANK[a] >= RANK[b] else b
+
+
+def data_root_health(temp: float | None = None) -> dict[str, str]:
+    """Report where data goes now, free space, and the drive's temperature."""
     from racecar_neo_ros2_driver import data_root
 
     root, warning = data_root.resolve()
@@ -562,33 +824,126 @@ def data_root_health() -> dict[str, str]:
         return {'label': 'Data drive', 'status': 'dead', 'detail': f'{root} missing'}
     where = 'NVMe' if data_root.on_nvme(root) else 'SD card'
     detail = f'{root} ({where}), {free:.0f} GB free'
+    status = 'healthy' if free >= 10 else 'stale'
     if warning:
         detail = f'{warning} {free:.0f} GB free'
-        return {'label': 'Data drive', 'status': 'stale', 'detail': detail}
-    return {'label': 'Data drive', 'status': 'healthy' if free >= 10 else 'stale',
-            'detail': detail}
+        status = 'stale'
+    if temp is not None:
+        detail += f', {temp:.0f} C'
+        if temp >= NVME_TEMP_FAIL_C:
+            status, detail = 'dead', f'{detail}. Drive too hot'
+        elif temp >= NVME_TEMP_WARN_C:
+            status, detail = _worse(status, 'stale'), f'{detail}. Drive hot'
+    return {'label': 'Data drive', 'status': status, 'detail': detail}
 
 
 def _collect_system_health() -> dict[str, dict[str, str]]:
-    """Slow-refresh diagnostics: data drive, RTC battery, Pi under-voltage alarm."""
-    volts = _read_battery_voltage()
-    rtc_status, rtc_label = _classify_rtc(volts)
-    uv_alarm = _read_under_voltage_alarm()
-    if uv_alarm is None:
-        uv_status, uv_label = ('dead', 'UNAVAILABLE')
-    elif uv_alarm:
-        uv_status, uv_label = ('dead', 'TRIPPED (5V dipped this boot)')
-    else:
-        uv_status, uv_label = ('healthy', 'OK')
+    """Slow-refresh diagnostics: data drive and RTC battery."""
+    rtc_status, rtc_label = _classify_rtc(_read_battery_voltage())
     return {
-        'data': data_root_health(),
+        'data': data_root_health(_read_nvme_temp()),
         'rtc': {'label': 'RTC battery', 'status': rtc_status, 'detail': rtc_label},
-        'under_voltage': {
-            'label': 'Pi under-voltage alarm',
-            'status': uv_status,
-            'detail': uv_label,
-        },
     }
+
+
+class Ext5vWatch:
+    """The Pi's 5 V input: the last reading and the lowest since the last take()."""
+
+    def __init__(self, read: Callable[[], float | None] = _read_ext5v) -> None:
+        self._read = read
+        self._lock = threading.Lock()
+        self._now: float | None = None
+        self._low: float | None = None
+
+    def sample(self) -> None:
+        volts = self._read()
+        if volts is None:
+            return
+        with self._lock:
+            self._now = volts
+            self._low = volts if self._low is None else min(self._low, volts)
+
+    def take(self) -> tuple[float | None, float | None]:
+        with self._lock:
+            now, low = self._now, self._low
+            self._low = None
+        return now, low
+
+
+_ext5v = Ext5vWatch()
+
+
+def power_view(
+    volts: float | None, low: float | None, flags: int | None, alarm: bool | None
+) -> dict[str, Any]:
+    """
+    Return the Power chip: the Pi's 5 V input, under-voltage and throttling.
+
+    `low` is the lowest reading since the last tick; the page keeps the
+    lowest since it opened.
+    """
+    if volts is None:
+        return {'label': 'Power', 'status': 'dead', 'detail': 'No reading', 'volts': None}
+    low = volts if low is None else min(low, volts)
+    status = classify_ext5v(low)
+    notes = []
+    flags = flags or 0
+    if flags & 0x1:
+        status = 'dead'
+        notes.append('Under-voltage now')
+    elif flags & 0x6:
+        status = _worse(status, 'stale')
+        notes.append('Throttled now')
+    if alarm or flags & 0x10000:
+        status = _worse(status, 'stale')
+        notes.append('Low earlier this boot')
+    return {
+        'label': 'Power',
+        'status': status,
+        'detail': '. '.join([f'{volts:.2f} V', *notes]),
+        'volts': volts,
+        'low': low,
+        'notes': '. '.join(notes),
+        'limits': [EXT5V_MIN_VOLTS, EXT5V_WARN_VOLTS],
+    }
+
+
+def link_view(
+    report: dict[str, float] | None, age: float | None, problem_age: float | None
+) -> dict[str, Any]:
+    """
+    Return the Link chip: pit_node's Teensy link report.
+
+    Yellow for a minute after a lost frame, a CRC failure, a reconnect, or a
+    Teensy reset; red with no report or no frames.
+    """
+    if report is None or age is None or age > LINK_STALE_SEC:
+        return {'label': 'Teensy link', 'status': 'dead', 'detail': 'No report'}
+    rate = report.get('rate_hz', 0.0)
+    totals = [
+        (int(report.get('dropped_frames', 0)), 'lost frames'),
+        (int(report.get('crc_failures', 0)), 'CRC errors'),
+        (int(report.get('reconnects', 0)), 'reconnects'),
+        (int(report.get('resets', 0)), 'Teensy resets'),
+    ]
+    seen = [f'{n} {what}' for n, what in totals if n]
+    detail = f'{rate:.0f} Hz. ' + (
+        f'Since teleop started: {", ".join(seen)}' if seen else 'No lost frames'
+    )
+    if report.get('level', 0) >= 2 or rate < 1:
+        status = 'dead'
+    elif problem_age is not None and problem_age < LINK_PROBLEM_HOLD_SEC:
+        status = 'stale'
+    else:
+        status = 'healthy'
+    return {'label': 'Teensy link', 'status': status, 'detail': detail}
+
+
+def _ext5v_loop() -> None:
+    while _monitor_running:
+        if viewing():
+            _ext5v.sample()
+        time.sleep(EXT5V_SAMPLE_SEC)
 
 
 # Watchdog states that change a card; healthy and starting leave the
@@ -689,8 +1044,10 @@ def open_app(target: str, run: Callable[..., Any] = subprocess.run) -> tuple[boo
         return False, f'{app["name"]} is not available.'
     if app['exclusive']:
         live = ('active', 'activating')
-        if (unit_states([app['unit']], run)[app['unit']] not in live
-                and unit_states([AUTONOMY_UNIT], run)[AUTONOMY_UNIT] in live):
+        if (
+            unit_states([app['unit']], run)[app['unit']] not in live
+            and unit_states([AUTONOMY_UNIT], run)[AUTONOMY_UNIT] in live
+        ):
             mapping = last_run().get('mode') == 'mapping'
             message = autonomy_action('save-stop' if mapping else 'stop', run)
             if unit_states([AUTONOMY_UNIT], run)[AUTONOMY_UNIT] in live:
@@ -728,7 +1085,9 @@ def _systemctl(verb: str, unit: str, run: Callable[..., Any]) -> str:
     try:
         r = run(
             ['systemctl', '--no-ask-password', verb, unit],
-            capture_output=True, text=True, timeout=SYSTEMCTL_TIMEOUT_SEC,
+            capture_output=True,
+            text=True,
+            timeout=SYSTEMCTL_TIMEOUT_SEC,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return str(exc)
@@ -803,8 +1162,10 @@ def feature_list(
             out.append({**item, 'state': state, 'last': last})
             continue
         on = teleop == 'active' and running[item['id']]
-        pending = busy or teleop in ('activating', 'reloading') or (
-            teleop == 'active' and running[item['id']] != wanted[item['id']]
+        pending = (
+            busy
+            or teleop in ('activating', 'reloading')
+            or (teleop == 'active' and running[item['id']] != wanted[item['id']])
         )
         state = 'activating' if pending else ('active' if on else 'inactive')
         out.append({**item, 'state': state, 'wanted': wanted[item['id']]})
@@ -816,7 +1177,9 @@ def map_tool(*argv: str, run: Callable[..., Any] = subprocess.run) -> tuple[int,
     try:
         r = run(
             [*MAP_TOOL, *argv],
-            capture_output=True, text=True, timeout=MAP_TOOL_TIMEOUT_SEC,
+            capture_output=True,
+            text=True,
+            timeout=MAP_TOOL_TIMEOUT_SEC,
             stdin=subprocess.DEVNULL,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -962,7 +1325,9 @@ def viewing() -> bool:
 def _monitor_loop() -> None:
     """Background thread that refreshes the cached status snapshot while a page polls."""
     last_system_health = 0.0
-    system_health = _collect_system_health()
+    slow_health = _collect_system_health()
+    last_network = 0.0
+    network: list[dict[str, str]] = []
     while _monitor_running:
         try:
             sample_system(time.time())
@@ -989,7 +1354,9 @@ def _monitor_loop() -> None:
             for name, cfg in MONITORED.items():
                 if cfg.get('publisher'):
                     # pit_node subscribes, so the topic exists without a driver.
-                    present = _sampler is not None and _sampler.count_publishers(cfg['topic']) > 0
+                    present = (
+                        _sampler is not None and _sampler.count_publishers(str(cfg['topic'])) > 0
+                    )
                 else:
                     present = cfg['topic'] in topics
                 if present:
@@ -1008,19 +1375,30 @@ def _monitor_loop() -> None:
                     'detail': detail,
                 }
 
-            rates = {}
+            rates: dict[str, dict[str, Any]] = {}
             warming = _sampler is not None and _sampler.warming()
             for topic in DISPLAY_RATE_TOPICS:
                 hz = _measure_hz(topic)
-                if warming and hz is None and topic not in REALSENSE_DIAGNOSTIC_NAMES.values():
+                if warming and hz is None and topic not in DIAGNOSTIC_RATE_NAMES.values():
                     rates[topic] = {'hz': None, 'stale': False, 'warming': True}
                 else:
                     rates[topic] = {'hz': hz, 'stale': hz is None or hz < 0.5}
 
             now = time.monotonic()
+            if now - last_network >= NETWORK_REFRESH_SEC:
+                network = network_view()
+                last_network = now
             if now - last_system_health >= SYSTEM_HEALTH_REFRESH_SEC:
-                system_health = _collect_system_health()
+                slow_health = _collect_system_health()
                 last_system_health = now
+            _ext5v.sample()
+            system_health = {
+                **slow_health,
+                'power': power_view(
+                    *_ext5v.take(), _read_throttled()[0], _read_under_voltage_alarm()
+                ),
+                'link': link_view(*(_sampler.link() if _sampler else (None, None, None))),
+            }
 
             snapshot = {
                 'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
@@ -1033,7 +1411,8 @@ def _monitor_loop() -> None:
                 'log_dir': str(Path.home() / 'logs' / 'latest'),
                 'autonomy': autonomy_view(*(_sampler.autonomy() if _sampler else (None, None))),
                 'apps': app_list(unit_states(_app_units())),
-                'battery': battery_view(time.time()),
+                'battery': current_battery(),
+                'network': network,
                 'host': socket.gethostname(),
             }
 
@@ -1100,19 +1479,31 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 _refresh_apps()
             if query.get('refresh') == ['1']:
                 _refresh_apps()
-            self._send_json(200, {
-                **get_status(),
-                'override': _override.view(time.monotonic()),
-                'features': features_view(),
-            })
+            self._send_json(
+                200,
+                {
+                    **get_status(),
+                    'battery': current_battery(),
+                    'clock': clock_view(time.time()),
+                    'override': _override.view(time.monotonic()),
+                    'features': features_view(),
+                },
+            )
+        elif url.path == '/api/battery':
+            origin = lab_origin(self.headers.get('Origin'), self.headers.get('Host'))
+            cors = {'Access-Control-Allow-Origin': origin, 'Vary': 'Origin'} if origin else {}
+            self._send_json(200, {'battery': current_battery()}, cors)
         elif url.path == '/api/history':
             now = time.time()
-            self._send_json(200, {
-                'now': now,
-                'window_sec': BATTERY_WINDOW_SEC,
-                'battery': _battery.buckets(now),
-                'system': _system.buckets(now),
-            })
+            self._send_json(
+                200,
+                {
+                    'now': now,
+                    'window_sec': BATTERY_WINDOW_SEC,
+                    'battery': _battery.buckets(now),
+                    'system': _system.buckets(now),
+                },
+            )
         elif url.path == '/api/overview':
             if _overview is None:
                 self._send_json(503, {})
@@ -1170,6 +1561,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if self.path == '/api/clear-log':
             ok, message = clear_watchdog_log()
             self._send_json(200 if ok else 400, {'ok': ok, 'message': message})
+            return
+        if self.path in ('/api/shutdown', '/api/battery/cancel'):
+            if not page_origin(self.headers.get('Origin'), self.headers.get('Host')):
+                self._send_json(403, {'ok': False, 'message': 'Not allowed from this page.'})
+                return
+            if self.path == '/api/battery/cancel':
+                if _sampler is not None:
+                    _sampler.cancel_shutdown()
+                log.warning('Shutdown cancel requested from %s', self.client_address[0])
+                self._send_json(200, {'ok': True, 'message': 'Shutdown canceled.'})
+                return
+            log.warning('Turn off requested from %s', self.client_address[0])
+            self._send_json(200, {'ok': True, 'message': FINAL_MESSAGE})
+            threading.Thread(target=turn_off, daemon=True).start()
             return
         if self.path not in ('/api/open', '/api/override', '/api/feature'):
             self.send_error(404)
@@ -1261,6 +1666,7 @@ def main() -> None:
 
     monitor = threading.Thread(target=_monitor_loop, daemon=True)
     monitor.start()
+    threading.Thread(target=_ext5v_loop, daemon=True).start()
     log.info('Background monitor started')
 
     server = ThreadingHTTPServer(('0.0.0.0', PORT), DashboardHandler)

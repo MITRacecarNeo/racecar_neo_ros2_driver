@@ -58,7 +58,7 @@ A hue low set above its high wraps through 0, so red, which straddles hue 0 and 
 
 Top row, the two views side by side at the same width, then the state box across the rest:
 
-- Camera view: the color frame after the resize, with the crop area in gold, the winning contour and its center in red, a red tie from the center line to the contour center, and the grey setpoint line down the middle.
+- Camera view: the color frame after the resize, with the crop area in gold, the winning contour and its center in red, a red tie from the center line to the contour center, and the gray setpoint line down the middle.
 - Mask view: black and white, the whole frame, so the threshold can be judged on everything in view rather than only the band. The band is outlined in gold; only what is inside it is searched.
 - State box: LINE FOUND, or LINE LOST in crimson. Hover it for the contour's center and area, or for how long the line has been lost.
 

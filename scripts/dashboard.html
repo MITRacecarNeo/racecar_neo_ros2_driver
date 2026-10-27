@@ -4,12 +4,24 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RACECAR Neo</title>
-<link rel="stylesheet" href="/ui/rcn.css?v=11">
-<script src="/ui/charts.js?v=11"></script>
+<link rel="stylesheet" href="/ui/rcn.css?v=13">
+<script src="/ui/charts.js?v=13"></script>
 <link rel="icon" href="/ui/brand/app-icon-32.png">
 <link rel="apple-touch-icon" href="/ui/brand/app-icon-180.png">
 <style>
   .rcn-header .host { font: 600 16px/24px var(--rcn-font-sans); color: var(--rcn-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rcn-header { position: relative; }
+  .rcn-header .batt { white-space: nowrap; }
+  #clock { position: absolute; left: 50%; transform: translateX(-50%); font: 600 16px/24px var(--rcn-font-sans); white-space: nowrap; }
+  @media (max-width: 900px) { #clock { display: none; } }
+  .net { position: relative; }
+  #net-pill { cursor: pointer; }
+  #net-menu { position: absolute; right: 0; top: calc(100% + 8px); z-index: 20; min-width: 300px; background: var(--rcn-surface); border: 1px solid var(--rcn-steel); border-radius: var(--rcn-radius-md); padding: var(--rcn-space-2) var(--rcn-space-3); }
+  #net-menu table { border-collapse: collapse; width: 100%; font: 400 14px/20px var(--rcn-font-sans); }
+  #net-menu td { padding: 4px 8px 4px 0; white-space: nowrap; }
+  #net-menu td.dim { color: var(--rcn-text-muted); }
+  #batt-time { cursor: pointer; }
+  @media (max-width: 480px) { #batt-power { display: none; } }
   main { max-width: 1100px; margin: 0 auto; padding: var(--rcn-space-6) var(--rcn-space-4) var(--rcn-space-8); }
 
   /* Hover and keyboard-focus explanations. */
@@ -101,7 +113,14 @@
 <header class="rcn-header">
   <img class="rcn-mark" src="/ui/brand/mark.png" alt="RACECAR Neo">
   <span class="host" id="host"></span>
+  <span id="clock" aria-label="Car time"></span>
   <span class="rcn-spacer"></span>
+  <span class="net">
+    <span class="rcn-status off" id="net-pill" role="button" tabindex="0" aria-haspopup="true" aria-expanded="false" hidden></span>
+    <div id="net-menu" hidden><table id="net-table"></table></div>
+  </span>
+  <span class="rcn-status off batt" id="batt-time" role="button" tabindex="0" hidden></span>
+  <span class="rcn-status off batt" id="batt-power" hidden></span>
   <span class="rcn-status off" id="overall"><svg class="rcn-icon"><use href="/ui/icons.svg#info"/></svg>Loading</span>
 </header>
 
@@ -111,14 +130,22 @@
     <span id="override-text">Safety switch override is on. The car may move without warning. Do not leave it unattended.</span>
     <button class="rcn-btn small" id="override-off">Turn off</button>
   </div>
+  <div class="rcn-override" id="battery-banner" role="alert" hidden>
+    <svg class="rcn-icon"><use href="/ui/icons.svg#battery"/></svg>
+    <span id="battery-text"></span>
+    <button class="rcn-btn small" id="battery-cancel" hidden>Cancel shutdown</button>
+  </div>
   <h2 class="apps-title">Apps</h2>
   <div class="bar-row group-row"><div class="rcn-eyebrow">Core</div></div>
   <div class="apps">
-    <!-- display: contents keeps the override tile in the same grid as the core apps. -->
+    <!-- display: contents keeps the override and Turn Off tiles in the same grid as the core apps. -->
     <div id="apps-core" style="display: contents"></div>
-    <button class="app" id="override" aria-pressed="false" data-tip="Drive without a controller. Press any controller button except LB to stop.">
+    <button class="app" id="override" aria-pressed="false" data-tip="Drive without a controller. Press any controller button except LB to stop">
       <span class="glyph"><svg class="rcn-icon"><use href="/ui/icons.svg#alert"/></svg></span>
       <span class="name">Safety Override</span></button>
+    <button class="app" id="poweroff" data-tip="Shut down the car safely">
+      <span class="glyph"><svg class="rcn-icon"><use href="/ui/icons.svg#power"/></svg></span>
+      <span class="name">Turn Off</span></button>
   </div>
   <div class="bar-row group-row">
     <div class="rcn-eyebrow">Utilities</div>
@@ -478,7 +505,8 @@ const INDICATORS = [
   ['node', 'edgetpu', 'pulse', 'Coral', 'compute'],
   ['health', 'data', 'layers', 'Data', 'compute'],
   ['health', 'rtc', 'clock', 'RTC', 'compute'],
-  ['health', 'under_voltage', 'bolt', 'Power', 'compute'],
+  ['health', 'power', 'bolt', 'Power', 'compute'],
+  ['health', 'link', 'pulse', 'Link', 'compute'],
   ['node', 'throttle', 'gauge', 'Throttle', 'actuation'],
   ['node', 'mux', 'merge', 'Mux', 'actuation'],
   ['node', 'dotmatrix', 'grid', 'Display', 'actuation'],
@@ -487,7 +515,10 @@ const INDICATORS = [
 ];
 const hz = (r) => (r && r.hz !== null && r.hz !== undefined ? r.hz : null);
 let openChip = null;  // key of the chip whose explanation is open (touch)
-function chip(key, glyph, word, kind, num, unit, tip) {
+let powerLow = null;  // lowest 5 V input since this page opened
+function chip(key, glyph, word, kind, num, unit, text) {
+  // Hover tips end without a period.
+  const tip = text.replace(/\.$/, '');
   return `<button class="chip ${kind}${key === openChip ? ' tip-open' : ''}" data-key="${esc(key)}" data-tip="${esc(tip)}" aria-label="${esc(tip)}">`
     + `${icon(glyph)}<span class="word">${esc(word)}</span>`
     + `${num !== null ? `<span class="rcn-num">${esc(num)}</span><span class="unit">${esc(unit)}</span>` : ''}`
@@ -519,7 +550,14 @@ function renderBasic(data) {
         rr.warming ? `${label}: measuring.` : `${label}: ${r !== null ? `${r.toFixed(1)} Hz` : 'no data'}.`));
     } else if (kind === 'health') {
       const h = (data.system_health || {})[key];
-      if (h) groups[group].push(chip(key, glyph, word, STATUS[h.status] || 'off', null, '', `${h.label}: ${h.detail}.`));
+      if (h && key === 'power' && h.volts !== null) {
+        powerLow = Math.min(powerLow === null ? h.low : powerLow, h.low);
+        // The chip keeps the lowest reading since the page opened, so a dip stays visible.
+        const [floor, margin] = h.limits;
+        const kind = powerLow < floor ? 'err' : (STATUS[h.status] === 'ok' && powerLow < margin ? 'warn' : (STATUS[h.status] || 'off'));
+        groups[group].push(chip(key, glyph, word, kind, h.volts.toFixed(2), 'V',
+          `Power: ${h.volts.toFixed(2)} V, lowest ${powerLow.toFixed(2)} V.${h.notes ? ` ${h.notes}.` : ''}`));
+      } else if (h) groups[group].push(chip(key, glyph, word, STATUS[h.status] || 'off', null, '', `${h.label}: ${h.detail}.`));
     } else {
       const a = data.autonomy || {};
       if (a.status) groups[group].push(chip(key, glyph, word, STATUS[a.status] || 'off', null, '', [a.headline, ...(a.lines || [])].join('. ')));
@@ -557,8 +595,12 @@ function renderAdvanced(data) {
 
 function renderOverall(data) {
   const all = [...Object.values(data.nodes || {}), ...Object.values(data.system_health || {})];
-  const kind = all.some((n) => n.status === 'dead') ? 'err' : (all.some((n) => n.status === 'stale') ? 'warn' : 'ok');
-  setOverall(kind, kind === 'ok' ? 'System OK' : 'Check system');
+  let kind = all.some((n) => n.status === 'dead') ? 'err' : (all.some((n) => n.status === 'stale') ? 'warn' : 'ok');
+  let word = kind === 'ok' ? 'System OK' : 'Check system';
+  const e = data.battery && data.battery.estimate;
+  if (turningOff || (e && (e.level === 'countdown' || e.level === 'off'))) [kind, word] = ['err', 'Shutting down'];
+  else if (e && e.level === 'warn') [kind, word] = [kind === 'err' ? 'err' : 'warn', 'Low battery'];
+  setOverall(kind, word);
 }
 function setOverall(kind, word) { $('overall').outerHTML = pill(kind, word).replace('class="', 'id="overall" class="'); }
 
@@ -605,6 +647,142 @@ $('override-off').onclick = () => sendOverride('stop');
 setInterval(() => sendOverride('keep'), 1000);
 sendOverride('keep');
 
+// Battery: header pills, banner, cancel, and Turn Off. The countdown runs on
+// this page from shutdown_in, so it does not depend on the 3 s poll or on the
+// car's clock.
+const FINAL_TEXT = 'Turning the car off now. Turn off the power switch.';
+let battery = null;
+let shutdownDeadline = null;
+let turningOff = false;
+function minutesText(m) {
+  const r = Math.round(m);
+  return r >= 60 ? `${Math.floor(r / 60)} h ${r % 60} min left` : `${r} min left`;
+}
+// The time pill shows percent left, time left, or the estimated shutdown time;
+// a click moves to the next view, remembered for this browser.
+const PILL_VIEWS = ['percent', 'time', 'clock'];
+let pillView = store.get('rcn-battery-view', 'time');
+if (!PILL_VIEWS.includes(pillView)) pillView = 'time';
+function pillText(e) {
+  if (pillView === 'percent' && e.soc !== null) return `${Math.round(e.soc)}% left`;
+  if (pillView === 'clock') {
+    const at = new Date(Date.now() + e.minutes_left * 60000);
+    return `until ${at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}`;
+  }
+  return minutesText(e.minutes_left);
+}
+function nextPillView() {
+  pillView = PILL_VIEWS[(PILL_VIEWS.indexOf(pillView) + 1) % PILL_VIEWS.length];
+  store.set('rcn-battery-view', pillView);
+  if (battery && battery.minutes_left !== null) $('batt-time').innerHTML = icon('battery') + esc(pillText(battery));
+}
+$('batt-time').onclick = nextPillView;
+$('batt-time').onkeydown = (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); nextPillView(); } };
+function renderBattery(b) {
+  const e = b && b.estimate;
+  battery = e || null;
+  const level = e ? e.level : 'ok';
+  const kind = level === 'ok' ? 'off' : (level === 'warn' ? 'warn' : 'err');
+  const time = $('batt-time');
+  time.hidden = !(e && e.minutes_left !== null);
+  if (!time.hidden) {
+    time.className = `rcn-status ${kind} batt`;
+    time.innerHTML = icon('battery') + esc(pillText(e));
+  }
+  const power = $('batt-power');
+  power.hidden = !(e && e.power_w !== null);
+  if (!power.hidden) power.innerHTML = icon('bolt') + esc(`${e.power_w.toFixed(1)} W avg`);
+  if (e && level === 'countdown' && e.shutdown_in !== null) {
+    const at = performance.now() + e.shutdown_in * 1000;
+    // Keep the running count unless the car's figure differs by more than a tick.
+    if (shutdownDeadline === null || Math.abs(at - shutdownDeadline) > 1500) shutdownDeadline = at;
+  } else shutdownDeadline = null;
+  $('battery-cancel').hidden = !(e && e.can_cancel);
+  renderBatteryBanner();
+}
+function renderBatteryBanner() {
+  const e = battery;
+  let text = '';
+  if (turningOff || (e && e.level === 'off')) text = FINAL_TEXT;
+  else if (e && e.level === 'countdown' && shutdownDeadline !== null) {
+    text = `Shutting down in ${Math.max(0, Math.ceil((shutdownDeadline - performance.now()) / 1000))} s.`;
+  } else if (e && e.level === 'warn') {
+    text = e.minutes_left !== null
+      ? `Low battery: ${Math.round(e.minutes_left)} min left. Charge or swap the battery.`
+      : 'Low battery: Charge or swap the battery.';
+  }
+  $('battery-text').textContent = text;
+  $('battery-banner').hidden = !text;
+}
+setInterval(renderBatteryBanner, 250);
+$('battery-cancel').onclick = async () => {
+  try {
+    const r = await (await fetch('/api/battery/cancel', { method: 'POST' })).json();
+    $('msg').textContent = r.message;
+  } catch (err) { $('msg').textContent = 'Lost contact with the car.'; }
+  update(true);
+};
+$('poweroff').onclick = async () => {
+  if (!confirm('Turn the car off?')) return;
+  try {
+    const r = await fetch('/api/shutdown', { method: 'POST' });
+    const o = await r.json();
+    if (!r.ok) { $('msg').textContent = o.message; return; }
+  } catch (err) { $('msg').textContent = 'Lost contact with the car.'; return; }
+  turningOff = true;
+  clearInterval(statusTimer);
+  renderBatteryBanner();
+  setOverall('err', 'Shutting down');
+};
+
+// Clock: the car's time, ticking here between updates.
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+let carClock = null;  // { offsetMs: car minus this device, utcOffset: car's UTC offset in s, zone }
+function setClock(c) {
+  if (c) carClock = { offsetMs: c.epoch * 1000 - Date.now(), utcOffset: c.utc_offset, zone: c.zone };
+  renderClock();
+}
+function renderClock() {
+  if (!carClock) return;
+  // Shift to the car's zone, then read the fields in UTC.
+  const t = new Date(Date.now() + carClock.offsetMs + carClock.utcOffset * 1000);
+  const h = t.getUTCHours() % 12 || 12;
+  const two = (n) => String(n).padStart(2, '0');
+  $('clock').textContent = `${DAYS[t.getUTCDay()]} ${MONTHS[t.getUTCMonth()]} ${t.getUTCDate()} `
+    + `${h}:${two(t.getUTCMinutes())}:${two(t.getUTCSeconds())} ${t.getUTCHours() < 12 ? 'AM' : 'PM'} ${carClock.zone}`;
+}
+setInterval(renderClock, 1000);
+
+// Network: the pill names the client network; the menu lists every interface.
+function networkLabel(rows) {
+  const client = rows.find((r) => r.kind === 'Wi-Fi' && r.state === 'connected');
+  if (client) return client.network;
+  if (rows.some((r) => r.kind === 'Ethernet' && r.state === 'connected')) return 'Ethernet';
+  if (rows.some((r) => r.kind === 'Access point' && r.state === 'connected')) return 'Access point';
+  return 'No network';
+}
+function renderNetwork(rows) {
+  const pill = $('net-pill');
+  pill.hidden = !(rows && rows.length);
+  if (pill.hidden) return;
+  const online = rows.some((r) => r.kind !== 'Access point' && r.state === 'connected');
+  pill.className = `rcn-status ${online ? 'ok' : 'off'}`;
+  pill.innerHTML = icon('wifi') + esc(networkLabel(rows));
+  const state = (r) => (r.state === 'connected' ? r.network : (r.state === 'unavailable' && r.kind === 'Ethernet' ? 'No cable' : 'Not connected'));
+  setHtml('net-table', rows.map((r) => `<tr><td>${esc(r.device)}</td><td class="dim">${esc(r.kind)}</td>`
+    + `<td>${esc(state(r))}</td><td class="dim">${esc(r.address.split('/')[0])}</td></tr>`).join(''));
+}
+function toggleNetMenu(open) {
+  const menu = $('net-menu');
+  menu.hidden = open === undefined ? !menu.hidden : !open;
+  $('net-pill').setAttribute('aria-expanded', String(!menu.hidden));
+}
+$('net-pill').onclick = (ev) => { ev.stopPropagation(); toggleNetMenu(); };
+$('net-pill').onkeydown = (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); toggleNetMenu(); } };
+document.addEventListener('click', (ev) => { if (!$('net-menu').contains(ev.target)) toggleNetMenu(false); });
+document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') toggleNetMenu(false); });
+
 function update(refresh) {
   return fetch(refresh ? '/api/status?refresh=1' : '/api/status')
     .then((r) => r.json())
@@ -615,6 +793,9 @@ function update(refresh) {
       renderFeatures(data.features);
       renderBasic(data);
       renderAdvanced(data);
+      setClock(data.clock);
+      renderNetwork(data.network);
+      renderBattery(data.battery);
       renderOverall(data);
       $('timestamp').textContent = `Updated ${data.timestamp}`;
     })
@@ -636,7 +817,7 @@ $('clear-log').onclick = async () => {
 $('refresh').onclick = () => { update(true); pollOverview(); pollHistory(); };
 
 update(false);
-setInterval(() => update(false), 3000);
+const statusTimer = setInterval(() => update(false), 3000);
 // Overview: frames and graphs at 2 Hz while open; the battery history moves in 10 s buckets.
 setInterval(pollOverview, 500);
 setInterval(pollHistory, 10000);

@@ -7,6 +7,7 @@ comment in the source can point here instead of carrying the full account.
 ## Contents
 
 - [Diagnostic rate checks](#diagnostic-rate-checks)
+- [Telemetry topic start](#telemetry-topic-start)
 - [CPU busy share](#cpu-busy-share)
 - [eth0 addressing](#eth0-addressing)
 - [AP isolation dispatcher](#ap-isolation-dispatcher)
@@ -26,7 +27,10 @@ comment in the source can point here instead of carrying the full account.
 - [Localization state](#localization-state)
 - [Localizer choice](#localizer-choice)
 - [Data drive missing at boot](#data-drive-missing-at-boot)
+- [Health report failures](#health-report-failures)
 - [Lab dashboards](#lab-dashboards)
+- [Low-battery shutdown](#low-battery-shutdown)
+- [Terminal app](#terminal-app)
 - [WiFi persistence](#wifi-persistence)
 - [Boot brownout with ethernet attached](#boot-brownout-with-ethernet-attached)
   - [Not a flat battery](#not-a-flat-battery)
@@ -74,11 +78,11 @@ measurement otherwise. Two were wrong before v0.8.1:
   the driver runs its "typical" mode at 7.2 Hz, so the floor sat 11 percent
   under the real rate and an ordinary dip failed a healthy unit.
 
-The six PIT topics carry a 65 percent floor rather than 80. Their rate stays
-load-dependent even with the diagnostic's own cost removed, and a car dipping
-into under-voltage throttling drops further. At 88.4 Hz the floor passes
-anything in the 90 to 110 Hz band while a halved frame rate (68 Hz) still
-warns.
+The Teensy sends its telemetry frame on a 200 Hz timer, and the six PIT
+topics arrive at 201 to 202 Hz with the diagnostic subscribed, so they take
+the default 80 percent floor (160 Hz); a halved frame rate still warns.
+`/imu/lsm9ds1` is read from `pit_node`'s own link report on `/diagnostics`
+(the `teensy link` row), the others are counted.
 
 Below its floor a stream warns; below `STALL_HZ` (2 Hz) it fails. Through
 v0.8.2 the floor itself was the fail line, so a Coral delivering 8.6 of its
@@ -86,6 +90,16 @@ v0.8.2 the floor itself was the fail line, so a Coral delivering 8.6 of its
 still feeds the car; a stopped one does not, and the exit code now separates
 them. A car whose stack is down entirely shows every topic as not published,
 which fails rather than skips.
+
+## Telemetry topic start
+
+`racecar_neo_ros2_driver/pit_node.py` (`LISTENER_REFRESH_SEC`).
+
+A telemetry topic from `pit_node` (`/mag`, `/imu/lsm9ds1/raw`,
+`/battery/voltage`, `/rc/channels`, `/tf`, and the rest) takes about 2 s to
+start after a program subscribes: `pit_node` publishes a topic only while it
+has a subscriber and reads the counts once a second. It then runs at the full
+rate.
 
 ## CPU busy share
 
@@ -513,6 +527,66 @@ Data written to `~/data` during the fallback stays there. A drive that drops
 out after boot leaves the root on `/mnt/nvme/data`; new `racecar log` and
 `racecar map` sessions refuse until a reboot.
 
+## Health report failures
+
+`scripts/health.py`, `scripts/sysinfo.py`, `scripts/sudoers.d-racecar-nvme`.
+
+`ext5v` FAIL: the 5 V input dipped under 4.75 V. See
+[Boot brownout with ethernet attached](#boot-brownout-with-ethernet-attached)
+for the supply chain and the contacts that caused it before. `samples.csv` in
+the report folder has every sample, for a plot of when the dips happened.
+
+`smart` WARN "SMART unreadable": the sudoers rule is missing. Run
+`scripts/setup_user_env.sh`, or check `sudo -n nvme smart-log -o json
+/dev/nvme0` by hand.
+
+`kernel log` FAIL with `I/O tag ... timeout, completion polled`: the drive
+did not answer a read for 30 s, and the kernel found the read complete when
+it polled: the drive finished, but its interrupt never arrived. It has been
+seen about once a boot, from the first reads to several minutes in. The
+FAIL holds until the next boot, since the check
+reads the whole boot's log. Repeated timeouts, `resetting controller`, or
+AER errors point at the drive's seating or its PCIe ribbon.
+
+`unsafe shutdowns` counts each time power was lost with the Pi running: a
+battery pulled or the switch turned off. It never warns, since the switch is
+the usual way to turn the car off; a jump with no switch-offs points at
+brownouts.
+
+`data root` FAIL: the car fell back to `~/data` with a drive fitted. See
+[Data drive missing at boot](#data-drive-missing-at-boot).
+
+A shake or poke step FAIL names the step and its first event; the events
+table in `report.md` lists every one with its time:
+
+- `5 V input` or `under-voltage` while poking a power connector: that
+  connector or its crimp is loose. See
+  [Root cause and repair](#root-cause-and-repair) for the supply chain.
+- `usb` on the lidar or RealSense step: reseat that cable at both ends. A
+  USB disconnect on another step points at a cable that moved with the car.
+- `PIT link` on the Teensy UART step: frames from the Teensy stopped for
+  over 50 ms; reseat the UART wires at the PIT board and at the Pi. On
+  another step, the wires moved with the car.
+- A stream that drops and stays down (the lidar after its cable is
+  unplugged) counts against the step it went down in only.
+- `nvme` or `pcie` on the NVMe ribbon step: reseat the ribbon at both ends.
+- `sensor rate` alone: the stream slowed without a disconnect. A RealSense
+  drop under shaking can be the camera's own auto-exposure; repeat the step
+  before replacing a cable.
+- `between steps`: the fault came while no step ran, as when the car was set
+  down or picked up. Events before the first step are not counted: the
+  watch is still starting then.
+
+`teensy link` (`racecar health link`, `racecar status`): `pit_node`'s
+counts since teleop started. Lost frames with no CRC failures are frames
+that never arrived; CRC failures are frames damaged on the wire, often
+noise from a loose UART wire or ground. A Teensy reset with no reconnect is
+the Teensy restarting on its own, as when its supply dips; plugging or
+unplugging the IMU connector does this.
+
+`teleop` FAIL: shake and poke need the PIT stream. Start teleop with
+`racecar service start teleop`.
+
 ## Lab dashboards
 
 `scripts/setup_dashboards.sh`, `scripts/dashboards/`.
@@ -528,6 +602,69 @@ checkouts under `scripts/dashboards/` are gitignored and left in place.
 
 Saved tuning lives in the car profile's `dashboards/<name>.yaml`, never in
 the shipped `<name>.yaml`, so updating the driver keeps a car's tuning.
+
+## Low-battery shutdown
+
+`scripts/battery_guard.py`, `racecar-battery-guard.service`,
+`config/battery.yaml`.
+
+The car turned off on its own:
+
+1. Turn off the power switch.
+2. Charge or swap the battery, then turn the car on.
+3. Run `journalctl -u racecar-battery-guard -b -1` to see the warning, the
+   countdown, its trigger (`floor` or `estimate`), and each shutdown step.
+4. The guard log `<data root>/health/battery/<start>_guard.csv` has one row
+   a second; the `event` column marks the warning, countdown, and steps.
+
+No time or power in the 8080 header: the guard is not running, or it has
+read under 30 s of the battery. `systemctl status racecar-battery-guard`
+shows which. Teleop must be running, since `pit_node` reads the battery.
+
+"Unknown battery" in the journal: the first voltage fits no cell count
+(3.3 to 4.35 V per cell). The guard still applies a floor for the nearest
+count. Set `cells` in `params/battery.yaml` for a battery it cannot read.
+
+The countdown has no Cancel shutdown button: a countdown at the 7.1 V floor
+cannot be canceled. Turn the car off and change the battery. A countdown at
+5 minutes left can be canceled once per boot; the floor still shuts the car
+down.
+
+Time left jumps between driving and standing: the load correction is off or
+wrong for this battery. Run `python3 scripts/battery_curve.py` on its guard
+log; the r_internal line gives the drop per amp to set as `r_internal_ohm`.
+
+A terminal shows the red line but no prompt: the shell redraws its prompt
+right after the line. A full-screen program (vim, htop) keeps the line until
+it next redraws.
+
+## Terminal app
+
+`scripts/terminal.py`, `racecar-terminal.service`, `scripts/pam.d-racecar-terminal`.
+
+"Not allowed from this network.": the browser is not on the car's access
+point. Join the access point, or set `allow_lan` (docs/advanced-settings.md,
+"Terminal access from the LAN").
+
+"Too many tries.": five wrong passwords lock the login for a minute.
+
+The login page comes back after a while: a login ends after 30 minutes
+without use, and every login ends when the app restarts.
+
+The terminals are gone: stopping the app (`racecar service stop terminal`,
+a reboot) ends every terminal. The layout is kept, so the page opens new
+shells in the same places.
+
+A terminal shrinks with blank space at the side: it is open on a smaller
+screen too, and takes the size of the device that typed last. Type in it to
+fill this screen again.
+
+Ctrl+Shift+W closes the Chrome window: Chrome keeps that key. Use Close in
+the terminal's bar.
+
+"The terminal is starting.": ttyd has not opened its socket yet, or
+restarted. Reload after a few seconds; `journalctl -u racecar-terminal`
+shows why it stopped.
 
 ## WiFi persistence
 
@@ -700,6 +837,7 @@ Margin: the buck sits near the low end of its tolerance, so the rail has about
 Check after any work on the power harness, and after a drive:
 
 ```bash
+racecar health power                          # 30 s of EXT5V, throttling, the battery; saved report
 vcgencmd get_throttled                        # 0x0; bits 16 and 18 are sticky since boot
 vcgencmd pmic_read_adc EXT5V_V                # above 4.80 V under teleop load
 journalctl -b -k | grep -ci undervoltage      # 0

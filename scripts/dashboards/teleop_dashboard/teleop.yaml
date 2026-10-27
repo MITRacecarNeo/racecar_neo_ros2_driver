@@ -18,11 +18,11 @@ camera_topic: /camera/color
 # car whose camera is color only; the card then shows the color frame alone.
 depth_topic: /camera/depth
 
-depth_max_m: 4.0      # far end of the depth ramp, metres. Anything past this
+depth_max_m: 4.0      # far end of the depth ramp, meters. Anything past this
                       # clamps to the dark end instead of dropping out. 4 m
                       # suits a lab floor; raise it for a corridor.
 
-# vision_msgs/Detection2DArray for the Detections toggle on the colour view.
+# vision_msgs/Detection2DArray for the Detections toggle on the color view.
 # edgetpu_node publishes /edgetpu/inference; a car that remaps the detector
 # elsewhere points this at it. Leave empty on a car with no detector: the
 # toggle then reports itself unavailable instead of waiting forever.

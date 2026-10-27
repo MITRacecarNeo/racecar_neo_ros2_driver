@@ -239,8 +239,8 @@ def fit_turn_gain(arcs: list[Arc], current_gain: float, wheelbase: float) -> Tur
         ys.append(ratio - 1.0)
     if len(xs) < 2:
         return None
-    x, y = np.array(xs), np.array(ys)
-    return TurnFit(float(x @ y / (x @ x)), base, len(xs))
+    xv, yv = np.array(xs), np.array(ys)
+    return TurnFit(float(xv @ yv / (xv @ xv)), base, len(xs))
 
 
 # The odometry heading is calibrated to well under 1%; a scan match further

@@ -6,12 +6,20 @@
 line-length = 99
 skip-string-normalization = true
 target-version = ['py312']
-extend-exclude = '^/(scripts/dashboards|build|install|log)/'
+extend-exclude = '^/(scripts/dashboards/(eps_dashboard|pursuit_dashboard|smartfollow_dashboard|\.migrated)|build|install|log)/'
 
 [tool.ruff]
 line-length = 99
 target-version = 'py312'
-extend-exclude = ['scripts/dashboards', 'build', 'install', 'log']
+extend-exclude = [
+    'scripts/dashboards/eps_dashboard',
+    'scripts/dashboards/pursuit_dashboard',
+    'scripts/dashboards/smartfollow_dashboard',
+    'scripts/dashboards/.migrated',
+    'build',
+    'install',
+    'log',
+]
 
 [tool.ruff.lint]
 # Import order is left to ament_flake8 (google style).
@@ -23,7 +31,7 @@ inline-quotes = 'single'
 [tool.mypy]
 python_version = '3.12'
 files = ['racecar_neo_ros2_driver', 'launch', 'scripts']
-exclude = ['^scripts/dashboards/']
+exclude = ['^scripts/dashboards/(eps_dashboard|pursuit_dashboard|smartfollow_dashboard|\.migrated)/']
 # rclpy, message packages, pycoral and luma ship no type stubs.
 ignore_missing_imports = true
 # launch/ has no __init__.py; as a namespace package it would shadow ROS launch.

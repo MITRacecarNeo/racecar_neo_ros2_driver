@@ -369,8 +369,7 @@ class TestChangeMode:
         assert mc.resume(out=lines.append) == 0
         assert lines == ['Autonomy is already running.'] and systemd.actions() == []
 
-    def test_refuses_when_the_data_root_cannot_be_written(self, mc, root, systemd,
-                                                          monkeypatch):
+    def test_refuses_when_the_data_root_cannot_be_written(self, mc, root, systemd, monkeypatch):
         monkeypatch.delenv('RACECAR_MAP_ROOT', raising=False)
         monkeypatch.setattr(mc.data_root, 'session_problem', lambda: 'drive dropped out')
         with pytest.raises(mc.MapError, match='drive dropped out'):

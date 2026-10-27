@@ -1,0 +1,4 @@
+# The NVMe data drive's SMART log without a password, for racecar status,
+# racecar health and racecar disk (scripts/sysinfo.py NVME_SMART_ARGV).
+# Read-only; no other nvme command or argument is allowed.
+racecar ALL=(root) NOPASSWD: /usr/sbin/nvme smart-log -o json /dev/nvme0

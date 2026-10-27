@@ -1,0 +1,25 @@
+[Unit]
+Description=RACECAR Neo Battery Guard (low-battery warning and safe shutdown)
+Wants=racecar-data.service
+After=racecar-data.service
+
+[Service]
+Type=exec
+User=racecar
+Group=racecar
+ExecStart=/bin/bash -c '\
+    source /opt/ros/jazzy/setup.bash && \
+    source /home/racecar/ros2_ws/install/setup.bash && \
+    exec python3 /home/racecar/ros2_ws/src/racecar_neo_ros2_driver/scripts/battery_guard.py'
+# Not bound to teleop: it waits for /battery/state and keeps running across
+# teleop restarts.
+Restart=always
+RestartSec=5
+Environment=HOME=/home/racecar
+# RACECAR_DATA_DIR, from racecar-data.service.
+EnvironmentFile=-/run/racecar/environment
+Environment=ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
+WorkingDirectory=/home/racecar/ros2_ws
+
+[Install]
+WantedBy=multi-user.target

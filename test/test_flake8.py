@@ -7,7 +7,7 @@ import pytest
 @pytest.mark.flake8
 @pytest.mark.linter
 def test_flake8():
-    # The lab dashboards in `dashboards` keep their own style and are not yet
-    # held to this package's lint rules.
-    rc, errors = main_with_errors(argv=['--exclude=build,install,log,dashboards'])
+    # Retired lab dashboards stay on some cars for reference; they are not shipped.
+    retired = 'eps_dashboard,pursuit_dashboard,smartfollow_dashboard,.migrated'
+    rc, errors = main_with_errors(argv=[f'--exclude=build,install,log,{retired}'])
     assert rc == 0, '\n'.join(errors)

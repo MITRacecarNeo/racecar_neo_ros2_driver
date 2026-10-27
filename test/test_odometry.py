@@ -139,6 +139,7 @@ class _OdomPit:
     _integrate_odometry = PitNode._integrate_odometry
 
     _publish_odometry = PitNode._publish_odometry
+    _wanted = PitNode._wanted
 
     def __init__(self):
         self._odometry = OdomIntegrator()
@@ -146,7 +147,8 @@ class _OdomPit:
         self._odom_next_pub = None
         self._odom_frame, self._odom_child_frame = 'odom', 'base_link'
         self.sent = []
-        self._tf = SimpleNamespace(sendTransform=self.sent.append)
+        self._tf = SimpleNamespace(sendTransform=self.sent.append, pub_tf=object())
+        self._listened = {}
         self._pub_odom_integrated = SimpleNamespace(publish=self.sent.append)
         self._yaw_axis = 2
         self._yaw_gain = 1.0
@@ -160,6 +162,13 @@ class _OdomPit:
 
 
 class TestPitNodeOdometry:
+    def test_nothing_built_without_a_subscriber(self):
+        pit = _OdomPit()
+        pit._listened = {id(pit._tf.pub_tf): False, id(pit._pub_odom_integrated): False}
+        pit._integrate_odometry(1_000_000_000, 0.5, [0.0, 0.0, 0.0])
+        pit._integrate_odometry(1_030_000_000, 0.5, [0.0, 0.0, 0.0])
+        assert pit.sent == []
+
     def test_yaw_is_body_z(self):
         pit = _OdomPit()
         pit._integrate_odometry(1_000_000_000, 0.5, [0.0, 0.0, 0.0])

@@ -4,6 +4,119 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-10-26
+
+### Added
+
+- Low-battery warning and safe shutdown: `scripts/battery_guard.py`, run
+  by `racecar-battery-guard.service` from boot, apart from teleop. It
+  estimates charge and time left from a measured discharge curve of the
+  Gens ace 5000 mAh 2S battery (`racecar_neo_ros2_driver/battery.py`,
+  `config/battery.yaml`), reads the cell count at boot, and measures the
+  capacity of the battery in the car as it runs. Warns at 15 minutes
+  left. At 7.1 V (3.55 V per cell, 30 s median) it counts down 60 s, then
+  stops a recording, the driving apps, autonomy, and teleop, and powers
+  off (`scripts/safe_shutdown.py`, `scripts/polkit/49-racecar-power.rules`).
+  The countdown also starts at 5 minutes left (`shutdown_enabled`), and
+  that one can be canceled once. Load correction: each reading is raised by
+  30 mOhm times its current above 2.3 A, the idle current the curve was
+  measured at (`r_internal_ohm`, `curve_amps`). Publishes `/battery/estimate`; logs a CSV under
+  `<data root>/health/battery/`.
+- Low-battery messages: a red line on every terminal of the car's user and
+  in the tmux status bar, with the shell prompt redrawn after it
+  (`scripts/battery_alert.py`); LOW / BATT / "!", the seconds left, and
+  SHUT / DOWN on the dot matrix, and orange and red flashing on the LED
+  strip (`scripts/battery_display.py`).
+- `pit_node` inputs `/dotmatrix/alert` and `/led/alert`, shown ahead of the
+  user's frames and the override flash while fresh.
+- 8080 home page: battery time left (click for percent or the time the car
+  turns off) and average power in the header, "Low battery" and "Shutting
+  down" in the status pill, a countdown banner with Cancel shutdown, and a
+  Turn Off tile in Core (`POST /api/shutdown`). `GET /api/battery`;
+  `/ui/battery.js` shows the banner on the map viewer, the launch page, and
+  the lab dashboards.
+- `speed_cap` in `throttle.yaml`: speed clipped for every source at all
+  times, 1.0 (off) by default; about 0.15 with the field firmware holds the
+  car to about 1.0 m/s. The lowest active cap wins while mapping.
+
+- Terminal app on port 8086 (`scripts/terminal.py`,
+  `racecar-terminal.service`): a shell on the car in the browser, behind the
+  racecar password (PAM, `/etc/pam.d/racecar-terminal`). Each terminal is a tmux
+  session on its own socket (`tmux -L racecar-terminal`), so it survives a
+  reload and can be attached from SSH; new terminals start in `~/jupyter_ws`.
+  Logins come from the access point only unless `car.yaml` sets
+  `terminal: {allow_lan: true}`. Split, resize, maximize, close, and Reset;
+  Ctrl+Shift+E, O, X, and W; the layout is saved on the car, so a reload or
+  another device shows the same terminals. Presets with start commands
+  (four built in, the car's own saved, export and import), and Export of a
+  terminal's text. Opened from the Terminal tile in Core, which replaces
+  the Terminator placeholder. `ttyd` and `python3-pampy` join the setup
+  packages; setup turns off the package's own `ttyd.service`.
+- 8080 header: the car's date, time, and zone, and a network pill with a
+  menu of every interface, its network, and address.
+- `racecar status` rows for the battery guard and the terminal app;
+  `racecar service status` lists both.
+- `racecar health` (`scripts/health.py`): `power` samples EXT5V for 30 s
+  and checks throttling, the PMIC alarm, the ARM clock, and the battery
+  against the guard's floor; `nvme` checks the drive's mount and the data
+  root, writes and reads back 256 MB, and reads free space, SMART (new
+  unsafe shutdowns since the last report, counted, not warned), and kernel log errors. Each run
+  saves `report.md`, `report.json`, and `samples.csv` under
+  `<data root>/health/`; exit 1 on a FAIL.
+- `scripts/battery_curve.py`: guard logs (joined across a restart) and
+  capture CSVs to charge, capacity, the voltage drop per amp, the curve
+  against the charge left, and the estimate replayed and scored at 15 and 5
+  minutes, with `--r-internal` for a candidate value.
+- Teensy link statistics: `pit_node` counts frames, CRC failures (always,
+  not only with `require_crc`), lost frames from gaps in the Teensy's
+  timestamps, bytes skipped while finding a frame, reconnects, and Teensy
+  resets (`racecar_neo_ros2_driver/pit_link.py`), and publishes them on
+  `/diagnostics` once a second from its reader thread. `racecar health
+  link`, a `teensy link` row in `racecar status`, and a Link chip on 8080
+  read them.
+- `racecar health shake` and `poke` (`scripts/health_watch.py`): timed steps
+  (each axis shaken and the deck tapped; each connector in
+  `config/health.yaml` pressed and wiggled) while the 5 V input, throttling,
+  USB, under-voltage, NVMe and PCIe errors in the kernel log, a data-root
+  write each second, gaps over 50 ms in the PIT stream, and the `/scan` and
+  RealSense rates are watched. Each fault is charged to its step. The car
+  profile's `params/health.yaml` replaces the connector list.
+- `racecar status` rows `ext5v` (one reading against 4.75 V and 4.85 V)
+  and `nvme` (temperature, wear, media errors).
+- `scripts/sudoers.d-racecar-nvme`, installed by `setup_user_env.sh` after a
+  `visudo` check: `nvme smart-log -o json /dev/nvme0` without a password,
+  for `racecar status`, `racecar health`, and `racecar disk`.
+- `sysinfo.read_pmic_rails()`, `read_ext5v()`, `read_nvme_temp()`, and
+  `read_nvme_smart()`.
+
+### Changed
+
+- Driver CPU at idle from about 1.15 cores to 0.29: `pit_node`,
+  `imu_fusion_node`, `mux_node`, and `throttle_node` spin on rclpy's
+  `EventsExecutor` (`racecar_neo_ros2_driver/spin.py`); `pit_node` skips
+  telemetry topics with no subscriber (a new subscriber gets data within
+  about 2 s, at the full rate) and computes the protocol CRC with
+  `binascii.crc_hqx`; `imu_fusion_node` decodes only the newest sample of
+  each source at its publish rate. Topics, rates, and messages are unchanged.
+- The PIT frame rate on 8080 and in `racecar status` comes from `pit_node`'s
+  link report instead of counting `/imu/lsm9ds1`; the six PIT topics are
+  checked against 200 Hz (the firmware's telemetry timer) with an 80 percent
+  floor.
+- `pit_protocol.scan_for_packet` returns the bytes before a frame's magic on
+  their own call, so every discarded byte is counted.
+- 8080 Power chip: the Pi's 5 V input, read once a second while a page is
+  open, with the lowest reading since the page opened; under-voltage and
+  throttling now. An under-voltage alarm from earlier in the boot warns
+  instead of showing red. The Data chip adds the drive's temperature; both
+  it and the RTC chip refresh every 15 s instead of 60 s.
+- 8080 hover tips end without a period.
+- The lab dashboards in `scripts/dashboards/` (web teleop, line follow,
+  wall follow, camera label) are held to the package's lint rules: flake8,
+  pep257, ruff, black, and mypy (typed signatures). Only the retired
+  dashboards kept on some cars stay excluded. `racecar lint` passes on the
+  whole package again (black formatting, typing fixes in the calibration
+  tools, `racecar disk`, the dashboard, and the sensor overview).
+
 ## [0.9.0] - 2026-10-24
 
 ### Added
@@ -1456,7 +1569,8 @@ Design notes and migration from v1:
 - Parameter YAMLs: `config/gamepad.yaml`, `mux.yaml`, `throttle.yaml`, `pwm.yaml`
 - Project files: `README.md`, `LICENSE` (GPLv3), `.gitignore`, `.gitattributes`
 
-[Unreleased]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.8.3...v0.9.0
 [0.8.3]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.8.1...v0.8.2
