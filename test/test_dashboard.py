@@ -1115,3 +1115,32 @@ class TestNetwork:
             assert f'id="{element}"' in html
         assert "['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']" in html
         assert "'PM'} ${carClock.zone}`" in html
+
+
+class TestLink:
+    def _report(self, **kw):
+        return {'rate_hz': 200.0, 'level': 0.0, **kw}
+
+    def test_clean(self, dashboard):
+        v = dashboard.link_view(self._report(), 1.0, None)
+        assert (v['status'], v['detail']) == ('healthy', '200 Hz. No lost frames')
+
+    def test_recent_problem_holds_yellow(self, dashboard):
+        v = dashboard.link_view(self._report(dropped_frames=3, reconnects=1), 1.0, 20.0)
+        assert v['status'] == 'stale'
+        assert v['detail'] == '200 Hz. Since teleop started: 3 lost frames, 1 reconnects'
+
+    def test_old_problem_clears(self, dashboard):
+        v = dashboard.link_view(self._report(dropped_frames=3), 1.0, 90.0)
+        assert v['status'] == 'healthy'
+
+    def test_stale_or_missing_report_is_red(self, dashboard):
+        assert dashboard.link_view(None, None, None)['status'] == 'dead'
+        assert dashboard.link_view(self._report(), 10.0, None)['status'] == 'dead'
+        down = dashboard.link_view(self._report(level=2.0, rate_hz=0.0), 1.0, 0.5)
+        assert down['status'] == 'dead'
+
+    def test_pit_rate_comes_from_the_link_report(self, dashboard):
+        assert '/imu/lsm9ds1' not in dashboard.RATE_TOPICS
+        assert '/imu/lsm9ds1' in dashboard.DISPLAY_RATE_TOPICS
+        assert "['health', 'link', 'pulse', 'Link', 'compute']" in dashboard.DASHBOARD_HTML

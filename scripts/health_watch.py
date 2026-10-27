@@ -11,7 +11,8 @@ operator moves the car one timed step at a time:
     data root       a 4 KB write with fsync once a second; a failure or a write
                     over 1 s
     PIT link        a gap over 50 ms between /imu/lsm9ds1 stamps (5 ms apart
-                    while the Teensy link holds)
+                    while the Teensy link holds), and a CRC failure, a
+                    reconnect or a Teensy reset in pit_node's link report
     sensor rates    /scan in 2 s bins, and the RealSense rates on /diagnostics,
                     under half of the still step's
 
@@ -200,12 +201,21 @@ class Watch:
                 self.add('PIT link', f'{(stamp - last[0]) * 1000:.0f} ms without a frame')
             last[0] = stamp
 
+        previous: dict[str, float] = {}
+
         def on_diagnostics(msg: Any) -> None:
             rates: dict[str, float] = {}
             sysinfo.read_diagnostic_rates(msg, rates)
             t = self.clock()
             with self._lock:
                 self.realsense.extend((t, topic, hz) for topic, hz in rates.items())
+            report = sysinfo.read_link_status(msg)
+            if report is None:
+                return
+            for event in link_events(previous, report):
+                self.add('PIT link', event, t)
+            previous.clear()
+            previous.update(report)
 
         node.create_subscription(Imu, LINK_TOPIC, on_imu, qos_profile_sensor_data)
         node.create_subscription(
@@ -221,6 +231,23 @@ class Watch:
         finally:
             node.destroy_node()
             rclpy.shutdown()
+
+
+def link_events(previous: dict[str, float], report: dict[str, float]) -> list[str]:
+    """Return what the link report counts that the one before it did not."""
+    if not previous:
+        return []
+    names = (
+        ('crc_failures', 'CRC failure'),
+        ('reconnects', 'reconnect'),
+        ('resets', 'Teensy reset'),
+    )
+    out = []
+    for key, name in names:
+        new = int(report.get(key, 0) - previous.get(key, 0))
+        if new > 0:
+            out.append(f'{new} {name}{"s" if new > 1 else ""}')
+    return out
 
 
 def run_steps(

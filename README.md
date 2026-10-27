@@ -650,8 +650,9 @@ drive over time and saves a report. `racecar status` takes one reading of
 each; `racecar health` samples and tests.
 
 ```sh
-racecar health          # power, then nvme
+racecar health          # power, link, then nvme
 racecar health power    # the Pi's 5 V input for 30 s, throttling, the battery
+racecar health link     # the Teensy UART link for 30 s
 racecar health nvme     # the data drive: mount, speed, SMART, kernel log
 racecar health shake    # shake the car on each axis and tap the deck
 racecar health poke     # press and wiggle each connector, one at a time
@@ -660,6 +661,7 @@ racecar health poke     # press and wiggle each connector, one at a time
 | Step | Checks | FAIL when |
 |---|---|---|
 | `power` | EXT5V (the Pi's 5 V input) about 140 times a second for 30 s: min, mean, share under 4.75 V; throttle bits before and after; the PMIC under-voltage alarm; the ARM clock; battery voltage and current from `/battery/state` | any sample under 4.75 V; throttling now or during the run; the battery under the guard's floor (3.55 V per cell) |
+| `link` | `pit_node`'s Teensy link report for 30 s: frame rate (200 Hz), longest gap, lost frames, CRC failures, skipped bytes, reconnects, Teensy resets, and the totals since teleop started | a gap over 50 ms; a CRC failure, a reconnect, or a Teensy reset during the sample |
 | `nvme` | drive on PCIe, mounted at `/mnt/nvme`, the data root on it; a 256 MB write and read back that bypasses the page cache, with MB/s; free space; SMART temperature, wear, media errors, and unsafe shutdowns (a count; the switch makes one); NVMe and PCIe errors in this boot's kernel log | no drive; not mounted; the data root on the SD card; a read-back mismatch; SMART critical warning or media errors; any kernel log error |
 
 `shake` and `poke` look for a loose contact. Each prompts one step at a
@@ -673,7 +675,7 @@ be running. During every step they watch:
 | Throttling | a throttle bit not set at the start |
 | Kernel log | a USB disconnect or reset, under-voltage, an NVMe or PCIe error |
 | Data root | a 4 KB write that fails or takes over 1 s (one a second) |
-| PIT link | over 50 ms between `/imu/lsm9ds1` stamps (5 ms apart normally) |
+| PIT link | over 50 ms between `/imu/lsm9ds1` stamps (5 ms apart normally); a CRC failure, reconnect, or Teensy reset in `pit_node`'s link report |
 | Sensor rates | `/scan` (2 s bins) or a RealSense stream under half its still rate |
 
 A step with a fault FAILs and names it; the report adds an events table with
@@ -683,12 +685,21 @@ connectors are in `config/health.yaml`; a car with other wiring puts its own
 `poke:` list in the car profile as `params/health.yaml`, which replaces it.
 
 Under 4.85 V, sticky throttle bits from earlier in the boot, a slow drive
-(under 100 MB/s write or 150 MB/s read) warn.
+(under 100 MB/s write or 150 MB/s read), a lost Teensy frame, skipped bytes,
+or a frame rate more than 2.5% off 200 Hz warn.
 The battery row needs teleop running; without it the row is skipped.
 
 Each run writes `report.md`, `report.json`, and `samples.csv` (every EXT5V
 sample) to `health/<time>/` under the data root. The exit code is 1 when a
 check fails.
+
+`pit_node` counts the Teensy link while it runs and reports it on
+`/diagnostics` once a second (`pit: teensy link`): frames, the frame rate,
+lost frames (from gaps in the Teensy's own timestamps), the longest gap, CRC
+failures, bytes skipped while finding a frame, reconnects, and Teensy
+resets. `racecar status` has a `teensy link` row from it, and the 8080 Link
+chip shows it: yellow for a minute after a lost frame, CRC failure,
+reconnect, or reset, red with no report.
 
 `racecar status` has `ext5v` and `nvme` rows: one EXT5V reading, and the
 drive's temperature, wear, and media errors. SMART needs root; setup installs

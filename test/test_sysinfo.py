@@ -221,12 +221,31 @@ class TestDiagnosticRates:
         )
         assert out == {}
 
-    def test_names_cover_the_three_realsense_streams(self):
-        assert set(sysinfo.REALSENSE_DIAGNOSTIC_NAMES.values()) == {
+    def test_names_cover_the_realsense_streams_and_the_teensy_link(self):
+        assert set(sysinfo.DIAGNOSTIC_RATE_NAMES.values()) == {
             '/camera/color',
             '/camera/depth',
             '/imu/realsense',
+            '/imu/lsm9ds1',
         }
+
+    def test_link_status(self):
+        status = SimpleNamespace(
+            name='pit: teensy link',
+            level=b'\x01',
+            values=[
+                SimpleNamespace(key='Actual frequency (Hz)', value='199.0'),
+                SimpleNamespace(key='dropped_frames', value='3'),
+                SimpleNamespace(key='hardware', value='ttyAMA0'),
+            ],
+        )
+        msg = SimpleNamespace(status=[SimpleNamespace(name='camera: color', values=[]), status])
+        assert sysinfo.read_link_status(msg) == {
+            'rate_hz': 199.0,
+            'dropped_frames': 3.0,
+            'level': 1.0,
+        }
+        assert sysinfo.read_link_status(SimpleNamespace(status=[])) is None
 
 
 class TestMemory:

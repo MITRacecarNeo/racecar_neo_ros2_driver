@@ -166,3 +166,39 @@ class TestReport:
     def test_render_groups_by_step(self):
         lines = health.render_lines(self._checks())
         assert lines[1] == 'POWER' and lines[4] == 'NVME'
+
+
+class TestLink:
+    def _report(self, **kw):
+        base = {'rate_hz': 200.0, 'gap_ms': 5.0, 'frames': 1000, 'dropped_frames': 0}
+        return {**base, 'crc_failures': 0, 'skipped_bytes': 0, 'reconnects': 0, 'resets': 0, **kw}
+
+    def test_clean_link_passes(self):
+        rows = health.link_rows([self._report(), self._report(frames=1200)])
+        assert all(c.status == 'OK' for c in rows)
+        assert rows[0].detail.startswith('mean 200.0 Hz')
+
+    def test_counts_are_new_during_the_sample(self):
+        rows = {c.name: c for c in health.link_rows([
+            self._report(dropped_frames=5, crc_failures=1),
+            self._report(dropped_frames=7, crc_failures=1),
+        ])}
+        assert (rows['lost frames'].status, rows['lost frames'].detail) == ('WARN', '2')
+        assert rows['crc failures'].status == 'OK'
+
+    def test_faults(self):
+        rows = {c.name: c for c in health.link_rows([
+            self._report(),
+            self._report(gap_ms=80.0, crc_failures=1, resets=1, rate_hz=150.0),
+        ])}
+        assert rows['longest gap'].status == 'FAIL'
+        assert rows['crc failures'].status == 'FAIL'
+        assert rows['teensy resets'].status == 'FAIL'
+        assert rows['frame rate'].status == 'WARN'
+
+    def test_no_reports(self):
+        rows = health.link_rows([])
+        assert [(c.name, c.status) for c in rows] == [('teensy link', 'FAIL')]
+
+    def test_all_runs_link(self):
+        assert health.DEFAULT_STEPS == ('power', 'link', 'nvme')

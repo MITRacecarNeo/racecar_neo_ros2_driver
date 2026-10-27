@@ -194,7 +194,7 @@ def test_health_dispatches_to_its_script(tmp_path, monkeypatch):
 def test_health_in_help_and_completion():
     text = TOOL.read_text()
     assert 'health [step]' in text
-    assert 'COMPREPLY=( $(compgen -W "all power nvme shake poke --seconds --help"' in text
+    assert 'COMPREPLY=( $(compgen -W "all power link nvme shake poke --seconds --help"' in text
 
 
 class TestService:

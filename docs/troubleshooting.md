@@ -77,11 +77,11 @@ measurement otherwise. Two were wrong before v0.8.1:
   the driver runs its "typical" mode at 7.2 Hz, so the floor sat 11 percent
   under the real rate and an ordinary dip failed a healthy unit.
 
-The six PIT topics carry a 65 percent floor rather than 80. Their rate stays
-load-dependent even with the diagnostic's own cost removed, and a car dipping
-into under-voltage throttling drops further. At 88.4 Hz the floor passes
-anything in the 90 to 110 Hz band while a halved frame rate (68 Hz) still
-warns.
+The Teensy sends its telemetry frame on a 200 Hz timer, and the six PIT
+topics arrive at 201 to 202 Hz with the diagnostic subscribed, so they take
+the default 80 percent floor (160 Hz); a halved frame rate still warns.
+`/imu/lsm9ds1` is read from `pit_node`'s own link report on `/diagnostics`
+(the `teensy link` row), the others are counted.
 
 Below its floor a stream warns; below `STALL_HZ` (2 Hz) it fails. Through
 v0.8.2 the floor itself was the fail line, so a Coral delivering 8.6 of its
@@ -565,6 +565,13 @@ table in `report.md` lists every one with its time:
 - `between steps`: the fault came while no step ran, as when the car was set
   down or picked up. Events before the first step are not counted: the
   watch is still starting then.
+
+`teensy link` (`racecar health link`, `racecar status`): `pit_node`'s
+counts since teleop started. Lost frames with no CRC failures are frames
+that never arrived; CRC failures are frames damaged on the wire, often
+noise from a loose UART wire or ground. A Teensy reset with no reconnect is
+the Teensy restarting on its own, as when its supply dips; plugging or
+unplugging the IMU connector does this.
 
 `teleop` FAIL: shake and poke need the PIT stream. Start teleop with
 `racecar service start teleop`.

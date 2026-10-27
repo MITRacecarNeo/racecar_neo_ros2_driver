@@ -37,16 +37,16 @@ class TestTopicSpecs:
             assert spec.floor_frac == 0.8, f'{spec.topic} should use the 80% floor'
 
     def test_pit_topics_carry_the_wider_floor(self, diag):
-        # The six topics off the Teensy telemetry frame slow under graph load,
-        # so their floor leaves room for it. A halved frame rate (68 Hz) must
-        # still warn, or the check stops meaning anything.
+        # The six topics off the Teensy telemetry frame, sent on a 200 Hz
+        # timer; 201 to 202 Hz measured with the diagnostic subscribed. A
+        # halved frame rate (100 Hz) must still warn.
         pit = [s for s in diag.SENSOR_TOPICS if s.topic in diag.PIT_TOPICS]
         assert len(pit) == 6
         for spec in pit:
-            assert spec.nominal == 136.0
+            assert spec.nominal == 200.0
             assert spec.floor_frac == diag.PIT_FLOOR_FRAC
-            assert spec.floor < 90.0, 'floor must pass a car delivering 90 Hz'
-            assert spec.floor > 68.0, 'floor must still flag a halved frame rate'
+            assert spec.floor < 190.0, 'an ordinary dip must not warn'
+            assert spec.floor > 100.0, 'floor must still flag a halved frame rate'
 
     def test_lidar_nominal_matches_the_delivered_rate(self, diag):
         scan = next(s for s in diag.SENSOR_TOPICS if s.topic == '/scan')
@@ -60,9 +60,15 @@ class TestTopicSpecs:
         assert by_topic['/camera/color'].nominal == 60.0
         assert by_topic['/camera/depth'].nominal == 30.0
 
-    def test_realsense_rates_come_from_diagnostics(self, diag):
-        # Subscribing to the image streams would starve the PIT telemetry rate.
-        assert diag.DIAGNOSTIC_SOURCED == {'/camera/color', '/camera/depth', '/imu/realsense'}
+    def test_reported_rates_come_from_diagnostics(self, diag):
+        # Subscribing to the image streams would starve the PIT telemetry
+        # rate; pit_node reports the frame rate itself.
+        assert diag.DIAGNOSTIC_SOURCED == {
+            '/camera/color',
+            '/camera/depth',
+            '/imu/realsense',
+            '/imu/lsm9ds1',
+        }
 
     def test_every_nominal_sits_well_above_the_stall_line(self, diag):
         # A nominal near STALL_HZ would turn an ordinary dip into a FAIL.
@@ -223,7 +229,7 @@ class TestSampleWindow:
         assert diag.DEFAULT_WINDOW >= 5.0
 
     def test_diagnostic_names_cover_every_diagnostic_sourced_topic(self, diag):
-        assert set(diag.REALSENSE_DIAGNOSTIC_NAMES.values()) == diag.DIAGNOSTIC_SOURCED
+        assert set(diag.DIAGNOSTIC_RATE_NAMES.values()) == diag.DIAGNOSTIC_SOURCED
 
 
 def _vec(x, y, z):
@@ -781,3 +787,36 @@ class TestPowerAndDriveRows:
     )
     def test_limits(self, diag, temp, smart, status):
         assert diag.nvme_check(True, temp, smart).status == status
+
+
+class TestLinkCheck:
+    def _ros(self, diag, reports):
+        return diag.RosResult(available=True, link=reports)
+
+    def _report(self, **kw):
+        base = {'rate_hz': 200.0, 'gap_ms': 5.0, 'crc_failures': 0, 'dropped_frames': 0}
+        return {**base, 'reconnects': 0, 'resets': 0, **kw}
+
+    def test_clean_link(self, diag):
+        c = diag.link_check(self._ros(diag, [self._report(), self._report()]))
+        assert c.status == 'OK' and c.detail.startswith('200 Hz, longest gap 5 ms')
+
+    def test_old_losses_only_listed(self, diag):
+        old = self._report(dropped_frames=4)
+        c = diag.link_check(self._ros(diag, [old, old]))
+        assert c.status == 'OK' and '4 dropped frames' in c.detail
+
+    def test_new_loss_warns(self, diag):
+        reports = [self._report(), self._report(dropped_frames=2, gap_ms=15.0)]
+        assert diag.link_check(self._ros(diag, reports)).status == 'WARN'
+
+    def test_reset_in_the_window_fails(self, diag):
+        reports = [self._report(), self._report(resets=1)]
+        assert diag.link_check(self._ros(diag, reports)).status == 'FAIL'
+
+    def test_no_report_fails(self, diag):
+        c = diag.link_check(self._ros(diag, []))
+        assert c.status == 'FAIL' and 'pit_node' in c.detail
+
+    def test_no_graph_skips(self, diag):
+        assert diag.link_check(diag.RosResult()).status == 'SKIP'

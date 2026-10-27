@@ -316,7 +316,7 @@ patterns on `/dotmatrix/pixels`.
 | `/dotmatrix/text`, `/dotmatrix/pixels` | `std_msgs/String`, `UInt8MultiArray` | user code | `dotmatrix_node` |
 | `/dotmatrix/frame`, `/led/pixels` | `std_msgs/UInt8MultiArray` | `dotmatrix_node`, user code | `pit_node` |
 | `/dotmatrix/alert`, `/led/alert` | `std_msgs/UInt8MultiArray` (8 x 24 pixels, one byte each; 84 RGB triplets) | `battery_guard.py` | `pit_node` |
-| `/diagnostics` | `diagnostic_msgs/DiagnosticArray` | camera, `edgetpu_node` | dashboard, `diagnose.py` |
+| `/diagnostics` | `diagnostic_msgs/DiagnosticArray` | camera, `edgetpu_node`, `pit_node` (Teensy link, 1 Hz) | dashboard, `diagnose.py`, `health.py` |
 | `/tf_static` | `tf2_msgs/TFMessage` | `robot_state_publisher`, `realsense2_camera_node` | TF consumers, viewers |
 | `/robot_description` | `std_msgs/String` | `robot_state_publisher` | viewers (RViz, Foxglove) |
 
@@ -657,6 +657,13 @@ racecar health [power|nvme]
                                                         samples.csv
 ```
 
+`link` reads `pit_node`'s Teensy link report (`pit_link.LinkStats`, counted
+in the serial reader thread and published there once a second as
+`pit: teensy link` on `/diagnostics`; no timer). The report carries the
+frame rate under the RealSense driver's rate key, so `sysinfo`'s
+`DIAGNOSTIC_RATE_NAMES` gives the dashboard and `racecar status` the PIT
+rate without subscribing to the 200 Hz IMU topic.
+
 `shake` and `poke` run `health_watch.Watch`: four threads (EXT5V as fast as
 vcgencmd answers; a 1 s loop for throttle bits and a data-root write; a
 `journalctl -k -f` follower; an rclpy node on `/imu/lsm9ds1` stamps, `/scan`
@@ -886,6 +893,7 @@ saves the profile to one `.tar.gz` for a fresh image or SD card swap.
 ```
 racecar_neo_ros2_driver/
 ├── racecar_neo_ros2_driver/   node implementations, launch_common, pit_protocol,
+│                              pit_link (Teensy link statistics),
 │                              limits (shared clamp), frames (frames.yaml loader),
 │                              car_profile (per-car settings in ~/.config/racecar),
 │                              data_root (where the car's data goes)

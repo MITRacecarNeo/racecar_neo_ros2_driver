@@ -2,9 +2,12 @@
 """
 `racecar health`: hardware checks that sample over time and keep a report.
 
-    racecar health [all]    power, then nvme
+    racecar health [all]    power, link, then nvme
     racecar health power    the Pi's 5 V input for 30 s, throttling, the PMIC
                             alarm, the ARM clock, the battery
+    racecar health link     the Teensy UART link for 30 s, from pit_node's
+                            report: frame rate, lost frames, gaps, CRC
+                            failures, skipped bytes, reconnects, resets
     racecar health nvme     the data drive: placement, a 256 MB write and
                             read, free space, SMART, kernel log errors
     racecar health shake    the car shaken on each axis and its deck tapped,
@@ -58,10 +61,19 @@ import health_watch  # noqa: E402
 import sysinfo  # noqa: E402
 
 CONFIG_DIR = Path(__file__).resolve().parent.parent / 'config'
-STEPS = ('power', 'nvme', 'shake', 'poke')
+STEPS = ('power', 'link', 'nvme', 'shake', 'poke')
 # `racecar health` and `all`; shake and poke run only when named.
-DEFAULT_STEPS = ('power', 'nvme')
-TITLES = {'power': 'Power', 'nvme': 'Data drive', 'shake': 'Shake test', 'poke': 'Poke test'}
+DEFAULT_STEPS = ('power', 'link', 'nvme')
+TITLES = {
+    'power': 'Power',
+    'link': 'Teensy link',
+    'nvme': 'Data drive',
+    'shake': 'Shake test',
+    'poke': 'Poke test',
+}
+# The Teensy sends a telemetry frame every 5 ms.
+LINK_HZ = 200.0
+LINK_RATE_TOLERANCE = 0.025
 # Wait this long for the first PIT frame before calling teleop stopped.
 TELEOP_WAIT_SEC = 5.0
 
@@ -264,6 +276,99 @@ def run_power(seconds: float, out: Callable[[str], None]) -> tuple[list[Check], 
     ]
     rails = sysinfo.read_pmic_rails()
     return checks, {'ext5v_samples': samples, 'rails': rails}
+
+
+# ---------------------------------------------------------------------------
+# Teensy link
+# ---------------------------------------------------------------------------
+
+
+def collect_link(seconds: float) -> list[dict[str, float]]:
+    """Return pit_node's Teensy link reports (1 Hz on /diagnostics) for `seconds`."""
+    try:
+        import rclpy
+        from diagnostic_msgs.msg import DiagnosticArray
+    except ImportError:
+        return []
+    reports: list[dict[str, float]] = []
+
+    def record(msg: Any) -> None:
+        report = sysinfo.read_link_status(msg)
+        if report is not None:
+            reports.append(report)
+
+    rclpy.init()
+    node = rclpy.create_node('racecar_health_link')
+    node.create_subscription(DiagnosticArray, '/diagnostics', record, 10)
+    end = time.monotonic() + seconds
+    try:
+        while time.monotonic() < end:
+            rclpy.spin_once(node, timeout_sec=0.2)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+    return reports
+
+
+def link_rows(reports: Sequence[dict[str, float]]) -> list[Check]:
+    """
+    Turn the link reports into rows; counts are new during the sample.
+
+    A CRC failure, a reconnect, a Teensy reset, or a gap over 50 ms fails;
+    a lost frame, skipped bytes, or a rate off 200 Hz warns.
+    """
+    from racecar_neo_ros2_driver import pit_link
+
+    g = 'link'
+    if not reports:
+        return [Check(g, 'teensy link', FAIL, 'no report from pit_node; start teleop')]
+    first, last = reports[0], reports[-1]
+
+    def new(key: str) -> int:
+        base = 0 if len(reports) == 1 else first.get(key, 0)
+        return int(last.get(key, 0) - base)
+
+    rates = [r.get('rate_hz', 0.0) for r in reports[1:]] or [last.get('rate_hz', 0.0)]
+    mean = statistics.fmean(rates)
+    off = abs(mean - LINK_HZ) > LINK_HZ * LINK_RATE_TOLERANCE
+    rate_status = FAIL if min(rates) < 2 else (WARN if off else OK)
+    gap = max(r.get('gap_ms', 0.0) for r in reports)
+
+    def counted(name: str, key: str, bad: str) -> Check:
+        n = new(key)
+        return Check(g, name, (bad if n else OK), str(n))
+
+    return [
+        Check(
+            g,
+            'frame rate',
+            rate_status,
+            f'mean {mean:.1f} Hz, min {min(rates):.1f} ({len(reports)} reports)',
+        ),
+        Check(
+            g, 'longest gap', FAIL if gap > pit_link.STALL_MS else OK, f'{gap:.1f} ms'
+        ),
+        counted('lost frames', 'dropped_frames', WARN),
+        counted('crc failures', 'crc_failures', FAIL),
+        counted('skipped bytes', 'skipped_bytes', WARN),
+        counted('reconnects', 'reconnects', FAIL),
+        counted('teensy resets', 'resets', FAIL),
+        Check(
+            g,
+            'since teleop started',
+            OK,
+            f'{int(last.get("frames", 0))} frames, {int(last.get("dropped_frames", 0))} lost, '
+            f'{int(last.get("crc_failures", 0))} CRC failures, '
+            f'{int(last.get("reconnects", 0))} reconnects, {int(last.get("resets", 0))} resets, '
+            f'longest gap {last.get("longest_gap_ms", 0.0):.1f} ms',
+        ),
+    ]
+
+
+def run_link(seconds: float, out: Callable[[str], None]) -> tuple[list[Check], dict[str, Any]]:
+    out(f'Watching the Teensy link for {seconds:.0f} s.')
+    reports = collect_link(seconds)
+    return link_rows(reports), {'link_reports': reports}
 
 
 # ---------------------------------------------------------------------------
@@ -587,7 +692,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument('step', nargs='?', default='all', choices=('all', *STEPS))
     parser.add_argument(
-        '--seconds', type=float, default=POWER_SEC, help='power sample time (default 30)'
+        '--seconds', type=float, default=POWER_SEC, help='power and link time (default 30)'
     )
     args = parser.parse_args(argv)
 
@@ -601,6 +706,10 @@ def main(argv: list[str] | None = None) -> int:
     extra: dict[str, Any] = {}
     if 'power' in steps:
         rows, data = run_power(args.seconds, print)
+        checks += rows
+        extra.update(data)
+    if 'link' in steps:
+        rows, data = run_link(args.seconds, print)
         checks += rows
         extra.update(data)
     if 'nvme' in steps:

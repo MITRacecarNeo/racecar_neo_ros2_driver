@@ -47,11 +47,15 @@ THROTTLE_BITS = {
     19: 'soft temperature limit has occurred',
 }
 
-# RealSense publishes its per-stream rates on /diagnostics under these names.
-REALSENSE_DIAGNOSTIC_NAMES = {
+# Stream rates published on /diagnostics, by status name: the RealSense
+# driver's per-stream rates, and pit_node's Teensy link, whose frame rate is
+# the rate of every PIT topic (racecar_neo_ros2_driver/pit_link.py).
+LINK_STATUS_NAME = 'pit: teensy link'
+DIAGNOSTIC_RATE_NAMES = {
     'camera: color': '/camera/color',
     'camera: depth': '/camera/depth',
     'camera: gyro': '/imu/realsense',
+    LINK_STATUS_NAME: '/imu/lsm9ds1',
 }
 DIAGNOSTIC_RATE_KEY = 'Actual frequency (Hz)'
 
@@ -73,7 +77,7 @@ def run_cmd(cmd: list[str], timeout: float = 5.0) -> str:
 def read_diagnostic_rates(msg: Any, into: dict[str, float]) -> None:
     """Copy the RealSense per-stream rates from one DiagnosticArray into `into`."""
     for status in msg.status:
-        topic = REALSENSE_DIAGNOSTIC_NAMES.get(status.name.lower())
+        topic = DIAGNOSTIC_RATE_NAMES.get(status.name.lower())
         if topic is None:
             continue
         for value in status.values:
@@ -84,6 +88,30 @@ def read_diagnostic_rates(msg: Any, into: dict[str, float]) -> None:
             except (TypeError, ValueError):
                 pass
             break
+
+
+def read_link_status(msg: Any) -> dict[str, float] | None:
+    """
+    Return pit_node's Teensy link report from one DiagnosticArray, or None.
+
+    Keys: rate_hz, gap_ms (both the last second), longest_gap_ms, and the
+    counters since pit_node started (frames, crc_failures, dropped_frames,
+    skipped_bytes, reconnects, resets); level is 0 OK, 1 WARN, 2 ERROR.
+    """
+    for status in msg.status:
+        if status.name != LINK_STATUS_NAME:
+            continue
+        out: dict[str, float] = {}
+        for value in status.values:
+            try:
+                key = 'rate_hz' if value.key == DIAGNOSTIC_RATE_KEY else value.key
+                out[key] = float(value.value)
+            except (TypeError, ValueError):
+                continue
+        level = status.level
+        out['level'] = float(level[0] if isinstance(level, (bytes, bytearray)) else level)
+        return out
+    return None
 
 
 def read_rtc_voltage() -> float | None:

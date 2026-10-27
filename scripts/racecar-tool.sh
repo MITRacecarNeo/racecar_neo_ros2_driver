@@ -1224,10 +1224,13 @@ Commands:
                           --window SEC        ROS sample window (default 5.0)
     health [step]       Hardware checks over time; each run saves a report to
                         health/ under the data root. Exits 1 when a check fails.
-                          all       power, then nvme (default)
+                          all       power, link, then nvme (default)
                           power     the Pi's 5 V input sampled for 30 s,
                                     throttling, the PMIC alarm, the ARM
                                     clock, the battery (teleop running)
+                          link      the Teensy UART link for 30 s: frame
+                                    rate, lost frames, gaps, CRC failures,
+                                    reconnects, resets (teleop running)
                           nvme      the data drive: mount, data root, a
                                     256 MB write and read, free space,
                                     SMART, kernel log errors
@@ -1240,7 +1243,7 @@ Commands:
                         Shake and poke watch the 5 V input, throttling, the
                         PIT link, USB, the drive, data writes, and the sensor
                         rates, and name the step a fault happened in.
-                        --seconds N sets the power sample time.
+                        --seconds N sets the power and link time.
     calibrate [steps]   Calibrate the sensors on the car via a guided session.
                         Sensors to calibrate include:
                           imu         LSM9DS1 accel bias and scale, gyro bias
@@ -1402,7 +1405,7 @@ _racecar_complete() {
             COMPREPLY=( $(compgen -W "status setup format check" -- "$cur") )
             ;;
         health)
-            COMPREPLY=( $(compgen -W "all power nvme shake poke --seconds --help" -- "$cur") )
+            COMPREPLY=( $(compgen -W "all power link nvme shake poke --seconds --help" -- "$cur") )
             ;;
         data)
             COMPREPLY=( $(compgen -W "path" -- "$cur") )

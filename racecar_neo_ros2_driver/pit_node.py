@@ -25,6 +25,7 @@ import time
 
 from ackermann_msgs.msg import AckermannDriveStamped
 from builtin_interfaces.msg import Time as TimeMsg
+from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from geometry_msgs.msg import TransformStamped
 from nav_msgs.msg import Odometry
 import numpy as np
@@ -43,6 +44,7 @@ import serial
 from std_msgs.msg import Bool, Float32, Float32MultiArray, UInt8MultiArray
 from tf2_ros import TransformBroadcaster
 
+from . import pit_link
 from . import pit_protocol as pit
 from .limits import clamp
 from .mux_node import MuxMode, select_mode, shown_mode
@@ -383,7 +385,9 @@ class PitNode(Node):
         self._start_time = time.monotonic()
         self._ser: serial.Serial | None = None
         self._write_lock = threading.Lock()
-        self._crc_fail_count = 0
+        # Touched only by the reader thread, which also publishes it.
+        self._link = pit_link.LinkStats(time.monotonic())
+        self._pub_diagnostics = self.create_publisher(DiagnosticArray, '/diagnostics', 10)
         self._running = True
 
         self._open_serial()
@@ -500,6 +504,7 @@ class PitNode(Node):
     def _read_loop(self) -> None:
         buffer = bytearray()
         while self._running:
+            self._report_link()
             if self._ser is None or not self._ser.is_open:
                 time.sleep(self._reconnect_period)
                 self._open_serial()
@@ -509,6 +514,8 @@ class PitNode(Node):
             except (serial.SerialException, OSError) as exc:
                 self.get_logger().warn(f'Serial read failed: {exc}; reconnecting')
                 self._close_serial()
+                self._link.reconnect()
+                buffer.clear()
                 continue
             if not chunk:
                 continue
@@ -516,9 +523,29 @@ class PitNode(Node):
             while True:
                 telem, consumed = pit.scan_for_packet(buffer)
                 if telem is not None:
+                    self._link.frame(telem.timestamp_us, telem.crc_ok)
                     self._publish_telemetry(telem)
                 elif consumed == 0:
                     break
+                else:
+                    self._link.skipped(consumed)
+
+    def _report_link(self) -> None:
+        """Publish the link statistics once a second (pit_link.py)."""
+        now = time.monotonic()
+        if not self._link.due(now):
+            return
+        report = self._link.report(now)
+        status = DiagnosticStatus()
+        status.level = bytes([report['level']])
+        status.name = pit_link.STATUS_NAME
+        status.message = report['message']
+        status.hardware_id = str(self._port)
+        status.values = [KeyValue(key=k, value=v) for k, v in report['values'].items()]
+        msg = DiagnosticArray()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.status = [status]
+        self._pub_diagnostics.publish(msg)
 
     def _setup_odometry(self, qos: QoSProfile) -> None:
         p = self.get_parameter
@@ -603,11 +630,9 @@ class PitNode(Node):
 
     def _publish_telemetry(self, telem: pit.Telemetry) -> None:
         if self._require_crc and not telem.crc_ok:
-            self._crc_fail_count += 1
-            if self._crc_fail_count % 100 == 1:
-                self.get_logger().warn(
-                    f'Dropping telemetry on CRC mismatch (count={self._crc_fail_count})'
-                )
+            failures = self._link.counts['crc_failures']
+            if failures % 100 == 1:
+                self.get_logger().warn(f'Dropping telemetry on CRC mismatch (count={failures})')
             return
 
         stamp = self._telemetry_stamp(telem.timestamp_us)

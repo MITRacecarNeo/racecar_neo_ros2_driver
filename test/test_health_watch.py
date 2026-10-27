@@ -177,3 +177,13 @@ class TestMotionReport:
         checks, extra = health.run_motion('shake', [], health.shake_steps(), tmp_path)
         assert [(c.name, c.status) for c in checks] == [('teleop', 'FAIL')]
         assert 'racecar service start teleop' in checks[0].detail and extra == {}
+
+
+class TestLinkEvents:
+    def test_new_counts_become_events(self):
+        before = {'crc_failures': 1, 'reconnects': 0, 'resets': 0}
+        after = {'crc_failures': 3, 'reconnects': 1, 'resets': 0}
+        assert watch.link_events(before, after) == ['2 CRC failures', '1 reconnect']
+
+    def test_first_report_has_no_events(self):
+        assert watch.link_events({}, {'crc_failures': 9}) == []

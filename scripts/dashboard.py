@@ -39,12 +39,14 @@ from safe_shutdown import shutdown_sequence  # noqa: E402
 from sysinfo import (  # noqa: E402
     classify_ext5v,
     classify_rtc as _classify_rtc,
+    DIAGNOSTIC_RATE_NAMES,
     EXT5V_MIN_VOLTS,
     EXT5V_WARN_VOLTS,
     NVME_TEMP_FAIL_C,
     NVME_TEMP_WARN_C,
     read_diagnostic_rates,
     read_ext5v as _read_ext5v,
+    read_link_status,
     read_memory as _read_memory,
     read_nvme_temp as _read_nvme_temp,
     read_rtc_voltage as _read_battery_voltage,
@@ -52,7 +54,6 @@ from sysinfo import (  # noqa: E402
     read_throttled as _read_throttled,
     read_under_voltage_alarm as _read_under_voltage_alarm,
     read_watchdog_state,
-    REALSENSE_DIAGNOSTIC_NAMES,
 )
 import webui  # noqa: E402
 
@@ -222,17 +223,22 @@ RATE_TOPICS = [
     '/motor',
     '/mux_out',
     '/imu/fused',
-    '/imu/lsm9ds1',
     '/scan',
     '/edgetpu/inference',
 ]
-# Every topic in the rates table; the RealSense ones come from /diagnostics.
+# Every topic in the rates table; the RealSense ones and the PIT frame rate
+# (pit_node's Teensy link report) come from /diagnostics.
 DISPLAY_RATE_TOPICS = [
     *RATE_TOPICS,
+    '/imu/lsm9ds1',
     '/imu/realsense',
     '/camera/color',
     '/camera/depth',
 ]
+# A lost frame, CRC failure, reconnect, or Teensy reset keeps the Link chip
+# yellow this long.
+LINK_PROBLEM_HOLD_SEC = 60.0
+LINK_STALE_SEC = 5.0
 
 log = logging.getLogger('dashboard')
 
@@ -562,6 +568,8 @@ class _RateSampler(Node):
         )
         # 1 Hz and latched: the autonomy card costs one small message a second.
         self._autonomy: tuple[dict[str, str], float] | None = None
+        self._link: tuple[dict[str, float], float] | None = None
+        self._link_problem_at: float | None = None
         self._estimate: tuple[dict[str, str], float] | None = None
         latched = QoSProfile(
             depth=1,
@@ -606,7 +614,12 @@ class _RateSampler(Node):
         if not updates:
             return
         now = time.monotonic()
+        link = read_link_status(msg)
         with self._lock:
+            if link is not None:
+                self._link = (link, now)
+                if link.get('level', 0) >= 1:
+                    self._link_problem_at = now
             self._diagnostic_rates.update(updates)
             for topic in updates:
                 self._diagnostic_last_update[topic] = now
@@ -635,6 +648,16 @@ class _RateSampler(Node):
 
     def cancel_shutdown(self) -> None:
         self._cancel_pub.publish(Empty())
+
+    def link(self) -> tuple[dict[str, float] | None, float | None, float | None]:
+        """Return the last Teensy link report, its age, and the age of its last problem."""
+        with self._lock:
+            now = time.monotonic()
+            problem = None if self._link_problem_at is None else now - self._link_problem_at
+            if self._link is None:
+                return None, None, problem
+            report, at = self._link
+            return dict(report), now - at, problem
 
     def autonomy(self) -> tuple[dict[str, str] | None, float | None]:
         """Return the last /autonomy/status values and their age in seconds."""
@@ -693,7 +716,7 @@ class _RateSampler(Node):
         """
         with self._lock:
             now = time.monotonic()
-            if topic in REALSENSE_DIAGNOSTIC_NAMES.values():
+            if topic in DIAGNOSTIC_RATE_NAMES.values():
                 last_update = self._diagnostic_last_update.get(topic)
                 if last_update is None or now - last_update > self._window:
                     return None
@@ -883,6 +906,37 @@ def power_view(
         'notes': '. '.join(notes),
         'limits': [EXT5V_MIN_VOLTS, EXT5V_WARN_VOLTS],
     }
+
+
+def link_view(
+    report: dict[str, float] | None, age: float | None, problem_age: float | None
+) -> dict[str, Any]:
+    """
+    Return the Link chip: pit_node's Teensy link report.
+
+    Yellow for a minute after a lost frame, a CRC failure, a reconnect, or a
+    Teensy reset; red with no report or no frames.
+    """
+    if report is None or age is None or age > LINK_STALE_SEC:
+        return {'label': 'Teensy link', 'status': 'dead', 'detail': 'No report'}
+    rate = report.get('rate_hz', 0.0)
+    totals = [
+        (int(report.get('dropped_frames', 0)), 'lost frames'),
+        (int(report.get('crc_failures', 0)), 'CRC errors'),
+        (int(report.get('reconnects', 0)), 'reconnects'),
+        (int(report.get('resets', 0)), 'Teensy resets'),
+    ]
+    seen = [f'{n} {what}' for n, what in totals if n]
+    detail = f'{rate:.0f} Hz. ' + (
+        f'Since teleop started: {", ".join(seen)}' if seen else 'No lost frames'
+    )
+    if report.get('level', 0) >= 2 or rate < 1:
+        status = 'dead'
+    elif problem_age is not None and problem_age < LINK_PROBLEM_HOLD_SEC:
+        status = 'stale'
+    else:
+        status = 'healthy'
+    return {'label': 'Teensy link', 'status': status, 'detail': detail}
 
 
 def _ext5v_loop() -> None:
@@ -1325,7 +1379,7 @@ def _monitor_loop() -> None:
             warming = _sampler is not None and _sampler.warming()
             for topic in DISPLAY_RATE_TOPICS:
                 hz = _measure_hz(topic)
-                if warming and hz is None and topic not in REALSENSE_DIAGNOSTIC_NAMES.values():
+                if warming and hz is None and topic not in DIAGNOSTIC_RATE_NAMES.values():
                     rates[topic] = {'hz': None, 'stale': False, 'warming': True}
                 else:
                     rates[topic] = {'hz': hz, 'stale': hz is None or hz < 0.5}
@@ -1343,6 +1397,7 @@ def _monitor_loop() -> None:
                 'power': power_view(
                     *_ext5v.take(), _read_throttled()[0], _read_under_voltage_alarm()
                 ),
+                'link': link_view(*(_sampler.link() if _sampler else (None, None, None))),
             }
 
             snapshot = {

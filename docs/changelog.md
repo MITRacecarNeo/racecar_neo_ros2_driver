@@ -65,6 +65,13 @@ All notable changes to this project will be documented in this file. The format 
   capture CSVs to charge, capacity, the voltage drop per amp, the curve
   against the charge left, and the estimate replayed and scored at 15 and 5
   minutes, with `--r-internal` for a candidate value.
+- Teensy link statistics: `pit_node` counts frames, CRC failures (always,
+  not only with `require_crc`), lost frames from gaps in the Teensy's
+  timestamps, bytes skipped while finding a frame, reconnects, and Teensy
+  resets (`racecar_neo_ros2_driver/pit_link.py`), and publishes them on
+  `/diagnostics` once a second from its reader thread. `racecar health
+  link`, a `teensy link` row in `racecar status`, and a Link chip on 8080
+  read them.
 - `racecar health shake` and `poke` (`scripts/health_watch.py`): timed steps
   (each axis shaken and the deck tapped; each connector in
   `config/health.yaml` pressed and wiggled) while the 5 V input, throttling,
@@ -82,6 +89,12 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Changed
 
+- The PIT frame rate on 8080 and in `racecar status` comes from `pit_node`'s
+  link report instead of counting `/imu/lsm9ds1`; the six PIT topics are
+  checked against 200 Hz (the firmware's telemetry timer) with an 80 percent
+  floor.
+- `pit_protocol.scan_for_packet` returns the bytes before a frame's magic on
+  their own call, so every discarded byte is counted.
 - 8080 Power chip: the Pi's 5 V input, read once a second while a page is
   open, with the lowest reading since the page opened; under-voltage and
   throttling now. An under-voltage alarm from earlier in the boot warns

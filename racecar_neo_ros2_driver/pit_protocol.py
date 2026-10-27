@@ -212,10 +212,11 @@ def scan_for_packet(buffer: bytearray) -> tuple[Telemetry | None, int]:
     """
     Extract the first complete telemetry frame from a rolling byte buffer.
 
-    Mutates buffer in place, discarding leading garbage. Returns
-    (Telemetry, consumed) for a decoded frame, (None, n) after discarding n
-    bytes that held no frame (scan again), or (None, 0) when more bytes are
-    needed. The last 3 bytes are kept when no magic is present, so a magic
+    Mutates buffer in place. Returns (Telemetry, consumed) for a decoded
+    frame, (None, n) after discarding n bytes that held no frame (scan
+    again), or (None, 0) when more bytes are needed. Bytes before a magic are
+    discarded on their own call, so every byte that held no frame is counted
+    in some n. The last 3 bytes are kept when no magic is present, so a magic
     split across reads is not lost.
     """
     idx = buffer.find(_TX_MAGIC_LE)
@@ -227,6 +228,7 @@ def scan_for_packet(buffer: bytearray) -> tuple[Telemetry | None, int]:
 
     if idx > 0:
         del buffer[:idx]
+        return None, idx
 
     if len(buffer) < TX_PACKET_SIZE:
         return None, 0
