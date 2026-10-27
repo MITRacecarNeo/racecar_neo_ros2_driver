@@ -179,18 +179,28 @@ class TestLink:
         assert rows[0].detail.startswith('mean 200.0 Hz')
 
     def test_counts_are_new_during_the_sample(self):
-        rows = {c.name: c for c in health.link_rows([
-            self._report(dropped_frames=5, crc_failures=1),
-            self._report(dropped_frames=7, crc_failures=1),
-        ])}
+        rows = {
+            c.name: c
+            for c in health.link_rows(
+                [
+                    self._report(dropped_frames=5, crc_failures=1),
+                    self._report(dropped_frames=7, crc_failures=1),
+                ]
+            )
+        }
         assert (rows['lost frames'].status, rows['lost frames'].detail) == ('WARN', '2')
         assert rows['crc failures'].status == 'OK'
 
     def test_faults(self):
-        rows = {c.name: c for c in health.link_rows([
-            self._report(),
-            self._report(gap_ms=80.0, crc_failures=1, resets=1, rate_hz=150.0),
-        ])}
+        rows = {
+            c.name: c
+            for c in health.link_rows(
+                [
+                    self._report(),
+                    self._report(gap_ms=80.0, crc_failures=1, resets=1, rate_hz=150.0),
+                ]
+            )
+        }
         assert rows['longest gap'].status == 'FAIL'
         assert rows['crc failures'].status == 'FAIL'
         assert rows['teensy resets'].status == 'FAIL'

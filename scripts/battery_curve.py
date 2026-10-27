@@ -34,6 +34,7 @@ import argparse
 from collections.abc import Sequence
 import csv
 from dataclasses import dataclass, replace
+from itertools import pairwise
 from pathlib import Path
 import statistics
 import sys
@@ -98,13 +99,13 @@ def config(r_internal: float | None = None) -> BatteryConfig:
 def drawn_mah(rows: Sequence[Row]) -> list[float]:
     """Charge drawn up to each row, in mAh; a gap counts at the last current."""
     out = [0.0]
-    for (t0, _, a0), (t1, _, _) in zip(rows, rows[1:]):
+    for (t0, _, a0), (t1, _, _) in pairwise(rows):
         out.append(out[-1] + a0 * max(0.0, t1 - t0) / 3.6)
     return out
 
 
 def drawn_wh(rows: Sequence[Row]) -> float:
-    pairs = zip(rows, rows[1:])
+    pairs = pairwise(rows)
     return sum(v0 * a0 * max(0.0, t1 - t0) for (t0, v0, a0), (t1, _, _) in pairs) / 3600
 
 
@@ -142,7 +143,7 @@ def mark_errors(rep: Replay, marks: Sequence[float] = MARKS_MIN) -> dict[float, 
         out[mark] = None
         if rep.floor_t is None:
             continue
-        for t, m in zip(rep.times, rep.minutes):
+        for t, m in zip(rep.times, rep.minutes, strict=True):
             if m is not None and m <= mark:
                 out[mark] = (rep.floor_t - t) / 60.0 - mark
                 break

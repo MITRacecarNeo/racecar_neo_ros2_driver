@@ -345,9 +345,7 @@ def link_rows(reports: Sequence[dict[str, float]]) -> list[Check]:
             rate_status,
             f'mean {mean:.1f} Hz, min {min(rates):.1f} ({len(reports)} reports)',
         ),
-        Check(
-            g, 'longest gap', FAIL if gap > pit_link.STALL_MS else OK, f'{gap:.1f} ms'
-        ),
+        Check(g, 'longest gap', FAIL if gap > pit_link.STALL_MS else OK, f'{gap:.1f} ms'),
         counted('lost frames', 'dropped_frames', WARN),
         counted('crc failures', 'crc_failures', FAIL),
         counted('skipped bytes', 'skipped_bytes', WARN),

@@ -163,7 +163,12 @@ def remap_axes(
     return np.array([sign[i] * v[order[i]] for i in range(3)]) * scale
 
 
-def build_imu(stamp: TimeMsg, frame: str, accel: Sequence[float], gyro: Sequence[float]) -> Imu:
+def build_imu(
+    stamp: TimeMsg,
+    frame: str,
+    accel: Sequence[float] | np.ndarray,
+    gyro: Sequence[float] | np.ndarray,
+) -> Imu:
     msg = Imu()
     msg.header.stamp = stamp
     msg.header.frame_id = frame
@@ -176,7 +181,7 @@ def build_imu(stamp: TimeMsg, frame: str, accel: Sequence[float], gyro: Sequence
     return msg
 
 
-def build_mag(stamp: TimeMsg, frame: str, field: Sequence[float]) -> MagneticField:
+def build_mag(stamp: TimeMsg, frame: str, field: Sequence[float] | np.ndarray) -> MagneticField:
     msg = MagneticField()
     msg.header.stamp = stamp
     msg.header.frame_id = frame
