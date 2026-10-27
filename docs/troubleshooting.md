@@ -545,6 +545,30 @@ brownouts.
 `data root` FAIL: the car fell back to `~/data` with a drive fitted. See
 [Data drive missing at boot](#data-drive-missing-at-boot).
 
+A shake or poke step FAIL names the step and its first event; the events
+table in `report.md` lists every one with its time:
+
+- `5 V input` or `under-voltage` while poking a power connector: that
+  connector or its crimp is loose. See
+  [Root cause and repair](#root-cause-and-repair) for the supply chain.
+- `usb` on the lidar or RealSense step: reseat that cable at both ends. A
+  USB disconnect on another step points at a cable that moved with the car.
+- `PIT link` on the Teensy UART step: frames from the Teensy stopped for
+  over 50 ms; reseat the UART wires at the PIT board and at the Pi. On
+  another step, the wires moved with the car.
+- A stream that drops and stays down (the lidar after its cable is
+  unplugged) counts against the step it went down in only.
+- `nvme` or `pcie` on the NVMe ribbon step: reseat the ribbon at both ends.
+- `sensor rate` alone: the stream slowed without a disconnect. A RealSense
+  drop under shaking can be the camera's own auto-exposure; repeat the step
+  before replacing a cable.
+- `between steps`: the fault came while no step ran, as when the car was set
+  down or picked up. Events before the first step are not counted: the
+  watch is still starting then.
+
+`teleop` FAIL: shake and poke need the PIT stream. Start teleop with
+`racecar service start teleop`.
+
 ## Lab dashboards
 
 `scripts/setup_dashboards.sh`, `scripts/dashboards/`.

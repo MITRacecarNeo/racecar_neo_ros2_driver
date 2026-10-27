@@ -7,11 +7,17 @@
                             alarm, the ARM clock, the battery
     racecar health nvme     the data drive: placement, a 256 MB write and
                             read, free space, SMART, kernel log errors
+    racecar health shake    the car shaken on each axis and its deck tapped,
+                            one timed step at a time, while power, the PIT
+                            link, USB, the drive and the sensor rates are
+                            watched (scripts/health_watch.py)
+    racecar health poke     the same watch while each connector in
+                            config/health.yaml is pressed and wiggled
 
 Each run writes report.md, report.json and samples.csv to
 <data root>/health/<time>/. Exit 1 when any check fails. The battery row
 needs teleop running (pit_node publishes /battery/state); without it the row
-is skipped.
+is skipped. shake and poke need teleop and refuse without it.
 """
 
 from __future__ import annotations
@@ -48,10 +54,34 @@ from diagnose import (  # noqa: E402, I100  sibling script, after the path inser
     use_color,
     WARN,
 )
+import health_watch  # noqa: E402
 import sysinfo  # noqa: E402
 
 CONFIG_DIR = Path(__file__).resolve().parent.parent / 'config'
-STEPS = ('power', 'nvme')
+STEPS = ('power', 'nvme', 'shake', 'poke')
+# `racecar health` and `all`; shake and poke run only when named.
+DEFAULT_STEPS = ('power', 'nvme')
+TITLES = {'power': 'Power', 'nvme': 'Data drive', 'shake': 'Shake test', 'poke': 'Poke test'}
+# Wait this long for the first PIT frame before calling teleop stopped.
+TELEOP_WAIT_SEC = 5.0
+
+SHAKE_SETUP = (
+    'Lift the car so its wheels are off the ground.',
+    'Hold it with both hands for every step.',
+)
+SHAKE_STEPS = (
+    ('still', 'Hold the car still.', 5.0),
+    ('left and right', 'Shake the car left and right.', 10.0),
+    ('forward and back', 'Shake the car forward and back.', 10.0),
+    ('up and down', 'Shake the car up and down.', 10.0),
+    ('deck taps', 'Tap the top deck with your fingertips, about twice a second.', 10.0),
+)
+POKE_SETUP = (
+    'Set the car on a box or stand so its wheels are off the ground.',
+    'Keep the top deck off for this test.',
+)
+POKE_STILL = ('still', 'Keep your hands off the car.', 5.0)
+POKE_SEC = 5.0
 POWER_SEC = 30.0
 
 # Throttle bits 0-3 are live; 16-19 are sticky for the boot.
@@ -397,6 +427,80 @@ def run_nvme(
 
 
 # ---------------------------------------------------------------------------
+# Shake and poke
+# ---------------------------------------------------------------------------
+
+
+def poke_connectors(config_dir: Path = CONFIG_DIR) -> list[dict[str, str]]:
+    """Return the poke list: config/health.yaml, or the car profile's list in its place."""
+    from racecar_neo_ros2_driver import car_profile
+
+    own = car_profile.read_yaml(car_profile.param_path('health')).get('poke')
+    listed = own if own else car_profile.read_yaml(config_dir / 'health.yaml').get('poke')
+    return [
+        {'name': str(c['name']), 'where': str(c['where'])}
+        for c in listed or []
+        if isinstance(c, dict) and c.get('name') and c.get('where')
+    ]
+
+
+def shake_steps() -> list[health_watch.Step]:
+    return [health_watch.Step(*spec) for spec in SHAKE_STEPS]
+
+
+def poke_steps(connectors: Sequence[dict[str, str]]) -> list[health_watch.Step]:
+    steps = [health_watch.Step(*POKE_STILL)]
+    steps += [
+        health_watch.Step(c['name'], f'Press and wiggle {c["where"]}.', POKE_SEC)
+        for c in connectors
+    ]
+    return steps
+
+
+def run_motion(
+    group: str,
+    setup: Sequence[str],
+    steps: list[health_watch.Step],
+    data_dir: Path,
+    out: Callable[[str], None] = print,
+    ask: Callable[[str], str] = input,
+) -> tuple[list[Check], dict[str, Any]]:
+    """Run the watch through `steps`; the first step is the still baseline."""
+    watch = health_watch.Watch(data_dir)
+    watch.start()
+    waited = 0.0
+    while watch.link_count == 0 and waited < TELEOP_WAIT_SEC:
+        time.sleep(0.2)
+        waited += 0.2
+    if watch.link_count == 0:
+        watch.stop()
+        detail = f'no {health_watch.LINK_TOPIC}; start teleop: racecar service start teleop'
+        return [Check(group, 'teleop', FAIL, detail)], {}
+    for line in setup:
+        out(line)
+    try:
+        health_watch.run_steps(steps, watch.clock, ask, out)
+    finally:
+        watch.stop()
+    # Before the still step the subscriptions are still starting; a gap
+    # there is theirs, not the car's.
+    found = watch.events + health_watch.rate_drops(steps, watch.scan_times, watch.realsense)
+    events = sorted((e for e in found if e.t >= steps[0].start), key=lambda e: e.t)
+    checks = health_watch.step_checks(group, steps, events, watch.ext5v)
+    record = [
+        {
+            't': round(e.t - watch.t0, 3),
+            'step': getattr(health_watch.step_of(e.t, steps), 'name', 'between steps'),
+            'kind': e.kind,
+            'detail': e.detail,
+        }
+        for e in events
+    ]
+    samples = [(t - watch.t0, v) for t, v in watch.ext5v]
+    return checks, {'events': record, 'ext5v_samples': samples}
+
+
+# ---------------------------------------------------------------------------
 # Report
 # ---------------------------------------------------------------------------
 
@@ -427,15 +531,26 @@ def render_lines(checks: Sequence[Check], color: bool = False) -> list[str]:
     return lines
 
 
-def report_markdown(stamp: str, car: str, checks: Sequence[Check], result: str) -> str:
+def report_markdown(
+    stamp: str,
+    car: str,
+    checks: Sequence[Check],
+    result: str,
+    events: Sequence[dict[str, Any]] = (),
+) -> str:
     lines = [f'# Health report {stamp}', '', f'Car: {car}', f'Result: {result}', '']
-    titles = {'power': 'Power', 'nvme': 'Data drive'}
     for step in STEPS:
         rows = [c for c in checks if c.group == step]
         if not rows:
             continue
-        lines += [f'## {titles[step]}', '', '| Check | Result | Detail |', '| --- | --- | --- |']
+        lines += [f'## {TITLES[step]}', '', '| Check | Result | Detail |', '| --- | --- | --- |']
         lines += [f'| {c.name} | {c.status} | {c.detail} |' for c in rows]
+        lines.append('')
+    if events:
+        lines += ['## Events', '', '| Time (s) | Step | Kind | Detail |']
+        lines.append('| --- | --- | --- | --- |')
+        for e in events:
+            lines.append(f'| {e["t"]:.2f} | {e["step"]} | {e["kind"]} | {e["detail"]} |')
         lines.append('')
     return '\n'.join(lines)
 
@@ -458,7 +573,9 @@ def write_report(
         **extra,
     }
     (folder / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
-    (folder / 'report.md').write_text(report_markdown(stamp, car, checks, result))
+    (folder / 'report.md').write_text(
+        report_markdown(stamp, car, checks, result, extra.get('events', ()))
+    )
     with open(folder / 'samples.csv', 'w') as f:
         f.write('time_s,ext5v_v\n')
         f.writelines(f'{t:.4f},{v:.5f}\n' for t, v in samples)
@@ -476,7 +593,7 @@ def main(argv: list[str] | None = None) -> int:
 
     from racecar_neo_ros2_driver import car_profile, data_root
 
-    steps = STEPS if args.step == 'all' else (args.step,)
+    steps = DEFAULT_STEPS if args.step == 'all' else (args.step,)
     health_dir = data_root.data_dir('health')
     now = datetime.now()
     stamp = now.strftime('%Y-%m-%d %H:%M:%S')
@@ -489,6 +606,14 @@ def main(argv: list[str] | None = None) -> int:
     if 'nvme' in steps:
         print('Checking the data drive.')
         rows, data = run_nvme(last_report(health_dir, 'smart'))
+        checks += rows
+        extra.update(data)
+    if 'shake' in steps:
+        rows, data = run_motion('shake', SHAKE_SETUP, shake_steps(), health_dir)
+        checks += rows
+        extra.update(data)
+    if 'poke' in steps:
+        rows, data = run_motion('poke', POKE_SETUP, poke_steps(poke_connectors()), health_dir)
         checks += rows
         extra.update(data)
 

@@ -59,6 +59,13 @@ All notable changes to this project will be documented in this file. The format 
   unsafe shutdowns since the last report, counted, not warned), and kernel log errors. Each run
   saves `report.md`, `report.json`, and `samples.csv` under
   `<data root>/health/`; exit 1 on a FAIL.
+- `racecar health shake` and `poke` (`scripts/health_watch.py`): timed steps
+  (each axis shaken and the deck tapped; each connector in
+  `config/health.yaml` pressed and wiggled) while the 5 V input, throttling,
+  USB, under-voltage, NVMe and PCIe errors in the kernel log, a data-root
+  write each second, gaps over 50 ms in the PIT stream, and the `/scan` and
+  RealSense rates are watched. Each fault is charged to its step. The car
+  profile's `params/health.yaml` replaces the connector list.
 - `racecar status` rows `ext5v` (one reading against 4.75 V and 4.85 V)
   and `nvme` (temperature, wear, media errors).
 - `scripts/sudoers.d-racecar-nvme`, installed by `setup_user_env.sh` after a

@@ -646,12 +646,34 @@ each; `racecar health` samples and tests.
 racecar health          # power, then nvme
 racecar health power    # the Pi's 5 V input for 30 s, throttling, the battery
 racecar health nvme     # the data drive: mount, speed, SMART, kernel log
+racecar health shake    # shake the car on each axis and tap the deck
+racecar health poke     # press and wiggle each connector, one at a time
 ```
 
 | Step | Checks | FAIL when |
 |---|---|---|
 | `power` | EXT5V (the Pi's 5 V input) about 140 times a second for 30 s: min, mean, share under 4.75 V; throttle bits before and after; the PMIC under-voltage alarm; the ARM clock; battery voltage and current from `/battery/state` | any sample under 4.75 V; throttling now or during the run; the battery under the guard's floor (3.55 V per cell) |
 | `nvme` | drive on PCIe, mounted at `/mnt/nvme`, the data root on it; a 256 MB write and read back that bypasses the page cache, with MB/s; free space; SMART temperature, wear, media errors, and unsafe shutdowns (a count; the switch makes one); NVMe and PCIe errors in this boot's kernel log | no drive; not mounted; the data root on the SD card; a read-back mismatch; SMART critical warning or media errors; any kernel log error |
+
+`shake` and `poke` look for a loose contact. Each prompts one step at a
+time; Enter starts the step, and it runs for a fixed time (10 s for shake, 5 s
+for poke) after a 5 s still step that sets the normal sensor rates. Teleop must
+be running. During every step they watch:
+
+| Watch | A fault |
+|---|---|
+| 5 V input | a sample under 4.75 V |
+| Throttling | a throttle bit not set at the start |
+| Kernel log | a USB disconnect or reset, under-voltage, an NVMe or PCIe error |
+| Data root | a 4 KB write that fails or takes over 1 s (one a second) |
+| PIT link | over 50 ms between `/imu/lsm9ds1` stamps (5 ms apart normally) |
+| Sensor rates | `/scan` (2 s bins) or a RealSense stream under half its still rate |
+
+A step with a fault FAILs and names it; the report adds an events table with
+the time, step, and line of each one. Shake asks you to hold the car with its
+wheels off the ground; poke wants it on a stand with the top deck off. The
+connectors are in `config/health.yaml`; a car with other wiring puts its own
+`poke:` list in the car profile as `params/health.yaml`, which replaces it.
 
 Under 4.85 V, sticky throttle bits from earlier in the boot, a slow drive
 (under 100 MB/s write or 150 MB/s read) warn.
@@ -1210,7 +1232,7 @@ switch it to slow mode before mapping.
 Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
 
 - **Unreleased**: `racecar health` (power and data drive checks over time,
-  with a saved report), `ext5v` and `nvme` rows in `racecar status`, and
+  shake and poke tests for loose contacts, with a saved report), `ext5v` and `nvme` rows in `racecar status`, and
   the 5 V input on the 8080 Power chip; a terminal app on port 8086 (tmux
   terminals in the browser behind the racecar password, layouts and presets
   saved on the car); low-battery warning and safe shutdown

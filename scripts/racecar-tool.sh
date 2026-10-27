@@ -1231,6 +1231,15 @@ Commands:
                           nvme      the data drive: mount, data root, a
                                     256 MB write and read, free space,
                                     SMART, kernel log errors
+                          shake     hold the car and shake it on each axis,
+                                    then tap the deck, one timed step at a
+                                    time (teleop running)
+                          poke      press and wiggle each connector in
+                                    config/health.yaml, one at a time
+                                    (teleop running)
+                        Shake and poke watch the 5 V input, throttling, the
+                        PIT link, USB, the drive, data writes, and the sensor
+                        rates, and name the step a fault happened in.
                         --seconds N sets the power sample time.
     calibrate [steps]   Calibrate the sensors on the car via a guided session.
                         Sensors to calibrate include:
@@ -1393,7 +1402,7 @@ _racecar_complete() {
             COMPREPLY=( $(compgen -W "status setup format check" -- "$cur") )
             ;;
         health)
-            COMPREPLY=( $(compgen -W "all power nvme --seconds --help" -- "$cur") )
+            COMPREPLY=( $(compgen -W "all power nvme shake poke --seconds --help" -- "$cur") )
             ;;
         data)
             COMPREPLY=( $(compgen -W "path" -- "$cur") )

@@ -657,6 +657,16 @@ racecar health [power|nvme]
                                                         samples.csv
 ```
 
+`shake` and `poke` run `health_watch.Watch`: four threads (EXT5V as fast as
+vcgencmd answers; a 1 s loop for throttle bits and a data-root write; a
+`journalctl -k -f` follower; an rclpy node on `/imu/lsm9ds1` stamps, `/scan`
+arrivals, and `/diagnostics` RealSense rates) append timestamped events.
+`run_steps` times each prompted step; `rate_drops` compares each step with
+the first, still one; `step_checks` charges each event to the step it falls
+in (with 1 s of grace after the step ends). The poke list is
+`config/health.yaml`, replaced whole by the car profile's
+`params/health.yaml`.
+
 The newest earlier `report.json` with a SMART snapshot gives the baseline
 for the count of new unsafe shutdowns. `report.json` is the machine-readable form for
 later tools.
@@ -775,6 +785,7 @@ node's `<name>_config` launch argument.
 | `foxglove.yaml` | `foxglove_bridge` (autonomy launch, when on) | port, topic whitelist, `/initialpose` as the only client topic |
 | `foxglove_layout.json` | Lichtblick, imported by hand (not a node file) | 3D view, status table, pose plot |
 | `battery.yaml` | `battery_guard.py` | capacity, measured curve, cell count, floor per cell, warning and shutdown minutes, capacity learning, `shutdown_enabled` |
+| `health.yaml` | `scripts/health.py` (not a node file) | connectors for `racecar health poke`, in prompt order |
 | `terminal.tmux.conf`, `terminal_presets.json` | `scripts/terminal.py` (not node files) | tmux settings for the terminal app; built-in presets |
 | `frames.yaml` | `frames.launch.py` (not a node parameter file) | frame offsets in mm and deg, fleet base values; see [Frame tree](#frame-tree) |
 
@@ -888,7 +899,8 @@ racecar_neo_ros2_driver/
 │                              racecar_map and map_control (`racecar map`),
 │                              racecar_profile (`racecar profile`),
 │                              racecar_disk (`racecar disk`, `racecar data`),
-│                              health (`racecar health`), sudoers.d-racecar-nvme,
+│                              health and health_watch (`racecar health`),
+│                              sudoers.d-racecar-nvme,
 │                              autonomy unit launcher and stop step,
 │                              systemd units, udev, polkit and modprobe rules,
 │   │                          Coral overlay and gasket patch
