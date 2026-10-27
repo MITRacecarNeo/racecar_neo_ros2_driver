@@ -1426,6 +1426,31 @@ def _monitor_loop() -> None:
         _wake.clear()
 
 
+# The executor thread spins once at a time. Subscriptions are created and
+# destroyed from other threads (rates while a page is open, Overview frames);
+# a destroy that lands while the executor builds its wait set raises once,
+# and the next spin rebuilds the set without it. Before, that one error ended
+# the thread, and battery, rates, and every other ROS input stopped until a
+# restart.
+SPIN_TIMEOUT_SEC = 0.5
+SPIN_LOG_EVERY = 100
+
+
+def spin_until_stopped(spin_once: Callable[[], None], running: Callable[[], bool]) -> int:
+    """Call spin_once while running(); log an error and carry on. Return the error count."""
+    errors = 0
+    while running():
+        try:
+            spin_once()
+        except (KeyboardInterrupt, SystemExit):
+            break
+        except Exception:  # noqa: BLE001 - a dead spinner stops every ROS input
+            errors += 1
+            if errors == 1 or errors % SPIN_LOG_EVERY == 0:
+                log.warning('ROS spin error %d; spinning on', errors, exc_info=True)
+    return errors
+
+
 def get_status() -> dict[str, Any]:
     """Return the most recent status snapshot (non-blocking)."""
     with _status_lock:
@@ -1652,15 +1677,15 @@ def main() -> None:
 
     _overview = Overview(sampler)
 
-    def _spin_sampler() -> None:
-        try:
-            rclpy.spin(sampler)
-        except (KeyboardInterrupt, SystemExit):
-            pass
-        except Exception:  # noqa: BLE001
-            log.exception('rclpy.spin terminated')
+    from rclpy.executors import SingleThreadedExecutor
 
-    spinner = threading.Thread(target=_spin_sampler, daemon=True)
+    executor = SingleThreadedExecutor()
+    executor.add_node(sampler)
+    spinner = threading.Thread(
+        target=spin_until_stopped,
+        args=(lambda: executor.spin_once(timeout_sec=SPIN_TIMEOUT_SEC), rclpy.ok),
+        daemon=True,
+    )
     spinner.start()
     log.info('rclpy sampler spinning')
 

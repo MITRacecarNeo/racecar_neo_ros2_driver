@@ -11,6 +11,11 @@ All notable changes to this project will be documented in this file. The format 
   `/battery/estimate` stopped and the 8080 battery pills disappeared until it
   recovered; the warning and shutdown checks waited too. The shutdown record
   waits at most 2 s before the power off.
+- 8080 dashboard: its ROS thread spins once at a time and survives an error.
+  A rate subscription destroyed when the last page closed could land while
+  the executor built its wait set; the error ended the thread, and the
+  battery, rates, and every other ROS input stayed stale until the service
+  restarted.
 - 8080 battery pills hide when the page loses contact with the car, and a tab
   brought back from the background updates at once, so old figures never read
   as current.

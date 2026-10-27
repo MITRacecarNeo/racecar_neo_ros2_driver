@@ -1157,3 +1157,25 @@ class TestBatteryPillsFresh:
 
     def test_tab_brought_back_updates_at_once(self, dashboard):
         assert "document.addEventListener('visibilitychange'" in dashboard.DASHBOARD_HTML
+
+
+class TestSpinUntilStopped:
+    def test_error_does_not_end_the_spinner(self, dashboard):
+        calls = []
+
+        def spin_once():
+            calls.append(1)
+            if len(calls) == 2:
+                raise RuntimeError('cannot use Destroyable because destruction was requested')
+
+        errors = dashboard.spin_until_stopped(spin_once, lambda: len(calls) < 5)
+        assert errors == 1 and len(calls) == 5
+
+    def test_stops_when_ros_shuts_down(self, dashboard):
+        assert dashboard.spin_until_stopped(lambda: None, lambda: False) == 0
+
+    def test_keyboard_interrupt_ends_it(self, dashboard):
+        def spin_once():
+            raise KeyboardInterrupt
+
+        assert dashboard.spin_until_stopped(spin_once, lambda: True) == 0
