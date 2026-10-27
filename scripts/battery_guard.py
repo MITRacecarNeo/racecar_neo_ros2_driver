@@ -68,6 +68,8 @@ WARN_CLEAR_MARGIN_MIN = 2.0
 # Kept for the estimate window; also bounds memory.
 HISTORY_SEC = 600.0
 LAST_SHUTDOWN_FILE = 'last_shutdown.json'
+# Longest wait for last_shutdown.json before the shutdown goes ahead.
+RECORD_WAIT_SEC = 2.0
 CSV_FIELDS = (
     'time',
     'volts',
@@ -222,7 +224,14 @@ def status_values(guard: Guard, now: float) -> dict[str, str]:
 
 
 class CsvLog:
-    """Append rows to a CSV, flushed and synced per row so a power cut loses at most one."""
+    """
+    Append rows to a CSV from a writer thread, flushed and synced per row.
+
+    write() only queues the row. A data drive that stalls (an NVMe sync can
+    block for 30 s) then holds up the log, never the guard's tick, its
+    /battery/estimate, or a shutdown. A power cut loses at most the rows
+    still queued.
+    """
 
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -230,16 +239,27 @@ class CsvLog:
         self.path = path
         self._file: IO[str] = open(path, 'a', newline='', buffering=1)
         self._writer = csv.writer(self._file, lineterminator='\n')
+        self._rows: queue.Queue[list[Any] | None] = queue.Queue()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
         if new:
             self.write(CSV_FIELDS)
 
     def write(self, row: Sequence[Any]) -> None:
-        self._writer.writerow(row)
-        self._file.flush()
-        os.fsync(self._file.fileno())
+        self._rows.put(list(row))
 
-    def close(self) -> None:
-        self._file.close()
+    def _run(self) -> None:
+        while (row := self._rows.get()) is not None:
+            self._writer.writerow(row)
+            self._file.flush()
+            os.fsync(self._file.fileno())
+
+    def close(self, timeout: float = 5.0) -> None:
+        """Write what is queued, waiting at most `timeout`, then close the file."""
+        self._rows.put(None)
+        self._thread.join(timeout)
+        if not self._thread.is_alive():
+            self._file.close()
 
 
 def csv_row(sample: Sample | None, guard: Guard, event: str) -> list[str]:
@@ -412,7 +432,14 @@ def main(argv: list[str] | None = None) -> int:
                 shown_until = (guard.shutdown_at or 0.0) + battery_display.SHUTDOWN_FRAMES_SEC
             time.sleep(max(0.0, shown_until - time.time()))
             if not args.dry_run:
-                write_last_shutdown(folder, guard.trigger, time.time(), guard)
+                # A stalled data drive must not hold up the power off.
+                record = threading.Thread(
+                    target=write_last_shutdown,
+                    args=(folder, guard.trigger, time.time(), guard),
+                    daemon=True,
+                )
+                record.start()
+                record.join(RECORD_WAIT_SEC)
 
             def report(line: str) -> None:
                 log.warning('Shutdown: %s', line)

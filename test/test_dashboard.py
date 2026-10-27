@@ -1144,3 +1144,16 @@ class TestLink:
         assert '/imu/lsm9ds1' not in dashboard.RATE_TOPICS
         assert '/imu/lsm9ds1' in dashboard.DISPLAY_RATE_TOPICS
         assert "['health', 'link', 'pulse', 'Link', 'compute']" in dashboard.DASHBOARD_HTML
+
+
+class TestBatteryPillsFresh:
+    def test_lost_contact_hides_the_pills(self, dashboard):
+        html = dashboard.DASHBOARD_HTML
+        start = html.index(".catch(() => {\n      setOverall('err', 'No contact');")
+        end = start + 300
+        catch = html[start:end]
+        assert "$('batt-time').hidden = true;" in catch
+        assert "$('batt-power').hidden = true;" in catch
+
+    def test_tab_brought_back_updates_at_once(self, dashboard):
+        assert "document.addEventListener('visibilitychange'" in dashboard.DASHBOARD_HTML

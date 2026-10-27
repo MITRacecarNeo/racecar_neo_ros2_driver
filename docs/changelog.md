@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+### Fixed
+
+- Battery guard: the CSV log is written from its own thread. A stalled data
+  drive (an NVMe sync can block for 30 s) held up the guard's whole loop, so
+  `/battery/estimate` stopped and the 8080 battery pills disappeared until it
+  recovered; the warning and shutdown checks waited too. The shutdown record
+  waits at most 2 s before the power off.
+- 8080 battery pills hide when the page loses contact with the car, and a tab
+  brought back from the background updates at once, so old figures never read
+  as current.
+
 ## [0.9.1] - 2026-10-26
 
 ### Added

@@ -193,6 +193,25 @@ class TestStatusAndLog:
         assert rows[1][8] == 'ok' and rows[2][9] == 'warn'
         assert rows[2][1] == ''
 
+    def test_csv_log_write_does_not_wait_for_the_disk(self, tmp_path, monkeypatch):
+        stalled = bg.threading.Event()
+        real_fsync = bg.os.fsync
+
+        def slow_fsync(fd):
+            stalled.wait(5)
+            real_fsync(fd)
+
+        monkeypatch.setattr(bg.os, 'fsync', slow_fsync)
+        log = bg.CsvLog(tmp_path / 'run.csv')
+        start = bg.time.monotonic()
+        for i in range(20):
+            log.write([f'{i}.000'] + [''] * 9)
+        assert bg.time.monotonic() - start < 0.5
+        stalled.set()
+        log.close()
+        rows = list(csv.reader((tmp_path / 'run.csv').open()))
+        assert len(rows) == 21 and rows[-1][0] == '19.000'
+
     def test_last_shutdown_file(self, tmp_path):
         guard = bg.Guard(BatteryConfig())
         _run(guard, FLOOR_V, 40, 0.0)

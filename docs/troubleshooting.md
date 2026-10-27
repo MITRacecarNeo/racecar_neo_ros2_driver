@@ -618,7 +618,8 @@ The car turned off on its own:
    a second; the `event` column marks the warning, countdown, and steps.
 
 No time or power in the 8080 header: the guard is not running, or it has
-read under 30 s of the battery. `systemctl status racecar-battery-guard`
+read under 30 s of the battery, or the page has lost contact with the car
+(the status pill reads "No contact"). `systemctl status racecar-battery-guard`
 shows which. Teleop must be running, since `pit_node` reads the battery.
 
 "Unknown battery" in the journal: the first voltage fits no cell count

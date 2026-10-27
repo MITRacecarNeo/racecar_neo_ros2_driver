@@ -799,7 +799,12 @@ function update(refresh) {
       renderOverall(data);
       $('timestamp').textContent = `Updated ${data.timestamp}`;
     })
-    .catch(() => setOverall('err', 'No contact'));
+    .catch(() => {
+      setOverall('err', 'No contact');
+      // Old battery figures would read as current; the banner keeps its countdown.
+      $('batt-time').hidden = true;
+      $('batt-power').hidden = true;
+    });
 }
 $('clear-apps').onclick = async () => {
   if (!confirm('Stop all utilities?')) return;
@@ -818,6 +823,9 @@ $('refresh').onclick = () => { update(true); pollOverview(); pollHistory(); };
 
 update(false);
 const statusTimer = setInterval(() => update(false), 3000);
+// A browser pauses timers in a background tab; a tab brought back shows the
+// car's figures now, not the ones from when it was hidden.
+document.addEventListener('visibilitychange', () => { if (!document.hidden) update(false); });
 // Overview: frames and graphs at 2 Hz while open; the battery history moves in 10 s buckets.
 setInterval(pollOverview, 500);
 setInterval(pollHistory, 10000);
