@@ -17,13 +17,12 @@ import subprocess
 import sys
 from typing import Any
 
+from racecar_neo_ros2_driver import apps
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 
-DRIVING_UNITS = (
-    'racecar-webteleop.service',
-    'racecar-linefollow.service',
-    'racecar-wallfollow.service',
-)
+# Apps that publish /drive (config/apps.yaml).
+DRIVING_UNITS = tuple(f"{a['unit']}.service" for a in apps.driving_apps())
 AUTONOMY_UNIT = 'racecar-autonomy.service'
 TELEOP_UNIT = 'racecar-teleop.service'
 STEP_TIMEOUT_SEC = 30.0

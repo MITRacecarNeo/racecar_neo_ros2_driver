@@ -25,7 +25,9 @@ Each dashboard is one Python process: a ROS node plus a stdlib HTTP server
 | `<name>.py` | The node (subscriptions, the `/drive` timer), the HTTP handler, and pure helpers the tests reach without a node |
 | `<name>.html` | The page: controls, canvases, charts; polls `GET /state` |
 | `<name>.yaml` | Shipped defaults for every tunable |
-| `racecar-<name>.service.in` | Unit template; `@DIR@` is substituted at install |
+
+Each dashboard is an entry in `config/apps.yaml` with its `dir` and `script`;
+its unit is rendered from `scripts/dashboards/racecar-app.service.in`.
 
 `/drive` comes from a timer (15 Hz), never from a browser post. A command older
 than `cmd_timeout` reads as released, so a closed tab, a dropped link, or a

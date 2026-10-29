@@ -31,7 +31,7 @@ import subprocess
 import time
 from typing import Any
 
-from racecar_neo_ros2_driver import autonomy as au, data_root
+from racecar_neo_ros2_driver import apps, autonomy as au, data_root
 from racecar_neo_ros2_driver.maps import map_root, parse_pose, ROOT_ENV, valid_name
 
 UNIT = 'racecar-autonomy.service'
@@ -373,11 +373,7 @@ def _control(action: str) -> None:
 # slam_toolbox. Starting mapping or localization stops them; the map viewer
 # and the apps page ask first. Stopping them is allowed by
 # scripts/polkit/49-racecar-dashboards.rules.
-DRIVING_APPS = (
-    ('racecar-webteleop.service', 'Web Teleop'),
-    ('racecar-linefollow.service', 'Line Follow'),
-    ('racecar-wallfollow.service', 'Wall Follow'),
-)
+DRIVING_APPS = tuple((f"{a['unit']}.service", a['name']) for a in apps.driving_apps())
 
 
 def running_driving_apps() -> list[str]:

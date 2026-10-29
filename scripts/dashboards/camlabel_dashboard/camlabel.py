@@ -28,7 +28,7 @@ from typing import Any
 
 import cv2
 import numpy as np
-from racecar_neo_ros2_driver import data_root
+from racecar_neo_ros2_driver import apps, data_root
 import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
@@ -36,7 +36,7 @@ from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
 import yaml
 
-PORT = 8085
+PORT = apps.port('camlabel')
 BASE = Path(__file__).resolve().parent
 # The shared styles, fonts and logos are served from scripts/web/ (webui.py).
 sys.path.insert(0, str(BASE.parents[1]))

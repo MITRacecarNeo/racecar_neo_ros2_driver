@@ -36,13 +36,13 @@ from urllib.parse import parse_qs, urlparse
 
 import map_control as mc
 import numpy as np
-from racecar_neo_ros2_driver import autonomy as au
+from racecar_neo_ros2_driver import apps, autonomy as au
 from racecar_neo_ros2_driver.maps import map_root, valid_name
 import sysinfo
 import webui
 import yaml
 
-PORT = 8084
+PORT = apps.port('mapview')
 HERE = Path(__file__).resolve().parent
 PAGE = HERE / 'mapview.html'
 RACECAR_MAP = HERE / 'racecar_map.py'

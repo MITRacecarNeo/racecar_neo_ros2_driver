@@ -199,6 +199,28 @@ stops a running autonomy run, restarts teleop (allowed by
 loads a localization map from the last pose. The autonomy tile runs the same
 `racecar map` commands: resume, stop, and save then stop.
 
+### App registry
+
+`config/apps.yaml` lists every app the car serves in a browser: id, name,
+icon, port, group, unit, whether it publishes `/drive` (`exclusive`), whether
+8080 may start it, what it needs, and for lab dashboards the folder and
+script. `racecar_neo_ros2_driver/apps.py` reads it, and runs as a plain script
+for the shell side.
+
+```
+config/apps.yaml ──▶ apps.py ─┬─▶ dashboard.py   tiles, open_app, Clear apps, CORS ports
+                              ├─▶ map_control.py DRIVING_APPS (stopped by mapping)
+                              ├─▶ safe_shutdown  DRIVING_UNITS
+                              ├─▶ each app       its PORT
+                              └─▶ apps.py list ─┬─▶ setup_dashboards.sh  units from
+                                                │   scripts/dashboards/racecar-app.service.in
+                                                └─▶ racecar service      one-at-a-time rule
+```
+
+A new app is one entry, its unit, and for 8080 start and stop its unit in
+`scripts/polkit/49-racecar-dashboards.rules`; `test/test_apps.py` checks that
+the rule grants exactly the startable apps.
+
 ### Lab dashboards
 
 Four dashboards in `scripts/dashboards/` run as `racecar-*` units, installed

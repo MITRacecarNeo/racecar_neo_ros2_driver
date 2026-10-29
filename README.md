@@ -185,7 +185,7 @@ Twelve phases, all under `scripts/`:
 9. **`setup_workspace.sh`**: clones `sllidar_ros2` at a pinned commit and runs `colcon build --symlink-install`; `setup_all.sh` then runs `racecar profile migrate` (see [Car profile](#car-profile))
 10. **`setup_jupyter.sh`**: `pip install --user jupyterlab` and the library's notebook packages (pinned), creates `~/jupyter_ws/`, links `~/jupyter_ws/data` and `~/jupyter_ws/maps` to the [data root](#car-data)
 11. **`setup_services.sh`**: installs and enables the core systemd units (`racecar-{data,teleop,watchdog,dashboard,jupyter,mapview}.service`), installs `racecar-autonomy.service` disabled, and installs `/etc/profile.d/racecar-data.sh`
-12. **`setup_dashboards.sh`**: installs a stopped, disabled `racecar-*` unit for each of the four lab dashboards in `scripts/dashboards/` (web teleop, line follow, wall follow, camera label) and removes units left by retired dashboards (`RACECAR_DASHBOARDS=0` skips it)
+12. **`setup_dashboards.sh`**: installs a stopped, disabled `racecar-*` unit for each lab dashboard listed in `config/apps.yaml` (web teleop, line follow, wall follow, camera label) and removes units left by retired dashboards (`RACECAR_DASHBOARDS=0` skips it)
 
 Individual phase scripts can be run on their own to re-do or skip steps (e.g. `racecar setup networking` for just the networking phase, or `bash scripts/setup_udev.sh` to reinstall the udev rules after a hardware swap).
 

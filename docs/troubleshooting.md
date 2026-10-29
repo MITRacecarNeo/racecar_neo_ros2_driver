@@ -591,9 +591,9 @@ unplugging the IMU connector does this.
 
 `scripts/setup_dashboards.sh`, `scripts/dashboards/`.
 
-Each unit is rendered from the dashboard's `.service.in`, substituting its
-directory and adding the discovery scope, rather than copied, so the unit
-always points at the tree it was installed from.
+Each unit is rendered from `scripts/dashboards/racecar-app.service.in` with
+the app's name, port, folder and script from `config/apps.yaml`, plus the
+discovery scope, so the unit always points at the tree it was installed from.
 
 The script also stops, disables and removes the units of the three retired
 dashboards (`eps`, `pursuit`, `smartfollow`), so a car upgraded from v0.8.0

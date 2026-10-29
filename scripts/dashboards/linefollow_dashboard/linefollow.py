@@ -45,7 +45,7 @@ from ackermann_msgs.msg import AckermannDriveStamped
 import cv2
 from nav_msgs.msg import Odometry
 import numpy as np
-from racecar_neo_ros2_driver import car_profile, data_root
+from racecar_neo_ros2_driver import apps, car_profile, data_root
 import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
@@ -53,7 +53,7 @@ from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
 import yaml
 
-PORT = 8082
+PORT = apps.port('linefollow')
 BASE = Path(__file__).resolve().parent
 # The shared styles, fonts and logos are served from scripts/web/ (webui.py).
 sys.path.insert(0, str(BASE.parents[1]))

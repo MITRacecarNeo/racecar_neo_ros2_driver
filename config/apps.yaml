@@ -1,0 +1,108 @@
+# Apps the car serves in a browser (racecar_neo_ros2_driver/apps.py).
+#
+# The 8080 home page shows one tile per entry, in this order. The driving-app
+# rules (map_control.py, safe_shutdown.py), setup_dashboards.sh and
+# `racecar service` read the same list, so a new app is one entry here plus
+# its unit. Starting and stopping from 8080 also needs the unit in
+# scripts/polkit/49-racecar-dashboards.rules (test/test_apps.py checks it).
+#
+# Keys:
+#   id          short name; `racecar service start <id>` and the unit name
+#   name, icon, desc
+#               tile label, icon in scripts/web/icons.svg, hover tip
+#   port        where the app serves its page
+#   group       core (started at boot, except Terminal) or utilities (started
+#               when opened, stopped by Clear apps)
+#   unit        systemd unit without .service; leave it out for a tile that
+#               opens nothing
+#   exclusive   publishes /drive: one runs at a time, and mapping or
+#               localization stops it
+#   startable   8080 may start it (polkit grants start and stop)
+#   needs       a feature it needs on (camera)
+#   dir, script lab dashboards only: folder under scripts/dashboards/ and the
+#               script the rendered unit runs (setup_dashboards.sh)
+
+home:
+  port: 8080
+  unit: racecar-dashboard
+
+apps:
+  - id: terminal
+    name: Terminal
+    icon: terminal
+    port: 8086
+    group: core
+    unit: racecar-terminal
+    exclusive: false
+    startable: true
+    desc: Open a terminal
+
+  - id: jupyter
+    name: JupyterLab
+    icon: notebook
+    port: 8888
+    group: core
+    unit: racecar-jupyter
+    exclusive: false
+    startable: false
+    desc: Notebooks and code
+
+  - id: mapview
+    name: Map Viewer
+    icon: map
+    port: 8084
+    group: core
+    unit: racecar-mapview
+    exclusive: false
+    startable: false
+    desc: Build and load maps
+
+  - id: webteleop
+    name: Web Teleop
+    icon: gamepad
+    port: 8081
+    group: utilities
+    unit: racecar-webteleop
+    exclusive: true
+    startable: true
+    desc: Drive from the browser with camera and lidar
+    dir: teleop_dashboard
+    script: teleop.py
+
+  - id: linefollow
+    name: Line Follow
+    icon: line
+    port: 8082
+    group: utilities
+    unit: racecar-linefollow
+    exclusive: true
+    startable: true
+    desc: Follow a colored line with the camera
+    needs: camera
+    dir: linefollow_dashboard
+    script: linefollow.py
+
+  - id: wallfollow
+    name: Wall Follow
+    icon: wall
+    port: 8083
+    group: utilities
+    unit: racecar-wallfollow
+    exclusive: true
+    startable: true
+    desc: Follow walls with the lidar
+    dir: wallfollow_dashboard
+    script: wallfollow.py
+
+  - id: camlabel
+    name: Camera Label
+    icon: tag
+    port: 8085
+    group: utilities
+    unit: racecar-camlabel
+    exclusive: false
+    startable: true
+    desc: Capture camera frames and label them for training
+    needs: camera
+    dir: camlabel_dashboard
+    script: camlabel.py

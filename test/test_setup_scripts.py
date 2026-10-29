@@ -12,6 +12,7 @@ import subprocess
 import pytest
 
 SCRIPTS_DIR = Path(__file__).parent.parent / 'scripts'
+APPS_PY = SCRIPTS_DIR.parent / 'racecar_neo_ros2_driver' / 'apps.py'
 
 PHASE_SCRIPTS = [
     'setup_ros2.sh',
@@ -608,26 +609,24 @@ class TestDashboardScript:
     def test_verifies_every_substitution_token(self, text):
         # A template that stops carrying a token has changed shape; installing
         # the result anyway would point the unit at the wrong directory.
-        for token in ('@DIR@', 'Environment=HOME='):
+        for token in ('@NAME@', '@PORT@', '@DIR@', '@SCRIPT@', 'Environment=HOME='):
             assert token in text
 
     def test_env_var_skips_the_phase(self, text):
         assert 'RACECAR_DASHBOARDS' in text
 
-    def test_ships_the_four_dashboards(self, text):
-        listed = text.split('DASHBOARDS=(', 1)[1].split(')', 1)[0].split()
-        assert listed == list(self.DASHBOARDS)
+    def test_dashboards_come_from_the_app_registry(self, text):
+        assert '"$APPS_PY" list --where dir' in text
+        assert 'DASHBOARDS=(' not in text
 
-    @pytest.mark.parametrize(
-        'name',
-        ['teleop_dashboard', 'linefollow_dashboard', 'wallfollow_dashboard', 'camlabel_dashboard'],
-    )
-    def test_templates_ship_in_tree(self, name):
-        unit, port = self.DASHBOARDS[name]
-        body = (SCRIPTS_DIR / 'dashboards' / name / f'{unit}.service.in').read_text()
+    def test_one_template_for_every_dashboard(self):
+        body = (SCRIPTS_DIR / 'dashboards' / 'racecar-app.service.in').read_text()
         assert '/opt/ros/jazzy' in body and '/opt/ros/humble' not in body
-        assert f'(port {port})' in body
+        assert '(port @PORT@)' in body
         assert body.count('@DIR@') == 2
+        # Like the 8080, 8084 and 8086 units: the data root is known at start.
+        assert 'After=racecar-data.service' in body
+        assert 'EnvironmentFile=-/run/racecar/environment' in body
 
     def test_installs_rendered_units(self, tmp_path, monkeypatch):
         units = tmp_path / 'units'
@@ -637,10 +636,12 @@ class TestDashboardScript:
         monkeypatch.setenv('RACECAR_SYSTEMCTL', 'true')
         r = subprocess.run(['bash', str(self.SCRIPT)], capture_output=True, text=True)
         assert r.returncode == 0, r.stderr
-        for name, (unit, _) in self.DASHBOARDS.items():
+        for name, (unit, port) in self.DASHBOARDS.items():
             body = (units / f'{unit}.service').read_text()
             assert f'WorkingDirectory={SCRIPTS_DIR / "dashboards" / name}' in body
+            assert f'(port {port})' in body
             assert 'ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST' in body
+            assert '@' not in body
         again = subprocess.run(['bash', str(self.SCRIPT)], capture_output=True, text=True)
         assert again.stdout.count('already up to date') == len(self.DASHBOARDS)
 
@@ -1005,8 +1006,13 @@ class TestOneShotSetup:
         rules = '\n'.join(p.read_text() for p in (SCRIPTS_DIR / 'polkit').glob('*.rules'))
         named = set(re.findall(r'racecar-[a-z]+\.service', rules))
         installed = {p.name for p in SCRIPTS_DIR.glob('racecar-*.service')}
-        templates = (SCRIPTS_DIR / 'dashboards').glob('*/racecar-*.service.in')
-        installed |= {p.name[: -len('.in')] for p in templates}
+        listed = subprocess.run(
+            ['python3', str(APPS_PY), 'list', '--where', 'dir', '--fields', 'unit'],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.split()
+        installed |= {f'{unit}.service' for unit in listed}
         assert named and named <= installed, named - installed
         user_env = (SCRIPTS_DIR / 'setup_user_env.sh').read_text()
         for rule in (SCRIPTS_DIR / 'polkit').glob('*.rules'):

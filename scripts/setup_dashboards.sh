@@ -1,9 +1,10 @@
 #!/bin/bash
 # Install the lab dashboards as racecar-* systemd units.
 #
-# Four dashboards ship in scripts/dashboards/: webteleop (8081), linefollow
-# (8082), wallfollow (8083), camlabel (8085). Units are rendered from each
-# dashboard's .service.in. See docs/troubleshooting.md, "Lab dashboards".
+# The dashboards are the apps in config/apps.yaml with a `dir` under
+# scripts/dashboards/ (racecar_neo_ros2_driver/apps.py). Each unit is rendered
+# from scripts/dashboards/racecar-app.service.in with the app's name, port,
+# folder and script. See docs/troubleshooting.md, "Lab dashboards".
 #
 # Usage:
 #   setup_dashboards.sh                render and install the units
@@ -22,16 +23,18 @@ set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DASH_DIR="$SCRIPT_DIR/dashboards"
+TEMPLATE="$DASH_DIR/racecar-app.service.in"
+APPS_PY="$SCRIPT_DIR/../racecar_neo_ros2_driver/apps.py"
 SYSTEMD_DIR="${RACECAR_SYSTEMD_DIR:-/etc/systemd/system}"
 SUDO="${RACECAR_SUDO-sudo}"
 SYSTEMCTL="$SUDO ${RACECAR_SYSTEMCTL:-systemctl}"
 
-DASHBOARDS=(
-    teleop_dashboard
-    linefollow_dashboard
-    wallfollow_dashboard
-    camlabel_dashboard
-)
+# unit, name, port, dir, script; one tab-separated line per dashboard.
+mapfile -t DASHBOARDS < <(python3 "$APPS_PY" list --where dir --fields unit,name,port,dir,script)
+if [[ ${#DASHBOARDS[@]} -eq 0 ]]; then
+    echo "  no dashboards listed by $APPS_PY" >&2
+    exit 1
+fi
 
 # Dashboards no longer shipped. Their units are removed if still installed.
 RETIRED_UNITS=(
@@ -60,40 +63,37 @@ fi
 failed=()
 changed=0
 
-# Render a template for this platform. @DIR@ and Environment=HOME= are required
-# anchors; a template missing either is refused.
+# Render the template for one app. Every token and Environment=HOME= are
+# required anchors; a template missing one is refused.
 render_unit() {
-    local src="$1" dir="$2" token
-    for token in '@DIR@' 'Environment=HOME='; do
-        if ! grep -qF -- "$token" "$src"; then
-            echo "  $(basename "$src"): expected '$token' not found; template changed" >&2
+    local name="$1" port="$2" dir="$3" script="$4" token
+    for token in '@NAME@' '@PORT@' '@DIR@' '@SCRIPT@' 'Environment=HOME='; do
+        if ! grep -qF -- "$token" "$TEMPLATE"; then
+            echo "  $(basename "$TEMPLATE"): expected '$token' not found; template changed" >&2
             return 1
         fi
     done
-    sed -e "s|@DIR@|$dir|g" \
+    sed -e "s|@NAME@|$name|g" -e "s|@PORT@|$port|g" \
+        -e "s|@DIR@|$dir|g" -e "s|@SCRIPT@|$script|g" \
         -e "/^Environment=HOME=/a Environment=ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST" \
-        "$src"
+        "$TEMPLATE"
 }
 
+# One registry line: unit, name, port, dir, script.
 install_unit() {
-    # Two statements: bash expands every word of a `local` before any of its
-    # assignments take effect, so a single one would build dir from the
-    # caller's name rather than from $1.
-    local name="$1"
-    local dir="$DASH_DIR/$name"
-    local src unit rendered
-    src="$(find "$dir" -maxdepth 1 -name 'racecar-*.service.in' | head -1)"
-    if [[ -z "$src" ]]; then
-        echo "  $name: no .service.in; skipping" >&2
-        failed+=("$name (no unit template)")
+    local unit_name name port dir script unit rendered
+    IFS=$'\t' read -r unit_name name port dir script <<<"$1"
+    unit="$unit_name.service"
+    if [[ ! -f "$DASH_DIR/$dir/$script" ]]; then
+        echo "  $unit: $dir/$script not found; skipping" >&2
+        failed+=("$unit_name (no script)")
         return 1
     fi
-    unit="$(basename "$src" .in)"
 
     rendered="$(mktemp)"
-    if ! render_unit "$src" "$dir" >"$rendered"; then
+    if ! render_unit "$name" "$port" "$DASH_DIR/$dir" "$script" >"$rendered"; then
         rm -f "$rendered"
-        failed+=("$name (render)")
+        failed+=("$unit_name (render)")
         return 1
     fi
 
@@ -106,7 +106,7 @@ install_unit() {
         # Called under `|| true`, so errexit is off here; test the install
         # explicitly.
         echo "  $unit: install failed (sudo?)" >&2
-        failed+=("$name (install)")
+        failed+=("$unit_name (install)")
         rm -f "$rendered"
         return 1
     fi
@@ -130,8 +130,8 @@ remove_retired_unit() {
 }
 
 echo "==> Rendering and installing units"
-for name in "${DASHBOARDS[@]}"; do
-    install_unit "$name" || true
+for line in "${DASHBOARDS[@]}"; do
+    install_unit "$line" || true
 done
 
 echo "==> Retired dashboard units"
@@ -151,13 +151,10 @@ fi
 
 echo
 echo "Dashboards installed, stopped and disabled. One driving dashboard at a time:"
-for name in "${DASHBOARDS[@]}"; do
-    src="$(find "$DASH_DIR/$name" -maxdepth 1 -name 'racecar-*.service.in' | head -1)"
-    [[ -n "$src" ]] || continue
-    unit="$(basename "$src" .service.in)"
-    port="$(sed -n 's/.*(port \([0-9]*\)).*/\1/p' "$src" | head -1)"
+for line in "${DASHBOARDS[@]}"; do
+    IFS=$'\t' read -r unit _ port _ _ <<<"$line"
     printf '  racecar service start %-12s http://%s:%s\n' \
-        "${unit#racecar-}" "$(hostname).local" "${port:-?}"
+        "${unit#racecar-}" "$(hostname).local" "$port"
 done
 
 if [[ ${#failed[@]} -gt 0 ]]; then

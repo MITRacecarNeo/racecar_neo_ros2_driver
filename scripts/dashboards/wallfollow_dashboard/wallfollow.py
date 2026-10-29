@@ -34,7 +34,7 @@ from typing import Any
 
 from ackermann_msgs.msg import AckermannDriveStamped
 from nav_msgs.msg import Odometry
-from racecar_neo_ros2_driver import car_profile, data_root
+from racecar_neo_ros2_driver import apps, car_profile, data_root
 import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
@@ -42,7 +42,7 @@ from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
 import yaml
 
-PORT = 8083
+PORT = apps.port('wallfollow')
 BASE = Path(__file__).resolve().parent
 # The shared styles, fonts and logos are served from scripts/web/ (webui.py).
 sys.path.insert(0, str(BASE.parents[1]))

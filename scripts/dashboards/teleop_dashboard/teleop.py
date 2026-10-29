@@ -61,7 +61,7 @@ from ackermann_msgs.msg import AckermannDriveStamped
 import cv2
 from nav_msgs.msg import Odometry
 import numpy as np
-from racecar_neo_ros2_driver import car_profile, data_root
+from racecar_neo_ros2_driver import apps, car_profile, data_root
 import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
@@ -78,7 +78,7 @@ except ImportError:
     Detection2DArray = None
 import yaml
 
-PORT = 8081
+PORT = apps.port('webteleop')
 BASE = Path(__file__).resolve().parent
 # The shared styles, fonts and logos are served from scripts/web/ (webui.py).
 sys.path.insert(0, str(BASE.parents[1]))

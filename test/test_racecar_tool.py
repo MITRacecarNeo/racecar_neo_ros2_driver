@@ -264,20 +264,14 @@ class TestService:
         assert 'dash_units' in block
         assert 'only one /drive publisher' in block
 
-    def test_dash_units_are_the_three_dashboards(self):
-        # All three steer, so none may run alongside another; one list serves
-        # both the status view and the one-at-a-time rule.
+    def test_unit_lists_come_from_the_app_registry(self):
+        # One list, config/apps.yaml, serves the status view and the
+        # one-at-a-time rule; test/test_apps.py checks what it holds.
         text = TOOL.read_text()
-        dash = text.split('local -a dash_units=')[1].split('local -a app_units=')[0]
-        for name in ('webteleop', 'linefollow', 'wallfollow'):
-            assert f'racecar-{name}' in dash, f'{name} missing from dash_units'
-        assert dash.count('racecar-') == 3
+        assert '"$apps_py" list --where exclusive=true --fields unit' in text
+        assert '--where exclusive=false --fields unit' in text
+        assert 'local -a dash_units=(' not in text
         assert 'drive_units' not in text
-
-    def test_camlabel_is_not_a_drive_dashboard(self):
-        text = TOOL.read_text()
-        apps = text.split('local -a app_units=')[1].split('\n')[0]
-        assert 'racecar-camlabel' in apps and 'racecar-terminal' in apps
 
     def test_no_retired_dashboard_is_named_anywhere(self):
         text = TOOL.read_text()

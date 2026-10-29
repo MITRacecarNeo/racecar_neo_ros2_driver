@@ -23,6 +23,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
+from racecar_neo_ros2_driver import apps
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
@@ -61,94 +62,14 @@ import webui  # noqa: E402
 # Configuration
 # ---------------------------------------------------------------------------
 
-PORT = 8080
+PORT = apps.home_port()
 
-# Home page apps. Core apps start at boot, except Terminal, which starts when
-# opened. Utilities start when opened and stop with Clear apps. Starting and
-# stopping needs scripts/polkit/49-racecar-dashboards.rules.
-# `exclusive` utilities publish /drive, so one runs at a time. An app with no
-# unit is shown but opens nothing.
-APPS: list[dict[str, Any]] = [
-    {
-        'id': 'terminal',
-        'name': 'Terminal',
-        'icon': 'terminal',
-        'port': 8086,
-        'group': 'core',
-        'unit': 'racecar-terminal',
-        'exclusive': False,
-        'startable': True,
-        'desc': 'Open a terminal',
-    },
-    {
-        'id': 'jupyter',
-        'name': 'JupyterLab',
-        'icon': 'notebook',
-        'port': 8888,
-        'group': 'core',
-        'unit': 'racecar-jupyter',
-        'exclusive': False,
-        'startable': False,
-        'desc': 'Notebooks and code',
-    },
-    {
-        'id': 'mapview',
-        'name': 'Map Viewer',
-        'icon': 'map',
-        'port': 8084,
-        'group': 'core',
-        'unit': 'racecar-mapview',
-        'exclusive': False,
-        'startable': False,
-        'desc': 'Build and load maps',
-    },
-    {
-        'id': 'webteleop',
-        'name': 'Web Teleop',
-        'icon': 'gamepad',
-        'port': 8081,
-        'group': 'utilities',
-        'unit': 'racecar-webteleop',
-        'exclusive': True,
-        'startable': True,
-        'desc': 'Drive from the browser with camera and lidar',
-    },
-    {
-        'id': 'linefollow',
-        'name': 'Line Follow',
-        'icon': 'line',
-        'port': 8082,
-        'group': 'utilities',
-        'unit': 'racecar-linefollow',
-        'exclusive': True,
-        'startable': True,
-        'desc': 'Follow a colored line with the camera',
-        'needs': 'camera',
-    },
-    {
-        'id': 'wallfollow',
-        'name': 'Wall Follow',
-        'icon': 'wall',
-        'port': 8083,
-        'group': 'utilities',
-        'unit': 'racecar-wallfollow',
-        'exclusive': True,
-        'startable': True,
-        'desc': 'Follow walls with the lidar',
-    },
-    {
-        'id': 'camlabel',
-        'name': 'Camera Label',
-        'icon': 'tag',
-        'port': 8085,
-        'group': 'utilities',
-        'unit': 'racecar-camlabel',
-        'exclusive': False,
-        'startable': True,
-        'desc': 'Capture camera frames and label them for training',
-        'needs': 'camera',
-    },
-]
+# Home page apps, from config/apps.yaml (racecar_neo_ros2_driver/apps.py). Core
+# apps start at boot, except Terminal, which starts when opened. Utilities
+# start when opened and stop with Clear apps. Starting and stopping needs
+# scripts/polkit/49-racecar-dashboards.rules. `exclusive` utilities publish
+# /drive, so one runs at a time.
+APPS: list[dict[str, Any]] = apps.all_apps()
 
 # Features: parts of the car that cost CPU and can be turned off. The camera
 # and detections are teleop subsystems (scripts/features.py); changing one
@@ -177,7 +98,7 @@ TELEOP_SETTLE_SEC = 10.0
 READY_TIMEOUT_SEC = 1.0
 SYSTEMCTL_TIMEOUT_SEC = 30.0
 RATE_WINDOW_SEC = 3.0
-MAPVIEW_PORT = 8084
+MAPVIEW_PORT = apps.port('mapview')
 # /autonomy/status arrives at 1 Hz; older than this, the node has stopped.
 AUTONOMY_STALE_SEC = 5.0
 # The Data and RTC chips; the Power chip refreshes every tick.

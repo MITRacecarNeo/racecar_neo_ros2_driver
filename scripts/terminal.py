@@ -46,9 +46,10 @@ from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from racecar_neo_ros2_driver import apps  # noqa: E402, I100
 import webui  # noqa: E402
 
-PORT = 8086
+PORT = apps.port('terminal')
 SCRIPT_DIR = Path(__file__).resolve().parent
 CONFIG_DIR = SCRIPT_DIR.parent / 'config'
 TMUX_SOCKET = 'racecar-terminal'

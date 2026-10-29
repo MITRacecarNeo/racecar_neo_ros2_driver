@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+### Changed
+
+- App registry: `config/apps.yaml` lists every browser app (port, unit,
+  group, `/drive` publisher, start from 8080), read by
+  `racecar_neo_ros2_driver/apps.py`. The 8080 tiles, the driving-app rules of
+  `racecar map` and the safe shutdown, every app's port, `racecar service`
+  and `setup_dashboards.sh` read it instead of their own lists.
+- Lab dashboard units are rendered from one template,
+  `scripts/dashboards/racecar-app.service.in`, and now wait for the data
+  drive and read its environment like the 8080, 8084 and 8086 units. Run
+  `racecar setup dashboards` to update them.
+
 ### Fixed
 
 - Battery guard: the CSV log is written from its own thread. A stalled data
