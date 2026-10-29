@@ -4,6 +4,7 @@ from itertools import pairwise
 from pathlib import Path
 
 import pytest
+from racecar_neo_ros2_driver import battery
 from racecar_neo_ros2_driver.battery import (
     battery_soc,
     BatteryConfig,
@@ -118,6 +119,25 @@ class TestConfig:
     def test_rejects_bad_settings(self, kwargs):
         with pytest.raises(ValueError):
             BatteryConfig(**kwargs)
+
+    def test_load_config_puts_the_profile_on_top(self, car_profile_dir):
+        params = car_profile_dir / 'params'
+        params.mkdir(parents=True)
+        (params / 'battery.yaml').write_text(
+            'battery_guard:\n  ros__parameters:\n    floor_cell_volts: 3.6\n'
+        )
+        cfg = battery.load_config(CONFIG.parent)
+        assert cfg.floor_cell_volts == 3.6
+        assert cfg.capacity_mah == BatteryConfig().capacity_mah
+
+    def test_config_dir_falls_back_to_the_source_tree(self, monkeypatch):
+        import ament_index_python.packages as packages
+
+        def missing(name):
+            raise packages.PackageNotFoundError(name)
+
+        monkeypatch.setattr(packages, 'get_package_share_directory', missing)
+        assert battery.config_dir() == CONFIG.parent.resolve()
 
 
 class TestEstimate:

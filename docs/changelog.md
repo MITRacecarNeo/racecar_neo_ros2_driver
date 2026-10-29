@@ -19,6 +19,22 @@ All notable changes to this project will be documented in this file. The format 
 - 8080 battery pills hide when the page loses contact with the car, and a tab
   brought back from the background updates at once, so old figures never read
   as current.
+- `racecar health` reads the battery floor from the same settings as the
+  battery guard (`battery.load_config`); it read the source tree's copy while
+  the guard read the installed one. `scripts/battery_curve.py` uses it too.
+- `racecar log` and the 8080 feature choice keep their files in the car
+  profile (`RACECAR_CONFIG_DIR`, `XDG_CONFIG_HOME`), like the rest of the
+  car's settings. `launch_teleop.sh` reads the features after the ROS
+  overlay. `racecar log config` saves through a rename.
+- `racecar health shake` flags the same NVMe and PCIe kernel errors as
+  `racecar health nvme`; it missed failed commands, buffer I/O errors, and
+  link resets.
+- 8080 Autonomy tile follows `RACECAR_AUTONOMY_CONF` when it reads the last
+  run.
+- Wall follow (8083) serves requests in parallel, like the other apps; one
+  slow client held up the page's polling.
+- Lab dashboard READMEs: saved tuning lives in the car profile, not
+  `<name>.local.yaml`; retired dashboards dropped from the conflict lists.
 
 ## [0.9.1] - 2026-10-26
 

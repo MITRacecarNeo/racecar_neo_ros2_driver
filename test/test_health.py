@@ -65,6 +65,16 @@ class TestPower:
         assert health.battery_row([], 3.55).status == 'SKIP'
 
 
+class TestBatteryFloor:
+    def test_floor_is_the_guards(self, monkeypatch):
+        from racecar_neo_ros2_driver import battery
+
+        monkeypatch.setattr(
+            battery, 'load_config', lambda: battery.BatteryConfig(floor_cell_volts=3.6)
+        )
+        assert health.floor_cell_volts() == 3.6
+
+
 class TestNvme:
     def test_speed_test_writes_reads_and_removes(self, tmp_path):
         write, read = health.speed_test(tmp_path, size_mb=8, chunk_mb=4)

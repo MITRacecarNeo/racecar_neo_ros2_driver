@@ -30,6 +30,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields
 from itertools import pairwise
+from pathlib import Path
 from statistics import median
 from typing import Any
 
@@ -124,6 +125,27 @@ class BatteryConfig:
         return (
             self.plausible_min_cell_volts * cells < volts < self.plausible_max_cell_volts * cells
         )
+
+
+def config_dir() -> Path:
+    """Return the config dir the battery guard reads: installed share, else the source tree."""
+    try:
+        from ament_index_python.packages import get_package_share_directory
+
+        share = Path(get_package_share_directory('racecar_neo_ros2_driver')) / 'config'
+    except (ImportError, LookupError):
+        share = None
+    if share is not None and share.is_dir():
+        return share
+    return Path(__file__).resolve().parent.parent / 'config'
+
+
+def load_config(directory: Path | None = None) -> BatteryConfig:
+    """Return config/battery.yaml with the car profile's override on top."""
+    from racecar_neo_ros2_driver import car_profile
+
+    params = car_profile.node_params('battery', 'battery_guard', directory or config_dir())
+    return BatteryConfig.from_params(params)
 
 
 @dataclass(frozen=True)

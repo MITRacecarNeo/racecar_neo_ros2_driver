@@ -144,6 +144,15 @@ class TestConfig:
         path.write_text('# a comment\nDIR=/data\n\n')
         assert rl.load_config(path) == {'DIR': '/data'}
 
+    def test_files_live_in_the_car_profile(self, car_profile_dir):
+        assert rl.config_file() == car_profile_dir / 'log.conf'
+        assert rl.state_file() == car_profile_dir / 'log.state'
+
+    def test_default_path_is_the_profile(self, car_profile_dir):
+        rl.save_config({'DIR': '/data'})
+        assert rl.load_config() == {'DIR': '/data'}
+        assert [f.name for f in car_profile_dir.iterdir()] == ['log.conf']
+
 
 class TestState:
     def test_roundtrip(self, tmp_path):
@@ -218,21 +227,18 @@ class TestCli:
         args = rl.build_parser().parse_args(['stop'])
         assert args.timeout == 15.0
 
-    def test_status_reports_not_recording(self, tmp_path, monkeypatch, capsys):
-        monkeypatch.setattr(rl, 'STATE_FILE', tmp_path / 'absent')
+    def test_status_reports_not_recording(self, capsys):
         assert rl.main(['status']) == 0
         assert 'not recording' in capsys.readouterr().out
 
-    def test_status_json_when_idle(self, tmp_path, monkeypatch, capsys):
-        monkeypatch.setattr(rl, 'STATE_FILE', tmp_path / 'absent')
+    def test_status_json_when_idle(self, capsys):
         rl.main(['status', '--json'])
         assert json.loads(capsys.readouterr().out) == {'recording': False}
 
-    def test_stale_state_is_cleared(self, tmp_path, monkeypatch):
+    def test_stale_state_is_cleared(self, tmp_path):
         # A recorder killed by a reboot leaves state behind; treating that as
         # "recording" would make stop and status lie.
-        path = tmp_path / 'log.state'
-        rl.write_state({'pid': 999999, 'bag': str(tmp_path / 'b'), 'started': 0}, path)
-        monkeypatch.setattr(rl, 'STATE_FILE', path)
+        path = rl.state_file()
+        rl.write_state({'pid': 999999, 'bag': str(tmp_path / 'b'), 'started': 0})
         assert rl.active_state() is None
         assert rl.read_state(path) is None

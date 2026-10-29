@@ -26,9 +26,17 @@ import sys
 import time
 from typing import Any
 
-CONFIG_DIR = Path.home() / '.config' / 'racecar'
-CONFIG_FILE = CONFIG_DIR / 'log.conf'
-STATE_FILE = CONFIG_DIR / 'log.state'
+
+def config_file() -> Path:
+    from racecar_neo_ros2_driver import car_profile
+
+    return car_profile.profile_dir() / 'log.conf'
+
+
+def state_file() -> Path:
+    from racecar_neo_ros2_driver import car_profile
+
+    return car_profile.profile_dir() / 'log.state'
 
 
 TIMESTAMP_FMT = '%Y%m%d_%H%M%S'
@@ -227,7 +235,7 @@ def dir_size(path: str | Path) -> int:
 
 def load_config(path: str | Path | None = None) -> dict[str, str]:
     """Read the persisted KEY=VALUE defaults."""
-    path = Path(path) if path else CONFIG_FILE
+    path = Path(path) if path else config_file()
     cfg = {}
     try:
         for line in Path(path).read_text().splitlines():
@@ -243,15 +251,17 @@ def load_config(path: str | Path | None = None) -> dict[str, str]:
 
 def save_config(cfg: dict[str, str], path: str | Path | None = None) -> None:
     """Persist the defaults, replacing the file."""
-    path = Path(path) if path else CONFIG_FILE
+    path = Path(path) if path else config_file()
     path.parent.mkdir(parents=True, exist_ok=True)
     body = ''.join(f'{k}={v}\n' for k, v in sorted(cfg.items()) if v != '')
-    path.write_text('# racecar log defaults\n' + body)
+    tmp = path.with_name(f'.{path.name}.tmp')
+    tmp.write_text('# racecar log defaults\n' + body)
+    tmp.replace(path)
 
 
 def read_state(path: str | Path | None = None) -> dict[str, Any] | None:
     """Load the active recording's state, or None when nothing is recording."""
-    path = Path(path) if path else STATE_FILE
+    path = Path(path) if path else state_file()
     try:
         return json.loads(path.read_text())
     except (OSError, ValueError):
@@ -260,14 +270,14 @@ def read_state(path: str | Path | None = None) -> dict[str, Any] | None:
 
 def write_state(state: dict[str, Any], path: str | Path | None = None) -> None:
     """Record where the running bag went, so status and stop can find it."""
-    path = Path(path) if path else STATE_FILE
+    path = Path(path) if path else state_file()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(state, indent=2) + '\n')
 
 
 def clear_state(path: str | Path | None = None) -> None:
     """Forget the active recording."""
-    path = Path(path) if path else STATE_FILE
+    path = Path(path) if path else state_file()
     try:
         path.unlink()
     except OSError:
@@ -581,8 +591,8 @@ def cmd_config(args: argparse.Namespace) -> int:
     """Show, set, or clear the persisted defaults."""
     if args.reset:
         try:
-            CONFIG_FILE.unlink()
-            print(f'cleared {CONFIG_FILE}')
+            config_file().unlink()
+            print(f'cleared {config_file()}')
         except OSError:
             print('nothing to clear')
         return 0
@@ -600,7 +610,7 @@ def cmd_config(args: argparse.Namespace) -> int:
     print(f'topics   {cfg.get("TOPICS") or "all"}')
     print(f'dir      {cfg.get("DIR") or f"{root}  (resolved)"}')
     print(f'storage  {cfg.get("STORAGE", DEFAULT_STORAGE)}')
-    print(f'config   {CONFIG_FILE}')
+    print(f'config   {config_file()}')
     hint = storage_hint(root)
     if hint:
         print(f'\nnote: {hint}')

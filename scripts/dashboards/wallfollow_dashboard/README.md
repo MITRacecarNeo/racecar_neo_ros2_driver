@@ -28,8 +28,8 @@ Dashboard: `http://<car-ip>:8083`.
 | `racecar service enable wallfollow` | start at every boot |
 | `racecar service logs wallfollow` | follow the log |
 
-Saved tuning goes to `wallfollow.local.yaml` beside `wallfollow.yaml`; the shipped file
-keeps the defaults. Internals: `docs/dashboards.md` in the driver.
+Saved tuning goes to `dashboards/wallfollow.yaml` in the car profile
+(`~/.config/racecar`); the shipped `wallfollow.yaml` keeps the defaults. Internals: `docs/dashboards.md` in the driver.
 
 ## Dashboard
 

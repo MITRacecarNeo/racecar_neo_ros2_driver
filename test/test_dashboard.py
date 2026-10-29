@@ -763,6 +763,12 @@ class TestFeatures:
         path.write_text('AUTONOMY_MODE=off\nAUTONOMY_MAP=hall\n')
         assert dashboard.last_run(path) == {}
 
+    def test_last_run_follows_the_mode_file_override(self, dashboard, tmp_path, monkeypatch):
+        path = tmp_path / 'other.conf'
+        path.write_text('AUTONOMY_MODE=mapping\nAUTONOMY_MAP=hall\n')
+        monkeypatch.setenv('RACECAR_AUTONOMY_CONF', str(path))
+        assert dashboard.last_run() == {'mode': 'mapping', 'map': 'hall'}
+
 
 class _ToolRun(FakeRun):
     """FakeRun that also answers `racecar map` calls."""

@@ -199,14 +199,10 @@ def mapping_now() -> bool:
 
 
 def recording_now() -> bool:
-    from racecar_log import STATE_FILE
+    from racecar_log import pid_alive, read_state
 
-    try:
-        state = json.loads(STATE_FILE.read_text())
-    except (OSError, ValueError):
-        return False
-    pid = state.get('pid')
-    return bool(pid) and Path(f'/proc/{pid}').exists()
+    state = read_state()
+    return state is not None and pid_alive(state.get('pid'))
 
 
 def refuse_while_busy(run: Run = run_command) -> None:

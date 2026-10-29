@@ -28,7 +28,9 @@ LAUNCH_ARGS_FILE = 'launch_args'
 
 
 def state_file() -> Path:
-    return Path.home() / '.config' / 'racecar' / 'features.conf'
+    from racecar_neo_ros2_driver import car_profile
+
+    return car_profile.profile_dir() / 'features.conf'
 
 
 def boot_id() -> str:

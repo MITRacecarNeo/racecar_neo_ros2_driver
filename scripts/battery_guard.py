@@ -29,7 +29,7 @@ import argparse
 from collections import deque
 from collections.abc import Sequence
 import csv
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import json
 import logging
 import os
@@ -46,7 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from battery_alert import Announcer  # noqa: E402
 import battery_display  # noqa: E402
-from racecar_neo_ros2_driver import car_profile, data_root  # noqa: E402
+from racecar_neo_ros2_driver import battery, data_root  # noqa: E402
 from racecar_neo_ros2_driver.battery import (  # noqa: E402
     BatteryConfig,
     CapacityLearner,
@@ -294,14 +294,9 @@ def write_last_shutdown(folder: Path, trigger: str, now: float, guard: Guard) ->
 
 
 def load_config(floor_cell_volts: float | None = None) -> BatteryConfig:
-    """Return config/battery.yaml with the car profile's override on top."""
-    from ament_index_python.packages import get_package_share_directory
-
-    config_dir = Path(get_package_share_directory('racecar_neo_ros2_driver')) / 'config'
-    params = car_profile.node_params('battery', 'battery_guard', config_dir)
-    if floor_cell_volts is not None:
-        params['floor_cell_volts'] = floor_cell_volts
-    return BatteryConfig.from_params(params)
+    """Return the battery settings, with --floor-cell-volts on top when given."""
+    cfg = battery.load_config()
+    return cfg if floor_cell_volts is None else replace(cfg, floor_cell_volts=floor_cell_volts)
 
 
 def main(argv: list[str] | None = None) -> int:

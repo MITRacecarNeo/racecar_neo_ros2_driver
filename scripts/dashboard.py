@@ -170,7 +170,6 @@ FEATURES: list[dict[str, Any]] = [
 ]
 TELEOP_UNIT = 'racecar-teleop.service'
 AUTONOMY_UNIT = 'racecar-autonomy.service'
-AUTONOMY_MODE_FILE = Path.home() / '.config' / 'racecar' / 'autonomy.conf'
 MAP_TOOL = [sys.executable, str(Path(__file__).resolve().parent / 'racecar_map.py')]
 MAP_TOOL_TIMEOUT_SEC = 180.0
 # Time for the sensors to come up after a teleop restart before autonomy resumes.
@@ -1135,11 +1134,9 @@ def activate(target: str, run: Callable[..., Any] = subprocess.run) -> tuple[boo
 
 def last_run(path: Path | None = None) -> dict[str, str]:
     """Return the mode and map of the last autonomy run from its mode file, or {}."""
-    try:
-        lines = (path or AUTONOMY_MODE_FILE).read_text().splitlines()
-    except OSError:
-        return {}
-    values = dict(line.split('=', 1) for line in lines if '=' in line)
+    from map_control import read_mode_file
+
+    values = read_mode_file(path)
     mode, name = values.get('AUTONOMY_MODE', ''), values.get('AUTONOMY_MAP', '')
     if mode not in ('mapping', 'localization') or not name:
         return {}

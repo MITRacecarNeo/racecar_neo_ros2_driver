@@ -28,8 +28,8 @@ Dashboard: `http://<car-ip>:8082`.
 | `racecar service enable linefollow` | start at every boot |
 | `racecar service logs linefollow` | follow the log |
 
-Saved tuning goes to `linefollow.local.yaml` beside `linefollow.yaml`; the shipped file
-keeps the defaults. Internals: `docs/dashboards.md` in the driver.
+Saved tuning goes to `dashboards/linefollow.yaml` in the car profile
+(`~/.config/racecar`); the shipped `linefollow.yaml` keeps the defaults. Internals: `docs/dashboards.md` in the driver.
 
 ## Pipeline
 
@@ -105,7 +105,7 @@ Save rewrites the numbers in place, so the comments in the yaml survive. The val
 
 Anything else publishing /drive will fight this service at the mux and the car will sit still or stutter:
 
-- The wallfollow, pursuit, eps, and smartfollow dashboards all publish /drive. Stop them before starting this one: `racecar service stop wallfollow`, and the same for the others.
+- The webteleop and wallfollow dashboards both publish /drive. Stop them before starting this one: `racecar service stop wallfollow`, and the same for webteleop.
 - A leftover Jupyter kernel that ever created a racecar object keeps publishing /drive. Restart the jupyter service to clear them.
 
 Check with: `ros2 topic info -v /drive` (there should be exactly one publisher: linefollow).
@@ -125,4 +125,4 @@ A lost line holds the last command, throttle included. On a track where the line
 
 ## Car specifics
 
-This package is calibrated for the RACECAR Neo: JPEG frames on /camera/color, steering sign, speed feedback from /odom, ROS Jazzy paths. The steering sign was verified physically on the sibling dashboards and is the same here.
+This package is calibrated for the RACECAR Neo: raw color frames on /camera/color, steering sign, speed feedback from /odom, ROS Jazzy paths. The steering sign was verified physically on the sibling dashboards and is the same here.
