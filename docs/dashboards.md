@@ -37,11 +37,13 @@ last command forever.
 Steering is negated on publish: positive on the wire turns this car left
 (verified on the car).
 
-Three threads share the state: the ROS executor, the HTTP request threads, and
-the main thread in `serve_forever`. Everything shared sits behind one `_lock`,
-never held across an encode or a network write. `rclpy.init()` installs signal
-handlers that stop ROS but leave `serve_forever` blocked, so `main` takes the
-signals back and calls `shutdown` off the serving thread.
+The handler is a `webui.AppHandler` and `main` ends in `webui.serve()`
+(`scripts/webui.py`, the same for every app): HTTP/1.1 keep-alive, the
+request body read before `do_POST`, `/ui/` assets, pages with `{{asset}}`
+and `{{home}}` filled in, a threaded server, and a ROS spin thread that
+survives an error. Three threads share the state: the ROS executor, the HTTP
+request threads, and the main thread in `serve_forever`. Everything shared
+sits behind one `_lock`, never held across an encode or a network write.
 
 ## Tuning and logs
 

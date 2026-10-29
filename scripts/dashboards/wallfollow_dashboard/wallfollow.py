@@ -21,22 +21,18 @@ without the negation). Speed feedback comes from /odom.
 """
 
 from collections import deque
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import math
 from pathlib import Path
 import re
-import signal
 import sys
 import threading
 import time
-from typing import Any
 
 from ackermann_msgs.msg import AckermannDriveStamped
 from nav_msgs.msg import Odometry
 from racecar_neo_ros2_driver import apps, car_profile, data_root
 import rclpy
-from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
@@ -309,30 +305,23 @@ def _log_number(name: str) -> int:
     return int(m.group(1)) if m else 0
 
 
-class Handler(BaseHTTPRequestHandler):
+class Handler(webui.AppHandler):
     def do_GET(self) -> None:
-        asset = webui.static_file(self.path)
-        if asset is not None:
-            self.send_response(200)
-            self.send_header('Content-Type', asset[1])
-            self.send_header('Content-Length', str(len(asset[0])))
-            self.send_header('Cache-Control', webui.CACHE_CONTROL)
-            self.end_headers()
-            self.wfile.write(asset[0])
+        if self.serve_asset():
             return
         if self.path == '/':
-            self._send((BASE / 'wallfollow.html').read_bytes(), 'text/html; charset=utf-8')
+            self.page(BASE / 'wallfollow.html')
         elif self.path == '/state':
             with _lock:
                 body = json.dumps({**_state, 'params': _params})
-            self._send(body.encode(), 'application/json')
+            self.send(200, body.encode(), 'application/json')
         elif self.path == '/logs':
             names = sorted((f.name for f in LOG_DIR.glob('*.csv')), key=_log_number)
-            self._send(json.dumps(names).encode(), 'application/json')
+            self.send(200, json.dumps(names).encode(), 'application/json')
         elif self.path.startswith('/logs/'):
             f = LOG_DIR / Path(self.path).name
             if f.is_file():
-                self._send(f.read_bytes(), 'text/csv')
+                self.send(200, f.read_bytes(), 'text/csv')
             else:
                 self.send_error(404)
         else:
@@ -340,7 +329,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         if self.path == '/params':
-            data = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+            data = self.read_json()
             with _lock:
                 changed = []
                 for k in (
@@ -374,7 +363,7 @@ class Handler(BaseHTTPRequestHandler):
                 f.write('t,error,steer,speed_cmd,speed_ms\n')
                 f.writelines(f'# mark,{t},{label}\n' for t, label in list(_marks) if t >= tmin)
                 f.writelines(rows)
-            self._send(name.encode(), 'text/plain')
+            self.send(200, name.encode(), 'text/plain')
             return
         elif self.path == '/save':
             save_params()
@@ -383,52 +372,15 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self.send_error(404)
             return
-        self._send(b'ok', 'text/plain')
-
-    def _send(self, body: bytes, ctype: str) -> None:
-        self.send_response(200)
-        self.send_header('Content-Type', ctype)
-        self.send_header('Content-Length', str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, fmt: str, *args: Any) -> None:
-        pass
-
-
-def _spin(node: Node) -> None:
-    try:
-        rclpy.spin(node)
-    except ExternalShutdownException:
-        pass
+        self.send(200, b'ok', 'text/plain')
 
 
 def main() -> None:
     load_params()
     rclpy.init()
     node = WallFollowNode()
-    spin = threading.Thread(target=_spin, args=(node,), daemon=True)
-    spin.start()
-    server = ThreadingHTTPServer(('0.0.0.0', PORT), Handler)
-
-    # rclpy.init() installs SIGINT/SIGTERM handlers that shut the ROS context
-    # down but leave serve_forever() blocked, so the process outlives the
-    # signal until systemd's TimeoutStopSec expires and SIGKILLs it. Take the
-    # signals back. shutdown() has to run off the serving thread or it
-    # deadlocks waiting for the loop it is called from.
-    def stop(*_: Any) -> None:
-        threading.Thread(target=server.shutdown, daemon=True).start()
-
-    signal.signal(signal.SIGTERM, stop)
-    signal.signal(signal.SIGINT, stop)
-
     print(f'Wall-follow dashboard on http://0.0.0.0:{PORT} (mode={_params["mode"]})')
-    server.serve_forever()
-
-    # Unwind the ROS wait before the interpreter tears the context down;
-    # otherwise the spin thread aborts the process from C++.
-    rclpy.shutdown()
-    spin.join(timeout=2)
+    webui.serve(PORT, Handler, spin=webui.ros_spinner(node), cleanup=webui.ros_shutdown)
 
 
 if __name__ == '__main__':

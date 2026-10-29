@@ -2,6 +2,7 @@
 
 import gzip
 import http.client
+from http.server import ThreadingHTTPServer
 import io
 import json
 import math
@@ -236,7 +237,7 @@ class BusyJob:
 def server(mv, root):
     mv.Handler.viewer = FakeViewer()
     mv.Handler.job = BusyJob()
-    srv = mv.ThreadingHTTPServer(('127.0.0.1', 0), mv.Handler)
+    srv = ThreadingHTTPServer(('127.0.0.1', 0), mv.Handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     yield srv
     srv.shutdown()

@@ -46,12 +46,10 @@ message; they stop DISPLAY_HOLD_S after the page stops polling.
 
 from collections import deque
 from collections.abc import Callable
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import math
 from pathlib import Path
 import re
-import signal
 import sys
 import threading
 import time
@@ -63,7 +61,6 @@ from nav_msgs.msg import Odometry
 import numpy as np
 from racecar_neo_ros2_driver import apps, car_profile, data_root
 import rclpy
-from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from rclpy.serialization import deserialize_message
@@ -656,34 +653,25 @@ def _log_number(name: str) -> int:
     return int(m.group(1)) if m else 0
 
 
-class Handler(BaseHTTPRequestHandler):
-    protocol_version = 'HTTP/1.1'
-
+class Handler(webui.AppHandler):
     def do_GET(self) -> None:
         global _last_poll
-        asset = webui.static_file(self.path)
-        if asset is not None:
-            self.send_response(200)
-            self.send_header('Content-Type', asset[1])
-            self.send_header('Content-Length', str(len(asset[0])))
-            self.send_header('Cache-Control', webui.CACHE_CONTROL)
-            self.end_headers()
-            self.wfile.write(asset[0])
+        if self.serve_asset():
             return
         if self.path == '/':
-            self._send((BASE / 'teleop.html').read_bytes(), 'text/html; charset=utf-8')
+            self.page(BASE / 'teleop.html')
         elif self.path.startswith('/frame'):
             with _lock:
                 data = _preview
             if data:
-                self._send(data, 'image/jpeg', cache='no-store')
+                self.send(200, data, 'image/jpeg', cache='no-store')
             else:
                 self.send_error(503)
         elif self.path.startswith('/depth'):
             with _lock:
                 data = _depth_preview
             if data:
-                self._send(data, 'image/jpeg', cache='no-store')
+                self.send(200, data, 'image/jpeg', cache='no-store')
             else:
                 self.send_error(503)
         elif self.path == '/state':
@@ -697,14 +685,14 @@ class Handler(BaseHTTPRequestHandler):
                         'display': {'kind': _display['kind'], 'text': _display['text']},
                     }
                 )
-            self._send(body.encode(), 'application/json')
+            self.send(200, body.encode(), 'application/json')
         elif self.path == '/logs':
             names = sorted((f.name for f in LOG_DIR.glob('*.csv')), key=_log_number)
-            self._send(json.dumps(names).encode(), 'application/json')
+            self.send(200, json.dumps(names).encode(), 'application/json')
         elif self.path.startswith('/logs/'):
             f = LOG_DIR / Path(self.path).name
             if f.is_file():
-                self._send(f.read_bytes(), 'text/csv')
+                self.send(200, f.read_bytes(), 'text/csv')
             else:
                 self.send_error(404)
         else:
@@ -712,9 +700,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         if self.path == '/cmd':
-            set_cmd(self._body())
+            set_cmd(self.read_json())
         elif self.path == '/params':
-            update_params(self._body())
+            update_params(self.read_json())
         elif self.path == '/logs/save':
             LOG_DIR.mkdir(parents=True, exist_ok=True)
             latest = max((_log_number(f.name) for f in LOG_DIR.glob('Log*.csv')), default=0)
@@ -725,14 +713,14 @@ class Handler(BaseHTTPRequestHandler):
                 f.write('t,fwd,turn,speed_cmd,steer,speed_ms\n')
                 f.writelines(f'# mark,{t},{label}\n' for t, label in list(_marks) if t >= tmin)
                 f.writelines(rows)
-            self._send(name.encode(), 'text/plain')
+            self.send(200, name.encode(), 'text/plain')
             return
         elif self.path == '/matrix':
-            set_display('pixels', self._body().get('pixels', []))
+            set_display('pixels', self.read_json().get('pixels', []))
         elif self.path == '/text':
-            set_display('text', self._body().get('text', ''))
+            set_display('text', self.read_json().get('text', ''))
         elif self.path == '/leds':
-            set_display('leds', self._body().get('colors', []))
+            set_display('leds', self.read_json().get('colors', []))
         elif self.path == '/display/release':
             set_display('release', None)
         elif self.path == '/save':
@@ -742,57 +730,15 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self.send_error(404)
             return
-        self._send(b'ok', 'text/plain')
-
-    def _body(self) -> Any:
-        return json.loads(self.rfile.read(int(self.headers['Content-Length'])))
-
-    def _send(self, body: bytes, ctype: str, cache: str | None = None) -> None:
-        self.send_response(200)
-        self.send_header('Content-Type', ctype)
-        self.send_header('Content-Length', str(len(body)))
-        if cache:
-            self.send_header('Cache-Control', cache)
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, fmt: str, *args: Any) -> None:
-        pass
-
-
-def _spin(node: Node) -> None:
-    try:
-        rclpy.spin(node)
-    except ExternalShutdownException:
-        pass
+        self.send(200, b'ok', 'text/plain')
 
 
 def main() -> None:
     load_params()
     rclpy.init()
     node = TeleopNode()
-    spin = threading.Thread(target=_spin, args=(node,), daemon=True)
-    spin.start()
-    server = ThreadingHTTPServer(('0.0.0.0', PORT), Handler)
-
-    # rclpy.init() installs SIGINT/SIGTERM handlers that shut the ROS context
-    # down but leave serve_forever() blocked, so the process outlives the
-    # signal until systemd's TimeoutStopSec expires and SIGKILLs it. Take the
-    # signals back. shutdown() has to run off the serving thread or it
-    # deadlocks waiting for the loop it is called from.
-    def stop(*_: Any) -> None:
-        threading.Thread(target=server.shutdown, daemon=True).start()
-
-    signal.signal(signal.SIGTERM, stop)
-    signal.signal(signal.SIGINT, stop)
-
     print(f'Web teleop dashboard on http://0.0.0.0:{PORT}')
-    server.serve_forever()
-
-    # Unwind the ROS wait before the interpreter tears the context down;
-    # otherwise the spin thread aborts the process from C++.
-    rclpy.shutdown()
-    spin.join(timeout=2)
+    webui.serve(PORT, Handler, spin=webui.ros_spinner(node), cleanup=webui.ros_shutdown)
 
 
 if __name__ == '__main__':

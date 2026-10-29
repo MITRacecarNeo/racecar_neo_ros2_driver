@@ -208,27 +208,27 @@ class TestPower:
         assert watch.take() == (4.88, None)
 
     def test_page_keeps_the_lowest_since_it_opened(self, dashboard):
-        html = dashboard.DASHBOARD_HTML
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert "['health', 'power', 'bolt', 'Power', 'compute']" in html
         assert 'powerLow = Math.min(' in html and 'h.limits' in html
 
 
 class TestDashboardHTML:
     def test_html_template_present(self, dashboard):
-        assert '<!DOCTYPE html>' in dashboard.DASHBOARD_HTML
+        assert '<!DOCTYPE html>' in dashboard.webui.read_page(dashboard._HTML_PATH)
 
     def test_html_references_api_endpoint(self, dashboard):
-        html = dashboard.DASHBOARD_HTML
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert "'/api/status'" in html and "'/api/status?refresh=1'" in html
 
     def test_title_says_racecar(self, dashboard):
-        html = dashboard.DASHBOARD_HTML
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert 'RACECAR Neo' in html
         assert 'UAV Neo' not in html
 
     def test_system_health_section_present(self, dashboard):
         # The target div and the JS field name must agree.
-        html = dashboard.DASHBOARD_HTML
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert 'id="system-health"' in html
         assert 'data.system_health' in html
 
@@ -424,7 +424,7 @@ class TestHome:
         assert not dashboard.app_ready(port, timeout=0.2)
 
     def test_launch_page_opens_then_waits(self, dashboard):
-        html = dashboard._read_page(dashboard._LAUNCH_PATH)
+        html = dashboard.webui.read_page(dashboard._LAUNCH_PATH)
         assert "fetch('/api/open'" in html and '/api/ready?app=' in html
         assert 'location.replace' in html and 'id="cancel"' in html
         assert 'window.close()' in html
@@ -505,7 +505,7 @@ class TestHome:
         assert '49-racecar-teleop.rules' in (scripts / 'setup_user_env.sh').read_text()
 
     def test_page_uses_the_shared_assets(self, dashboard):
-        html = dashboard._load_dashboard_html()
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert '/ui/rcn.css' in html and '/ui/brand/' in html and '/launch?app=' in html
         assert html.count('/ui/brand/mark.png') == 1, 'one logo on the page, in color'
         assert '/ui/brand/lockup' not in html
@@ -555,7 +555,7 @@ class TestHistory:
         assert dashboard.BATTERY_WINDOW_SEC == 7200
 
     def test_page_charts_both_series(self, dashboard):
-        html = dashboard.DASHBOARD_HTML
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert "fetch('/api/history')" in html and "fetch('/api/overview')" in html
         for chart in ('ov-volts', 'ov-amps', 'ov-temp', 'ov-mem', 'ov-imu', 'ov-speed'):
             assert f'id="{chart}"' in html
@@ -694,7 +694,7 @@ class TestOverrideEndpoint:
         assert post('go')[0] == 400
 
     def test_page_has_the_toggle_and_warning(self, dashboard):
-        html = dashboard._load_dashboard_html()
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert 'id="override"' in html and 'id="override-banner"' in html
         assert 'The car may start moving without warning. Do not leave it unattended.' in html
 
@@ -846,7 +846,7 @@ class TestFeatureEndpoint:
         )
 
     def test_page_has_features(self, dashboard):
-        html = dashboard._load_dashboard_html()
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert 'id="features"' in html and 'id="autosheet"' in html
         assert 'needs the camera. Turn it on?' in html
 
@@ -881,7 +881,7 @@ class TestDrivingAppsAndAutonomy:
         assert dashboard.open_app('camlabel', run)[0] and run.tool == []
 
     def test_page_asks_before_stopping_autonomy(self, dashboard):
-        html = dashboard._load_dashboard_html()
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert 'Save it, stop it, and open' in html and 'will close.' in html
 
 
@@ -1033,20 +1033,20 @@ class TestBatteryEndpoints:
 
 class TestBatteryPage:
     def test_turn_off_tile_next_to_the_override(self, dashboard):
-        html = dashboard._load_dashboard_html()
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert html.index('id="override"') < html.index('id="poweroff"')
         assert html.index('id="poweroff"') < html.index('id="apps-utilities"')
         assert "confirm('Turn the car off?')" in html
         assert '/api/shutdown' in html
 
     def test_header_pills_banner_and_cancel(self, dashboard):
-        html = dashboard._load_dashboard_html()
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
         for element in ('batt-time', 'batt-power', 'battery-banner', 'battery-cancel'):
             assert f'id="{element}"' in html
         assert '/api/battery/cancel' in html
 
     def test_time_pill_switches_views(self, dashboard):
-        html = dashboard._load_dashboard_html()
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert "const PILL_VIEWS = ['percent', 'time', 'clock'];" in html
         assert 'until ${at.toLocaleTimeString' in html
         assert "store.set('rcn-battery-view', pillView)" in html
@@ -1116,7 +1116,7 @@ class TestNetwork:
         assert clock['zone'] == time.localtime(1000.0).tm_zone
 
     def test_page_has_the_clock_and_network_pill(self, dashboard):
-        html = dashboard._load_dashboard_html()
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
         for element in ('clock', 'net-pill', 'net-menu', 'net-table'):
             assert f'id="{element}"' in html
         assert "['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']" in html
@@ -1149,12 +1149,14 @@ class TestLink:
     def test_pit_rate_comes_from_the_link_report(self, dashboard):
         assert '/imu/lsm9ds1' not in dashboard.RATE_TOPICS
         assert '/imu/lsm9ds1' in dashboard.DISPLAY_RATE_TOPICS
-        assert "['health', 'link', 'pulse', 'Link', 'compute']" in dashboard.DASHBOARD_HTML
+        assert "['health', 'link', 'pulse', 'Link', 'compute']" in dashboard.webui.read_page(
+            dashboard._HTML_PATH
+        )
 
 
 class TestBatteryPillsFresh:
     def test_lost_contact_hides_the_pills(self, dashboard):
-        html = dashboard.DASHBOARD_HTML
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
         start = html.index(".catch(() => {\n      setOverall('err', 'No contact');")
         end = start + 300
         catch = html[start:end]
@@ -1162,26 +1164,6 @@ class TestBatteryPillsFresh:
         assert "$('batt-power').hidden = true;" in catch
 
     def test_tab_brought_back_updates_at_once(self, dashboard):
-        assert "document.addEventListener('visibilitychange'" in dashboard.DASHBOARD_HTML
-
-
-class TestSpinUntilStopped:
-    def test_error_does_not_end_the_spinner(self, dashboard):
-        calls = []
-
-        def spin_once():
-            calls.append(1)
-            if len(calls) == 2:
-                raise RuntimeError('cannot use Destroyable because destruction was requested')
-
-        errors = dashboard.spin_until_stopped(spin_once, lambda: len(calls) < 5)
-        assert errors == 1 and len(calls) == 5
-
-    def test_stops_when_ros_shuts_down(self, dashboard):
-        assert dashboard.spin_until_stopped(lambda: None, lambda: False) == 0
-
-    def test_keyboard_interrupt_ends_it(self, dashboard):
-        def spin_once():
-            raise KeyboardInterrupt
-
-        assert dashboard.spin_until_stopped(spin_once, lambda: True) == 0
+        assert "document.addEventListener('visibilitychange'" in dashboard.webui.read_page(
+            dashboard._HTML_PATH
+        )

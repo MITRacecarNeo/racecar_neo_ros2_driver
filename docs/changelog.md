@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Changed
 
+- Every app (8080, map viewer, terminal, lab dashboards) serves through one
+  shared base, `scripts/webui.py`: `AppHandler` and `serve()`. All of them now
+  keep connections alive (HTTP/1.1), read a request body before handling it
+  (bodies over 64 KiB are refused), stop cleanly on SIGTERM, and keep
+  spinning ROS after an error; the map viewer's ROS thread no longer ends on
+  the first one. Pages link shared files as `?v={{asset}}` and the shared
+  scripts reach the home page as `{{home}}`; both are filled in when sent.
 - App registry: `config/apps.yaml` lists every browser app (port, unit,
   group, `/drive` publisher, start from 8080), read by
   `racecar_neo_ros2_driver/apps.py`. The 8080 tiles, the driving-app rules of

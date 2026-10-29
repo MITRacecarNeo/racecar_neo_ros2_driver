@@ -66,8 +66,8 @@ def test_icons_parse_and_have_ids(webui):
 
 
 def test_pages_link_shared_files_with_the_asset_version(webui):
-    # A browser keeps /ui/ files for CACHE_CONTROL; the version query is what
-    # makes it fetch a changed rcn.css or charts.js at once.
+    # A browser keeps /ui/ files for CACHE_CONTROL; the version query, filled
+    # in when the page is sent, makes it fetch a changed rcn.css at once.
     scripts = Path(__file__).resolve().parent.parent / 'scripts'
     pages = [
         scripts / 'dashboard.html',
@@ -84,7 +84,7 @@ def test_pages_link_shared_files_with_the_asset_version(webui):
         text = page.read_text()
         for name in ('rcn.css', 'charts.js', 'lost.js', 'override.js', 'battery.js'):
             for link in re.findall(rf'"/ui/{re.escape(name)}[^"]*"', text):
-                assert link == f'"/ui/{name}?v={webui.ASSET_VERSION}"', (page.name, link)
+                assert link == f'"/ui/{name}?v={{{{asset}}}}"', (page.name, link)
 
 
 def test_lab_pages_show_a_closed_screen():
@@ -124,3 +124,227 @@ def test_app_pages_show_the_low_battery_banner():
     ):
         assert '/ui/battery.js?v=' in (scripts / page).read_text(), page
     assert '/ui/battery.js' not in (scripts / 'dashboard.html').read_text()
+
+
+class TestFill:
+    def test_page_gets_the_version_and_home_port(self, webui, tmp_path):
+        page = tmp_path / 'p.html'
+        page.write_text('<link href="/ui/rcn.css?v={{asset}}"> :{{home}}/')
+        text = webui.read_page(page)
+        assert f'?v={webui.ASSET_VERSION}"' in text and ':8080/' in text
+
+    def test_unreadable_page_is_an_error_page(self, webui, tmp_path):
+        assert 'unreadable' in webui.read_page(tmp_path / 'absent.html')
+
+    @pytest.mark.parametrize('name', ['battery.js', 'override.js', 'lost.js'])
+    def test_shared_scripts_reach_the_home_page(self, webui, name):
+        raw = (webui.WEB_DIR / name).read_text()
+        assert ':{{home}}/' in raw and ':8080/' not in raw
+        body, _ = webui.static_file(f'/ui/{name}')
+        assert b'{{' not in body and b':8080/' in body
+
+
+class TestOrigins:
+    @pytest.mark.parametrize(
+        'origin, host, allow_missing, ok',
+        [
+            ('http://10.42.0.1:8086', '10.42.0.1:8086', False, True),
+            ('http://evil.example', '10.42.0.1:8086', False, False),
+            ('http://10.42.0.1:8080', '10.42.0.1:8086', False, False),
+            (None, '10.42.0.1:8086', False, False),
+            (None, '10.42.0.1:8086', True, True),
+            ('http://10.42.0.1:8086', None, True, False),
+        ],
+    )
+    def test_same_origin(self, webui, origin, host, allow_missing, ok):
+        assert webui.same_origin(origin, host, allow_missing) is ok
+
+    @pytest.mark.parametrize(
+        'origin, ok',
+        [
+            ('http://car.local:8081', True),
+            ('http://car.local:8089', False),
+            ('https://car.local:8081', False),
+            ('http://other:8081', False),
+            (None, False),
+        ],
+    )
+    def test_sibling_origin(self, webui, origin, ok):
+        assert (webui.sibling_origin(origin, 'car.local:8080', [8081, 8082]) is not None) is ok
+
+
+class TestSpinUntilStopped:
+    def test_error_does_not_end_the_spinner(self, webui):
+        calls = []
+
+        def spin_once():
+            calls.append(1)
+            if len(calls) == 2:
+                raise RuntimeError('cannot use Destroyable because destruction was requested')
+
+        errors = webui.spin_until_stopped(spin_once, lambda: len(calls) < 5)
+        assert errors == 1 and len(calls) == 5
+
+    def test_stops_when_ros_shuts_down(self, webui):
+        assert webui.spin_until_stopped(lambda: None, lambda: False) == 0
+
+    def test_error_from_the_shutdown_is_not_counted(self, webui):
+        state = {'ok': True}
+
+        def spin_once():
+            state['ok'] = False
+            raise RuntimeError('context is not valid')
+
+        assert webui.spin_until_stopped(spin_once, lambda: state['ok']) == 0
+
+    def test_keyboard_interrupt_ends_it(self, webui):
+        def spin_once():
+            raise KeyboardInterrupt
+
+        assert webui.spin_until_stopped(spin_once, lambda: True) == 0
+
+
+@pytest.fixture
+def served(webui):
+    """Run an AppHandler on a free port; yield its port."""
+    import threading
+    import time
+
+    release = threading.Event()
+
+    class Handler(webui.AppHandler):
+        def do_GET(self):
+            if self.serve_asset():
+                return
+            if self.path == '/slow':
+                release.wait(5)
+            self.send(200, b'ok', 'text/plain')
+
+        def do_POST(self):
+            try:
+                self.send_json({'got': self.read_json()})
+            except ValueError:
+                self.send(400, b'bad', 'text/plain')
+
+    from http.server import ThreadingHTTPServer
+
+    srv = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    thread = threading.Thread(target=srv.serve_forever, daemon=True)
+    thread.start()
+    time.sleep(0.05)
+    yield srv.server_address[1], release
+    release.set()
+    srv.shutdown()
+    srv.server_close()
+
+
+class TestAppHandler:
+    def test_ignored_body_leaves_the_connection_clean(self, served):
+        # Keep-alive: a body the handler never reads must not become the
+        # start of the next request on the same connection.
+        import http.client
+
+        port, _ = served
+        conn = http.client.HTTPConnection('127.0.0.1', port, timeout=5)
+        conn.request(
+            'GET', '/', body=b'{"stray": 1}', headers={'Content-Type': 'application/json'}
+        )
+        first = conn.getresponse()
+        assert first.status == 200 and first.read() == b'ok'
+        conn.request('GET', '/')
+        second = conn.getresponse()
+        assert second.status == 200 and second.read() == b'ok'
+        conn.close()
+
+    def test_read_json(self, served):
+        import http.client
+        import json
+
+        port, _ = served
+        conn = http.client.HTTPConnection('127.0.0.1', port, timeout=5)
+        conn.request('POST', '/', body=b'{"a": 1}')
+        assert json.loads(conn.getresponse().read()) == {'got': {'a': 1}}
+        conn.request('POST', '/', body=b'')
+        assert json.loads(conn.getresponse().read()) == {'got': {}}
+        conn.request('POST', '/', body=b'[1, 2]')
+        res = conn.getresponse()
+        assert res.status == 400
+        res.read()
+        conn.close()
+
+    def test_refuses_a_large_body(self, served, webui):
+        import http.client
+
+        port, _ = served
+        conn = http.client.HTTPConnection('127.0.0.1', port, timeout=5)
+        conn.request('POST', '/', body=b'x' * (webui.MAX_BODY + 1))
+        assert conn.getresponse().status == 413
+        conn.close()
+
+    def test_assets_are_cached_for_a_while(self, served, webui):
+        import http.client
+
+        port, _ = served
+        conn = http.client.HTTPConnection('127.0.0.1', port, timeout=5)
+        conn.request('GET', '/ui/rcn.css')
+        res = conn.getresponse()
+        assert res.status == 200 and res.getheader('Cache-Control') == webui.CACHE_CONTROL
+        res.read()
+        conn.close()
+
+
+class TestServe:
+    def test_answers_while_another_request_waits(self, webui):
+        # A client that holds its request open must not hold up the others.
+        import http.client
+        import signal
+        import threading
+        import time
+
+        release = threading.Event()
+        bound = {}
+
+        class Handler(webui.AppHandler):
+            def do_GET(self):
+                if self.path == '/slow':
+                    release.wait(5)
+                self.send(200, b'ok', 'text/plain')
+
+        stops, cleanups = [], []
+        runner = threading.Thread(
+            target=webui.serve,
+            args=(0, Handler),
+            kwargs={
+                'bind': '127.0.0.1',
+                'on_stop': lambda: stops.append(1),
+                'cleanup': lambda: cleanups.append(1),
+                'ready': lambda srv: bound.update(port=srv.server_address[1]),
+            },
+        )
+        old = signal.getsignal(signal.SIGTERM), signal.getsignal(signal.SIGINT)
+        # signal.signal only works on the main thread; serve() runs here on
+        # another, so give it a stand-in that records the handler.
+        installed = {}
+        real_signal = signal.signal
+        signal.signal = lambda sig, fn: installed.__setitem__(sig, fn)
+        try:
+            runner.start()
+            for _ in range(100):
+                if 'port' in bound and signal.SIGTERM in installed:
+                    break
+                time.sleep(0.02)
+            slow = http.client.HTTPConnection('127.0.0.1', bound['port'], timeout=5)
+            slow.request('GET', '/slow')
+            fast = http.client.HTTPConnection('127.0.0.1', bound['port'], timeout=2)
+            fast.request('GET', '/')
+            assert fast.getresponse().read() == b'ok'
+            release.set()
+            assert slow.getresponse().read() == b'ok'
+            installed[signal.SIGTERM](signal.SIGTERM, None)
+            runner.join(timeout=5)
+            assert not runner.is_alive()
+            assert stops == [1] and cleanups == [1]
+        finally:
+            signal.signal = real_signal
+            real_signal(signal.SIGTERM, old[0])
+            real_signal(signal.SIGINT, old[1])

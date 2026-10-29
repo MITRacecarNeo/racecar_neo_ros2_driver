@@ -6,19 +6,15 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Callable
 import http.client
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import json
 import logging
 from pathlib import Path
 import secrets
 import shutil
-import signal
 import socket
 import subprocess
 import sys
 import threading
 import time
-from types import FrameType
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -305,13 +301,7 @@ def override_origin(origin: str | None, host: str | None) -> str | None:
     The lab pages (scripts/web/override.js) run on their own ports, so the
     browser needs a CORS header to read the reply.
     """
-    if not origin or not host:
-        return None
-    o, h = urlparse(origin), urlparse(f'//{host}')
-    ports = {a['port'] for a in APPS if a['exclusive']}
-    if o.scheme == 'http' and o.hostname == h.hostname and o.port in ports:
-        return origin
-    return None
+    return webui.sibling_origin(origin, host, (a['port'] for a in APPS if a['exclusive']))
 
 
 def estimate_view(values: dict[str, str] | None, age: float | None) -> dict[str, Any] | None:
@@ -425,20 +415,12 @@ def clock_view(now: float) -> dict[str, Any]:
 
 def page_origin(origin: str | None, host: str | None) -> bool:
     """Return True for a request from this page (same host and port) or not from a browser."""
-    if not origin:
-        return True
-    return bool(host) and urlparse(origin).netloc == host
+    return webui.same_origin(origin, host, allow_missing=True)
 
 
 def lab_origin(origin: str | None, host: str | None) -> str | None:
     """Return `origin` when an app page on this car (its own port) may read /api/battery."""
-    if not origin or not host:
-        return None
-    o, h = urlparse(origin), urlparse(f'//{host}')
-    ports = {a['port'] for a in APPS if a['port']}
-    if o.scheme == 'http' and o.hostname == h.hostname and o.port in ports:
-        return origin
-    return None
+    return webui.sibling_origin(origin, host, (a['port'] for a in APPS))
 
 
 def turn_off(run: Callable[..., Any] = subprocess.run) -> list[str]:
@@ -1344,31 +1326,6 @@ def _monitor_loop() -> None:
         _wake.clear()
 
 
-# The executor thread spins once at a time. Subscriptions are created and
-# destroyed from other threads (rates while a page is open, Overview frames);
-# a destroy that lands while the executor builds its wait set raises once,
-# and the next spin rebuilds the set without it. Before, that one error ended
-# the thread, and battery, rates, and every other ROS input stopped until a
-# restart.
-SPIN_TIMEOUT_SEC = 0.5
-SPIN_LOG_EVERY = 100
-
-
-def spin_until_stopped(spin_once: Callable[[], None], running: Callable[[], bool]) -> int:
-    """Call spin_once while running(); log an error and carry on. Return the error count."""
-    errors = 0
-    while running():
-        try:
-            spin_once()
-        except (KeyboardInterrupt, SystemExit):
-            break
-        except Exception:  # noqa: BLE001 - a dead spinner stops every ROS input
-            errors += 1
-            if errors == 1 or errors % SPIN_LOG_EVERY == 0:
-                log.warning('ROS spin error %d; spinning on', errors, exc_info=True)
-    return errors
-
-
 def get_status() -> dict[str, Any]:
     """Return the most recent status snapshot (non-blocking)."""
     with _status_lock:
@@ -1383,47 +1340,25 @@ _HTML_PATH = Path(__file__).resolve().parent / 'dashboard.html'
 _LAUNCH_PATH = Path(__file__).resolve().parent / 'dashboard_launch.html'
 
 
-def _read_page(path: Path) -> str:
-    try:
-        return path.read_text(encoding='utf-8')
-    except OSError as exc:
-        return f'<!DOCTYPE html><body><pre>{path.name} unreadable: {exc}</pre>'
-
-
-def _load_dashboard_html() -> str:
-    return _read_page(_HTML_PATH)
-
-
-DASHBOARD_HTML = _load_dashboard_html()
-
-
-class DashboardHandler(BaseHTTPRequestHandler):
+class DashboardHandler(webui.AppHandler):
     """Serve GET / (HTML) and GET /api/status (JSON snapshot)."""
 
     def do_GET(self) -> None:
-        asset = webui.static_file(self.path)
-        if asset is not None:
-            self.send_response(200)
-            self.send_header('Content-Type', asset[1])
-            self.send_header('Content-Length', str(len(asset[0])))
-            self.send_header('Cache-Control', webui.CACHE_CONTROL)
-            self.end_headers()
-            self.wfile.write(asset[0])
+        if self.serve_asset():
             return
         url = urlparse(self.path)
         query = parse_qs(url.query)
         if url.path == '/':
-            self._send_html(_load_dashboard_html())
+            self.page(_HTML_PATH)
         elif url.path == '/launch':
-            self._send_html(_read_page(_LAUNCH_PATH))
+            self.page(_LAUNCH_PATH)
         elif url.path == '/api/status':
             if note_view():
                 # The cached snapshot may be minutes old; refresh what is cheap.
                 _refresh_apps()
             if query.get('refresh') == ['1']:
                 _refresh_apps()
-            self._send_json(
-                200,
+            self.send_json(
                 {
                     **get_status(),
                     'battery': current_battery(),
@@ -1435,11 +1370,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         elif url.path == '/api/battery':
             origin = lab_origin(self.headers.get('Origin'), self.headers.get('Host'))
             cors = {'Access-Control-Allow-Origin': origin, 'Vary': 'Origin'} if origin else {}
-            self._send_json(200, {'battery': current_battery()}, cors)
+            self.send_json({'battery': current_battery()}, 200, cors)
         elif url.path == '/api/history':
             now = time.time()
-            self._send_json(
-                200,
+            self.send_json(
                 {
                     'now': now,
                     'window_sec': BATTERY_WINDOW_SEC,
@@ -1449,10 +1383,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             )
         elif url.path == '/api/overview':
             if _overview is None:
-                self._send_json(503, {})
+                self.send_json({}, 503)
             else:
                 _overview.touch()
-                self._send_json(200, _overview.state())
+                self.send_json(_overview.state(), 200)
         elif url.path in ('/api/overview/color.jpg', '/api/overview/depth.jpg'):
             name = url.path.rsplit('/', 1)[1].split('.')[0]
             if _overview is not None:
@@ -1461,70 +1395,46 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if frame is None:
                 self.send_error(404)
             else:
-                self.send_response(200)
-                self.send_header('Content-Type', 'image/jpeg')
-                self.send_header('Content-Length', str(len(frame)))
-                self.send_header('Cache-Control', 'no-store')
-                self.end_headers()
-                self.wfile.write(frame)
+                self.send(200, frame, 'image/jpeg', cache='no-store')
         elif url.path == '/api/ready':
             app = next((a for a in APPS if a['id'] == query.get('app', [''])[0]), None)
             if app is None:
-                self._send_json(404, {'ready': False})
+                self.send_json({'ready': False}, 404)
             else:
-                self._send_json(200, {'ready': app_ready(app['port']), 'port': app['port']})
+                self.send_json({'ready': app_ready(app['port']), 'port': app['port']}, 200)
         else:
             self.send_error(404)
-
-    def _send_html(self, text: str) -> None:
-        content = text.encode()
-        self.send_response(200)
-        self.send_header('Content-Type', 'text/html; charset=utf-8')
-        self.send_header('Content-Length', str(len(content)))
-        self.end_headers()
-        self.wfile.write(content)
-
-    def _send_json(self, code: int, data: Any, headers: dict[str, str] | None = None) -> None:
-        body = json.dumps(data).encode()
-        self.send_response(code)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Content-Length', str(len(body)))
-        for key, value in (headers or {}).items():
-            self.send_header(key, value)
-        self.end_headers()
-        self.wfile.write(body)
 
     def do_POST(self) -> None:  # noqa: N802
         if self.path == '/api/clear-apps':
             ok, message = clear_apps()
             _refresh_apps()
             log.info('clear apps: %s', message)
-            self._send_json(200 if ok else 400, {'ok': ok, 'message': message})
+            self.send_json({'ok': ok, 'message': message}, 200 if ok else 400)
             return
         if self.path == '/api/clear-log':
             ok, message = clear_watchdog_log()
-            self._send_json(200 if ok else 400, {'ok': ok, 'message': message})
+            self.send_json({'ok': ok, 'message': message}, 200 if ok else 400)
             return
         if self.path in ('/api/shutdown', '/api/battery/cancel'):
             if not page_origin(self.headers.get('Origin'), self.headers.get('Host')):
-                self._send_json(403, {'ok': False, 'message': 'Not allowed from this page.'})
+                self.send_json({'ok': False, 'message': 'Not allowed from this page.'}, 403)
                 return
             if self.path == '/api/battery/cancel':
                 if _sampler is not None:
                     _sampler.cancel_shutdown()
                 log.warning('Shutdown cancel requested from %s', self.client_address[0])
-                self._send_json(200, {'ok': True, 'message': 'Shutdown canceled.'})
+                self.send_json({'ok': True, 'message': 'Shutdown canceled.'}, 200)
                 return
             log.warning('Turn off requested from %s', self.client_address[0])
-            self._send_json(200, {'ok': True, 'message': FINAL_MESSAGE})
+            self.send_json({'ok': True, 'message': FINAL_MESSAGE}, 200)
             threading.Thread(target=turn_off, daemon=True).start()
             return
         if self.path not in ('/api/open', '/api/override', '/api/feature'):
             self.send_error(404)
             return
         try:
-            length = int(self.headers.get('Content-Length') or 0)
-            body = json.loads(self.rfile.read(length) or b'{}')
+            body = self.read_json()
             target = str(body.get('app', ''))
             action = str(body.get('action', ''))
             feature, on = str(body.get('feature', '')), bool(body.get('on'))
@@ -1533,7 +1443,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             on = False
         if self.path == '/api/feature':
             ok, message = change_feature(feature, on, action)
-            self._send_json(200 if ok else 400, {'ok': ok, 'message': message})
+            self.send_json({'ok': ok, 'message': message}, 200 if ok else 400)
             return
         if self.path == '/api/override':
             self._override(action)
@@ -1541,7 +1451,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         ok, message = open_app(target)
         _refresh_apps()
         log.info('open %s: %s', target, message)
-        self._send_json(200 if ok else 400, {'ok': ok, 'message': message})
+        self.send_json({'ok': ok, 'message': message}, 200 if ok else 400)
 
     def _override(self, action: str) -> None:
         now = time.monotonic()
@@ -1557,12 +1467,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 log.info('Safety override turned off')
             _override.stop()
         else:
-            self._send_json(400, {'ok': False, 'message': 'Unknown action.'}, cors)
+            self.send_json({'ok': False, 'message': 'Unknown action.'}, 400, cors)
             return
-        self._send_json(200, {'ok': True, **_override.view(now)}, cors)
-
-    def log_message(self, fmt: str, *args: Any) -> None:
-        """Suppress default per-request logging."""
+        self.send_json({'ok': True, **_override.view(now)}, 200, cors)
 
 
 # ---------------------------------------------------------------------------
@@ -1595,47 +1502,31 @@ def main() -> None:
 
     _overview = Overview(sampler)
 
-    from rclpy.executors import SingleThreadedExecutor
-
-    executor = SingleThreadedExecutor()
-    executor.add_node(sampler)
-    spinner = threading.Thread(
-        target=spin_until_stopped,
-        args=(lambda: executor.spin_once(timeout_sec=SPIN_TIMEOUT_SEC), rclpy.ok),
-        daemon=True,
-    )
-    spinner.start()
-    log.info('rclpy sampler spinning')
-
     monitor = threading.Thread(target=_monitor_loop, daemon=True)
     monitor.start()
     threading.Thread(target=_ext5v_loop, daemon=True).start()
     log.info('Background monitor started')
 
-    server = ThreadingHTTPServer(('0.0.0.0', PORT), DashboardHandler)
-    server.daemon_threads = True
-    log.info('Dashboard listening on http://0.0.0.0:%d', PORT)
-
-    def _shutdown(signum: int, _frame: FrameType | None) -> None:
+    def stop() -> None:
         global _monitor_running
-        log.info('Received signal %d, shutting down', signum)
+        log.info('Stopping')
         _monitor_running = False
-        threading.Thread(target=server.shutdown).start()
 
-    signal.signal(signal.SIGTERM, _shutdown)
-    signal.signal(signal.SIGINT, _shutdown)
-
-    try:
-        server.serve_forever()
-    finally:
+    def cleanup() -> None:
+        global _monitor_running
         _monitor_running = False
-        server.server_close()
         monitor.join(timeout=5)
-        # rclpy shutdown wakes the spin thread; destroying the node while it
-        # waits can block or abort the interpreter at exit.
-        rclpy.try_shutdown()
-        spinner.join(timeout=2)
+        webui.ros_shutdown()
         log.info('Dashboard stopped')
+
+    log.info('Dashboard listening on http://0.0.0.0:%d', PORT)
+    # The executor spins once at a time: subscriptions are created and
+    # destroyed from other threads (rates while a page is open, Overview
+    # frames), and a destroy that lands while it builds its wait set raises
+    # once; the next spin rebuilds the set without it.
+    webui.serve(
+        PORT, DashboardHandler, spin=webui.ros_spinner(sampler), on_stop=stop, cleanup=cleanup
+    )
 
 
 if __name__ == '__main__':

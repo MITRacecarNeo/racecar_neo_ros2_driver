@@ -217,6 +217,16 @@ config/apps.yaml ──▶ apps.py ─┬─▶ dashboard.py   tiles, open_app, 
                                                 └─▶ racecar service      one-at-a-time rule
 ```
 
+Every app's server is built on `scripts/webui.py`:
+
+| Piece | Gives |
+|---|---|
+| `AppHandler` | `send`, `send_json`, `read_json` (body read before `do_POST`, at most 64 KiB, so keep-alive stays clean), `page`, `serve_asset` for `/ui/`, HTTP/1.1, no request log |
+| `serve()` | Threaded server, an optional spin thread, SIGINT and SIGTERM taken back from rclpy, then `cleanup` and the join |
+| `ros_spinner`, `spin_until_stopped` | Executor loop that logs an error and spins on; ends quietly at shutdown |
+| `fill`, `read_page`, `static_file` | `{{asset}}` (`ASSET_VERSION`) and `{{home}}` (the 8080 port) filled in pages and shared scripts |
+| `same_origin`, `sibling_origin` | Origin checks for page-only calls and for CORS from the other app ports |
+
 A new app is one entry, its unit, and for 8080 start and stop its unit in
 `scripts/polkit/49-racecar-dashboards.rules`; `test/test_apps.py` checks that
 the rule grants exactly the startable apps.

@@ -14,7 +14,7 @@
   function show() {
     if (shown) return;
     shown = true;
-    const back = `${location.protocol}//${location.hostname}:8080/`;
+    const back = `${location.protocol}//${location.hostname}:{{home}}/`;
     const el = document.createElement('div');
     el.id = 'rcn-lost';
     el.innerHTML = `<div class="box">

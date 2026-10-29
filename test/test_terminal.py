@@ -75,18 +75,6 @@ class TestRules:
         assert term.client_allowed(ip, allow_lan) is allowed
 
     @pytest.mark.parametrize(
-        'origin, host, ok',
-        [
-            ('http://10.42.0.1:8086', '10.42.0.1:8086', True),
-            ('http://evil.example', '10.42.0.1:8086', False),
-            ('http://10.42.0.1:8080', '10.42.0.1:8086', False),
-            (None, '10.42.0.1:8086', False),
-        ],
-    )
-    def test_origin_ok(self, origin, host, ok):
-        assert term.origin_ok(origin, host) is ok
-
-    @pytest.mark.parametrize(
         'path, target',
         [
             ('/pane/main/', ('main', '/pane/')),

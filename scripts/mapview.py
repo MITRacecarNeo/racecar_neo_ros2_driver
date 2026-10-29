@@ -21,12 +21,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 import gzip
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import io
 import json
 import math
 from pathlib import Path
-import signal
 import subprocess
 import sys
 import threading
@@ -338,10 +336,9 @@ class Viewer:
         threading.Thread(target=self._watch, daemon=True).start()
 
     def _spin(self) -> None:
-        try:
-            self._executor.spin()
-        except Exception:  # noqa: BLE001  shutdown interrupts the spin
-            pass
+        webui.spin_until_stopped(
+            lambda: self._executor.spin_once(timeout_sec=webui.SPIN_TIMEOUT_SEC), self._rclpy.ok
+        )
 
     def touch(self) -> None:
         with self._lock:
@@ -510,85 +507,54 @@ class Viewer:
 # -- HTTP --
 
 
-class Handler(BaseHTTPRequestHandler):
+class Handler(webui.AppHandler):
     viewer: Viewer
     job: Job
-
-    def log_message(self, fmt: str, *args: Any) -> None:  # noqa: A002
-        return
-
-    def _send(
-        self, code: int, body: bytes, kind: str, headers: dict[str, str] | None = None
-    ) -> None:
-        self.send_response(code)
-        self.send_header('Content-Type', kind)
-        self.send_header('Content-Length', str(len(body)))
-        self.send_header('Cache-Control', 'no-store')
-        for k, v in (headers or {}).items():
-            self.send_header(k, v)
-        self.end_headers()
-        self.wfile.write(body)
-
-    def _json(self, data: Any, code: int = 200) -> None:
-        self._send(code, json.dumps(data).encode(), 'application/json')
-
-    def _body(self) -> dict[str, Any]:
-        length = int(self.headers.get('Content-Length') or 0)
-        data = json.loads(self.rfile.read(length) or b'{}')
-        if not isinstance(data, dict):
-            raise ValueError('expected a JSON object')
-        return data
+    cache = 'no-store'
 
     def do_GET(self) -> None:  # noqa: N802
-        asset = webui.static_file(self.path)
-        if asset is not None:
-            self.send_response(200)
-            self.send_header('Content-Type', asset[1])
-            self.send_header('Content-Length', str(len(asset[0])))
-            self.send_header('Cache-Control', webui.CACHE_CONTROL)
-            self.end_headers()
-            self.wfile.write(asset[0])
+        if self.serve_asset():
             return
         url = urlparse(self.path)
         q = {k: v[0] for k, v in parse_qs(url.query).items()}
         if url.path in ('/', '/index.html'):
-            self._send(200, PAGE.read_bytes(), 'text/html; charset=utf-8')
+            self.page(PAGE)
         elif url.path == '/api/state':
             self.viewer.touch()
             state = self.viewer.snapshot(int(q.get('trail_from', 0)), int(q.get('trail_id', -1)))
             state['job'] = self.job.state()
-            self._json(state)
+            self.send_json(state)
         elif url.path == '/api/map':
             self.viewer.touch()
             payload = self.viewer.map_payload()
             if payload is None:
-                self._send(204, b'', 'application/octet-stream')
+                self.send(204, b'', 'application/octet-stream')
             else:
                 self._grid(*payload)
         elif url.path == '/api/driving':
-            self._json({'apps': mc.running_driving_apps()})
+            self.send_json({'apps': mc.running_driving_apps()})
         elif url.path == '/api/maps':
-            self._json({'root': str(map_root()), 'maps': mc.map_rows(map_root())})
+            self.send_json({'root': str(map_root()), 'maps': mc.map_rows(map_root())})
         elif url.path == '/api/saved':
             self._saved(q.get('name', ''))
         elif url.path == '/api/thumb':
             self._thumb(q.get('name', ''))
         else:
-            self._send(404, b'not found', 'text/plain')
+            self.send(404, b'not found', 'text/plain')
 
     def _grid(self, info: dict[str, Any], gz: bytes) -> None:
-        self._send(
+        self.send(
             200,
             gz,
             'application/octet-stream',
-            {'Content-Encoding': 'gzip', 'X-Map-Info': json.dumps(info)},
+            headers={'Content-Encoding': 'gzip', 'X-Map-Info': json.dumps(info)},
         )
 
     def _saved(self, name: str) -> None:
         stem = saved_stem(name) if valid_name(name) else None
         saved = read_saved(stem) if stem is not None else None
         if saved is None:
-            self._send(404, b'no such map', 'text/plain')
+            self.send(404, b'no such map', 'text/plain')
             return
         info, grid = saved
         self._grid({**info, 'version': 0, 'name': name}, gzip.compress(grid.tobytes(), 5))
@@ -597,36 +563,36 @@ class Handler(BaseHTTPRequestHandler):
         stem = saved_stem(name) if valid_name(name) else None
         png = thumbnail_png(stem) if stem is not None else None
         if png is None:
-            self._send(404, b'no such map', 'text/plain')
+            self.send(404, b'no such map', 'text/plain')
         else:
-            self._send(200, png, 'image/png')
+            self.send(200, png, 'image/png')
 
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
         try:
-            body = self._body()
+            body = self.read_json()
             if path == '/api/action':
                 argv = action_argv(body)
                 if not self.job.start(argv):
-                    self._json({'ok': False, 'message': 'another command is running'}, 409)
+                    self.send_json({'ok': False, 'message': 'another command is running'}, 409)
                     return
-                self._json({'ok': True, 'argv': argv})
+                self.send_json({'ok': True, 'argv': argv})
             elif path == '/api/pose':
                 self.viewer.touch()
                 x, y, yaw = (float(body[k]) for k in ('x', 'y', 'yaw'))
                 self.viewer.set_pose(x, y, yaw)
-                self._json({'ok': True, 'message': 'pose sent'})
+                self.send_json({'ok': True, 'message': 'pose sent'})
             elif path == '/api/trail/clear':
                 self.viewer.clear_trail()
-                self._json({'ok': True})
+                self.send_json({'ok': True})
             elif path == '/api/find':
                 self.viewer.touch()
                 ok, message = self.viewer.find_me()
-                self._json({'ok': ok, 'message': message})
+                self.send_json({'ok': ok, 'message': message})
             else:
-                self._send(404, b'not found', 'text/plain')
+                self.send(404, b'not found', 'text/plain')
         except (ValueError, KeyError, TypeError, RuntimeError) as exc:
-            self._json({'ok': False, 'message': str(exc)}, 400)
+            self.send_json({'ok': False, 'message': str(exc)}, 400)
 
 
 def main() -> int:
@@ -635,20 +601,8 @@ def main() -> int:
     rclpy.init()
     Handler.viewer = Viewer()
     Handler.job = Job([sys.executable, str(RACECAR_MAP)])
-    server = ThreadingHTTPServer(('', PORT), Handler)
-    server.daemon_threads = True
-
-    def stop(*_: Any) -> None:
-        threading.Thread(target=server.shutdown, daemon=True).start()
-
-    signal.signal(signal.SIGTERM, stop)
-    signal.signal(signal.SIGINT, stop)
     print(f'mapview: http://0.0.0.0:{PORT}', flush=True)
-    try:
-        server.serve_forever()
-    finally:
-        server.server_close()
-        Handler.viewer.shutdown()
+    webui.serve(PORT, Handler, cleanup=Handler.viewer.shutdown)
     return 0
 
 
