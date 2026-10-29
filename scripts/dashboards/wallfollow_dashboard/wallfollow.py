@@ -20,35 +20,28 @@ on the wire turns this car left (physically verified; the car steered mirrored
 without the negation). Speed feedback comes from /odom.
 """
 
-from collections import deque
 import json
 import math
 from pathlib import Path
-import re
 import sys
 import threading
 import time
+from typing import Any
 
 from ackermann_msgs.msg import AckermannDriveStamped
 from nav_msgs.msg import Odometry
-from racecar_neo_ros2_driver import apps, car_profile, data_root
+from racecar_neo_ros2_driver import apps
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
-import yaml
 
 PORT = apps.port('wallfollow')
 BASE = Path(__file__).resolve().parent
 # The shared styles, fonts and logos are served from scripts/web/ (webui.py).
 sys.path.insert(0, str(BASE.parents[1]))
-import webui  # noqa: E402, I100
-
-# Shipped defaults stay untouched; saved tuning goes to the per-car file,
-# which loads on top of them, in the car profile (dashboards/<name>.yaml).
-DEFAULTS_PATH = BASE / 'wallfollow.yaml'
-YAML_PATH = car_profile.dashboard_settings('wallfollow')
-LOG_DIR = data_root.current()[0] / 'dashboards' / 'wallfollow'
+import labkit  # noqa: E402, I100
+import webui  # noqa: E402
 
 MAX_SPEED = 1.0  # hard throttle cap, same idea as drive_real.set_max_speed
 SEARCH_STEP = 2  # degrees between candidate headings (dynamic)
@@ -72,32 +65,8 @@ CENTER_BIAS = 0.006  # score penalty per degree off-center, stops ping-pong
 LIDAR_MOUNT_YAW_DEG = 180.0
 
 _lock = threading.Lock()
-_params: dict = {}
+_marks = labkit.Marks()
 _state: dict = {'scan': [], 'hist': [], 'overlay': {}, 'enc_speed': 0.0}
-_hist: deque = deque(maxlen=600)
-# Full rows behind the live chart. POST /logs/save snapshots this to a csv,
-# so a saved log is exactly what was on the screen.
-_rows: deque = deque(maxlen=600)
-# Parameter-change markers [t, label] shown on the charts, so a run can be
-# judged before vs after a tuning change. Saved into logs as "# mark" lines.
-_marks: deque = deque(maxlen=40)
-_T0 = time.monotonic()
-
-
-def _now() -> float:
-    return round(time.monotonic() - _T0, 2)
-
-
-def _add_mark(label: str) -> None:
-    # Coalesce rapid updates (the speed slider fires while dragging).
-    if (
-        _marks
-        and _now() - _marks[-1][0] < 1.0
-        and _marks[-1][1].split(' ')[0] == label.split(' ')[0]
-    ):
-        _marks[-1] = [_now(), label]
-    else:
-        _marks.append([_now(), label])
 
 
 def set_max_speed(speed: float) -> float:
@@ -110,37 +79,34 @@ def set_max_speed(speed: float) -> float:
     return max(0.0, min(MAX_SPEED, float(speed)))
 
 
-def load_params() -> None:
-    with _lock:
-        before = dict(_params)
-        _params.update(yaml.safe_load(DEFAULTS_PATH.read_text()))
-        if YAML_PATH.exists():
-            _params.update(yaml.safe_load(YAML_PATH.read_text()) or {})
-        _params['speed'] = set_max_speed(_params['speed'])
-        _params.setdefault('lookahead', 3.0)  # older yaml files lack these keys
-        _params.setdefault('max_mps', 4.0)
-        _params.setdefault('speed_kp', 0.18)
-        _params.setdefault('speed_kd', 0.05)
-        # 0 = static, 1 = dynamic. Older yamls spell the mode out.
-        _params['mode'] = 1 if str(_params['mode']).strip() in ('1', 'dynamic') else 0
-        if before and before != _params:
-            _add_mark('yaml load')
+TUNE_KEYS = (
+    'speed',
+    'kp',
+    'kd',
+    'speed_kp',
+    'speed_kd',
+    'window',
+    'lookahead',
+    'look_angle',
+    'width',
+    'side_weight',
+)
 
 
-def save_params() -> None:
-    """Rewrite the numeric values in place so the yaml comments survive."""
-    if not YAML_PATH.exists():
-        car_profile.write_text(YAML_PATH, DEFAULTS_PATH.read_text())
-    text = YAML_PATH.read_text()
-    with _lock:
-        for k, v in _params.items():
-            if k == 'mode':
-                continue
-            if re.search(rf'(?m)^{k}:', text):
-                text = re.sub(rf'(?m)^{k}:\s*[-\d.eE+]+', f'{k}: {v}', text)
-            else:
-                text += f'{k}: {v}\n'
-    car_profile.write_text(YAML_PATH, text)
+def _clean(p: dict[str, Any]) -> None:
+    """Clamp the speed; read the mode as 0 static or 1 dynamic. Caller holds _lock."""
+    p['speed'] = set_max_speed(p['speed'])
+    # Older yamls spell the mode out.
+    p['mode'] = 1 if str(p['mode']).strip() in ('1', 'dynamic') else 0
+
+
+# Shipped defaults in wallfollow.yaml; saved tuning in the car profile
+# (dashboards/wallfollow.yaml), loaded on top.
+TUNING = labkit.Tuning(
+    'wallfollow', BASE / 'wallfollow.yaml', TUNE_KEYS, _lock, _marks, clean=_clean, fixed=('mode',)
+)
+_params = TUNING.params
+LOG = labkit.RunLog('wallfollow', 't,error,steer,speed_cmd,speed_ms', _marks, maxlen=600)
 
 
 class WallFollowNode(Node):
@@ -272,9 +238,9 @@ class WallFollowNode(Node):
         out.drive.steering_angle = float(-cmd)  # wire positive = left on this car
         self._pub.publish(out)
 
-        t = _now()
-        _rows.append(f'{t},{error:.4f},{cmd:.4f},{self._speed_cmd:.3f},{self._enc:.3f}\n')
-        _hist.append([t, round(error, 4)])
+        t = labkit.now()
+        LOG.rows.append(f'{t},{error:.4f},{cmd:.4f},{self._speed_cmd:.3f},{self._enc:.3f}\n')
+        LOG.hist.append([t, round(error, 4)])
         overlay.update(
             {
                 'error': round(error, 4),
@@ -292,17 +258,11 @@ class WallFollowNode(Node):
                 {
                     'scan': scan,
                     'overlay': overlay,
-                    'hist': list(_hist),
+                    'hist': list(LOG.hist),
                     'marks': list(_marks),
                     'enc_speed': round(self._enc, 3),
                 }
             )
-
-
-def _log_number(name: str) -> int:
-    """Log7.csv -> 7, so lists sort numerically. Anything else sorts first."""
-    m = re.match(r'Log(\d+)\.csv$', name)
-    return int(m.group(1)) if m else 0
 
 
 class Handler(webui.AppHandler):
@@ -315,60 +275,18 @@ class Handler(webui.AppHandler):
             with _lock:
                 body = json.dumps({**_state, 'params': _params})
             self.send(200, body.encode(), 'application/json')
-        elif self.path == '/logs':
-            names = sorted((f.name for f in LOG_DIR.glob('*.csv')), key=_log_number)
-            self.send(200, json.dumps(names).encode(), 'application/json')
-        elif self.path.startswith('/logs/'):
-            f = LOG_DIR / Path(self.path).name
-            if f.is_file():
-                self.send(200, f.read_bytes(), 'text/csv')
-            else:
-                self.send_error(404)
-        else:
+        elif not LOG.get(self):
             self.send_error(404)
 
     def do_POST(self) -> None:
         if self.path == '/params':
-            data = self.read_json()
-            with _lock:
-                changed = []
-                for k in (
-                    'speed',
-                    'kp',
-                    'kd',
-                    'speed_kp',
-                    'speed_kd',
-                    'window',
-                    'lookahead',
-                    'look_angle',
-                    'width',
-                    'side_weight',
-                ):
-                    if k in data:
-                        v = float(data[k])
-                        if k == 'speed':
-                            v = set_max_speed(v)
-                        if _params.get(k) != v:
-                            _params[k] = v
-                            changed.append(f'{k} {v:g}')
-                if changed:
-                    _add_mark(', '.join(changed))
-        elif self.path == '/logs/save':
-            LOG_DIR.mkdir(parents=True, exist_ok=True)
-            latest = max((_log_number(f.name) for f in LOG_DIR.glob('Log*.csv')), default=0)
-            name = f'Log{latest + 1}.csv'
-            rows = list(_rows)
-            tmin = float(rows[0].split(',')[0]) if rows else 0.0
-            with open(LOG_DIR / name, 'w') as f:
-                f.write('t,error,steer,speed_cmd,speed_ms\n')
-                f.writelines(f'# mark,{t},{label}\n' for t, label in list(_marks) if t >= tmin)
-                f.writelines(rows)
-            self.send(200, name.encode(), 'text/plain')
+            TUNING.update(self.read_json())
+        elif LOG.post(self):
             return
         elif self.path == '/save':
-            save_params()
+            TUNING.save()
         elif self.path == '/load':
-            load_params()
+            TUNING.load()
         else:
             self.send_error(404)
             return
@@ -376,7 +294,7 @@ class Handler(webui.AppHandler):
 
 
 def main() -> None:
-    load_params()
+    TUNING.load()
     rclpy.init()
     node = WallFollowNode()
     print(f'Wall-follow dashboard on http://0.0.0.0:{PORT} (mode={_params["mode"]})')

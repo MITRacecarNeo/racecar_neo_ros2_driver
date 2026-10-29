@@ -6,6 +6,11 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Changed
 
+- Lab dashboards share their tuning and run logs (`scripts/labkit.py`). Save
+  works the same on all three: values rewritten in place with comments kept,
+  and settings the saved file lacks appended (wall follow did this alone;
+  web teleop and line follow now do too). Wall follow's `mode` stays
+  file-only.
 - Every app (8080, map viewer, terminal, lab dashboards) serves through one
   shared base, `scripts/webui.py`: `AppHandler` and `serve()`. All of them now
   keep connections alive (HTTP/1.1), read a request body before handling it

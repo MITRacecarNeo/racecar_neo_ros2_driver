@@ -54,14 +54,14 @@ def params(monkeypatch, tmp_path):
     global SHIPPED
     if SHIPPED is None:
         SHIPPED = (BASE / 'teleop.yaml').read_text()
-    monkeypatch.setattr(tp, 'YAML_PATH', tmp_path / 'teleop.local.yaml')
-    monkeypatch.setattr(tp, 'LOG_DIR', tmp_path / 'logs')
+    monkeypatch.setattr(tp.TUNING, 'path', tmp_path / 'teleop.yaml')
+    monkeypatch.setattr(tp.LOG, 'dir', tmp_path / 'logs')
     tp._params.clear()
     tp._marks.clear()
-    tp._rows.clear()
-    tp._hist.clear()
+    tp.LOG.rows.clear()
+    tp.LOG.hist.clear()
     tp._cmd.update(fwd=0, turn=0, stamp=0.0)
-    tp.load_params()
+    tp.TUNING.load()
     tp._params.update(speed=0.5, angle=0.8)
     yield tp._params
 
@@ -102,23 +102,23 @@ def test_shipped_yaml_cannot_drive():
 
 def test_save_keeps_comments(params):
     params.update(speed=0.35, angle=0.6)
-    tp.save_params()
-    text = tp.YAML_PATH.read_text()
+    tp.TUNING.save()
+    text = tp.TUNING.path.read_text()
     assert (BASE / 'teleop.yaml').read_text() == SHIPPED  # defaults untouched
     assert 'the buttons do' in text  # comments survive
     tp._params.clear()
-    tp.load_params()
+    tp.TUNING.load()
     assert tp._params['speed'] == 0.35
     assert tp._params['angle'] == 0.6
     assert tp._params['camera_topic'] == '/camera/color'
 
 
 def test_update_clamps(params):
-    tp.update_params({'speed': 4.0, 'angle': -1.0})
+    tp.TUNING.update({'speed': 4.0, 'angle': -1.0})
     assert params['speed'] == tp.MAX_SPEED
     assert params['angle'] == 0.0
-    assert tp.update_params({'speed': 1.0}) == []
-    assert tp.update_params({'speed': 0.2}) == ['speed 0.2']
+    assert tp.TUNING.update({'speed': 1.0}) == []
+    assert tp.TUNING.update({'speed': 0.2}) == ['speed 0.2']
 
 
 # ---- command mapping ----
@@ -467,15 +467,8 @@ def test_a_car_with_no_detector_never_subscribes(monkeypatch, params):
 def test_rows_and_history_record_the_command(node):
     node._enc = 1.25
     drive(node, 1, -1)
-    assert tp._rows[-1].strip().split(',')[1:] == ['1', '-1', '0.500', '-0.800', '1.250']
-    assert tp._hist[-1][1:] == [1.25, 0.5]
-
-
-def test_thin_keeps_the_newest_row():
-    rows = [[i, 0.0, 0.0] for i in range(1000)]
-    sent = tp._thin(rows)
-    assert len(sent) < len(rows)
-    assert sent[-1] is rows[-1]
+    assert tp.LOG.rows[-1].strip().split(',')[1:] == ['1', '-1', '0.500', '-0.800', '1.250']
+    assert tp.LOG.hist[-1][1:] == [1.25, 0.5]
 
 
 # ---- sensors, dot matrix, LED strip ----

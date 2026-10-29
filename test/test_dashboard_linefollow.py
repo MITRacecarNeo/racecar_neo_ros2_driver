@@ -49,13 +49,13 @@ def params(monkeypatch, tmp_path):
     global SHIPPED
     if SHIPPED is None:
         SHIPPED = (BASE / 'linefollow.yaml').read_text()
-    monkeypatch.setattr(lf, 'YAML_PATH', tmp_path / 'linefollow.local.yaml')
-    monkeypatch.setattr(lf, 'LOG_DIR', tmp_path / 'logs')
+    monkeypatch.setattr(lf.TUNING, 'path', tmp_path / 'linefollow.yaml')
+    monkeypatch.setattr(lf.LOG, 'dir', tmp_path / 'logs')
     lf._params.clear()
     lf._marks.clear()
-    lf._rows.clear()
-    lf._hist.clear()
-    lf.load_params()
+    lf.LOG.rows.clear()
+    lf.LOG.hist.clear()
+    lf.TUNING.load()
     lf._params.update(BLUE_HSV)
     yield lf._params
 
@@ -118,13 +118,13 @@ def yaml_value(key):
 
 def test_save_keeps_comments_and_types(params):
     params.update(h_low=12, speed=0.35, crop_top=0.5, min_area=40)
-    lf.save_params()
-    text = lf.YAML_PATH.read_text()
+    lf.TUNING.save()
+    text = lf.TUNING.path.read_text()
     assert (BASE / 'linefollow.yaml').read_text() == SHIPPED  # defaults untouched
     assert 'Raise this if the car weaves.' in text  # comments survive
     assert 'h_low: 12\n' in text  # ints stay ints
     lf._params.clear()
-    lf.load_params()
+    lf.TUNING.load()
     assert lf._params['h_low'] == 12
     assert lf._params['speed'] == 0.35
     assert lf._params['crop_top'] == 0.5
@@ -133,22 +133,22 @@ def test_save_keeps_comments_and_types(params):
 
 
 def test_update_clamps_hsv_and_speed(params):
-    lf.update_params({'h_high': 500, 'v_low': -3, 'speed': 4.0})
+    lf.TUNING.update({'h_high': 500, 'v_low': -3, 'speed': 4.0})
     assert params['h_high'] == 179
     assert params['v_low'] == 0
     assert params['speed'] == lf.MAX_SPEED
 
 
 def test_update_keeps_the_band_ordered(params):
-    lf.update_params({'crop_top': 0.9, 'crop_bottom': 0.4})
+    lf.TUNING.update({'crop_top': 0.9, 'crop_bottom': 0.4})
     assert params['crop_top'] < params['crop_bottom']
     assert params['crop_bottom'] - params['crop_top'] >= lf.MIN_BAND - 1e-9
     assert params['crop_bottom'] <= 1.0
 
 
 def test_update_marks_only_real_changes(params):
-    assert lf.update_params({'speed': 0.0}) == []
-    assert lf.update_params({'speed': 0.2}) == ['speed 0.2']
+    assert lf.TUNING.update({'speed': 0.0}) == []
+    assert lf.TUNING.update({'speed': 0.2}) == ['speed 0.2']
     assert lf._marks[-1][1] == 'speed 0.2'
 
 
@@ -252,15 +252,15 @@ def test_previews_and_state_are_produced(node):
     assert lf._state['res'] == [W, H]
     assert lf._state['proc_res'] == [320, 240]
     assert lf._state['cx'] == pytest.approx(160, abs=3)
-    assert lf._hist[-1][2] == 0
-    row = lf._rows[-1].strip().split(',')
+    assert lf.LOG.hist[-1][2] == 0
+    row = lf.LOG.rows[-1].strip().split(',')
     assert row[5] == '0' and row[6] == str(lf._state['cx'])
 
 
 def test_lost_rows_are_flagged(node):
     feed(node, frame())
-    assert lf._hist[-1][2] == 1
-    assert lf._rows[-1].strip().split(',')[5:7] == ['1', '']
+    assert lf.LOG.hist[-1][2] == 1
+    assert lf.LOG.rows[-1].strip().split(',')[5:7] == ['1', '']
 
 
 # ---- actuation ----
@@ -272,11 +272,3 @@ def test_actuate_negates_steering_and_caps_speed(node):
     msg = node._pub.msgs[-1]
     assert msg.drive.steering_angle == pytest.approx(-0.4)  # wire positive = left
     assert msg.drive.speed == lf.MAX_SPEED
-
-
-def test_thin_keeps_the_newest_row():
-    rows = [[i, 0.0, 0] for i in range(1000)]
-    sent = lf._thin(rows)
-    assert len(sent) < len(rows)
-    assert sent[-1] is rows[-1]
-    assert lf._thin(rows[:50]) == rows[:50]  # short histories go through whole

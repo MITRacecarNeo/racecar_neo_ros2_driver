@@ -49,7 +49,6 @@ from collections.abc import Callable
 import json
 import math
 from pathlib import Path
-import re
 import sys
 import threading
 import time
@@ -59,7 +58,7 @@ from ackermann_msgs.msg import AckermannDriveStamped
 import cv2
 from nav_msgs.msg import Odometry
 import numpy as np
-from racecar_neo_ros2_driver import apps, car_profile, data_root
+from racecar_neo_ros2_driver import apps
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
@@ -73,26 +72,17 @@ except ImportError:
     # A car without vision_msgs still gets every other view; the Detections
     # toggle reports itself unavailable rather than taking the page down.
     Detection2DArray = None
-import yaml
 
 PORT = apps.port('webteleop')
 BASE = Path(__file__).resolve().parent
 # The shared styles, fonts and logos are served from scripts/web/ (webui.py).
 sys.path.insert(0, str(BASE.parents[1]))
-import webui  # noqa: E402, I100
-
-# Shipped defaults stay untouched; saved tuning goes to the per-car file,
-# which loads on top of them, in the car profile (dashboards/<name>.yaml).
-DEFAULTS_PATH = BASE / 'teleop.yaml'
-YAML_PATH = car_profile.dashboard_settings('teleop')
-LOG_DIR = data_root.current()[0] / 'dashboards' / 'teleop'
+import labkit  # noqa: E402, I100
+import webui  # noqa: E402
 
 MAX_SPEED = 1.0  # hard throttle cap either way, as drive_real.set_max_speed
 PUBLISH_RATE_HZ = 15.0  # /drive rate, independent of the browser
 PREVIEW_RATE_HZ = 15.0
-# The live chart is 420 px wide; send an even sample of the history rather
-# than every row. The log csv keeps all of them.
-HIST_POINTS = 300
 
 TUNE_KEYS = ('speed', 'angle')
 
@@ -138,7 +128,7 @@ LED_RESEND_S = 0.2
 DISPLAY_HOLD_S = 3.0
 
 _lock = threading.Lock()
-_params: dict = {}
+_marks = labkit.Marks()
 _state: dict = {
     'fwd': 0,
     'turn': 0,
@@ -162,13 +152,6 @@ _preview = b''
 _depth_preview = b''
 # The browser's command and when it last arrived. Read by the timer.
 _cmd: dict = {'fwd': 0, 'turn': 0, 'stamp': 0.0}
-_hist: deque = deque(maxlen=1200)
-# Full rows behind the live chart. POST /logs/save snapshots this to a csv,
-# so a saved log is exactly what was on the screen.
-_rows: deque = deque(maxlen=1200)
-# Parameter-change markers [t, label] shown on the charts. Saved into logs
-# as "# mark" lines.
-_marks: deque = deque(maxlen=40)
 _sense: deque = deque(maxlen=int(SENSE_S * PUBLISH_RATE_HZ))
 # Latest serialized messages, decoded by the timer: {name: (bytes, stamp)}.
 _raw: dict = {}
@@ -176,23 +159,6 @@ _raw: dict = {}
 # 'pixels' or 'text' for the matrix; leds is 252 bytes or None.
 _display: dict = {'kind': None, 'pixels': [], 'text': '', 'leds': None}
 _last_poll = 0.0
-_T0 = time.monotonic()
-
-
-def _now() -> float:
-    return round(time.monotonic() - _T0, 2)
-
-
-def _add_mark(label: str) -> None:
-    # Coalesce rapid updates: the sliders fire while they are dragged.
-    if (
-        _marks
-        and _now() - _marks[-1][0] < 1.0
-        and _marks[-1][1].split(' ')[0] == label.split(' ')[0]
-    ):
-        _marks[-1] = [_now(), label]
-    else:
-        _marks.append([_now(), label])
 
 
 def clamp_speed(speed: float) -> float:
@@ -213,48 +179,11 @@ def _clean(p: dict[str, Any]) -> None:
     p['depth_max_m'] = max(0.5, float(p.get('depth_max_m', 4.0)))
 
 
-def load_params() -> None:
-    with _lock:
-        before = json.dumps(_params, sort_keys=True)
-        _params.update(yaml.safe_load(DEFAULTS_PATH.read_text()))
-        if YAML_PATH.exists():
-            _params.update(yaml.safe_load(YAML_PATH.read_text()) or {})
-        _clean(_params)
-        if before != '{}' and before != json.dumps(_params, sort_keys=True):
-            _add_mark('yaml load')
-
-
-def save_params() -> None:
-    """Rewrite the numeric values in place so the yaml comments survive."""
-    if not YAML_PATH.exists():
-        car_profile.write_text(YAML_PATH, DEFAULTS_PATH.read_text())
-    scalar = re.compile(r'^([A-Za-z_]\w*):([ \t]*)[-\d.eE+]+(.*)$')
-    out = []
-    with _lock:
-        for raw in YAML_PATH.read_text().splitlines(keepends=True):
-            m = scalar.match(raw.rstrip('\n'))
-            if m:
-                key, gap, tail = m.groups()
-                v = _params.get(key)
-                if isinstance(v, (int, float)):
-                    out.append(f'{key}:{gap}{v}{tail}\n')
-                    continue
-            out.append(raw)
-    car_profile.write_text(YAML_PATH, ''.join(out))
-
-
-def update_params(data: dict[str, Any]) -> list[str]:
-    """Apply a posted subset of TUNE_KEYS. Returns the change labels."""
-    with _lock:
-        before = dict(_params)
-        for k in TUNE_KEYS:
-            if k in data:
-                _params[k] = float(data[k])
-        _clean(_params)
-        changed = [f'{k} {_params[k]:g}' for k in TUNE_KEYS if before.get(k) != _params[k]]
-        if changed:
-            _add_mark(', '.join(changed))
-    return changed
+# Shipped defaults in teleop.yaml; saved tuning in the car profile
+# (dashboards/teleop.yaml), loaded on top.
+TUNING = labkit.Tuning('teleop', BASE / 'teleop.yaml', TUNE_KEYS, _lock, _marks, clean=_clean)
+_params = TUNING.params
+LOG = labkit.RunLog('teleop', 't,fwd,turn,speed_cmd,steer,speed_ms', _marks)
 
 
 def _axis(v: Any) -> int:
@@ -592,13 +521,13 @@ class TeleopNode(Node):
         out.drive.steering_angle = float(-self._steer_cmd)  # wire positive = left on this car
         self._pub.publish(out)
 
-        t = _now()
+        t = labkit.now()
         sensors = self._sample_sensors(t)
         self._send_display(now)
-        _rows.append(
+        LOG.rows.append(
             f'{t},{fwd},{turn},{self._speed_cmd:.3f},{self._steer_cmd:.3f},{self._enc:.3f}\n'
         )
-        _hist.append([t, round(self._enc, 3), round(self._speed_cmd, 3)])
+        LOG.hist.append([t, round(self._enc, 3), round(self._speed_cmd, 3)])
         with _lock:
             _state.update(
                 {
@@ -609,7 +538,7 @@ class TeleopNode(Node):
                     'speed_cmd': round(self._speed_cmd, 3),
                     'steer': round(self._steer_cmd, 3),
                     'enc_speed': round(self._enc, 3),
-                    'hist': _thin(_hist),
+                    'hist': LOG.thin(),
                     'marks': list(_marks),
                     'sense': list(_sense),
                     **sensors,
@@ -633,24 +562,6 @@ def _colorize_depth(meters: np.ndarray, far_m: float) -> np.ndarray:
     out = cv2.applyColorMap(ramp, cv2.COLORMAP_INFERNO)
     out[~valid] = NO_RETURN_BGR
     return out
-
-
-def _thin(hist: deque) -> list:
-    """Even sample of `hist` down to HIST_POINTS, newest row always kept."""
-    rows = list(hist)
-    stride = max(1, len(rows) // HIST_POINTS)
-    if stride == 1:
-        return rows
-    sent = rows[::stride]
-    if sent[-1] is not rows[-1]:
-        sent.append(rows[-1])
-    return sent
-
-
-def _log_number(name: str) -> int:
-    """Log7.csv -> 7, so lists sort numerically. Anything else sorts first."""
-    m = re.match(r'Log(\d+)\.csv$', name)
-    return int(m.group(1)) if m else 0
 
 
 class Handler(webui.AppHandler):
@@ -686,34 +597,15 @@ class Handler(webui.AppHandler):
                     }
                 )
             self.send(200, body.encode(), 'application/json')
-        elif self.path == '/logs':
-            names = sorted((f.name for f in LOG_DIR.glob('*.csv')), key=_log_number)
-            self.send(200, json.dumps(names).encode(), 'application/json')
-        elif self.path.startswith('/logs/'):
-            f = LOG_DIR / Path(self.path).name
-            if f.is_file():
-                self.send(200, f.read_bytes(), 'text/csv')
-            else:
-                self.send_error(404)
-        else:
+        elif not LOG.get(self):
             self.send_error(404)
 
     def do_POST(self) -> None:
         if self.path == '/cmd':
             set_cmd(self.read_json())
         elif self.path == '/params':
-            update_params(self.read_json())
-        elif self.path == '/logs/save':
-            LOG_DIR.mkdir(parents=True, exist_ok=True)
-            latest = max((_log_number(f.name) for f in LOG_DIR.glob('Log*.csv')), default=0)
-            name = f'Log{latest + 1}.csv'
-            rows = list(_rows)
-            tmin = float(rows[0].split(',')[0]) if rows else 0.0
-            with open(LOG_DIR / name, 'w') as f:
-                f.write('t,fwd,turn,speed_cmd,steer,speed_ms\n')
-                f.writelines(f'# mark,{t},{label}\n' for t, label in list(_marks) if t >= tmin)
-                f.writelines(rows)
-            self.send(200, name.encode(), 'text/plain')
+            TUNING.update(self.read_json())
+        elif LOG.post(self):
             return
         elif self.path == '/matrix':
             set_display('pixels', self.read_json().get('pixels', []))
@@ -724,9 +616,9 @@ class Handler(webui.AppHandler):
         elif self.path == '/display/release':
             set_display('release', None)
         elif self.path == '/save':
-            save_params()
+            TUNING.save()
         elif self.path == '/load':
-            load_params()
+            TUNING.load()
         else:
             self.send_error(404)
             return
@@ -734,7 +626,7 @@ class Handler(webui.AppHandler):
 
 
 def main() -> None:
-    load_params()
+    TUNING.load()
     rclpy.init()
     node = TeleopNode()
     print(f'Web teleop dashboard on http://0.0.0.0:{PORT}')

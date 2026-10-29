@@ -47,16 +47,26 @@ sits behind one `_lock`, never held across an encode or a network write.
 
 ## Tuning and logs
 
+Both come from `scripts/labkit.py`; each dashboard makes a `Tuning` (its
+tunables, a clamp function, whole-number and file-only keys) and a `RunLog`
+(its CSV header) and passes them its `_lock`.
+
 Tuning loads the shipped `<name>.yaml`, then `dashboards/<name>.yaml` in the
 car profile (`~/.config/racecar`, `racecar_neo_ros2_driver/car_profile.py`) on
 top when it exists. Save writes only the profile file (seeded from the
-defaults on the first save) and rewrites its numbers in place so the comments
-survive. The file it replaces goes to the profile's `history/`. The shipped
-file stays unchanged, so a driver update keeps a car's tuning.
+defaults on the first save): it rewrites the numbers in place so the comments
+survive, and appends any tunable the file lacks, so a file saved before a
+setting existed gains it. Wall follow's `mode` is never written; it is chosen
+by editing the file. The file it replaces goes to the profile's `history/`.
+The shipped file stays unchanged, so a driver update keeps a car's tuning.
+Slider changes become marks on the charts; a drag of one slider within 1 s is
+one mark.
 
 CSV logs go to `dashboards/<name>/` under the data root
-(`racecar_neo_ros2_driver/data_root.py`) and are listed and downloaded
-through the page.
+(`racecar_neo_ros2_driver/data_root.py`) as `LogN.csv`: the header, the marks
+inside the saved window as `# mark` lines, then the rows behind the live
+chart. `GET /logs`, `GET /logs/<name>` and `POST /logs/save` list, send and
+save them.
 
 ## Lidar convention
 

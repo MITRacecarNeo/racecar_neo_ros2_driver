@@ -30,10 +30,8 @@ negated on publish: positive on the wire turns this car left (physically
 verified on the sibling dashboards). Speed feedback comes from /odom.
 """
 
-from collections import deque
 import json
 from pathlib import Path
-import re
 import sys
 import threading
 import time
@@ -43,32 +41,23 @@ from ackermann_msgs.msg import AckermannDriveStamped
 import cv2
 from nav_msgs.msg import Odometry
 import numpy as np
-from racecar_neo_ros2_driver import apps, car_profile, data_root
+from racecar_neo_ros2_driver import apps
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
-import yaml
 
 PORT = apps.port('linefollow')
 BASE = Path(__file__).resolve().parent
 # The shared styles, fonts and logos are served from scripts/web/ (webui.py).
 sys.path.insert(0, str(BASE.parents[1]))
-import webui  # noqa: E402, I100
-
-# Shipped defaults stay untouched; saved tuning goes to the per-car file,
-# which loads on top of them, in the car profile (dashboards/<name>.yaml).
-DEFAULTS_PATH = BASE / 'linefollow.yaml'
-YAML_PATH = car_profile.dashboard_settings('linefollow')
-LOG_DIR = data_root.current()[0] / 'dashboards' / 'linefollow'
+import labkit  # noqa: E402, I100
+import webui  # noqa: E402
 
 MAX_SPEED = 1.0  # hard throttle cap, same idea as drive_real.set_max_speed
 PROCESS_RATE_HZ = 20.0  # frames thresholded per second; the camera runs at 60
 PUBLISH_RATE_HZ = 15.0  # /drive rate, independent of the camera
 MIN_BAND = 0.05  # crop_bottom - crop_top never below this fraction
-# The live chart is 420 px wide; send an even sample of the history rather
-# than every row. The log csv keeps all of them.
-HIST_POINTS = 300
 # Overlay colors, BGR, matching the dashboard's tokens.
 GOLD = (0, 215, 255)
 RED = (51, 0, 255)
@@ -82,7 +71,7 @@ INT_KEYS = HSV_KEYS + ('min_area',)
 TUNE_KEYS = HSV_KEYS + FLOAT_KEYS + ('min_area',)
 
 _lock = threading.Lock()
-_params: dict = {}
+_marks = labkit.Marks()
 _state: dict = {
     'found': False,
     'error': 0.0,
@@ -102,30 +91,6 @@ _state: dict = {
 }
 _preview_color = b''
 _preview_mask = b''
-_hist: deque = deque(maxlen=1200)
-# Full rows behind the live chart. POST /logs/save snapshots this to a csv,
-# so a saved log is exactly what was on the screen.
-_rows: deque = deque(maxlen=1200)
-# Parameter-change markers [t, label] shown on the charts, so a run can be
-# judged before vs after a tuning change. Saved into logs as "# mark" lines.
-_marks: deque = deque(maxlen=40)
-_T0 = time.monotonic()
-
-
-def _now() -> float:
-    return round(time.monotonic() - _T0, 2)
-
-
-def _add_mark(label: str) -> None:
-    # Coalesce rapid updates: every trackbar fires while it is dragged.
-    if (
-        _marks
-        and _now() - _marks[-1][0] < 1.0
-        and _marks[-1][1].split(' ')[0] == label.split(' ')[0]
-    ):
-        _marks[-1] = [_now(), label]
-    else:
-        _marks.append([_now(), label])
 
 
 def set_max_speed(speed: float) -> float:
@@ -154,48 +119,19 @@ def _clean(p: dict[str, Any]) -> None:
     p['crop_top'], p['crop_bottom'] = round(top, 3), round(bottom, 3)
 
 
-def load_params() -> None:
-    with _lock:
-        before = json.dumps(_params, sort_keys=True)
-        _params.update(yaml.safe_load(DEFAULTS_PATH.read_text()))
-        if YAML_PATH.exists():
-            _params.update(yaml.safe_load(YAML_PATH.read_text()) or {})
-        _clean(_params)
-        if before != '{}' and before != json.dumps(_params, sort_keys=True):
-            _add_mark('yaml load')
-
-
-def save_params() -> None:
-    """Rewrite the numeric values in place so the yaml comments survive."""
-    if not YAML_PATH.exists():
-        car_profile.write_text(YAML_PATH, DEFAULTS_PATH.read_text())
-    scalar = re.compile(r'^([A-Za-z_]\w*):([ \t]*)[-\d.eE+]+(.*)$')
-    out = []
-    with _lock:
-        for raw in YAML_PATH.read_text().splitlines(keepends=True):
-            m = scalar.match(raw.rstrip('\n'))
-            if m:
-                key, gap, tail = m.groups()
-                v = _params.get(key)
-                if isinstance(v, (int, float)):
-                    out.append(f'{key}:{gap}{v}{tail}\n')
-                    continue
-            out.append(raw)
-    car_profile.write_text(YAML_PATH, ''.join(out))
-
-
-def update_params(data: dict[str, Any]) -> list[str]:
-    """Apply a posted subset of TUNE_KEYS. Returns the change labels."""
-    with _lock:
-        before = dict(_params)
-        for k in TUNE_KEYS:
-            if k in data:
-                _params[k] = int(data[k]) if k in INT_KEYS else float(data[k])
-        _clean(_params)
-        changed = [f'{k} {_params[k]:g}' for k in TUNE_KEYS if before.get(k) != _params[k]]
-        if changed:
-            _add_mark(', '.join(changed))
-    return changed
+# Shipped defaults in linefollow.yaml; saved tuning in the car profile
+# (dashboards/linefollow.yaml), loaded on top.
+TUNING = labkit.Tuning(
+    'linefollow',
+    BASE / 'linefollow.yaml',
+    TUNE_KEYS,
+    _lock,
+    _marks,
+    clean=_clean,
+    int_keys=INT_KEYS,
+)
+_params = TUNING.params
+LOG = labkit.RunLog('linefollow', 't,error,steer,speed_cmd,speed_ms,lost,cx,area', _marks)
 
 
 def threshold(hsv: np.ndarray, p: dict[str, Any]) -> np.ndarray:
@@ -325,13 +261,13 @@ class LineFollowNode(Node):
 
         self._proc_stamps.append(now)
         self._proc_stamps = [t for t in self._proc_stamps if now - t < 2.0]
-        t = _now()
+        t = labkit.now()
         lost = 0 if self._found else 1
-        _rows.append(
+        LOG.rows.append(
             f'{t},{self._error:.4f},{self._steer_cmd:.4f},{self._speed_cmd:.3f},'
             f'{self._enc:.3f},{lost},{"" if cx is None else cx},{area:.0f}\n'
         )
-        _hist.append([t, round(self._error, 4), lost])
+        LOG.hist.append([t, round(self._error, 4), lost])
 
         # Previews: the color frame carries the band, the contour, and its
         # center; the mask is the whole frame so the threshold can be judged
@@ -382,7 +318,7 @@ class LineFollowNode(Node):
                     'proc_res': [W, H],
                     'cam_fps': round(len(self._frame_stamps) / 2.0, 1),
                     'proc_fps': round(len(self._proc_stamps) / 2.0, 1),
-                    'hist': _thin(_hist),
+                    'hist': LOG.thin(),
                     'marks': list(_marks),
                 }
             )
@@ -394,24 +330,6 @@ class LineFollowNode(Node):
         self._pub.publish(out)
         with _lock:
             _state['enc_speed'] = round(self._enc, 3)
-
-
-def _thin(hist: deque) -> list:
-    """Even sample of `hist` down to HIST_POINTS, newest row always kept."""
-    rows = list(hist)
-    stride = max(1, len(rows) // HIST_POINTS)
-    if stride == 1:
-        return rows
-    sent = rows[::stride]
-    if sent[-1] is not rows[-1]:
-        sent.append(rows[-1])
-    return sent
-
-
-def _log_number(name: str) -> int:
-    """Log7.csv -> 7, so lists sort numerically. Anything else sorts first."""
-    m = re.match(r'Log(\d+)\.csv$', name)
-    return int(m.group(1)) if m else 0
 
 
 class Handler(webui.AppHandler):
@@ -431,37 +349,18 @@ class Handler(webui.AppHandler):
             with _lock:
                 body = json.dumps({**_state, 'params': _params, 'marks': list(_marks)})
             self.send(200, body.encode(), 'application/json')
-        elif self.path == '/logs':
-            names = sorted((f.name for f in LOG_DIR.glob('*.csv')), key=_log_number)
-            self.send(200, json.dumps(names).encode(), 'application/json')
-        elif self.path.startswith('/logs/'):
-            f = LOG_DIR / Path(self.path).name
-            if f.is_file():
-                self.send(200, f.read_bytes(), 'text/csv')
-            else:
-                self.send_error(404)
-        else:
+        elif not LOG.get(self):
             self.send_error(404)
 
     def do_POST(self) -> None:
         if self.path == '/params':
-            update_params(self.read_json())
-        elif self.path == '/logs/save':
-            LOG_DIR.mkdir(parents=True, exist_ok=True)
-            latest = max((_log_number(f.name) for f in LOG_DIR.glob('Log*.csv')), default=0)
-            name = f'Log{latest + 1}.csv'
-            rows = list(_rows)
-            tmin = float(rows[0].split(',')[0]) if rows else 0.0
-            with open(LOG_DIR / name, 'w') as f:
-                f.write('t,error,steer,speed_cmd,speed_ms,lost,cx,area\n')
-                f.writelines(f'# mark,{t},{label}\n' for t, label in list(_marks) if t >= tmin)
-                f.writelines(rows)
-            self.send(200, name.encode(), 'text/plain')
+            TUNING.update(self.read_json())
+        elif LOG.post(self):
             return
         elif self.path == '/save':
-            save_params()
+            TUNING.save()
         elif self.path == '/load':
-            load_params()
+            TUNING.load()
         else:
             self.send_error(404)
             return
@@ -469,7 +368,7 @@ class Handler(webui.AppHandler):
 
 
 def main() -> None:
-    load_params()
+    TUNING.load()
     rclpy.init()
     node = LineFollowNode()
     print(f'Line follow dashboard on http://0.0.0.0:{PORT}')
