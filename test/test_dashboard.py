@@ -425,7 +425,7 @@ class TestHome:
 
     def test_launch_page_opens_then_waits(self, dashboard):
         html = dashboard.webui.read_page(dashboard._LAUNCH_PATH)
-        assert "fetch('/api/open'" in html and '/api/ready?app=' in html
+        assert "RcnApi.post('/api/open'" in html and '/api/ready?app=' in html
         assert 'location.replace' in html and 'id="cancel"' in html
         assert 'window.close()' in html
         assert 'Try again' not in html

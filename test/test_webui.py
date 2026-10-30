@@ -65,6 +65,19 @@ def test_icons_parse_and_have_ids(webui):
     assert {'map', 'notebook', 'gamepad', 'line', 'wall', 'pulse', 'check', 'alert'} <= ids
 
 
+SHARED = (
+    'rcn.css',
+    'charts.js',
+    'lost.js',
+    'override.js',
+    'battery.js',
+    'ui.js',
+    'api.js',
+    'tune.js',
+    'logs.js',
+)
+
+
 def test_pages_link_shared_files_with_the_asset_version(webui):
     # A browser keeps /ui/ files for CACHE_CONTROL; the version query, filled
     # in when the page is sent, makes it fetch a changed rcn.css at once.
@@ -82,7 +95,7 @@ def test_pages_link_shared_files_with_the_asset_version(webui):
     ]
     for page in pages:
         text = page.read_text()
-        for name in ('rcn.css', 'charts.js', 'lost.js', 'override.js', 'battery.js'):
+        for name in SHARED:
             for link in re.findall(rf'"/ui/{re.escape(name)}[^"]*"', text):
                 assert link == f'"/ui/{name}?v={{{{asset}}}}"', (page.name, link)
 
@@ -348,3 +361,55 @@ class TestServe:
             signal.signal = real_signal
             real_signal(signal.SIGTERM, old[0])
             real_signal(signal.SIGINT, old[1])
+
+
+LABS = {
+    'teleop': 'teleop_dashboard/teleop',
+    'linefollow': 'linefollow_dashboard/linefollow',
+    'wallfollow': 'wallfollow_dashboard/wallfollow',
+}
+
+
+def _lab_page(name):
+    return (
+        Path(__file__).resolve().parent.parent / 'scripts' / 'dashboards' / f'{LABS[name]}.html'
+    ).read_text()
+
+
+class TestPageKit:
+    @pytest.mark.parametrize('name', list(LABS))
+    def test_labs_use_the_shared_kit(self, name):
+        text = _lab_page(name)
+        for script in ('ui.js', 'api.js', 'tune.js', 'logs.js'):
+            assert f'/ui/{script}?v=' in text, script
+        for gone in (
+            'function post(',
+            'const $ = (id)',
+            'let busy = false',
+            'function loadLog(',
+            '.card {',
+            "'#f49a4b'",
+            'Barlow, Arial',
+        ):
+            assert gone not in text, gone
+        assert 'RcnApi.poll(' in text and 'RcnLogs.mount(' in text and 'RcnTune.sliders(' in text
+
+    def test_wallfollow_tunes_with_sliders(self):
+        text = _lab_page('wallfollow')
+        assert 'type="number"' not in text and 'Apply' not in text
+
+    @pytest.mark.parametrize('name', list(LABS))
+    def test_every_slider_is_a_setting_the_app_takes(self, name):
+        import importlib.util
+        import sys
+
+        path = (
+            Path(__file__).resolve().parent.parent / 'scripts' / 'dashboards' / f'{LABS[name]}.py'
+        )
+        spec = importlib.util.spec_from_file_location(f'kit_{name}', path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        keys = set(re.findall(r"\{ key: '(\w+)'", _lab_page(name)))
+        keys |= set(re.findall(r"(?:lo|hi): '(\w+)'", _lab_page(name)))
+        assert keys and keys <= set(module.TUNE_KEYS), keys - set(module.TUNE_KEYS)

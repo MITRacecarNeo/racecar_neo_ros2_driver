@@ -6,6 +6,16 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Changed
 
+- Lab dashboard pages share one page kit (`scripts/web/ui.js`, `api.js`,
+  `tune.js`, `logs.js`, and an app-page section in `rcn.css`); the 8080
+  home page, launch page, map viewer and terminal use its helpers and POST.
+  Save and Load on every lab page confirm with a short message.
+- Wall follow tunes with sliders that apply while dragging, like line follow
+  and web teleop; the number fields and Apply are gone. Static mode now
+  shows `look_angle`. Line follow's `min_area` is a slider too.
+- Lab pages stop asking for updates while the tab is hidden and catch up as
+  soon as it is shown. A hidden web teleop tab hands the dot matrix and LED
+  strip back to the car after about 3 s.
 - Lab dashboards share their tuning and run logs (`scripts/labkit.py`). Save
   works the same on all three: values rewritten in place with comments kept,
   and settings the saved file lacks appended (wall follow did this alone;

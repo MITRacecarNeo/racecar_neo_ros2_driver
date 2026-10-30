@@ -143,5 +143,12 @@
     return out;
   }, { label: (t) => `${(t - now).toFixed(1)} s` });
 
-  window.RcnCharts = { timeChart, legendHtml, niceTicks, clockTicks, clockTicksEvery, recentTicks, COLOR, DASH };
+  // Seconds since `t0` (a saved log's first row), at a round step.
+  const elapsedTicks = (t0) => Object.assign((a, b) => {
+    const step = niceTicks(0, b - a, 5)[1] || 1, out = [];
+    for (let s = 0; s <= b - a + 1e-6; s += step) out.push([a + s, `${(a + s - t0).toFixed(0)} s`]);
+    return out;
+  }, { label: (t) => `${(t - t0).toFixed(1)} s` });
+
+  window.RcnCharts = { timeChart, legendHtml, niceTicks, clockTicks, clockTicksEvery, recentTicks, elapsedTicks, COLOR, DASH };
 })();

@@ -6,6 +6,8 @@
 <title>RACECAR Neo</title>
 <link rel="stylesheet" href="/ui/rcn.css?v={{asset}}">
 <script src="/ui/charts.js?v={{asset}}"></script>
+<script src="/ui/ui.js?v={{asset}}"></script>
+<script src="/ui/api.js?v={{asset}}"></script>
 <link rel="icon" href="/ui/brand/app-icon-32.png">
 <link rel="apple-touch-icon" href="/ui/brand/app-icon-180.png">
 <style>
@@ -24,16 +26,6 @@
   @media (max-width: 480px) { #batt-power { display: none; } }
   main { max-width: 1100px; margin: 0 auto; padding: var(--rcn-space-6) var(--rcn-space-4) var(--rcn-space-8); }
 
-  /* Hover and keyboard-focus explanations. */
-  [data-tip] { position: relative; }
-  [data-tip]::after {
-    content: attr(data-tip); position: absolute; left: 50%; top: calc(100% + 6px); transform: translateX(-50%);
-    width: max-content; max-width: 240px; padding: 6px 10px; border-radius: var(--rcn-radius-sm);
-    background: var(--rcn-ink); color: var(--rcn-paper); border: 1px solid var(--rcn-steel);
-    font: 600 13px/18px var(--rcn-font-sans); text-align: left; white-space: normal;
-    opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 0.12s; z-index: 20;
-  }
-  [data-tip]:hover::after, [data-tip]:focus-visible::after, [data-tip].tip-open::after { opacity: 1; visibility: visible; }
 
   /* Apps: white border while running; orange on hover, running or not. */
   .apps { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: var(--rcn-space-6) var(--rcn-space-4); margin-top: var(--rcn-space-4); }
@@ -254,22 +246,11 @@
 
 <script>
 'use strict';
-const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const icon = (name, cls = 'rcn-icon') => `<svg class="${cls}"><use href="/ui/icons.svg#${name}"/></svg>`;
-const STATUS_ICON = { ok: 'check', warn: 'alert', err: 'cross', off: 'info' };
-// kind: ok | warn | err | off, each with its icon and word.
-const pill = (kind, word) => `<span class="rcn-status ${kind}">${icon(STATUS_ICON[kind])}${esc(word)}</span>`;
+const { $, esc, icon, pill, STATUS_ICON, store, setHtml } = RcnUi;
+const { post, LOST } = RcnApi;
 const STATUS = { healthy: 'ok', stale: 'warn', dead: 'err', unsupervised: 'off' };
 const WORD = { healthy: 'OK', stale: 'Check', dead: 'Down', unsupervised: 'Off' };
-const store = {
-  get: (k, d) => { try { return localStorage.getItem(k) ?? d; } catch (err) { return d; } },
-  set: (k, v) => { try { localStorage.setItem(k, v); } catch (err) { /* not remembered */ } },
-};
 
-// Redrawn every 3 s: touch the DOM only when the markup changes.
-const shown = new Map();
-function setHtml(id, html) { if (shown.get(id) !== html) { shown.set(id, html); $(id).innerHTML = html; } }
 
 // -- apps --
 let apps = [];
@@ -334,10 +315,10 @@ function renderFeatures(view) {
 }
 async function setFeature(body) {
   try {
-    const r = await (await fetch('/api/feature', { method: 'POST', body: JSON.stringify(body) })).json();
+    const r = await (await post('/api/feature', body)).json();
     $('msg').textContent = r.message;
     featureMessage = r.message;
-  } catch (err) { $('msg').textContent = 'Lost contact with the car.'; }
+  } catch (err) { $('msg').textContent = LOST; }
   update(false);
 }
 function autonomyClick(f) {
@@ -632,10 +613,10 @@ function renderOverride(o) {
 async function sendOverride(action) {
   const epoch = action === 'keep' ? overrideEpoch : ++overrideEpoch;
   try {
-    const r = await fetch('/api/override', { method: 'POST', body: JSON.stringify({ action }) });
+    const r = await post('/api/override', { action });
     const o = await r.json();
     if (epoch === overrideEpoch) renderOverride(o);
-  } catch (err) { if (action !== 'keep') $('msg').textContent = 'Lost contact with the car.'; }
+  } catch (err) { if (action !== 'keep') $('msg').textContent = LOST; }
 }
 function startOverride() {
   if (!confirm('The car may start moving without warning. Do not leave it unattended.')) return;
@@ -717,18 +698,18 @@ function renderBatteryBanner() {
 setInterval(renderBatteryBanner, 250);
 $('battery-cancel').onclick = async () => {
   try {
-    const r = await (await fetch('/api/battery/cancel', { method: 'POST' })).json();
+    const r = await (await post('/api/battery/cancel')).json();
     $('msg').textContent = r.message;
-  } catch (err) { $('msg').textContent = 'Lost contact with the car.'; }
+  } catch (err) { $('msg').textContent = LOST; }
   update(true);
 };
 $('poweroff').onclick = async () => {
   if (!confirm('Turn the car off?')) return;
   try {
-    const r = await fetch('/api/shutdown', { method: 'POST' });
+    const r = await post('/api/shutdown');
     const o = await r.json();
     if (!r.ok) { $('msg').textContent = o.message; return; }
-  } catch (err) { $('msg').textContent = 'Lost contact with the car.'; return; }
+  } catch (err) { $('msg').textContent = LOST; return; }
   turningOff = true;
   clearInterval(statusTimer);
   renderBatteryBanner();
@@ -810,13 +791,13 @@ $('clear-apps').onclick = async () => {
   if (!confirm('Stop all utilities?')) return;
   $('msg').textContent = 'Stopping utilities...';
   try {
-    const r = await (await fetch('/api/clear-apps', { method: 'POST' })).json();
+    const r = await (await post('/api/clear-apps')).json();
     $('msg').textContent = r.message;
-  } catch (err) { $('msg').textContent = 'Lost contact with the car.'; }
+  } catch (err) { $('msg').textContent = LOST; }
   update(true);
 };
 $('clear-log').onclick = async () => {
-  try { await fetch('/api/clear-log', { method: 'POST' }); } catch (err) { /* shown on the next update */ }
+  try { await post('/api/clear-log'); } catch (err) { /* shown on the next update */ }
   update(true);
 };
 $('refresh').onclick = () => { update(true); pollOverview(); pollHistory(); };

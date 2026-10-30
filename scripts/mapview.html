@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>RACECAR Neo map</title>
 <link rel="stylesheet" href="/ui/rcn.css?v={{asset}}">
+<script src="/ui/ui.js?v={{asset}}"></script>
+<script src="/ui/api.js?v={{asset}}"></script>
 <script src="/ui/battery.js?v={{asset}}" defer></script>
 <link rel="icon" href="/ui/brand/app-icon-32.png">
 <link rel="apple-touch-icon" href="/ui/brand/app-icon-180.png">
@@ -112,11 +114,8 @@ main.maps-open #hint { left: calc(min(340px, 80%) + var(--rcn-space-3)); }
 const $ = (id) => document.getElementById(id);
 const canvas = $('view');
 const ctx = canvas.getContext('2d');
-const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const icon = (name) => `<svg class="rcn-icon"><use href="/ui/icons.svg#${name}"/></svg>`;
-// kind: ok | warn | err | off, each with its icon and word.
-const pill = (kind, word) => `<span class="rcn-status ${kind}">${icon({ ok: 'check', warn: 'alert', err: 'cross', off: 'info' }[kind])}${esc(word)}</span>`;
+const css = RcnUi.token;
+const { esc, icon, pill, setHtml } = RcnUi;
 
 // View: screen = (world - center) * scale, y up.
 const view = { cx: 0, cy: 0, scale: 40, fitted: false };
@@ -317,7 +316,7 @@ $('center').onclick = () => {
 };
 
 $('cleartrail').onclick = async () => {
-  try { await fetch('/api/trail/clear', { method: 'POST', body: '{}' }); } catch (err) { /* the next poll shows it */ }
+  try { await RcnApi.post('/api/trail/clear'); } catch (err) { /* the next poll shows it */ }
   trail = { id: -1, from: 0, points: [] };
   draw();
 };
@@ -352,12 +351,7 @@ async function finishPose(x, y, yaw) {
 }
 
 // -- requests --
-async function post(url, body) {
-  try {
-    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    return await res.json();
-  } catch (err) { return { ok: false, message: String(err) }; }
-}
+const post = RcnApi.postJson;
 function report(r) { flash(r.message || (r.ok ? 'done' : 'failed'), r.ok ? 'info' : 'bad'); }
 // A flash message shows for FLASH_MS over the standing banner (throttled, hot, mapping cap).
 const FLASH_MS = 4000;
@@ -367,7 +361,7 @@ function showBanner() {
   const b = $('banner'), s = state.status || {}, sys = state.sys || {};
   let msg = null;
   if (flashMsg && Date.now() < flashMsg.until) msg = flashMsg;
-  else if (lostContact) msg = { text: 'Lost contact with the car.', kind: 'bad' };
+  else if (lostContact) msg = { text: RcnApi.LOST, kind: 'bad' };
   else if (sys.throttled_now && sys.throttled_now.length) msg = { text: `Pi throttled now: ${sys.throttled_now.join(', ')}. This run is not valid.`, kind: 'bad' };
   else if (sys.temp_c != null && sys.temp_c >= 78) msg = { text: `Pi is hot (${sys.temp_c.toFixed(0)} C).`, kind: 'warn' };
   else if (s.mode === 'mapping') msg = { text: 'Speed limited for mapping. Turn gently to prevent map blur.', kind: 'warn' };
@@ -513,8 +507,6 @@ $('loadgo').onclick = () => {
 
 // -- status --
 // Polled at 10 Hz: touch the DOM only when the markup changes.
-const shown = new Map();
-function setHtml(id, html) { if (shown.get(id) !== html) { shown.set(id, html); $(id).innerHTML = html; } }
 function showStatus() {
   const s = state.status || {}, mode = s.mode || 'off';
   const active = mode === 'mapping' || mode === 'localization';

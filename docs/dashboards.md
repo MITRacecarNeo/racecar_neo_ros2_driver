@@ -45,6 +45,16 @@ survives an error. Three threads share the state: the ROS executor, the HTTP
 request threads, and the main thread in `serve_forever`. Everything shared
 sits behind one `_lock`, never held across an encode or a network write.
 
+The page side is shared too (`scripts/web/`): the app-page section of
+`rcn.css` (`rcn-main`, `rcn-section`, `rcn-tools`, `rcn-state`, `rcn-zoom`,
+`rcn-slider`, `rcn-toast`, `data-tip`), `ui.js` (`RcnUi`: element, escape,
+pills, canvas colors from the CSS tokens, live camera frames, toasts),
+`api.js` (`RcnApi`: POST JSON, and a `/state` poll with one request in flight
+that stops while the tab is hidden), `tune.js` (`RcnTune.sliders`: live
+sliders that send at most one `POST /params` per 60 ms and follow what the
+app clamped) and `logs.js` (`RcnLogs.mount`: the Logs section). A page keeps
+its grid columns and what only it draws.
+
 ## Tuning and logs
 
 Both come from `scripts/labkit.py`; each dashboard makes a `Tuning` (its

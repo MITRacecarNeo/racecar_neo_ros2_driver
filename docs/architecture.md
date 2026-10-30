@@ -226,6 +226,7 @@ Every app's server is built on `scripts/webui.py`:
 | `ros_spinner`, `spin_until_stopped` | Executor loop that logs an error and spins on; ends quietly at shutdown |
 | `fill`, `read_page`, `static_file` | `{{asset}}` (`ASSET_VERSION`) and `{{home}}` (the 8080 port) filled in pages and shared scripts |
 | `same_origin`, `sibling_origin` | Origin checks for page-only calls and for CORS from the other app ports |
+| `scripts/web/` `ui.js`, `api.js`, `tune.js`, `logs.js` | The page side: helpers, POST and `/state` polling, tuning sliders, the Logs section (`docs/dashboards.md`) |
 
 A new app is one entry, its unit, and for 8080 start and stop its unit in
 `scripts/polkit/49-racecar-dashboards.rules`; `test/test_apps.py` checks that

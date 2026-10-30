@@ -35,7 +35,7 @@ Saved tuning goes to `dashboards/wallfollow.yaml` in the car profile
 
 - Lidar view: scan points, the averaging windows or search arc in gray, and the measured rays in orange. Scroll or use + and - to zoom.
 - Error chart: the last 30 s of error against the setpoint (cm in static mode, -1 to 1 in dynamic), with dashed lines at parameter changes.
-- Tune panel: speed is a 0 to 1 slider that applies while dragging; the other values apply on Apply.
+- Tune panel: every setting is a slider that applies while dragging. Static mode shows look_angle; dynamic mode shows width and side_weight.
 - Save and Load write and read wallfollow.yaml on the car. Reset (top bar) re-reads it. Stop (top bar) sets speed to 0.
 - Save log snapshots the error chart to LogN.csv. Load log draws a saved one with the error and the measured speed.
 
