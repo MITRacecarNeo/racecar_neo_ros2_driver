@@ -28,6 +28,12 @@ N = wf.WallFollowNode
 NEO_POINTS = 1080
 
 
+@pytest.fixture(autouse=True)
+def shipped_mount(monkeypatch):
+    """Use the shipped mount; the module read this car's profile at import."""
+    monkeypatch.setattr(wf, 'LASER_YAW', math.pi)
+
+
 def make_scan(points=NEO_POINTS, span_deg=360.0, fill=5.0):
     """Build a LaserScan with `points` rays evenly covering `span_deg`, centered on raw 0."""
     msg = LaserScan()
@@ -72,7 +78,7 @@ class TestScanPattern:
     def test_mount_yaw_puts_the_nose_at_the_raw_180_edge(self):
         # Measured on hardware: an object in front reports at raw 180. The
         # neoracer read 0 there, which is the whole of the difference.
-        assert wf.LIDAR_MOUNT_YAW_DEG == 180.0
+        assert math.degrees(wf.LASER_YAW) == pytest.approx(180.0)
 
 
 class TestAngleMapping:
@@ -126,7 +132,7 @@ class TestOtherScanPatterns:
         assert N._mean_at(N, msg, 90, 4.0) == pytest.approx(2.0, abs=0.01)
 
     def test_forward_facing_lidar_needs_no_offset(self, monkeypatch):
-        monkeypatch.setattr(wf, 'LIDAR_MOUNT_YAW_DEG', 0.0)
+        monkeypatch.setattr(wf, 'LASER_YAW', 0.0)
         msg = make_scan()
         i = place(msg, 0.0, 1.5)
         assert N._student_deg(msg, i) == pytest.approx(0.0, abs=0.5)

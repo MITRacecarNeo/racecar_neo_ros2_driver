@@ -34,7 +34,7 @@ from urllib.parse import parse_qs, urlparse
 
 import map_control as mc
 import numpy as np
-from racecar_neo_ros2_driver import apps, autonomy as au
+from racecar_neo_ros2_driver import apps, autonomy as au, frames
 from racecar_neo_ros2_driver.maps import map_root, valid_name
 import sysinfo
 import webui
@@ -141,16 +141,6 @@ def scan_to_map(
         ranges, angle_min, angle_increment, (lx, ly, pose[2] + laser[2]), 0.3, 12.0, points
     )
     return [[round(float(a), 2), round(float(b), 2)] for a, b in zip(x, y, strict=True)]
-
-
-def laser_mount(frames: dict[str, float] | None) -> tuple[float, float, float] | None:
-    if frames is None:
-        return None
-    return (
-        frames.get('laser_x_mm', 0.0) / 1000.0,
-        frames.get('laser_y_mm', 0.0) / 1000.0,
-        math.radians(frames.get('laser_yaw_deg', 0.0)),
-    )
 
 
 @dataclass
@@ -319,8 +309,7 @@ class Viewer:
         self._handles: list[Any] = []
         self._publisher: Any = None
         self._client: Any = None
-        self.active = False
-        self.last_request = 0.0
+        self.gate = webui.IdleGate(IDLE_SEC, self._open, self._close)
         self.status: dict[str, str] = {}
         self.pose: tuple[float, float, float] | None = None
         self.scan: list[list[float]] = []
@@ -332,7 +321,7 @@ class Viewer:
         self.map_version = 0
         self.sys: dict[str, Any] = {}
         self._cpu = CpuMeter()
-        self._laser = laser_mount(mc.current_frames())
+        self._laser = frames.laser_mount(mc.current_frames())
         threading.Thread(target=self._watch, daemon=True).start()
 
     def _spin(self) -> None:
@@ -340,11 +329,13 @@ class Viewer:
             lambda: self._executor.spin_once(timeout_sec=webui.SPIN_TIMEOUT_SEC), self._rclpy.ok
         )
 
+    @property
+    def active(self) -> bool:
+        return self.gate.open
+
     def touch(self) -> None:
         with self._lock:
-            self.last_request = time.monotonic()
-            if not self.active:
-                self._open()
+            self.gate.touch()
 
     def _open(self) -> None:
         from diagnostic_msgs.msg import DiagnosticStatus
@@ -373,7 +364,6 @@ class Viewer:
         ]
         self._publisher = n.create_publisher(PoseWithCovarianceStamped, '/initialpose', 10)
         self._client = n.create_client(Trigger, '/autonomy/global_localization')
-        self.active = True
 
     def _close(self) -> None:
         for h in self._handles:
@@ -386,15 +376,12 @@ class Viewer:
         self._publisher = self._client = None
         self.status, self.pose, self.scan = {}, None, []
         self.map_info, self.map_gz = None, b''
-        self.active = False
 
     def _watch(self) -> None:
         while True:
             time.sleep(1.0)
             with self._lock:
-                if self.active and time.monotonic() - self.last_request > IDLE_SEC:
-                    self._close()
-                active = self.active
+                active = self.gate.check()
             if active:
                 flags, names = sysinfo.read_throttled()
                 info = {
@@ -424,7 +411,7 @@ class Viewer:
 
     def _on_scan(self, msg: Any) -> None:
         now = time.monotonic()
-        if now - self._scan_at < SCAN_PERIOD_SEC or self.pose is None or self._laser is None:
+        if now - self._scan_at < SCAN_PERIOD_SEC or self.pose is None:
             return
         self._scan_at = now
         points = scan_to_map(

@@ -181,13 +181,9 @@ def saved_pose(
 
 
 def current_frames() -> dict[str, float] | None:
-    try:
-        from ament_index_python.packages import get_package_share_directory
-        from racecar_neo_ros2_driver.frames import load_frames
+    from racecar_neo_ros2_driver import frames
 
-        return load_frames(Path(get_package_share_directory('racecar_neo_ros2_driver')) / 'config')
-    except Exception:  # noqa: BLE001  the comparison is advisory
-        return None
+    return frames.current()
 
 
 def frame_changes(meta: dict[str, Any], current: dict[str, float] | None) -> list[str]:

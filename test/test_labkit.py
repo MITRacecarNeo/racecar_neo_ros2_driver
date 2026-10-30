@@ -165,3 +165,29 @@ class TestRunLog:
     def test_rows_hold_the_window(self, log):
         log.rows.extend(f'{i},0\n' for i in range(9))
         assert len(log.rows) == 5 and log.rows[0] == '4,0\n'
+
+
+class TestDrive:
+    @pytest.mark.parametrize(
+        'speed, reverse, expected',
+        [
+            (5.0, False, 1.0),
+            (-1.0, False, 0.0),
+            (0.4, False, 0.4),
+            (-5.0, True, -1.0),
+            (5.0, True, 1.0),
+        ],
+    )
+    def test_speed_is_capped(self, speed, reverse, expected):
+        assert labkit.clamp_speed(speed, reverse) == expected
+
+    def test_right_is_negative_on_the_wire(self):
+        # Positive on the wire turns this car left; a lab steers right with +.
+        msg = labkit.drive_msg(0.3, 0.5)
+        assert msg.drive.steering_angle == pytest.approx(-0.5)
+        assert msg.drive.speed == pytest.approx(0.3)
+
+    def test_the_cap_holds_in_the_message(self):
+        assert labkit.drive_msg(9.0, 0.0).drive.speed == labkit.MAX_SPEED
+        assert labkit.drive_msg(-9.0, 0.0).drive.speed == 0.0
+        assert labkit.drive_msg(-9.0, 0.0, reverse=True).drive.speed == -labkit.MAX_SPEED

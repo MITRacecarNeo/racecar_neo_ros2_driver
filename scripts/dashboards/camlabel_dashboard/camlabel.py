@@ -26,7 +26,7 @@ from typing import Any
 
 import cv2
 import numpy as np
-from racecar_neo_ros2_driver import apps, data_root
+from racecar_neo_ros2_driver import apps, data_root, imaging
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
@@ -69,23 +69,16 @@ class CameraNode(Node):
 
     def _cb(self, msg: Image) -> None:
         global _live, _preview, _cam_res
-        if msg.encoding == 'jpeg':
-            data = bytes(msg.data)
-            arr = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
-        else:
-            # Raw frame fallback for other camera drivers.
-            arr = np.frombuffer(msg.data, dtype=np.uint8).reshape(msg.height, msg.width, -1)
-            if msg.encoding == 'rgb8':
-                arr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
-            data = cv2.imencode('.jpg', arr)[1].tobytes()
-        prev, res = data, [msg.width, msg.height]
-        if arr is not None:
-            h, w = arr.shape[:2]
-            res = [w, h]
-            pw = int(_cfg['preview_width'])
-            small = cv2.resize(arr, (pw, max(1, round(pw * h / w))))
-            quality = [cv2.IMWRITE_JPEG_QUALITY, int(_cfg['preview_quality'])]
-            prev = cv2.imencode('.jpg', small, quality)[1].tobytes()
+        arr = imaging.bgr(msg)
+        if arr is None:
+            return
+        # A JPEG frame is saved as it came; a raw one is encoded once.
+        data = bytes(msg.data) if msg.encoding == 'jpeg' else imaging.jpeg(arr, 95)
+        h, w = arr.shape[:2]
+        res = [w, h]
+        prev = imaging.jpeg(
+            imaging.fit_width(arr, int(_cfg['preview_width'])), _cfg['preview_quality']
+        )
         with _lock:
             _live = data
             _preview = prev

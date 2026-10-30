@@ -13,11 +13,11 @@ Two forms, selected by `mode` in wallfollow.yaml (file edit only, no UI switch):
   dynamic: steer toward the most open heading in a front arc, with obstacles
            inflated by the car's half-width. side_weight biases one side.
 
-Angles use the student convention (0 = nose, positive = right). The mapping
-from a raw scan angle to that convention is LIDAR_MOUNT_YAW_DEG, set for the
-RACECAR Neo; see the constant. /drive steering is negated on publish: positive
-on the wire turns this car left (physically verified; the car steered mirrored
-without the negation). Speed feedback comes from /odom.
+Angles use the lab convention (0 = nose, positive = right), turned from raw
+scan angles by the car's calibrated lidar yaw; see LASER_YAW. /drive steering
+is negated on publish: positive on the wire turns this car left (physically
+verified; the car steered mirrored without the negation). Speed feedback comes
+from /odom.
 """
 
 import json
@@ -30,7 +30,7 @@ from typing import Any
 
 from ackermann_msgs.msg import AckermannDriveStamped
 from nav_msgs.msg import Odometry
-from racecar_neo_ros2_driver import apps
+from racecar_neo_ros2_driver import apps, frames
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
@@ -43,40 +43,19 @@ sys.path.insert(0, str(BASE.parents[1]))
 import labkit  # noqa: E402, I100
 import webui  # noqa: E402
 
-MAX_SPEED = 1.0  # hard throttle cap, same idea as drive_real.set_max_speed
 SEARCH_STEP = 2  # degrees between candidate headings (dynamic)
 HALF_CLEAR = 0.21  # meters, car half-width plus margin, inflates obstacles
 CENTER_BIAS = 0.006  # score penalty per degree off-center, stops ping-pong
 
-# Raw scan angle that points at the car's nose, in degrees.
-#
-# The RACECAR Neo mounts its RPLIDAR facing aft, so the nose sits at the raw
-# +/-180 edge of the sweep rather than at 0. Measured on hardware: an object
-# in front reports at raw 180, and one off the car's right at raw +90.
-# The neoracer read 0 at the nose over a 270 degree sweep, which is why this
-# dashboard steered into walls on a Neo before the constant existed.
-#
-#     student_deg = LIDAR_MOUNT_YAW_DEG - raw_deg
-#
-# Set this to 0.0 for a forward-facing lidar. Nothing else here assumes a
-# sweep width: indices come from the message's own angle_min and
-# angle_increment and wrap modulo the point count, so a 360 degree / 1080
-# point scan and a 270 degree scan both work.
-LIDAR_MOUNT_YAW_DEG = 180.0
+# The lidar's yaw in base_link from the car's frames (config/frames.yaml, with
+# the car profile's calibrated value on top): about 180 degrees on the RACECAR
+# Neo, whose RPLIDAR faces aft. Lab angles are 0 at the nose and positive to
+# the car's right (frames.student_deg); nothing here assumes a sweep width.
+LASER_YAW = frames.laser_mount()[2]
 
 _lock = threading.Lock()
 _marks = labkit.Marks()
 _state: dict = {'scan': [], 'hist': [], 'overlay': {}, 'enc_speed': 0.0}
-
-
-def set_max_speed(speed: float) -> float:
-    """
-    Clamp throttle to [0, MAX_SPEED].
-
-    Every speed that leaves this program passes through here, so /drive can
-    never carry more than 1.0.
-    """
-    return max(0.0, min(MAX_SPEED, float(speed)))
 
 
 TUNE_KEYS = (
@@ -95,7 +74,7 @@ TUNE_KEYS = (
 
 def _clean(p: dict[str, Any]) -> None:
     """Clamp the speed; read the mode as 0 static or 1 dynamic. Caller holds _lock."""
-    p['speed'] = set_max_speed(p['speed'])
+    p['speed'] = labkit.clamp_speed(p['speed'])
     # Older yamls spell the mode out.
     p['mode'] = 1 if str(p['mode']).strip() in ('1', 'dynamic') else 0
 
@@ -129,14 +108,13 @@ class WallFollowNode(Node):
     @staticmethod
     def _index_at(msg: LaserScan, deg: float) -> int:
         """Ray index for a student angle (0 = nose, positive = right)."""
-        raw = math.radians(LIDAR_MOUNT_YAW_DEG - deg)
+        raw = frames.raw_rad(deg, LASER_YAW)
         return round((raw - msg.angle_min) / msg.angle_increment) % len(msg.ranges)
 
     @staticmethod
     def _student_deg(msg: LaserScan, i: int) -> float:
-        """Student angle of ray `i`, wrapped to (-180, 180]."""
-        raw = math.degrees(msg.angle_min + i * msg.angle_increment)
-        return (LIDAR_MOUNT_YAW_DEG - raw + 180.0) % 360.0 - 180.0
+        """Lab angle of ray `i`, -180 to 180."""
+        return frames.student_deg(msg.angle_min + i * msg.angle_increment, LASER_YAW)
 
     def _mean_at(self, msg: LaserScan, deg: float, window: float) -> float:
         """Average range (m) in a `window`-deg cone at `deg` (0 = nose, + = right)."""
@@ -233,10 +211,7 @@ class WallFollowNode(Node):
             self._speed_cmd = max(0.0, min(1.0, p['speed'] + self._trim))
         self._last_speed_error = serr
 
-        out = AckermannDriveStamped()
-        out.drive.speed = set_max_speed(self._speed_cmd)
-        out.drive.steering_angle = float(-cmd)  # wire positive = left on this car
-        self._pub.publish(out)
+        self._pub.publish(labkit.drive_msg(self._speed_cmd, cmd))
 
         t = labkit.now()
         LOG.rows.append(f'{t},{error:.4f},{cmd:.4f},{self._speed_cmd:.3f},{self._enc:.3f}\n')
@@ -248,11 +223,7 @@ class WallFollowNode(Node):
                 'speed_cmd': round(self._speed_cmd, 3),
             }
         )
-        scan = [
-            [round(self._student_deg(msg, i), 1), round(msg.ranges[i], 3)]
-            for i in range(0, len(msg.ranges), 3)
-            if msg.range_min < msg.ranges[i] < msg.range_max
-        ]
+        scan = frames.student_scan(msg, LASER_YAW)
         with _lock:
             _state.update(
                 {

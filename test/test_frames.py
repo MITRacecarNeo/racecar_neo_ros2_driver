@@ -199,3 +199,52 @@ class TestLaunch:
     def test_module_names_frames_yaml(self):
         assert frames.FRAMES_YAML == 'frames.yaml'
         assert (CONFIG / frames.FRAMES_YAML).is_file()
+
+
+class TestLaserMount:
+    def test_mount_in_meters_and_radians(self):
+        x, y, yaw = frames.laser_mount(
+            {'laser_x_mm': 238.3, 'laser_y_mm': 0.0, 'laser_yaw_deg': 180.0}
+        )
+        assert (x, y) == pytest.approx((0.2383, 0.0)) and yaw == pytest.approx(math.pi)
+
+    def test_missing_keys_mean_the_shipped_aft_mount(self):
+        assert frames.laser_mount({}) == pytest.approx((0.0, 0.0, math.pi))
+
+    def test_current_reads_the_shipped_file(self):
+        assert frames.current()['laser_yaw_deg'] == 180.0
+
+    @pytest.mark.parametrize('yaw_deg', [180.0, 0.0])
+    @pytest.mark.parametrize('raw_deg', [-170, -90, -30, 0, 45, 90, 179])
+    def test_matches_the_old_rule_at_0_and_180(self, yaw_deg, raw_deg):
+        # The labs used lab = yaw - raw, right only for a yaw of 0 or 180.
+        got = frames.student_deg(math.radians(raw_deg), math.radians(yaw_deg))
+        assert ((got - (yaw_deg - raw_deg)) + 180) % 360 - 180 == pytest.approx(0.0, abs=1e-9)
+
+    @pytest.mark.parametrize('lab', [-179, -90, -12.5, 0, 33, 90, 180])
+    def test_round_trip_at_a_calibrated_yaw(self, lab):
+        yaw = math.radians(179.619)
+        raw = frames.raw_rad(lab, yaw)
+        assert -math.pi <= raw <= math.pi
+        back = frames.student_deg(raw, yaw)
+        assert ((back - lab) + 180) % 360 - 180 == pytest.approx(0.0, abs=1e-9)
+
+    def test_a_calibrated_yaw_turns_the_view(self):
+        # Turned 0.381 deg short of aft, the lidar sees the nose at raw
+        # 180.381 deg; the old rule (yaw - raw) read that ray 0.76 deg off.
+        yaw = math.radians(179.619)
+        assert frames.student_deg(math.radians(180.381), yaw) == pytest.approx(0.0, abs=1e-9)
+
+    def test_student_scan_keeps_in_range_rays(self):
+        from types import SimpleNamespace
+
+        msg = SimpleNamespace(
+            angle_min=-math.pi,
+            angle_increment=math.pi / 2,
+            range_min=0.1,
+            range_max=10.0,
+            ranges=[1.0, 0.05, 2.0, 20.0],
+        )
+        pts = frames.student_scan(msg, math.pi, step=1)
+        assert [p[1] for p in pts] == [1.0, 2.0]
+        assert pts[0][0] == pytest.approx(0.0) and abs(pts[1][0]) == pytest.approx(180.0)

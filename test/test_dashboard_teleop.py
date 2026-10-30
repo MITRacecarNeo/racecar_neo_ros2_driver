@@ -18,6 +18,7 @@ import sys
 import cv2
 import numpy as np
 import pytest
+from racecar_neo_ros2_driver import frames
 from sensor_msgs.msg import Image, LaserScan
 from vision_msgs.msg import (
     BoundingBox2D,
@@ -79,6 +80,12 @@ def node(monkeypatch):
     return tp.TeleopNode()
 
 
+@pytest.fixture(autouse=True)
+def shipped_mount(monkeypatch):
+    """Use the shipped mount; the module read this car's profile at import."""
+    monkeypatch.setattr(tp, 'LASER_YAW', math.pi)
+
+
 def drive(node, fwd, turn, at=100.0, tick=None):
     """Post a command at time `at`, then run the timer at `tick` (default: same instant)."""
     tp.set_cmd({'fwd': fwd, 'turn': turn}, now=at)
@@ -90,8 +97,8 @@ def drive(node, fwd, turn, at=100.0, tick=None):
 
 
 def test_speed_is_capped_both_ways():
-    assert tp.clamp_speed(5.0) == tp.MAX_SPEED
-    assert tp.clamp_speed(-5.0) == -tp.MAX_SPEED
+    assert tp.labkit.clamp_speed(5.0, reverse=True) == tp.labkit.MAX_SPEED
+    assert tp.labkit.clamp_speed(-5.0, reverse=True) == -tp.labkit.MAX_SPEED
 
 
 def test_shipped_yaml_cannot_drive():
@@ -115,7 +122,7 @@ def test_save_keeps_comments(params):
 
 def test_update_clamps(params):
     tp.TUNING.update({'speed': 4.0, 'angle': -1.0})
-    assert params['speed'] == tp.MAX_SPEED
+    assert params['speed'] == tp.labkit.MAX_SPEED
     assert params['angle'] == 0.0
     assert tp.TUNING.update({'speed': 1.0}) == []
     assert tp.TUNING.update({'speed': 0.2}) == ['speed 0.2']
@@ -225,23 +232,28 @@ def test_scan_is_thinned(node):
     assert len(tp._state['scan']) == 120
 
 
+def lab_deg(msg, i):
+    """Return the angle teleop draws ray `i` at."""
+    return frames.student_deg(msg.angle_min + i * msg.angle_increment, tp.LASER_YAW)
+
+
 def test_mount_yaw_puts_the_nose_at_the_raw_180_edge():
     # Measured on hardware: the Neo's RPLIDAR faces aft, so an object in
     # front reports at raw 180. The neoracer read 0 there.
-    assert tp.LIDAR_MOUNT_YAW_DEG == 180.0
+    assert math.degrees(tp.LASER_YAW) == pytest.approx(180.0)
 
 
 def test_object_in_front_reads_as_zero_degrees(node):
     msg = make_scan()
     i = place(msg, 180.0, 1.0)
-    assert node._student_deg(msg, i) == pytest.approx(0.0, abs=0.5)
+    assert lab_deg(msg, i) == pytest.approx(0.0, abs=0.5)
 
 
 def test_object_off_the_right_reads_as_positive(node):
     # Measured on hardware: an object off the car's right sits at raw +90.
     msg = make_scan()
     i = place(msg, 90.0, 1.0)
-    assert node._student_deg(msg, i) == pytest.approx(90.0, abs=0.5)
+    assert lab_deg(msg, i) == pytest.approx(90.0, abs=0.5)
 
 
 def test_left_and_right_are_not_mirrored(node):
@@ -249,8 +261,8 @@ def test_left_and_right_are_not_mirrored(node):
     msg = make_scan()
     right = place(msg, 90.0, 2.0)
     left = place(msg, -90.0, 3.0)
-    assert node._student_deg(msg, right) == pytest.approx(90.0, abs=0.5)
-    assert node._student_deg(msg, left) == pytest.approx(-90.0, abs=0.5)
+    assert lab_deg(msg, right) == pytest.approx(90.0, abs=0.5)
+    assert lab_deg(msg, left) == pytest.approx(-90.0, abs=0.5)
 
 
 def test_mapping_is_a_yaw_not_a_flip(node):
@@ -259,21 +271,21 @@ def test_mapping_is_a_yaw_not_a_flip(node):
     msg = make_scan()
     for raw in (-150, -90, -30, 0, 30, 90, 150):
         i = place(msg, raw, 1.0)
-        assert ((node._student_deg(msg, i) - (-raw)) % 360) == pytest.approx(180.0, abs=0.5)
+        assert ((lab_deg(msg, i) - (-raw)) % 360) == pytest.approx(180.0, abs=0.5)
 
 
 def test_270_degree_scan_still_maps(node):
     """Nothing here assumes a sweep width; the angle comes from the message."""
     msg = make_scan(points=811, span_deg=270.0)
     i = place(msg, 90.0, 2.0)
-    assert node._student_deg(msg, i) == pytest.approx(90.0, abs=0.5)
+    assert lab_deg(msg, i) == pytest.approx(90.0, abs=0.5)
 
 
 def test_forward_facing_lidar_needs_no_offset(node, monkeypatch):
-    monkeypatch.setattr(tp, 'LIDAR_MOUNT_YAW_DEG', 0.0)
+    monkeypatch.setattr(tp, 'LASER_YAW', 0.0)
     msg = make_scan()
     i = place(msg, 0.0, 1.5)
-    assert node._student_deg(msg, i) == pytest.approx(0.0, abs=0.5)
+    assert lab_deg(msg, i) == pytest.approx(0.0, abs=0.5)
 
 
 def test_camera_preview_is_encoded(node):
@@ -344,32 +356,6 @@ def test_a_colour_only_car_does_not_subscribe_to_depth(monkeypatch, params):
     tp.TeleopNode()
     assert '/camera/depth' not in topics
     assert params['camera_topic'] in topics
-
-
-def test_depth_ramp_orders_near_over_far():
-    """
-    Near must read brighter than far.
-
-    A no-return pixel must be black rather than sharing the dark end with a
-    distant wall.
-    """
-    frame = np.array([[0.0, 0.5, 3.9, 0.0]], np.float32)  # 0 = no return
-    out = tp._colorize_depth(frame, 4.0)
-    near, far = out[0][1].sum(), out[0][2].sum()
-    assert near > far
-    assert far > 0
-    assert tuple(out[0][0]) == tp.NO_RETURN_BGR
-    assert tuple(out[0][3]) == tp.NO_RETURN_BGR
-
-
-def test_depth_beyond_the_ramp_stays_visible():
-    """
-    A wall past depth_max_m clamps to the dark end.
-
-    It must not vanish into the no-return black.
-    """
-    out = tp._colorize_depth(np.array([[99.0]], np.float32), 4.0)
-    assert tuple(out[0][0]) != tp.NO_RETURN_BGR
 
 
 def make_detection(cx, cy, w, h, label='person', score=0.9):

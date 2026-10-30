@@ -132,12 +132,13 @@ class TestConfig:
 
     def test_config_dir_falls_back_to_the_source_tree(self, monkeypatch):
         import ament_index_python.packages as packages
+        from racecar_neo_ros2_driver import paths
 
         def missing(name):
             raise packages.PackageNotFoundError(name)
 
         monkeypatch.setattr(packages, 'get_package_share_directory', missing)
-        assert battery.config_dir() == CONFIG.parent.resolve()
+        assert paths.config_dir() == CONFIG.parent.resolve()
 
 
 class TestEstimate:

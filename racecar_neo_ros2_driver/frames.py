@@ -57,3 +57,52 @@ def xacro_mappings(values: dict[str, float]) -> dict[str, str]:
         suffix = next(s for s in _UNITS if key.endswith(s))
         mappings[key[: -len(suffix)]] = format(value * _UNITS[suffix], '.10g')
     return mappings
+
+
+# -- the lidar mount, for anything that turns scan angles into the car's --
+
+
+def current() -> dict[str, float] | None:
+    """Return the frames the running stack loads, or None when they cannot be read."""
+    from .paths import config_dir
+
+    try:
+        return load_frames(config_dir())
+    except (OSError, ValueError):
+        return None
+
+
+def laser_mount(values: dict[str, float] | None = None) -> tuple[float, float, float]:
+    """
+    Return the lidar's (x m, y m, yaw rad) in base_link.
+
+    A ray at raw scan angle r points at r + yaw in base_link (counterclockwise
+    from the nose). With no frames, the shipped mount: facing aft at the origin.
+    """
+    v = values if values is not None else (current() or {})
+    return (
+        v.get('laser_x_mm', 0.0) / 1000.0,
+        v.get('laser_y_mm', 0.0) / 1000.0,
+        math.radians(v.get('laser_yaw_deg', 180.0)),
+    )
+
+
+def student_deg(raw_rad: float, yaw_rad: float) -> float:
+    """Return the lab angle of a ray: 0 at the nose, positive to the car's right, -180..180."""
+    deg = -math.degrees(raw_rad + yaw_rad)
+    return (deg + 180.0) % 360.0 - 180.0
+
+
+def raw_rad(student: float, yaw_rad: float) -> float:
+    """Return the raw scan angle, -pi to pi, that points at lab angle `student` (degrees)."""
+    raw = -math.radians(student) - yaw_rad
+    return math.atan2(math.sin(raw), math.cos(raw))
+
+
+def student_scan(msg: Any, yaw_rad: float, step: int = 3) -> list[list[float]]:
+    """Return every `step`-th in-range ray as [lab angle deg, range m], for a top-down view."""
+    return [
+        [round(student_deg(msg.angle_min + i * msg.angle_increment, yaw_rad), 1), round(r, 3)]
+        for i in range(0, len(msg.ranges), step)
+        if msg.range_min < (r := msg.ranges[i]) < msg.range_max
+    ]

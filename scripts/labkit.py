@@ -224,3 +224,34 @@ class RunLog:
             return False
         handler.send(200, self.save().encode(), 'text/plain')
         return True
+
+
+# -- /drive --
+
+# Hard throttle cap either way, as the student library's drive.set_max_speed.
+MAX_SPEED = 1.0
+
+
+def clamp_speed(speed: float, reverse: bool = False) -> float:
+    """
+    Clamp throttle to [0, MAX_SPEED], or [-MAX_SPEED, MAX_SPEED] with reverse.
+
+    Every speed a lab dashboard publishes passes through here, so /drive can
+    never carry more than MAX_SPEED.
+    """
+    return max(-MAX_SPEED if reverse else 0.0, min(MAX_SPEED, float(speed)))
+
+
+def drive_msg(speed: float, steer: float, reverse: bool = False) -> Any:
+    """
+    Return the /drive message for a lab command.
+
+    `steer` is in the lab convention, positive to the car's right; on the wire
+    positive turns this car left, so it is negated here (verified on the car).
+    """
+    from ackermann_msgs.msg import AckermannDriveStamped
+
+    out = AckermannDriveStamped()
+    out.drive.speed = clamp_speed(speed, reverse)
+    out.drive.steering_angle = float(-steer)
+    return out

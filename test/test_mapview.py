@@ -103,12 +103,6 @@ class TestMapsFromDisk:
 
 
 class TestLiveData:
-    def test_laser_mount(self, mv):
-        assert mv.laser_mount(None) is None
-        frames = {'laser_x_mm': 238.3, 'laser_y_mm': 0.0, 'laser_yaw_deg': 180.0}
-        x, y, yaw = mv.laser_mount(frames)
-        assert (x, y) == pytest.approx((0.2383, 0.0)) and yaw == pytest.approx(math.pi)
-
     def test_scan_to_map_places_returns(self, mv):
         # Car at (1, 0) facing +y; laser 0.2 m ahead, facing aft. Beam 0 (the laser's +x)
         # points down -y from the laser at (1, 0.2): 1 m out lands at (1, -0.8).

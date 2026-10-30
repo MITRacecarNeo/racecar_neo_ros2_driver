@@ -6,6 +6,20 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Changed
 
+- Web teleop and wall follow turn lidar angles by the car's calibrated lidar
+  yaw (`laser_yaw_deg`, as the map viewer and 8080 Overview already did)
+  instead of a fixed 180 degrees; the old rule (180 minus the raw angle) was
+  right only for a yaw of exactly 0 or 180. Helpers in `frames.py`
+  (`laser_mount`, `student_deg`, `raw_rad`, `student_scan`); both pages draw
+  the scan with `scripts/web/lidar.js`.
+- Camera frames on every page decode through one module (`imaging.py`), which
+  honors padded image rows. The 8080 Overview depth view uses the lab
+  dashboards' ramp and nearest-neighbor scaling, so holes in the depth image
+  stay holes.
+- Lab dashboards build `/drive` in one place (`labkit.drive_msg`): the speed
+  cap and the steering sign.
+- The map viewer, 8080 Overview and 8080 monitoring share one rule for
+  subscriptions kept open while a page is viewing (`webui.IdleGate`).
 - Lab dashboard pages share one page kit (`scripts/web/ui.js`, `api.js`,
   `tune.js`, `logs.js`, and an app-page section in `rcn.css`); the 8080
   home page, launch page, map viewer and terminal use its helpers and POST.

@@ -590,7 +590,7 @@ class TestOnDemand:
         assert not s.warming()
 
     def test_view_tracking(self, dashboard, monkeypatch):
-        monkeypatch.setattr(dashboard, '_last_view', 0.0)
+        monkeypatch.setattr(dashboard, '_view', dashboard.webui.IdleGate(dashboard.VIEW_IDLE_SEC))
         dashboard._wake.clear()
         assert dashboard.note_view() is True and dashboard._wake.is_set()
         assert dashboard.viewing()

@@ -14,6 +14,7 @@
 <script src="/ui/api.js?v={{asset}}"></script>
 <script src="/ui/tune.js?v={{asset}}"></script>
 <script src="/ui/logs.js?v={{asset}}"></script>
+<script src="/ui/lidar.js?v={{asset}}"></script>
 <style>
   .grid { display: grid; grid-template-columns: minmax(300px, 400px) minmax(320px, 1fr) minmax(320px, 1fr); gap: var(--rcn-space-4); align-items: stretch; }
   .column { display: grid; gap: var(--rcn-space-4); align-content: start; }
@@ -88,8 +89,8 @@
     <div class="rcn-zoombox">
       <canvas id="lidar" class="rcn-canvas" width="560" height="560" title="Nose up. Scroll to zoom"></canvas>
       <div class="rcn-zoom">
-        <button class="rcn-btn quiet" onclick="zoom(1 / 1.25)" aria-label="Zoom in"><svg class="rcn-icon"><use href="/ui/icons.svg#plus"/></svg></button>
-        <button class="rcn-btn quiet" onclick="zoom(1.25)" aria-label="Zoom out"><svg class="rcn-icon"><use href="/ui/icons.svg#minus"/></svg></button>
+        <button class="rcn-btn quiet" onclick="lidar.zoom(1 / 1.25)" aria-label="Zoom in"><svg class="rcn-icon"><use href="/ui/icons.svg#plus"/></svg></button>
+        <button class="rcn-btn quiet" onclick="lidar.zoom(1.25)" aria-label="Zoom out"><svg class="rcn-icon"><use href="/ui/icons.svg#minus"/></svg></button>
       </div>
     </div>
     <div class="rcn-caption">Range <span id="lidarRange">4.0</span> m</div>
@@ -289,25 +290,8 @@ function drawOverlay() {
 window.addEventListener('resize', drawOverlay);
 
 // ---- lidar ----
-let VIEW = 4.0;
-function zoom(f) { VIEW = Math.min(12, Math.max(1, VIEW * f)); }
-$('lidar').addEventListener('wheel', (e) => { e.preventDefault(); zoom(e.deltaY > 0 ? 1.2 : 1 / 1.2); });
-function drawLidar(scan) {
-  const c = $('lidar'), x = c.getContext('2d');
-  const cx = c.width / 2, cy = c.height / 2, k = (cx - 10) / VIEW;
-  x.clearRect(0, 0, c.width, c.height);
-  x.strokeStyle = 'rgba(227, 227, 235, 0.18)';
-  for (let r = 1; r <= VIEW; r++) { x.beginPath(); x.arc(cx, cy, r * k, 0, 2 * Math.PI); x.stroke(); }
-  // 0 deg is the nose (up); positive degrees are to the right.
-  x.fillStyle = token('--rcn-orange');
-  for (const [deg, r] of scan) {
-    const a = deg * Math.PI / 180;
-    x.fillRect(cx + Math.sin(a) * r * k - 1.5, cy - Math.cos(a) * r * k - 1.5, 3, 3);
-  }
-  x.fillStyle = token('--rcn-paper');
-  x.beginPath(); x.moveTo(cx, cy - 10); x.lineTo(cx - 7, cy + 8); x.lineTo(cx + 7, cy + 8); x.fill();
-  $('lidarRange').textContent = VIEW.toFixed(1);
-}
+const lidar = RcnLidar.view($('lidar'), $('lidarRange'), { dots: '--rcn-orange' });
+const drawLidar = (scan) => lidar.draw(scan);
 
 // ---- compass: the car points up; turning left by h moves north h clockwise ----
 function drawCompass(heading) {

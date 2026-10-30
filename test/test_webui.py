@@ -413,3 +413,28 @@ class TestPageKit:
         keys = set(re.findall(r"\{ key: '(\w+)'", _lab_page(name)))
         keys |= set(re.findall(r"(?:lo|hi): '(\w+)'", _lab_page(name)))
         assert keys and keys <= set(module.TUNE_KEYS), keys - set(module.TUNE_KEYS)
+
+
+class TestIdleGate:
+    def test_opens_once_and_closes_when_idle(self, webui):
+        t, calls = [0.0], []
+        gate = webui.IdleGate(
+            10.0, lambda: calls.append('open'), lambda: calls.append('close'), lambda: t[0]
+        )
+        assert gate.touch() is True and gate.touch() is False
+        t[0] = 9.0
+        assert gate.check() and calls == ['open']
+        gate.touch()
+        t[0] = 18.0
+        assert gate.check()
+        t[0] = 19.5
+        assert not gate.check() and calls == ['open', 'close']
+        assert gate.touch() is True and calls[-1] == 'open'
+
+    def test_without_callbacks_it_only_tracks_viewing(self, webui):
+        t = [100.0]
+        gate = webui.IdleGate(15.0, clock=lambda: t[0])
+        assert not gate.check()
+        gate.touch()
+        t[0] += 16.0
+        assert not gate.check()

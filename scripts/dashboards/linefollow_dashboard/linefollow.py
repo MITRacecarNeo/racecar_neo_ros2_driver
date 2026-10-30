@@ -41,7 +41,7 @@ from ackermann_msgs.msg import AckermannDriveStamped
 import cv2
 from nav_msgs.msg import Odometry
 import numpy as np
-from racecar_neo_ros2_driver import apps
+from racecar_neo_ros2_driver import apps, imaging
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
@@ -54,7 +54,6 @@ sys.path.insert(0, str(BASE.parents[1]))
 import labkit  # noqa: E402, I100
 import webui  # noqa: E402
 
-MAX_SPEED = 1.0  # hard throttle cap, same idea as drive_real.set_max_speed
 PROCESS_RATE_HZ = 20.0  # frames thresholded per second; the camera runs at 60
 PUBLISH_RATE_HZ = 15.0  # /drive rate, independent of the camera
 MIN_BAND = 0.05  # crop_bottom - crop_top never below this fraction
@@ -93,21 +92,11 @@ _preview_color = b''
 _preview_mask = b''
 
 
-def set_max_speed(speed: float) -> float:
-    """
-    Clamp throttle to [0, MAX_SPEED].
-
-    Every speed that leaves this program passes through here, so /drive can
-    never carry more than 1.0.
-    """
-    return max(0.0, min(MAX_SPEED, float(speed)))
-
-
 def _clean(p: dict[str, Any]) -> None:
     """Clamp every tunable into its range. Caller holds _lock."""
     for k in HSV_KEYS:
         p[k] = max(0, min(HSV_MAX[k], int(p[k])))
-    p['speed'] = set_max_speed(p['speed'])
+    p['speed'] = labkit.clamp_speed(p['speed'])
     p['angle_kp'] = max(0.0, float(p['angle_kp']))
     p['angle_kd'] = max(0.0, float(p['angle_kd']))
     p['speed_kp'] = max(0.0, float(p['speed_kp']))
@@ -212,12 +201,7 @@ class LineFollowNode(Node):
             return
         self._last_proc = now
 
-        if msg.encoding == 'jpeg':
-            arr = cv2.imdecode(np.frombuffer(bytes(msg.data), np.uint8), cv2.IMREAD_COLOR)
-        else:
-            arr = np.frombuffer(msg.data, dtype=np.uint8).reshape(msg.height, msg.width, -1)
-            if msg.encoding == 'rgb8':
-                arr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+        arr = imaging.bgr(msg)
         if arr is None:
             return
         self._res = (arr.shape[1], arr.shape[0])
@@ -247,7 +231,7 @@ class LineFollowNode(Node):
             self._steer_cmd = max(-1.0, min(1.0, cmd))
             # Constant throttle by default; speed_kp bleeds it off as the
             # line drifts from center so a sharp turn is taken slower.
-            self._speed_cmd = set_max_speed(
+            self._speed_cmd = labkit.clamp_speed(
                 p['speed'] * max(0.0, 1.0 - p['speed_kp'] * abs(error))
             )
             self._error = error
@@ -324,10 +308,7 @@ class LineFollowNode(Node):
             )
 
     def _actuate(self) -> None:
-        out = AckermannDriveStamped()
-        out.drive.speed = set_max_speed(self._speed_cmd)
-        out.drive.steering_angle = float(-self._steer_cmd)  # wire positive = left on this car
-        self._pub.publish(out)
+        self._pub.publish(labkit.drive_msg(self._speed_cmd, self._steer_cmd))
         with _lock:
             _state['enc_speed'] = round(self._enc, 3)
 

@@ -102,8 +102,8 @@ def feed(node, img):
 
 
 def test_speed_is_capped():
-    assert lf.set_max_speed(5.0) == lf.MAX_SPEED
-    assert lf.set_max_speed(-1.0) == 0.0
+    assert lf.labkit.clamp_speed(5.0) == lf.labkit.MAX_SPEED
+    assert lf.labkit.clamp_speed(-1.0) == 0.0
 
 
 def test_shipped_yaml_cannot_drive():
@@ -136,7 +136,7 @@ def test_update_clamps_hsv_and_speed(params):
     lf.TUNING.update({'h_high': 500, 'v_low': -3, 'speed': 4.0})
     assert params['h_high'] == 179
     assert params['v_low'] == 0
-    assert params['speed'] == lf.MAX_SPEED
+    assert params['speed'] == lf.labkit.MAX_SPEED
 
 
 def test_update_keeps_the_band_ordered(params):
@@ -271,4 +271,4 @@ def test_actuate_negates_steering_and_caps_speed(node):
     node._actuate()
     msg = node._pub.msgs[-1]
     assert msg.drive.steering_angle == pytest.approx(-0.4)  # wire positive = left
-    assert msg.drive.speed == lf.MAX_SPEED
+    assert msg.drive.speed == lf.labkit.MAX_SPEED

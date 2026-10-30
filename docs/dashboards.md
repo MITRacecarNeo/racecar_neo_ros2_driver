@@ -80,19 +80,25 @@ save them.
 
 ## Lidar convention
 
-`LIDAR_MOUNT_YAW_DEG` is the raw scan angle that points at the car's nose:
+Lab angles are 0 at the nose and positive to the car's right. A ray at raw
+scan angle r points r + yaw counterclockwise from the nose, where yaw is the
+lidar's mount from the car's frames (`laser_yaw_deg` in `config/frames.yaml`,
+with the car profile's calibrated value on top), so:
 
 ```
-student_deg = LIDAR_MOUNT_YAW_DEG - raw_deg
+lab_deg = -(raw_deg + laser_yaw_deg)      wrapped to -180..180
 ```
 
-The RPLIDAR faces aft over 360 degrees at 1080 points, so the nose sits at the
-raw 180 edge and the constant is `180.0`. An object in front reports at raw
-180, one off the car's right at raw +90: a yaw, not a handedness flip, so the
-order around the circle is kept and only the origin moves. Indices and angles
-come from each message's `angle_min` and `angle_increment` and wrap modulo the
-point count, so nothing assumes a sweep width. webteleop and wallfollow carry
-the constant; linefollow does not read the lidar.
+The RPLIDAR faces aft over 360 degrees at 1080 points: the shipped yaw is
+180, the calibrated one close to it (179.619 on the reference car). An object
+in front reports at raw 180, one off the car's right at raw +90. Helpers in
+`racecar_neo_ros2_driver/frames.py`: `laser_mount()`, `student_deg()`,
+`raw_rad()` and `student_scan()`; the map viewer and 8080 Overview read the
+same mount. Indices and angles come from each message's `angle_min` and
+`angle_increment`, so nothing assumes a sweep width. webteleop and wallfollow
+read the lidar; linefollow does not. The student library's `LidarReal` turns
+its samples by the same yaw, read from the base_link to laser transform on
+`/tf_static`.
 
 ## webteleop
 

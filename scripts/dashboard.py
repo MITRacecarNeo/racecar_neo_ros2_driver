@@ -1204,22 +1204,21 @@ def _refresh_apps() -> None:
         _latest_status['apps'] = apps
 
 
-_last_view = 0.0
+_view = webui.IdleGate(VIEW_IDLE_SEC)
 _wake = threading.Event()
 
 
 def note_view() -> bool:
     """Record a page request; return True when monitoring was idle until now."""
-    global _last_view
-    idle = not viewing()
-    _last_view = time.monotonic()
-    if idle:
+    viewing()
+    opened = _view.touch()
+    if opened:
         _wake.set()
-    return idle
+    return opened
 
 
 def viewing() -> bool:
-    return time.monotonic() - _last_view < VIEW_IDLE_SEC
+    return _view.check()
 
 
 def _monitor_loop() -> None:

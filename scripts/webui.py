@@ -23,6 +23,7 @@ import logging
 from pathlib import Path
 import signal
 import threading
+import time
 from types import FrameType
 from typing import Any
 from urllib.parse import unquote, urlparse
@@ -35,7 +36,7 @@ PREFIX = '/ui/'
 CACHE_CONTROL = 'max-age=300'
 # Pages link the shared files as /ui/<file>?v={{asset}}; bump this when a file
 # in scripts/web/ changes, so browsers fetch the new copy at once.
-ASSET_VERSION = '14'
+ASSET_VERSION = '15'
 TYPES = {
     '.css': 'text/css; charset=utf-8',
     '.js': 'text/javascript; charset=utf-8',
@@ -182,6 +183,48 @@ class AppHandler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt: str, *args: Any) -> None:
         """Suppress the default per-request log line."""
+
+
+class IdleGate:
+    """
+    Something kept open while a page asks for it.
+
+    touch() on each request opens it (on_open) if it was closed; check(), from
+    a loop, closes it (on_close) idle_sec after the last request. The caller
+    holds its own lock around both.
+    """
+
+    def __init__(
+        self,
+        idle_sec: float,
+        on_open: Callable[[], None] | None = None,
+        on_close: Callable[[], None] | None = None,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.idle_sec = idle_sec
+        self.open = False
+        self.last = 0.0
+        self._on_open = on_open
+        self._on_close = on_close
+        self._clock = clock
+
+    def touch(self) -> bool:
+        """Note a request; return True when this one opened it."""
+        self.last = self._clock()
+        if self.open:
+            return False
+        if self._on_open is not None:
+            self._on_open()
+        self.open = True
+        return True
+
+    def check(self) -> bool:
+        """Close it when idle too long; return whether it is open."""
+        if self.open and self._clock() - self.last > self.idle_sec:
+            if self._on_close is not None:
+                self._on_close()
+            self.open = False
+        return self.open
 
 
 def spin_until_stopped(spin_once: Callable[[], None], running: Callable[[], bool]) -> int:

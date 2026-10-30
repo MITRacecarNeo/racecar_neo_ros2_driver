@@ -55,10 +55,8 @@ import time
 from typing import Any
 
 from ackermann_msgs.msg import AckermannDriveStamped
-import cv2
 from nav_msgs.msg import Odometry
-import numpy as np
-from racecar_neo_ros2_driver import apps
+from racecar_neo_ros2_driver import apps, frames, imaging
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
@@ -80,38 +78,16 @@ sys.path.insert(0, str(BASE.parents[1]))
 import labkit  # noqa: E402, I100
 import webui  # noqa: E402
 
-MAX_SPEED = 1.0  # hard throttle cap either way, as drive_real.set_max_speed
 PUBLISH_RATE_HZ = 15.0  # /drive rate, independent of the browser
 PREVIEW_RATE_HZ = 15.0
 
 TUNE_KEYS = ('speed', 'angle')
 
-# Raw scan angle that points at the car's nose, in degrees.
-#
-# The RACECAR Neo mounts its RPLIDAR facing aft over 360 degrees at 1080
-# points, so the nose sits at the raw +/-180 edge of the sweep rather than at
-# 0. Measured on hardware: an object in front reports at raw 180, and one off
-# the car's right at raw +90.
-#
-#     student_deg = LIDAR_MOUNT_YAW_DEG - raw_deg
-#
-# The view read 180 degrees out before this constant existed, which is the
-# v0.8.0 known limitation: the plain negation below it assumed the neoracer's
-# forward-facing 270 degree mount. Set this to 0.0 for such a lidar. Nothing
-# here assumes a sweep width; the angle comes from the message's own
-# angle_min and angle_increment. Same convention and constant as
-# wallfollow.py, which steers on it.
-LIDAR_MOUNT_YAW_DEG = 180.0
-
-# Depth coloring. Near reads bright and far reads dark, on the perceptually
-# uniform inferno ramp: a single ordered scale, so a step in color is a step
-# in distance, and it survives being read by a color blind student. The ramp
-# starts at DEPTH_FLOOR rather than 0 so the darkest real reading is still
-# above black. No return is flat gray, so the stereo blind strip on the left
-# and floor closer than the minimum range do not read as a dark object.
-DEPTH_FLOOR = 24
-DEPTH_NEAR_M = 0.15  # below the D435i minimum range; nothing valid is nearer
-NO_RETURN_BGR = (102, 81, 80)
+# The lidar's yaw in base_link from the car's frames (config/frames.yaml, with
+# the car profile's calibrated value on top): about 180 degrees on the RACECAR
+# Neo, whose RPLIDAR faces aft. Lab angles are 0 at the nose and positive to
+# the car's right (frames.student_deg); nothing here assumes a sweep width.
+LASER_YAW = frames.laser_mount()[2]
 
 # Detections older than this are dropped rather than left frozen on the
 # frame. The overlay is only honest if a stale box disappears.
@@ -161,19 +137,9 @@ _display: dict = {'kind': None, 'pixels': [], 'text': '', 'leds': None}
 _last_poll = 0.0
 
 
-def clamp_speed(speed: float) -> float:
-    """
-    Clamp throttle to [-MAX_SPEED, MAX_SPEED].
-
-    Every speed that leaves this program passes through here, so /drive can
-    never carry more than 1.0 in either direction.
-    """
-    return max(-MAX_SPEED, min(MAX_SPEED, float(speed)))
-
-
 def _clean(p: dict[str, Any]) -> None:
     """Clamp every tunable into its range. Caller holds _lock."""
-    p['speed'] = max(0.0, clamp_speed(p['speed']))
+    p['speed'] = labkit.clamp_speed(p['speed'])
     p['angle'] = max(0.0, min(1.0, float(p['angle'])))
     p['cmd_timeout'] = max(0.1, float(p.get('cmd_timeout', 0.5)))
     p['depth_max_m'] = max(0.5, float(p.get('depth_max_m', 4.0)))
@@ -367,19 +333,9 @@ class TeleopNode(Node):
             self._leds_sent = now
             self._pub_leds.publish(UInt8MultiArray(data=d['leds']))
 
-    @staticmethod
-    def _student_deg(msg: LaserScan, i: int) -> float:
-        """Student angle of ray `i`: 0 the nose, positive the car's right."""
-        raw = math.degrees(msg.angle_min + i * msg.angle_increment)
-        return (LIDAR_MOUNT_YAW_DEG - raw + 180.0) % 360.0 - 180.0
-
     def _scan_cb(self, msg: LaserScan) -> None:
         # Every third ray is plenty for a 420 px view.
-        scan = [
-            [round(self._student_deg(msg, i), 1), round(msg.ranges[i], 3)]
-            for i in range(0, len(msg.ranges), 3)
-            if msg.range_min < msg.ranges[i] < msg.range_max
-        ]
+        scan = frames.student_scan(msg, LASER_YAW)
         with _lock:
             _state['scan'] = scan
 
@@ -402,12 +358,7 @@ class TeleopNode(Node):
         if now - self._last_preview < 1.0 / PREVIEW_RATE_HZ:
             return
         self._last_preview = now
-        if msg.encoding == 'jpeg':
-            arr = cv2.imdecode(np.frombuffer(bytes(msg.data), np.uint8), cv2.IMREAD_COLOR)
-        else:
-            arr = np.frombuffer(msg.data, dtype=np.uint8).reshape(msg.height, msg.width, -1)
-            if msg.encoding == 'rgb8':
-                arr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+        arr = imaging.bgr(msg)
         if arr is None:
             return
         h, w = arr.shape[:2]
@@ -415,48 +366,29 @@ class TeleopNode(Node):
         with _lock:
             p = dict(_params)
         pw = int(p['preview_width'])
-        small = cv2.resize(arr, (pw, max(1, round(pw * h / w))))
-        quality = [cv2.IMWRITE_JPEG_QUALITY, int(p['preview_quality'])]
+        frame = imaging.jpeg(imaging.fit_width(arr, pw), p['preview_quality'])
         with _lock:
-            _preview = cv2.imencode('.jpg', small, quality)[1].tobytes()
+            _preview = frame
             _state['res'] = [w, h]
 
     def _depth_cb(self, msg: Image) -> None:
-        """
-        Colorize the depth frame for the browser.
-
-        16UC1 is millimeters, the D435i default; 32FC1 is meters, which some
-        drivers publish instead. Both reach the ramp as meters.
-        """
+        """Colorize the depth frame for the browser."""
         global _depth_preview
         now = time.monotonic()
         self._depth_stamps = self._tick_fps(self._depth_stamps, now, 'depth_fps')
         if now - self._last_depth_preview < 1.0 / PREVIEW_RATE_HZ:
             return
         self._last_depth_preview = now
-        if msg.encoding in ('16UC1', 'mono16'):
-            raw = np.frombuffer(msg.data, dtype=np.uint16).reshape(msg.height, msg.width)
-            meters = raw.astype(np.float32) / 1000.0
-        elif msg.encoding == '32FC1':
-            meters = np.frombuffer(msg.data, dtype=np.float32).reshape(msg.height, msg.width)
-        else:
-            return
-        h, w = meters.shape
         with _lock:
             p = dict(_params)
-        pw = int(p['preview_width'])
-        # Nearest neighbour, not area: averaging a valid reading against a
-        # zero would invent a surface halfway to a hole in the depth image.
-        small = cv2.resize(
-            meters, (pw, max(1, round(pw * h / w))), interpolation=cv2.INTER_NEAREST
+        frame = imaging.depth_preview(
+            msg, int(p['preview_width']), p['depth_max_m'], p['preview_quality']
         )
+        if frame is None:
+            return
         with _lock:
-            _depth_preview = cv2.imencode(
-                '.jpg',
-                _colorize_depth(small, p['depth_max_m']),
-                [cv2.IMWRITE_JPEG_QUALITY, int(p['preview_quality'])],
-            )[1].tobytes()
-            _state['depth_res'] = [w, h]
+            _depth_preview = frame
+            _state['depth_res'] = [msg.width, msg.height]
 
     def _det_cb(self, msg: Any) -> None:
         """
@@ -513,13 +445,10 @@ class TeleopNode(Node):
         timed_out = held and now - stamp > p['cmd_timeout']
         if timed_out:
             fwd = turn = 0
-        self._speed_cmd = clamp_speed(fwd * p['speed'])
+        self._speed_cmd = labkit.clamp_speed(fwd * p['speed'], reverse=True)
         self._steer_cmd = max(-1.0, min(1.0, turn * p['angle']))
 
-        out = AckermannDriveStamped()
-        out.drive.speed = self._speed_cmd
-        out.drive.steering_angle = float(-self._steer_cmd)  # wire positive = left on this car
-        self._pub.publish(out)
+        self._pub.publish(labkit.drive_msg(self._speed_cmd, self._steer_cmd, reverse=True))
 
         t = labkit.now()
         sensors = self._sample_sensors(t)
@@ -544,24 +473,6 @@ class TeleopNode(Node):
                     **sensors,
                 }
             )
-
-
-def _colorize_depth(meters: np.ndarray, far_m: float) -> np.ndarray:
-    """
-    Turn depth in meters into a BGR preview.
-
-    Bright is near, dark is far, pure black is no return. A reading beyond
-    far_m clamps to the dark end rather than dropping out, so a far wall
-    still reads as a wall.
-    """
-    valid = meters > 0
-    near = min(DEPTH_NEAR_M, far_m)
-    span = max(far_m - near, 1e-3)
-    norm = np.clip((meters - near) / span, 0.0, 1.0)
-    ramp = (DEPTH_FLOOR + (1.0 - norm) * (255 - DEPTH_FLOOR)).astype(np.uint8)
-    out = cv2.applyColorMap(ramp, cv2.COLORMAP_INFERNO)
-    out[~valid] = NO_RETURN_BGR
-    return out
 
 
 class Handler(webui.AppHandler):

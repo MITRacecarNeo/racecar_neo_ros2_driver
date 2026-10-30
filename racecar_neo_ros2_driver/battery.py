@@ -127,24 +127,11 @@ class BatteryConfig:
         )
 
 
-def config_dir() -> Path:
-    """Return the config dir the battery guard reads: installed share, else the source tree."""
-    try:
-        from ament_index_python.packages import get_package_share_directory
-
-        share = Path(get_package_share_directory('racecar_neo_ros2_driver')) / 'config'
-    except (ImportError, LookupError):
-        share = None
-    if share is not None and share.is_dir():
-        return share
-    return Path(__file__).resolve().parent.parent / 'config'
-
-
 def load_config(directory: Path | None = None) -> BatteryConfig:
     """Return config/battery.yaml with the car profile's override on top."""
-    from racecar_neo_ros2_driver import car_profile
+    from racecar_neo_ros2_driver import car_profile, paths
 
-    params = car_profile.node_params('battery', 'battery_guard', directory or config_dir())
+    params = car_profile.node_params('battery', 'battery_guard', directory or paths.config_dir())
     return BatteryConfig.from_params(params)
 
 

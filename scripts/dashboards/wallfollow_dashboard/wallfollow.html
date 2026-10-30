@@ -14,6 +14,7 @@
 <script src="/ui/api.js?v={{asset}}"></script>
 <script src="/ui/tune.js?v={{asset}}"></script>
 <script src="/ui/logs.js?v={{asset}}"></script>
+<script src="/ui/lidar.js?v={{asset}}"></script>
 <style>
   .grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) minmax(0, 1fr); gap: var(--rcn-space-4); }
   @media (max-width: 1100px) { .grid { grid-template-columns: 1fr; } }
@@ -39,8 +40,8 @@
     <div class="rcn-zoombox">
       <canvas id="lidar" class="rcn-canvas" width="560" height="560"></canvas>
       <div class="rcn-zoom">
-        <button class="rcn-btn quiet" onclick="zoom(1 / 1.25)" aria-label="Zoom in"><svg class="rcn-icon"><use href="/ui/icons.svg#plus"/></svg></button>
-        <button class="rcn-btn quiet" onclick="zoom(1.25)" aria-label="Zoom out"><svg class="rcn-icon"><use href="/ui/icons.svg#minus"/></svg></button>
+        <button class="rcn-btn quiet" onclick="lidar.zoom(1 / 1.25)" aria-label="Zoom in"><svg class="rcn-icon"><use href="/ui/icons.svg#plus"/></svg></button>
+        <button class="rcn-btn quiet" onclick="lidar.zoom(1.25)" aria-label="Zoom out"><svg class="rcn-icon"><use href="/ui/icons.svg#minus"/></svg></button>
       </div>
     </div>
     <div class="rcn-caption">Range <span id="lidarRange">4.0</span> m</div>
@@ -94,43 +95,24 @@ function loadTune() { post('/load').then(() => RcnUi.toast('Loaded.')); }
 function reset() { post('/load'); }
 function stopCar() { post('/params', { speed: 0 }); }
 
-// ---- lidar ----
-let VIEW = 4.0;
-function zoom(f) { VIEW = Math.min(12, Math.max(1, VIEW * f)); }
-$('lidar').addEventListener('wheel', (e) => { e.preventDefault(); zoom(e.deltaY > 0 ? 1.2 : 1 / 1.2); });
+// ---- lidar: the scan, plus the windows or arc the controller reads ----
+const lidar = RcnLidar.view($('lidar'), $('lidarRange'));
 function drawLidar(scan, ov) {
-  const c = $('lidar'), x = c.getContext('2d');
-  const cx = c.width / 2, cy = c.height / 2, k = (cx - 10) / VIEW;
-  const L = ov.la ? Math.min(ov.la, VIEW) : VIEW;
-  const accent = token('--rcn-orange');
-  x.clearRect(0, 0, c.width, c.height);
-  x.strokeStyle = 'rgba(227, 227, 235, 0.18)';
-  for (let r = 1; r <= VIEW; r++) { x.beginPath(); x.arc(cx, cy, r * k, 0, 2 * Math.PI); x.stroke(); }
-  // 0 deg is the nose (up); positive degrees are to the right.
-  x.fillStyle = token('--rcn-mist');
-  for (const [deg, r] of scan) {
-    const a = deg * Math.PI / 180;
-    x.fillRect(cx + Math.sin(a) * r * k - 1.5, cy - Math.cos(a) * r * k - 1.5, 3, 3);
-  }
-  const ray = (deg, r, color, w) => {
-    const a = deg * Math.PI / 180;
-    x.strokeStyle = color; x.lineWidth = w; x.beginPath();
-    x.moveTo(cx, cy); x.lineTo(cx + Math.sin(a) * r * k, cy - Math.cos(a) * r * k); x.stroke();
-  };
-  if (ov.mode === 'static') {
-    for (const s of [1, -1]) {
-      ray(s * ov.look_angle - ov.window / 2, L, 'rgba(227, 227, 235, 0.45)', 1);
-      ray(s * ov.look_angle + ov.window / 2, L, 'rgba(227, 227, 235, 0.45)', 1);
-      ray(s * ov.look_angle, Math.min(s > 0 ? ov.right : ov.left, VIEW), accent, 3);
+  lidar.draw(scan, ({ range, ray }) => {
+    const L = ov.la ? Math.min(ov.la, range) : range;
+    const gray = 'rgba(227, 227, 235, 0.45)', accent = token('--rcn-orange');
+    if (ov.mode === 'static') {
+      for (const s of [1, -1]) {
+        ray(s * ov.look_angle - ov.window / 2, L, gray, 1);
+        ray(s * ov.look_angle + ov.window / 2, L, gray, 1);
+        ray(s * ov.look_angle, Math.min(s > 0 ? ov.right : ov.left, range), accent, 3);
+      }
+    } else if (ov.mode === 'dynamic') {
+      ray(-ov.width, L, gray, 1);
+      ray(ov.width, L, gray, 1);
+      ray(ov.target_deg, L, accent, 3);
     }
-  } else if (ov.mode === 'dynamic') {
-    ray(-ov.width, L, 'rgba(227, 227, 235, 0.45)', 1);
-    ray(ov.width, L, 'rgba(227, 227, 235, 0.45)', 1);
-    ray(ov.target_deg, L, accent, 3);
-  }
-  x.fillStyle = token('--rcn-paper');
-  x.beginPath(); x.moveTo(cx, cy - 10); x.lineTo(cx - 7, cy + 8); x.lineTo(cx + 7, cy + 8); x.fill();
-  $('lidarRange').textContent = VIEW.toFixed(1);
+  });
 }
 
 RcnApi.poll('/state', 120, (d) => {
