@@ -495,9 +495,9 @@ def state_snapshot(states: dict[str, NodeState], started_wall: float) -> dict[st
 
 def write_state(path: Path, payload: dict[str, Any]) -> None:
     """Write the state file by rename, so readers never see a partial file."""
-    tmp = path.with_name(path.name + '.tmp')
-    tmp.write_text(json.dumps(payload, indent=1) + '\n')
-    os.replace(tmp, path)
+    from racecar_neo_ros2_driver import fileio
+
+    fileio.write_atomic(path, json.dumps(payload, indent=1) + '\n')
 
 
 # ---------------------------------------------------------------------------
@@ -507,7 +507,9 @@ def write_state(path: Path, payload: dict[str, Any]) -> None:
 
 def _log_dir() -> Path:
     """Resolve ~/logs/latest to the real session directory."""
-    latest = Path.home() / 'logs' / 'latest'
+    from racecar_neo_ros2_driver import fileio
+
+    latest = fileio.latest_log_dir()
     if latest.is_symlink() or latest.is_dir():
         return latest.resolve()
     fallback = Path.home() / 'logs'

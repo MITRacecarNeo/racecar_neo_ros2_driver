@@ -48,7 +48,7 @@ import time
 from typing import Any
 
 import numpy as np
-from racecar_neo_ros2_driver import car_profile
+from racecar_neo_ros2_driver import car_profile, fileio
 import yaml
 
 HERE = Path(__file__).resolve().parent
@@ -765,7 +765,7 @@ class Session:
                 print('Teleop did not come up; see logs/teleop.log.')
                 code = 1
                 return code
-            latest = Path.home() / 'logs' / 'latest'
+            latest = fileio.latest_log_dir()
             self.write_meta(teleop_log_dir=str(latest.resolve()) if latest.exists() else None)
             self.start_children('autonomy', 'foxglove', 'bag')
             threading.Thread(target=self.record_load, daemon=True).start()

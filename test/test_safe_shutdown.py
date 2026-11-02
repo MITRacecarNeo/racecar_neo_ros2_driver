@@ -1,9 +1,8 @@
 """Unit tests for scripts/safe_shutdown.py: step order, failures, per-step reports."""
 
 import subprocess
-from types import SimpleNamespace
 
-from conftest import load_script
+from conftest import completed, load_script
 
 ss = load_script('safe_shutdown')
 
@@ -17,7 +16,7 @@ class TestShutdownSequence:
             if any(x in argv for x in raise_on):
                 raise subprocess.TimeoutExpired(argv, kwargs.get('timeout'))
             bad = any(x in argv for x in fail)
-            return SimpleNamespace(returncode=1 if bad else 0, stdout='', stderr='denied')
+            return completed(returncode=1 if bad else 0, stdout='', stderr='denied')
 
         return run, calls
 

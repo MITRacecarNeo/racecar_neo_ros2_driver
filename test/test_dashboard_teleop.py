@@ -10,11 +10,10 @@ timer callback is driven by hand with an explicit clock.
     pytest -q
 """
 
-import importlib.util
 import math
 from pathlib import Path
-import sys
 
+from conftest import load_dashboard
 import cv2
 import numpy as np
 import pytest
@@ -31,10 +30,7 @@ from vision_msgs.msg import (
 )
 
 BASE = Path(__file__).resolve().parents[1] / 'scripts' / 'dashboards' / 'teleop_dashboard'
-_spec = importlib.util.spec_from_file_location('teleop', BASE / 'teleop.py')
-tp = importlib.util.module_from_spec(_spec)
-sys.modules['teleop'] = tp
-_spec.loader.exec_module(tp)
+tp = load_dashboard('teleop')
 
 SHIPPED = None  # yaml as committed, restored after any test that writes it
 

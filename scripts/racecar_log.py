@@ -235,28 +235,17 @@ def dir_size(path: str | Path) -> int:
 
 def load_config(path: str | Path | None = None) -> dict[str, str]:
     """Read the persisted KEY=VALUE defaults."""
-    path = Path(path) if path else config_file()
-    cfg = {}
-    try:
-        for line in Path(path).read_text().splitlines():
-            line = line.strip()
-            if not line or line.startswith('#') or '=' not in line:
-                continue
-            key, _, value = line.partition('=')
-            cfg[key.strip()] = value.strip()
-    except OSError:
-        pass
-    return cfg
+    from racecar_neo_ros2_driver import fileio
+
+    return fileio.read_keyvals(Path(path) if path else config_file())
 
 
 def save_config(cfg: dict[str, str], path: str | Path | None = None) -> None:
     """Persist the defaults, replacing the file."""
-    path = Path(path) if path else config_file()
-    path.parent.mkdir(parents=True, exist_ok=True)
+    from racecar_neo_ros2_driver import fileio
+
     body = ''.join(f'{k}={v}\n' for k, v in sorted(cfg.items()) if v != '')
-    tmp = path.with_name(f'.{path.name}.tmp')
-    tmp.write_text('# racecar log defaults\n' + body)
-    tmp.replace(path)
+    fileio.write_atomic(Path(path) if path else config_file(), '# racecar log defaults\n' + body)
 
 
 def read_state(path: str | Path | None = None) -> dict[str, Any] | None:

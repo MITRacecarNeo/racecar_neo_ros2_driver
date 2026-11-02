@@ -10,20 +10,16 @@ field, and frames are synthetic BGR images carrying a painted stripe.
     pytest -q
 """
 
-import importlib.util
 from pathlib import Path
-import sys
 
+from conftest import load_dashboard
 import cv2
 import numpy as np
 import pytest
 from sensor_msgs.msg import Image
 
 BASE = Path(__file__).resolve().parents[1] / 'scripts' / 'dashboards' / 'linefollow_dashboard'
-_spec = importlib.util.spec_from_file_location('linefollow', BASE / 'linefollow.py')
-lf = importlib.util.module_from_spec(_spec)
-sys.modules['linefollow'] = lf
-_spec.loader.exec_module(lf)
+lf = load_dashboard('linefollow')
 
 SHIPPED = None  # yaml as committed, restored after any test that writes it
 

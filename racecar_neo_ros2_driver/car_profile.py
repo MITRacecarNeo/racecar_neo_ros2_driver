@@ -86,13 +86,11 @@ def write_text(path: Path, text: str, now: datetime | None = None) -> Path:
     A file in the profile that it replaces is copied to history/<stamp>/
     first, at its path relative to the profile.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
+    from .fileio import write_atomic
+
     if path.exists() and _in_profile(path):
         archive(path, now)
-    tmp = path.with_name(f'.{path.name}.tmp')
-    tmp.write_text(text)
-    tmp.replace(path)
-    return path
+    return write_atomic(path, text)
 
 
 def _in_profile(path: Path) -> bool:

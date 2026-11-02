@@ -402,7 +402,9 @@ def read_watchdog_state(log_dir: Path | None = None) -> dict[str, Any] | None:
     Adds `age_sec` (seconds since the watchdog last wrote it) and `stale`
     (older than WATCHDOG_STALE_POLLS polls).
     """
-    path = (log_dir or Path.home() / 'logs' / 'latest') / WATCHDOG_STATE_FILE
+    from racecar_neo_ros2_driver import fileio
+
+    path = (log_dir or fileio.latest_log_dir()) / WATCHDOG_STATE_FILE
     try:
         state: dict[str, Any] = json.loads(path.read_text())
         updated = datetime.fromisoformat(state['updated'])

@@ -9,7 +9,7 @@ import threading
 import time
 from types import SimpleNamespace
 
-from conftest import load_script
+from conftest import completed, load_script
 import pytest
 
 
@@ -305,12 +305,12 @@ class FakeRun:
         self.calls.append(argv)
         if argv[1] == 'is-active':
             out = '\n'.join(self.states.get(u, 'inactive') for u in argv[2:])
-            return SimpleNamespace(stdout=out, returncode=0, stderr='')
+            return completed(stdout=out, returncode=0, stderr='')
         verb, unit = argv[-2], argv[-1]
         if self.fail == verb:
-            return SimpleNamespace(stdout='', returncode=1, stderr=self.stderr)
+            return completed(stdout='', returncode=1, stderr=self.stderr)
         self.states[unit] = 'active' if verb == 'start' else 'inactive'
-        return SimpleNamespace(stdout='', returncode=0, stderr='')
+        return completed(stdout='', returncode=0, stderr='')
 
 
 class TestHome:
@@ -787,7 +787,7 @@ class _ToolRun(FakeRun):
             if action == 'resume':
                 self.states[AUTONOMY] = 'active'
             code = self.codes.get(action, 0)
-            return SimpleNamespace(stdout=f'{action} done\n', stderr='', returncode=code)
+            return completed(stdout=f'{action} done\n', stderr='', returncode=code)
         return super().__call__(argv, **kw)
 
 
@@ -1074,7 +1074,7 @@ def _fake_network(argv, **kwargs):
         out = 'infrastructure\nDuck\n'
     else:
         out = NMCLI_DEVICES
-    return SimpleNamespace(returncode=0, stdout=out)
+    return completed(returncode=0, stdout=out)
 
 
 class TestNetwork:

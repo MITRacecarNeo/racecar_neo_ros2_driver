@@ -10,19 +10,15 @@ the RACECAR Neo's pattern (1080 points over 360 degrees) and at the neoracer's
     pytest -q
 """
 
-import importlib.util
 import math
 from pathlib import Path
-import sys
 
+from conftest import load_dashboard
 import pytest
 from sensor_msgs.msg import LaserScan
 
 BASE = Path(__file__).resolve().parents[1] / 'scripts' / 'dashboards' / 'wallfollow_dashboard'
-_spec = importlib.util.spec_from_file_location('wallfollow', BASE / 'wallfollow.py')
-wf = importlib.util.module_from_spec(_spec)
-sys.modules['wallfollow'] = wf
-_spec.loader.exec_module(wf)
+wf = load_dashboard('wallfollow')
 
 N = wf.WallFollowNode
 NEO_POINTS = 1080

@@ -19,7 +19,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
-from racecar_neo_ros2_driver import apps
+from racecar_neo_ros2_driver import apps, fileio
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
@@ -171,7 +171,7 @@ _latest_status: dict[str, Any] = {
     'rates': {},
     'system_health': {},
     'watchdog_log': [],
-    'log_dir': str(Path.home() / 'logs' / 'latest'),
+    'log_dir': str(fileio.latest_log_dir()),
     'autonomy': {},
     'apps': [],
 }
@@ -666,7 +666,7 @@ def _get_node_list() -> list[str]:
     return sampler.node_list()
 
 
-WATCHDOG_LOG = Path.home() / 'logs' / 'latest' / 'watchdog.log'
+WATCHDOG_LOG = fileio.latest_log_dir() / 'watchdog.log'
 # Byte offset of the last Clear, beside the log of this teleop session.
 WATCHDOG_CLEARED = WATCHDOG_LOG.with_name('watchdog.cleared')
 
@@ -1307,7 +1307,7 @@ def _monitor_loop() -> None:
                 'rates': rates,
                 'system_health': system_health,
                 'watchdog_log': _read_watchdog_tail(),
-                'log_dir': str(Path.home() / 'logs' / 'latest'),
+                'log_dir': str(fileio.latest_log_dir()),
                 'autonomy': autonomy_view(*(_sampler.autonomy() if _sampler else (None, None))),
                 'apps': app_list(unit_states(_app_units())),
                 'battery': current_battery(),
@@ -1479,7 +1479,7 @@ class DashboardHandler(webui.AppHandler):
 def main() -> None:
     global _monitor_running, _sampler, _overview
 
-    logdir = Path.home() / 'logs' / 'latest'
+    logdir = fileio.latest_log_dir()
     handlers: list[logging.Handler] = [logging.StreamHandler(sys.stderr)]
     try:
         if logdir.exists():

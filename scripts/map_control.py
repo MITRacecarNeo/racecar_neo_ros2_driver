@@ -31,7 +31,7 @@ import subprocess
 import time
 from typing import Any
 
-from racecar_neo_ros2_driver import apps, autonomy as au, data_root
+from racecar_neo_ros2_driver import apps, autonomy as au, data_root, fileio
 from racecar_neo_ros2_driver.maps import map_root, parse_pose, ROOT_ENV, valid_name
 
 UNIT = 'racecar-autonomy.service'
@@ -85,16 +85,7 @@ def mode_file() -> Path:
 
 
 def read_mode_file(path: Path | None = None) -> dict[str, str]:
-    values: dict[str, str] = {}
-    try:
-        lines = (path or mode_file()).read_text().splitlines()
-    except OSError:
-        return values
-    for line in lines:
-        key, sep, value = line.strip().partition('=')
-        if sep and not key.startswith('#'):
-            values[key.strip()] = value.strip()
-    return values
+    return fileio.read_keyvals(path or mode_file())
 
 
 def write_mode_file(values: dict[str, str], path: Path | None = None) -> None:
@@ -103,10 +94,7 @@ def write_mode_file(values: dict[str, str], path: Path | None = None) -> None:
     merged = dict.fromkeys(KEYS, '')
     merged['AUTONOMY_FOXGLOVE'] = read_mode_file(path).get('AUTONOMY_FOXGLOVE', '0') or '0'
     merged.update(values)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + '.tmp')
-    tmp.write_text(''.join(f'{k}={merged[k]}\n' for k in KEYS))
-    os.replace(tmp, path)
+    fileio.write_atomic(path, ''.join(f'{k}={merged[k]}\n' for k in KEYS))
 
 
 def new_session(now: datetime) -> str:

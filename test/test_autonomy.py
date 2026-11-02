@@ -1,8 +1,8 @@
 """Unit tests for launch/autonomy.launch.py, maps.py, and the SLAM configs."""
 
-import importlib.util
 from pathlib import Path
 
+from conftest import load_launch
 from launch.actions import DeclareLaunchArgument
 import pytest
 from racecar_neo_ros2_driver import maps
@@ -14,12 +14,7 @@ CONFIG = ROOT / 'config'
 
 @pytest.fixture(scope='module')
 def autonomy():
-    spec = importlib.util.spec_from_file_location(
-        'autonomy_launch', ROOT / 'launch' / 'autonomy.launch.py'
-    )
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return load_launch('autonomy')
 
 
 def _dicts(spec):

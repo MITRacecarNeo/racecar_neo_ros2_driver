@@ -44,7 +44,7 @@ from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from racecar_neo_ros2_driver import apps  # noqa: E402, I100
+from racecar_neo_ros2_driver import apps, fileio  # noqa: E402, I100
 import webui  # noqa: E402
 
 PORT = apps.port('terminal')
@@ -264,10 +264,7 @@ class LayoutStore:
             if base != current['version']:
                 return False, current
             state = {'version': current['version'] + 1, 'layout': clean}
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.path.with_name(f'.{self.path.name}.tmp')
-            tmp.write_text(json.dumps(state))
-            tmp.replace(self.path)
+            fileio.write_atomic(self.path, json.dumps(state))
             return True, state
 
 
@@ -318,10 +315,7 @@ class PresetStore:
         return out
 
     def _write(self, presets: list[dict[str, Any]]) -> None:
-        self.user.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.user.with_name(f'.{self.user.name}.tmp')
-        tmp.write_text(json.dumps(presets, indent=2))
-        tmp.replace(self.user)
+        fileio.write_atomic(self.user, json.dumps(presets, indent=2))
 
     def listing(self) -> dict[str, list[dict[str, Any]]]:
         return {'builtin': self._read(self.builtin), 'user': self._read(self.user)}

@@ -1,10 +1,10 @@
 """Unit tests for the frame tree: frames.yaml loading, xacro render, transforms."""
 
-import importlib.util
 import math
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
+from conftest import load_launch
 from launch_ros.actions import Node
 import numpy as np
 import pytest
@@ -17,13 +17,6 @@ xacro = pytest.importorskip('xacro')
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG = ROOT / 'config'
 URDF = ROOT / 'urdf' / 'racecar_neo.urdf.xacro'
-
-
-def _load_launch(name: str):
-    spec = importlib.util.spec_from_file_location(name, ROOT / 'launch' / f'{name}.launch.py')
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def _render(values: dict[str, float]) -> ET.Element:
@@ -182,19 +175,19 @@ class TestFrameTree:
 
 class TestLaunch:
     def test_robot_description_renders_from_package_layout(self):
-        module = _load_launch('frames')
+        module = load_launch('frames')
         description = module.robot_description(str(ROOT))
         assert '<robot name="racecar_neo"' in description
 
     def test_node_respawns_with_a_cap(self, monkeypatch):
-        module = _load_launch('frames')
+        module = load_launch('frames')
         monkeypatch.setattr(module, 'get_package_share_directory', lambda _: str(ROOT))
         (node,) = [e for e in module.generate_launch_description().entities if isinstance(e, Node)]
         assert node._ExecuteLocal__respawn is True
         assert node._ExecuteLocal__respawn_max_retries == module.RESPAWN_MAX_RETRIES > 0
 
     def test_teleop_includes_frames_behind_an_enable_arg(self):
-        assert 'frames' in _load_launch('teleop')._SUBSYSTEMS
+        assert 'frames' in load_launch('teleop')._SUBSYSTEMS
 
     def test_module_names_frames_yaml(self):
         assert frames.FRAMES_YAML == 'frames.yaml'

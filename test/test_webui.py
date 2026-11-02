@@ -400,16 +400,9 @@ class TestPageKit:
 
     @pytest.mark.parametrize('name', list(LABS))
     def test_every_slider_is_a_setting_the_app_takes(self, name):
-        import importlib.util
-        import sys
+        from conftest import load_dashboard
 
-        path = (
-            Path(__file__).resolve().parent.parent / 'scripts' / 'dashboards' / f'{LABS[name]}.py'
-        )
-        spec = importlib.util.spec_from_file_location(f'kit_{name}', path)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-        spec.loader.exec_module(module)
+        module = load_dashboard(name)
         keys = set(re.findall(r"\{ key: '(\w+)'", _lab_page(name)))
         keys |= set(re.findall(r"(?:lo|hi): '(\w+)'", _lab_page(name)))
         assert keys and keys <= set(module.TUNE_KEYS), keys - set(module.TUNE_KEYS)

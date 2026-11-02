@@ -27,7 +27,6 @@ import json
 import math
 import os
 from pathlib import Path
-import re
 import sys
 import threading
 import time
@@ -542,12 +541,11 @@ def check_network() -> list[Check]:
     # default route at all.
     mode = os.environ.get('RACECAR_ETH_MODE', '')
     if not mode:
+        from racecar_neo_ros2_driver import fileio
+
+        # Written by the networking setup under the real user's home, often through sudo.
         cfg = Path.home() / '.config' / 'racecar' / 'networking.env'
-        try:
-            m = re.search(r'^RACECAR_ETH_MODE="?(\w+)"?', cfg.read_text(), re.MULTILINE)
-            mode = m.group(1) if m else 'static'
-        except OSError:
-            mode = 'static'
+        mode = fileio.read_keyvals(cfg).get('RACECAR_ETH_MODE') or 'static'
     v6def = _run(['ip', '-6', 'route', 'show', 'default', 'dev', 'eth0']).strip()
     if mode == 'static':
         if v6def:

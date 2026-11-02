@@ -1,9 +1,8 @@
 """Unit tests for scripts/health.py (`racecar health`)."""
 
 import json
-from types import SimpleNamespace
 
-from conftest import load_script
+from conftest import completed, load_script
 import pytest
 
 health = load_script('health')
@@ -137,7 +136,7 @@ class TestNvme:
         monkeypatch.setattr(
             data_root, 'current', lambda: (tmp_path, 'Data goes to ~/data on the SD card.')
         )
-        run = lambda argv, **kw: SimpleNamespace(returncode=0, stdout='')  # noqa: E731
+        run = lambda argv, **kw: completed(returncode=0, stdout='')  # noqa: E731
         checks, _ = health.run_nvme(None, run=run, test=lambda f: (400.0, 400.0))
         rows = {c.name: c for c in checks}
         assert rows['drive'].detail == 'CT500P310SSD8'
