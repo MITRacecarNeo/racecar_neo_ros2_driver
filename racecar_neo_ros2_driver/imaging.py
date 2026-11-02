@@ -27,7 +27,7 @@ def _rows(msg: Any, dtype: Any, channels: int) -> np.ndarray:
     """Return the pixel rows, padding dropped; a step of 0 means unpadded rows."""
     item = np.dtype(dtype).itemsize
     step = msg.step or msg.width * channels * item
-    buf = np.frombuffer(bytes(msg.data), dtype=dtype).reshape(msg.height, step // item)
+    buf = np.frombuffer(msg.data, dtype=dtype).reshape(msg.height, step // item)
     img = buf[:, : msg.width * channels]
     return img.reshape(msg.height, msg.width, channels) if channels > 1 else img
 
@@ -36,9 +36,12 @@ def bgr(msg: Any) -> np.ndarray | None:
     """Return a color or mono frame as a BGR (or gray) array, or None for other encodings."""
     if msg.encoding == 'jpeg':
         return cv2.imdecode(np.frombuffer(bytes(msg.data), np.uint8), cv2.IMREAD_COLOR)
-    if msg.encoding in ('rgb8', 'bgr8'):
-        img = _rows(msg, np.uint8, 3)
-        return img[:, :, ::-1] if msg.encoding == 'rgb8' else img
+    if msg.encoding == 'rgb8':
+        # cvtColor returns a contiguous copy; a reversed view would make the
+        # resize copy the frame again.
+        return cv2.cvtColor(_rows(msg, np.uint8, 3), cv2.COLOR_RGB2BGR)
+    if msg.encoding == 'bgr8':
+        return _rows(msg, np.uint8, 3)
     if msg.encoding == 'mono8':
         return _rows(msg, np.uint8, 1)
     return None
