@@ -92,4 +92,4 @@ The RACECAR Neo mux gates /drive on the RB bumper and zeroes output when /joy or
 
 ## Car specifics
 
-This package is calibrated for the RACECAR Neo: RPLIDAR angle mapping via LIDAR_MOUNT_YAW_DEG (the lidar faces aft over 360 degrees at 1080 points, so the nose sits at raw 180), steering sign, speed feedback from /odom, ROS Jazzy paths. Both signs were verified physically on the car.
+This package is calibrated for the RACECAR Neo: RPLIDAR angles turned by the car's calibrated lidar yaw (`laser_yaw_deg`; the lidar faces aft over 360 degrees at 1080 points, so the nose sits near raw 180), steering sign, speed feedback from /odom, ROS Jazzy paths. Both signs were verified physically on the car.

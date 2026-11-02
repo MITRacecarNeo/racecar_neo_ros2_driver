@@ -10,6 +10,7 @@ described in its own README. Install and use: README,
 - [Shared structure](#shared-structure)
 - [Tuning and logs](#tuning-and-logs)
 - [Lidar convention](#lidar-convention)
+- [New app checklist](#new-app-checklist)
 - [webteleop](#webteleop)
 - [linefollow](#linefollow)
 - [wallfollow](#wallfollow)
@@ -99,6 +100,40 @@ same mount. Indices and angles come from each message's `angle_min` and
 read the lidar; linefollow does not. The student library's `LidarReal` turns
 its samples by the same yaw, read from the base_link to laser transform on
 `/tf_static`.
+
+## New app checklist
+
+A new browser app is assembled from the shared pieces, not copied from a
+sibling. Port numbers, unit names and the one-at-a-time rule come from the
+registry; a hard-coded port or unit list is a bug.
+
+1. Registry: an entry in `config/apps.yaml` (id, name, icon from
+   `scripts/web/icons.svg`, port, group, unit `racecar-<id>`, `exclusive`
+   when it publishes `/drive`, `startable`, `needs`). A lab dashboard adds
+   `dir` and `script`, and `setup_dashboards.sh` renders its unit from
+   `racecar-app.service.in`; another app ships its own unit in `scripts/`.
+2. Start from 8080: a startable app's unit goes in
+   `scripts/polkit/49-racecar-dashboards.rules` (`test/test_apps.py` fails
+   until it does).
+3. Server: `PORT = apps.port('<id>')`; a handler on `webui.AppHandler`
+   (`serve_asset`, `page`, `send`, `send_json`, `read_json`); `main` ends in
+   `webui.serve(PORT, Handler, spin=webui.ros_spinner(node),
+   cleanup=webui.ros_shutdown)`. Subscriptions that cost CPU go behind a
+   `webui.IdleGate`.
+4. Sensors: camera frames through `imaging` (`bgr`, `depth_m`, `fit_width`,
+   `jpeg`, `depth_preview`); lidar angles through `frames` (`laser_mount`,
+   `student_deg`, `raw_rad`, `student_scan`).
+5. A lab dashboard: `labkit.Tuning` and `labkit.RunLog` with the app's lock,
+   `labkit.drive_msg` for every `/drive` message.
+6. Page: link `rcn.css`, `ui.js`, `api.js` and what it uses of `charts.js`,
+   `tune.js`, `logs.js`, `lidar.js`, `lost.js`, `battery.js` and
+   `override.js` (a driving app) as `/ui/<file>?v={{asset}}`; set
+   `data-app` on `<html>`; lay out with `rcn-main` and `rcn-section`; poll
+   with `RcnApi.poll`; draw canvas colors from `RcnUi.token`. Keep in the
+   page only its grid and what only it draws.
+7. Tests: a `test/test_dashboard_<id>.py` for the app's own logic; the
+   registry, asset and page-kit tests in `test_apps.py` and `test_webui.py`
+   cover the rest.
 
 ## webteleop
 

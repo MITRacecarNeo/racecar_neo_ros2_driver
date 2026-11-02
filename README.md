@@ -209,7 +209,7 @@ racecar service start       # default: start teleop (watchdog follows via Wants=
 racecar service stop        # default: stop teleop (watchdog follows via BindsTo=)
 racecar service logs teleop # journalctl -u racecar-teleop -f
 racecar service start wallfollow  # a lab dashboard; stops the other /drive publishers
-racecar service enable wallfollow # enable one unit; bare `enable` covers the core five
+racecar service enable wallfollow # enable one unit; bare `enable` covers the core six
 
 racecar setup all                       # run the 12-phase orchestrator
 racecar setup networking --ssid=racecar-neo-2   # configure eth0 addressing + ALFA-dongle AP
@@ -529,7 +529,7 @@ racecar service stop wallfollow
 **One at a time.** All three publish `/drive`, and a second publisher fights the
 mux, so `racecar service start` stops the others before starting the one you
 asked for. Units install disabled; `racecar service enable <name>` makes one
-survive a reboot, and bare `racecar service enable` covers only the core five.
+survive a reboot, and bare `racecar service enable` covers only the core six.
 
 **Safety.** `mux_node` forwards `/drive` only while the RB bumper is held, and
 zeroes the output when `/joy` or the active source goes stale. See
@@ -1249,6 +1249,14 @@ switch it to slow mode before mapping.
 
 Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
 
+- **Unreleased**: one app registry (`config/apps.yaml`) for the 8080 tiles,
+  `racecar service` and the unit install; every app on one server base
+  (`scripts/webui.py`) and one page kit (`scripts/web/`); lab dashboards
+  share tuning, logs and live sliders (wall follow included); web teleop and
+  wall follow use the car's calibrated lidar yaw, as the student library now
+  does; one camera decoder for every page; fixes to `racecar health`'s
+  battery floor, profile paths for `racecar log` and Features, and wall
+  follow's server.
 - **0.9.1** (2026-10-26): low-battery warning and safe shutdown
   (`racecar-battery-guard.service`: time left corrected for the sag while
   driving, a red line on terminals, banners on 8080 and the app pages, LED
