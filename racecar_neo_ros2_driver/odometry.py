@@ -79,6 +79,7 @@ class OdomIntegrator:
         self._stopped_since: float | None = None
         self._held = False
         self.gaps = 0
+        self.rejected = 0
 
     @property
     def holding(self) -> bool:
@@ -86,6 +87,11 @@ class OdomIntegrator:
         return self._held
 
     def step(self, t: float, v: float, omega_raw: float) -> bool:
+        # A corrupted frame can carry a NaN or inf; one would hold the pose at
+        # NaN until restart. The sample is dropped and the pose and clock kept.
+        if not (math.isfinite(t) and math.isfinite(v) and math.isfinite(omega_raw)):
+            self.rejected += 1
+            return False
         s = self.state
         last, s.t = s.t, t
         if last is None or t <= last:
