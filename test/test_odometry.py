@@ -28,6 +28,28 @@ class TestIntegration:
         assert integ.step(1.0, 0.5, 0.0) is False
         assert (integ.state.x, integ.state.t) == (0.0, 1.0)
 
+    @pytest.mark.parametrize('bad', [math.nan, math.inf, -math.inf])
+    @pytest.mark.parametrize('field', ['v', 'omega'])
+    def test_non_finite_sample_leaves_the_pose(self, bad, field):
+        integ = OdomIntegrator()
+        integ.step(0.0, 0.0, 0.0)
+        t = _drive(integ, 0.5, 0.5, 0.2)
+        before = (integ.state.x, integ.state.y, integ.state.theta, integ.state.t)
+        v, omega = (bad, 0.2) if field == 'v' else (0.5, bad)
+        assert integ.step(t + DT, v, omega) is False
+        assert (integ.state.x, integ.state.y, integ.state.theta, integ.state.t) == before
+        assert integ.rejected == 1
+        _drive(integ, 0.5, 0.5, 0.2, t0=t + DT)
+        s = integ.state
+        assert all(math.isfinite(x) for x in (s.x, s.y, s.theta))
+        assert s.x > before[0]
+
+    def test_non_finite_time_is_dropped(self):
+        integ = OdomIntegrator()
+        integ.step(0.0, 0.0, 0.0)
+        assert integ.step(math.nan, 0.5, 0.0) is False
+        assert integ.state.t == 0.0 and integ.rejected == 1
+
     def test_straight_line(self):
         integ = OdomIntegrator()
         integ.step(0.0, 0.0, 0.0)
@@ -154,6 +176,7 @@ class _OdomPit:
         self._yaw_gain = 1.0
         self._speed_scale = 1.0
         self._odom_gaps_logged = 0
+        self._odom_rejected_logged = 0
         self._odom_bias_logged = 0.0
         self.logged = []
 

@@ -642,6 +642,7 @@ class PitNode(Node):
         self._odom_period = 1.0 / float(p('odometry.publish_rate_hz').value)
         self._odom_next_pub: float | None = None
         self._odom_gaps_logged = 0
+        self._odom_rejected_logged = 0
         self._odom_bias_logged = 0.0
         self._pub_odom_integrated = self.create_publisher(
             Odometry, str(p('odometry.topic').value), qos
@@ -669,6 +670,13 @@ class PitNode(Node):
             self.get_logger().warn(
                 f'Odometry input gap over {self._odometry.stale_sec:g} s; pose held '
                 f'({gaps} so far)'
+            )
+        rejected = self._odometry.rejected
+        if rejected != self._odom_rejected_logged:
+            self._odom_rejected_logged = rejected
+            self.get_logger().warn(
+                f'Odometry sample with a non-finite speed or yaw rate dropped ({rejected} so far)',
+                throttle_duration_sec=5.0,
             )
         if abs(bias - self._odom_bias_logged) > ODOM_BIAS_LOG_STEP:
             self._odom_bias_logged = bias
