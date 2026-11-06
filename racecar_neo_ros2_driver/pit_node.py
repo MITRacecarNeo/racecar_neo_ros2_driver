@@ -430,7 +430,7 @@ class PitNode(Node):
         self._link = pit_link.LinkStats(time.monotonic())
         self._fw_info = pit_info.FirmwareInfo(time.monotonic())
         self._fw_resets = 0
-        self._fw_logged = pit_info.PENDING
+        self._fw_settled = 0
         self._pub_fw_info = self.create_publisher(
             String,
             str(self.get_parameter('firmware_info_topic').value),
@@ -646,11 +646,12 @@ class PitNode(Node):
         return status
 
     def _log_firmware(self) -> None:
-        """Log and latch the firmware info when its request settles."""
-        state = self._fw_info.state
-        if state == self._fw_logged:
+        """Log and latch the firmware info each time a request settles."""
+        settled = self._fw_info.settled
+        if settled == self._fw_settled:
             return
-        self._fw_logged = state
+        self._fw_settled = settled
+        state = self._fw_info.state
         if state == pit_info.KNOWN:
             self._pub_fw_info.publish(
                 String(data=self._fw_info.payload.decode('ascii', 'replace'))

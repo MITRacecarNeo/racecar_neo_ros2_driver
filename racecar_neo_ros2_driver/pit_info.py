@@ -99,6 +99,9 @@ class FirmwareInfo:
     def __init__(self, now: float, timeout_sec: float = REPLY_TIMEOUT_SEC) -> None:
         self.timeout = timeout_sec
         self._lock = threading.Lock()
+        # Counts requests that ended (payload in or timed out), so a reader
+        # polling now and then sees a re-read even when it ended between polls.
+        self.settled = 0
         self.restart(now)
 
     def restart(self, now: float) -> None:
@@ -115,6 +118,7 @@ class FirmwareInfo:
         with self._lock:
             if self.state == PENDING and now - self._since > self.timeout:
                 self.state = UNKNOWN
+                self.settled += 1
             return self.state == PENDING
 
     def add(self, chunk: InfoChunk) -> bool:
@@ -128,6 +132,7 @@ class FirmwareInfo:
             self.payload = payload
             self.values = parse_info(payload)
             self.state = KNOWN
+            self.settled += 1
             return True
 
     def summary(self) -> str:

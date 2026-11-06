@@ -83,6 +83,18 @@ class TestRequest:
         info.restart(10.0)
         assert info.requesting(10.5) and info.values == {}
 
+    def test_every_settled_request_counts(self):
+        # A re-read that ends between two polls still shows as a new result.
+        info = _known()
+        assert info.settled == 1
+        info.restart(10.0)
+        for chunk in _chunks(PAYLOAD.replace(b'574e229', b'683bb3e')):
+            info.add(chunk)
+        assert info.state == pit_info.KNOWN and info.settled == 2
+        info.restart(20.0)
+        info.requesting(23.0)
+        assert info.state == pit_info.UNKNOWN and info.settled == 3
+
 
 class TestReport:
     def test_pending(self):
