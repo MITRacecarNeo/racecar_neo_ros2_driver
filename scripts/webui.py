@@ -9,7 +9,8 @@ dashboards) builds its handler on AppHandler and runs it with serve():
 - page() and the shared scripts fill {{asset}} (ASSET_VERSION), {{home}}
   (the 8080 port from config/apps.yaml) and {{driver}} (the package version)
   when they are sent.
-- page() adds the shared footer (web/footer.js) to every page.
+- page() adds the shared footer (web/footer.js) and the header's home
+  button (web/home.js) to every page.
 - serve() runs a threaded server, an optional ROS spin thread, and a clean
   stop on SIGINT and SIGTERM.
 
@@ -40,7 +41,7 @@ PREFIX = '/ui/'
 CACHE_CONTROL = 'max-age=300'
 # Pages link the shared files as /ui/<file>?v={{asset}}; bump this when a file
 # in scripts/web/ changes, so browsers fetch the new copy at once.
-ASSET_VERSION = '16'
+ASSET_VERSION = '18'
 TYPES = {
     '.css': 'text/css; charset=utf-8',
     '.js': 'text/javascript; charset=utf-8',
@@ -50,7 +51,10 @@ TYPES = {
     '.txt': 'text/plain; charset=utf-8',
 }
 PACKAGE_XML = Path(__file__).resolve().parent.parent / 'package.xml'
-FOOTER_TAG = '<script src="/ui/footer.js?v={{asset}}" defer></script>'
+PAGE_TAGS = (
+    '<script src="/ui/footer.js?v={{asset}}" defer></script>'
+    '<script src="/ui/home.js?v={{asset}}" defer></script>'
+)
 # Shared files whose text gets the placeholders filled.
 FILLED = ('.js',)
 # Larger request bodies are refused; no app takes more than a few KiB.
@@ -85,11 +89,11 @@ def fill(text: str) -> str:
     )
 
 
-def with_footer(text: str) -> str:
-    """Add the shared footer script before </body>, or at the end."""
+def with_page_scripts(text: str) -> str:
+    """Add the footer and home button scripts before </body>, or at the end."""
     if '</body>' in text:
-        return text.replace('</body>', FOOTER_TAG + '\n</body>', 1)
-    return text + FOOTER_TAG
+        return text.replace('</body>', PAGE_TAGS + '\n</body>', 1)
+    return text + PAGE_TAGS
 
 
 def static_file(request_path: str, root: Path = WEB_DIR) -> tuple[bytes, str] | None:
@@ -111,7 +115,7 @@ def static_file(request_path: str, root: Path = WEB_DIR) -> tuple[bytes, str] | 
 def read_page(path: Path) -> str:
     """Return a page with its placeholders filled, or a short error page when unreadable."""
     try:
-        return fill(with_footer(path.read_text(encoding='utf-8')))
+        return fill(with_page_scripts(path.read_text(encoding='utf-8')))
     except OSError as exc:
         return f'<!DOCTYPE html><body><pre>{path.name} unreadable: {exc}</pre>'
 

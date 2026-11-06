@@ -87,6 +87,12 @@ h1, h2 { font-family: var(--rcn-font-display); font-weight: 700; margin: 0; }
   font: 500 12px/18px var(--rcn-font-sans); color: var(--rcn-text-muted);
 }
 .rcn-footer b { color: var(--rcn-text); font-weight: 600; }
+/* Home button (home.js), next to the mark in every page header. */
+.rcn-header .rcn-home { flex-shrink: 0; }
+@media (max-width: 600px) {
+  .rcn-header .rcn-home { padding: 6px 8px; }
+  .rcn-header .rcn-home .label { display: none; }
+}
 h1 { font-size: 31px; line-height: 40px; }
 h2 { font-size: 25px; line-height: 32px; }
 h3 { font: 600 20px/28px var(--rcn-font-sans); margin: 0; }
