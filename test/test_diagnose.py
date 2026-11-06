@@ -820,3 +820,28 @@ class TestLinkCheck:
 
     def test_no_graph_skips(self, diag):
         assert diag.link_check(diag.RosResult()).status == 'SKIP'
+
+
+class TestFirmwareCheck:
+    def _ros(self, diag, level=0, message='0.9.1', **values):
+        base = {'state': 'known', 'fw.label': 'v0.9.1.10-pcb', 'fw.git': '574e229'}
+        report = {'level': level, 'message': message, 'values': {**base, **values}}
+        return diag.RosResult(available=True, firmware=report)
+
+    def test_release_build(self, diag):
+        c = diag.firmware_check(self._ros(diag))
+        assert (c.status, c.detail) == ('OK', '0.9.1 (v0.9.1.10-pcb, 574e229)')
+
+    def test_test_build_warns(self, diag):
+        c = diag.firmware_check(self._ros(diag, 1, '0.9.1: open-loop PWM test build'))
+        assert c.status == 'WARN' and 'open-loop' in c.detail
+
+    def test_still_reading_warns(self, diag):
+        assert diag.firmware_check(self._ros(diag, state='pending')).status == 'WARN'
+
+    def test_no_report_fails(self, diag):
+        c = diag.firmware_check(diag.RosResult(available=True))
+        assert c.status == 'FAIL' and 'pit_node' in c.detail
+
+    def test_no_graph_skips(self, diag):
+        assert diag.firmware_check(diag.RosResult()).status == 'SKIP'

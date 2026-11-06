@@ -243,6 +243,24 @@ class TestDiagnosticRates:
         }
         assert sysinfo.read_link_status(SimpleNamespace(status=[])) is None
 
+    def test_firmware_status(self):
+        status = SimpleNamespace(
+            name='pit: firmware',
+            level=b'\x01',
+            message='0.9.1: open-loop PWM test build',
+            values=[
+                SimpleNamespace(key='state', value='known'),
+                SimpleNamespace(key='fw.speed_control', value='raw_pwm'),
+            ],
+        )
+        msg = SimpleNamespace(status=[SimpleNamespace(name='pit: teensy link', values=[]), status])
+        assert sysinfo.read_firmware_status(msg) == {
+            'level': 1,
+            'message': '0.9.1: open-loop PWM test build',
+            'values': {'state': 'known', 'fw.speed_control': 'raw_pwm'},
+        }
+        assert sysinfo.read_firmware_status(SimpleNamespace(status=[])) is None
+
 
 class TestMemory:
     MEMINFO = 'MemTotal:        8245972 kB\nMemFree:  100 kB\nMemAvailable:    6291456 kB\n'

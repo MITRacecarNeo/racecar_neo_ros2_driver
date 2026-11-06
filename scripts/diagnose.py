@@ -752,6 +752,7 @@ class RosResult:
     values: dict[str, Any] = field(default_factory=dict)
     reported: dict[str, float] = field(default_factory=dict)
     link: list[dict[str, float]] = field(default_factory=list)
+    firmware: dict[str, Any] | None = None
 
 
 _read_diagnostic_rates = sysinfo.read_diagnostic_rates
@@ -828,6 +829,7 @@ def sample_ros(window: float, specs: list[TopicSpec]) -> RosResult:
         latest: dict[str, Any] = {}
         reported: dict[str, float] = {}
         link: list[dict[str, float]] = []
+        firmware: list[dict[str, Any]] = []
         qos = QoSProfile(depth=10)
         qos.reliability = QoSReliabilityPolicy.BEST_EFFORT
         qos.durability = QoSDurabilityPolicy.VOLATILE
@@ -857,6 +859,9 @@ def sample_ros(window: float, specs: list[TopicSpec]) -> RosResult:
                     report = sysinfo.read_link_status(msg)
                     if report is not None:
                         link.append(report)
+                    status = sysinfo.read_firmware_status(msg)
+                    if status is not None:
+                        firmware.append(status)
 
                 node.create_subscription(DiagnosticArray, DIAGNOSTICS_TOPIC, on_diagnostics, qos)
             except Exception:  # noqa: BLE001 - fall through to "no rate"
@@ -895,6 +900,7 @@ def sample_ros(window: float, specs: list[TopicSpec]) -> RosResult:
         result.values = latest
         result.reported = dict(reported)
         result.link = list(link)
+        result.firmware = firmware[-1] if firmware else None
         result.available = True
     except Exception as exc:  # noqa: BLE001
         result.reason = f'{exc.__class__.__name__}: {exc}'
@@ -977,6 +983,26 @@ def link_check(ros: RosResult) -> Check:
     if new('crc_failures') or new('dropped_frames') or gap > pit_link.STALL_MS:
         return Check(g, name, WARN, detail)
     return Check(g, name, OK, detail)
+
+
+def firmware_check(ros: RosResult) -> Check:
+    """
+    Report the Teensy firmware pit_node read at start (pit_info.py).
+
+    A test build (open-loop PWM, ESC calibration), an uncommitted build, or no
+    reply warns.
+    """
+    g, name = 'sensors', 'teensy firmware'
+    if not ros.available:
+        return Check(g, name, SKIP, ros.reason or 'no ROS graph')
+    if ros.firmware is None:
+        return Check(g, name, FAIL, f'no report on {DIAGNOSTICS_TOPIC} from pit_node')
+    values = ros.firmware['values']
+    if values.get('state') == 'pending':
+        return Check(g, name, WARN, 'still reading the firmware info; run again')
+    build = ', '.join(v for v in (values.get('fw.label'), values.get('fw.git')) if v)
+    detail = ros.firmware['message'] + (f' ({build})' if build else '')
+    return Check(g, name, WARN if ros.firmware['level'] else OK, detail)
 
 
 def actuator_checks(ros: RosResult) -> list[Check]:
@@ -1246,6 +1272,7 @@ def main() -> int:
             note_turned_off(note_mapping_pause(rate_checks('sensors', SENSOR_TOPICS, ros), ros))
         )
         checks.append(link_check(ros))
+        checks.append(firmware_check(ros))
     if 'actuators' in requested:
         checks.extend(actuator_checks(ros))
     if 'autonomy' in requested:

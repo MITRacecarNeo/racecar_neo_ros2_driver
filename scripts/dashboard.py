@@ -43,6 +43,7 @@ from sysinfo import (  # noqa: E402
     NVME_TEMP_WARN_C,
     read_diagnostic_rates,
     read_ext5v as _read_ext5v,
+    read_firmware_status,
     read_link_status,
     read_memory as _read_memory,
     read_nvme_temp as _read_nvme_temp,
@@ -472,6 +473,7 @@ class _RateSampler(Node):
         self._autonomy: tuple[dict[str, str], float] | None = None
         self._link: tuple[dict[str, float], float] | None = None
         self._link_problem_at: float | None = None
+        self._firmware: tuple[dict[str, Any], float] | None = None
         self._estimate: tuple[dict[str, str], float] | None = None
         latched = QoSProfile(
             depth=1,
@@ -511,6 +513,10 @@ class _RateSampler(Node):
                 dq.popleft()
 
     def _record_diagnostics(self, msg: DiagnosticArray) -> None:
+        firmware = read_firmware_status(msg)
+        if firmware is not None:
+            with self._lock:
+                self._firmware = (firmware, time.monotonic())
         updates: dict[str, float] = {}
         read_diagnostic_rates(msg, updates)
         if not updates:
@@ -560,6 +566,14 @@ class _RateSampler(Node):
                 return None, None, problem
             report, at = self._link
             return dict(report), now - at, problem
+
+    def firmware(self) -> tuple[dict[str, Any] | None, float | None]:
+        """Return pit_node's last firmware info status and its age in seconds."""
+        with self._lock:
+            if self._firmware is None:
+                return None, None
+            report, at = self._firmware
+            return dict(report), time.monotonic() - at
 
     def autonomy(self) -> tuple[dict[str, str] | None, float | None]:
         """Return the last /autonomy/status values and their age in seconds."""
@@ -839,6 +853,40 @@ def link_view(
     else:
         status = 'healthy'
     return {'label': 'Teensy link', 'status': status, 'detail': detail}
+
+
+# fw.speed_control values of the firmware test builds, as the chip names them.
+FIRMWARE_TEST_BUILDS = {
+    'raw_pwm': 'Open-loop PWM test build. Drive commands set raw PWM, not speed',
+    'esc_cal': 'ESC calibration build. Not for driving',
+}
+
+
+def firmware_view(report: dict[str, Any] | None, age: float | None) -> dict[str, Any]:
+    """
+    Return the Firmware chip: the Teensy firmware pit_node read at start.
+
+    Yellow for a test build, an uncommitted build, or no reply; off with no
+    report or while reading.
+    """
+    label = 'Firmware'
+    if report is None or age is None or age > LINK_STALE_SEC:
+        return {'label': label, 'status': 'unsupervised', 'detail': 'No report'}
+    values = report.get('values', {})
+    state = values.get('state')
+    if state == 'pending':
+        return {'label': label, 'status': 'unsupervised', 'detail': 'Reading'}
+    if state != 'known':
+        return {'label': label, 'status': 'stale', 'detail': 'No reply. Firmware older than 0.9.0'}
+    build = ', '.join(v for v in (values.get('fw.label'), values.get('fw.git')) if v)
+    detail = values.get('fw.version', '?') + (f' ({build})' if build else '')
+    control = values.get('fw.speed_control', 'closed_loop')
+    if control != 'closed_loop':
+        test = FIRMWARE_TEST_BUILDS.get(control, f'Speed control {control}')
+        return {'label': label, 'status': 'stale', 'detail': f'{detail}. {test}'}
+    if values.get('fw.git_dirty') == '1':
+        return {'label': label, 'status': 'stale', 'detail': f'{detail}. Uncommitted build'}
+    return {'label': label, 'status': 'healthy', 'detail': detail}
 
 
 def _ext5v_loop() -> None:
@@ -1297,6 +1345,7 @@ def _monitor_loop() -> None:
                     *_ext5v.take(), _read_throttled()[0], _read_under_voltage_alarm()
                 ),
                 'link': link_view(*(_sampler.link() if _sampler else (None, None, None))),
+                'firmware': firmware_view(*(_sampler.firmware() if _sampler else (None, None))),
             }
 
             snapshot = {

@@ -585,6 +585,17 @@ the CRC, so sensor topics skip it. A Teensy reset with no reconnect is
 the Teensy restarting on its own, as when its supply dips; plugging or
 unplugging the IMU connector does this.
 
+`teensy firmware` (`racecar status`, 8080 Firmware chip): the firmware
+`pit_node` read when it started.
+
+- `open-loop PWM test build`: `/drive` speed sets raw ESC PWM, not a speed.
+  Flash a release build before driving.
+- `ESC calibration build`: the car is set up for ESC calibration. Flash a
+  release build before driving.
+- `uncommitted build`: the firmware was built from changed source.
+- `No info reply (firmware before 0.9.0)`: flash firmware 0.9.0 or later.
+- `still reading`: teleop just started. Run `racecar status` again.
+
 `teleop` FAIL: shake and poke need the PIT stream. Start teleop with
 `racecar service start teleop`.
 

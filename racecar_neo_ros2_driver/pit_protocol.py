@@ -23,6 +23,13 @@ Command (Pi -> Teensy), 4-byte magic 0xBEEFDEAD prefix + 470-byte body:
 The firmware frames the command by scanning for the 4 magic bytes, then reading
 sizeof(RxPacket) further bytes; the magic is not part of the RxPacket struct.
 
+Info chunk (Teensy -> Pi), 18 to 146 bytes, framed by magic 0xFEEDC0DE, sent
+only while the command's SystemState has the info_request bit:
+    u32 magic | u8 version | u8 revision | u16 packet_bytes | u32 payload_bytes
+    | u16 index | u16 count | ASCII payload part | u16 checksum
+The parts, joined in index order, are the firmware's key=value info payload
+(racecar-pit-firmware docs/protocol.md, "Info reply"; pit_info.py collects it).
+
 checksum is CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF) over every byte that
 precedes the 2-byte checksum field, magic included. Callers decide whether to
 enforce it (pit_node require_crc).
@@ -36,6 +43,7 @@ PROTO_VERSION = 1
 
 TX_MAGIC = 0xDEADBEEF  # Teensy -> Pi
 RX_MAGIC = 0xBEEFDEAD  # Pi -> Teensy
+INFO_MAGIC = 0xFEEDC0DE  # Teensy -> Pi, info chunk
 
 # Plausible FlySky pulse-width band, in microseconds. Channels sit near
 # 1000-2000 us; a receiver with no transmitter signal reports near 0.
@@ -56,11 +64,19 @@ RX_WIRE_SIZE = 4 + RX_BODY_SIZE  # magic prefix + body
 DOT_MATRIX_LEN = 192
 LED_LEN = 255
 
+_INFO_HEADER = struct.Struct('<IBBHIHH')
+INFO_HEADER_SIZE = _INFO_HEADER.size
+INFO_PART_MAX = 128
+INFO_PACKET_MIN = INFO_HEADER_SIZE + 2
+INFO_PACKET_MAX = INFO_HEADER_SIZE + INFO_PART_MAX + 2
+
 assert TX_PACKET_SIZE == 94, TX_PACKET_SIZE
 assert RX_BODY_SIZE == 470, RX_BODY_SIZE
+assert INFO_HEADER_SIZE == 16, INFO_HEADER_SIZE
 
 _TX_MAGIC_LE = struct.pack('<I', TX_MAGIC)
 _RX_MAGIC_LE = struct.pack('<I', RX_MAGIC)
+_INFO_MAGIC_LE = struct.pack('<I', INFO_MAGIC)
 
 
 def crc16_ccitt(data: bytes, crc: int = 0xFFFF) -> int:
@@ -173,6 +189,34 @@ def decode_telemetry(packet: bytes) -> Telemetry:
     )
 
 
+@dataclass
+class InfoChunk:
+    """One CRC-checked part of the firmware info payload."""
+
+    revision: int
+    payload_bytes: int
+    index: int
+    count: int
+    data: bytes
+
+
+def decode_info_chunk(packet: bytes) -> InfoChunk | None:
+    """Decode one info packet, magic included; None when malformed or the CRC fails."""
+    if not INFO_PACKET_MIN <= len(packet) <= INFO_PACKET_MAX:
+        return None
+    magic, version, revision, packet_bytes, payload_bytes, index, count = _INFO_HEADER.unpack_from(
+        packet
+    )
+    if magic != INFO_MAGIC or version != PROTO_VERSION or packet_bytes != len(packet):
+        return None
+    if count == 0 or index >= count:
+        return None
+    (checksum,) = struct.unpack_from('<H', packet, len(packet) - 2)
+    if crc16_ccitt(packet[:-2]) != checksum:
+        return None
+    return InfoChunk(revision, payload_bytes, index, count, bytes(packet[INFO_HEADER_SIZE:-2]))
+
+
 def encode_command(
     servo: float,
     motor: float,
@@ -210,27 +254,34 @@ def encode_command(
     return wire_wo_crc + struct.pack('<H', crc)
 
 
-def scan_for_packet(buffer: bytearray) -> tuple[Telemetry | None, int]:
+def scan_for_packet(buffer: bytearray) -> tuple[Telemetry | InfoChunk | None, int]:
     """
-    Extract the first complete telemetry frame from a rolling byte buffer.
+    Extract the first complete telemetry frame or info chunk from a rolling buffer.
 
-    Mutates buffer in place. Returns (Telemetry, consumed) for a decoded
-    frame, (None, n) after discarding n bytes that held no frame (scan
-    again), or (None, 0) when more bytes are needed. Bytes before a magic are
-    discarded on their own call, so every byte that held no frame is counted
-    in some n. The last 3 bytes are kept when no magic is present, so a magic
-    split across reads is not lost.
+    Mutates buffer in place. Returns (Telemetry or InfoChunk, consumed) for a
+    decoded packet, (None, n) after discarding n bytes that held no packet
+    (scan again), or (None, 0) when more bytes are needed. Bytes before a magic
+    are discarded on their own call, so every byte that held no packet is
+    counted in some n. The last 3 bytes are kept when no magic is present, so a
+    magic split across reads is not lost. An info chunk failing its CRC is not
+    returned; its bytes count as discarded.
     """
-    idx = buffer.find(_TX_MAGIC_LE)
-    if idx == -1:
+    tx = buffer.find(_TX_MAGIC_LE)
+    info = buffer.find(_INFO_MAGIC_LE)
+    starts = [i for i in (tx, info) if i != -1]
+    if not starts:
         # No magic yet; keep the last 3 bytes in case a magic straddles reads.
         drop = max(0, len(buffer) - 3)
         del buffer[:drop]
         return None, drop
 
+    idx = min(starts)
     if idx > 0:
         del buffer[:idx]
         return None, idx
+
+    if idx == info:
+        return _scan_info(buffer)
 
     if len(buffer) < TX_PACKET_SIZE:
         return None, 0
@@ -244,3 +295,22 @@ def scan_for_packet(buffer: bytearray) -> tuple[Telemetry | None, int]:
         return None, 4
     del buffer[:TX_PACKET_SIZE]
     return telem, TX_PACKET_SIZE
+
+
+def _scan_info(buffer: bytearray) -> tuple[InfoChunk | None, int]:
+    """Take one info chunk from the start of buffer (magic at 0)."""
+    if len(buffer) < INFO_HEADER_SIZE:
+        return None, 0
+    (packet_bytes,) = struct.unpack_from('<H', buffer, 6)
+    if not INFO_PACKET_MIN <= packet_bytes <= INFO_PACKET_MAX:
+        del buffer[:4]
+        return None, 4
+    if len(buffer) < packet_bytes:
+        return None, 0
+    chunk = decode_info_chunk(bytes(buffer[:packet_bytes]))
+    if chunk is None:
+        # A damaged length could reach into the next frame; resync from here.
+        del buffer[:4]
+        return None, 4
+    del buffer[:packet_bytes]
+    return chunk, packet_bytes

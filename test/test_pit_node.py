@@ -1,8 +1,12 @@
 """Unit tests for pit_node: SystemState bits, axis remap, odometry, display frame."""
 
+import threading
+
 import numpy as np
 import pytest
 
+from racecar_neo_ros2_driver import pit_info
+from racecar_neo_ros2_driver import pit_protocol as pit
 from racecar_neo_ros2_driver.mux_node import MuxMode
 from racecar_neo_ros2_driver.pit_node import (
     _MODE_BITS,
@@ -17,6 +21,7 @@ from racecar_neo_ros2_driver.pit_node import (
     SPEED_VARIANCE,
     SYS_DOTMATRIX_ACTIVE,
     SYS_DRIVER_STARTING,
+    SYS_INFO_REQUEST,
     SYS_LED_ACTIVE,
     SYS_MODE_AUTO,
     SYS_MODE_IDLE,
@@ -124,6 +129,48 @@ class _Pit:
         self._start_time = start
         self._led_startup = 10.0
         self._override = False
+
+
+class _Serial:
+    is_open = True
+
+    def __init__(self) -> None:
+        self.written: list[bytes] = []
+
+    def write(self, data: bytes) -> None:
+        self.written.append(data)
+
+
+class _Sender(_Pit):
+    """PitNode._send_command with a fake serial port."""
+
+    _send_command = PitNode._send_command
+
+    def __init__(self, info) -> None:
+        super().__init__()
+        self._ser = _Serial()
+        self._write_lock = threading.Lock()
+        self._cmd_stamp = 0.0
+        self._cmd_timeout = 0.5
+        self._latest_speed = self._latest_steer = 0.0
+        self._speed_sign = self._steer_sign = 1
+        self._fw_info = info
+
+    def sent_state(self) -> int:
+        return self._ser.written[-1][4 + pit.RX_BODY_SIZE - 3]
+
+
+class TestInfoRequest:
+    def test_bit_set_while_requesting_then_cleared(self, monkeypatch):
+        clock = [100.0]
+        monkeypatch.setattr('racecar_neo_ros2_driver.pit_node.time.monotonic', lambda: clock[0])
+        sender = _Sender(pit_info.FirmwareInfo(100.0, timeout_sec=2.0))
+        sender._send_command()
+        assert sender.sent_state() & SYS_INFO_REQUEST
+        clock[0] = 102.5
+        sender._send_command()
+        assert not sender.sent_state() & SYS_INFO_REQUEST
+        assert sender._fw_info.state == pit_info.UNKNOWN
 
 
 class TestBuildDisplay:

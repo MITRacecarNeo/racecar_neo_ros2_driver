@@ -42,9 +42,10 @@ from rclpy.qos import (
 from rclpy.time import Time
 from sensor_msgs.msg import BatteryState, Imu, Joy, MagneticField
 import serial
-from std_msgs.msg import Bool, Float32, Float32MultiArray, UInt8MultiArray
+from std_msgs.msg import Bool, Float32, Float32MultiArray, String, UInt8MultiArray
 from tf2_ros import TransformBroadcaster
 
+from . import pit_info
 from . import pit_link
 from . import pit_protocol as pit
 from .limits import clamp
@@ -61,6 +62,7 @@ SYS_MODE_AUTO = 2
 SYS_DOTMATRIX_ACTIVE = 0x04
 SYS_LED_ACTIVE = 0x08
 SYS_DRIVER_STARTING = 0x10
+SYS_INFO_REQUEST = 0x20
 
 # Odometry covariance sentinels. ROS convention puts -1 in the first element of
 # a block that was not estimated at all; a large finite variance marks a single
@@ -267,6 +269,8 @@ class PitNode(Node):
         # frames above and the override flash while they are fresh.
         self.declare_parameter('dotmatrix_alert_topic', '/dotmatrix/alert')
         self.declare_parameter('led_alert_topic', '/led/alert')
+        # Latched firmware info payload (key=value lines); empty when unknown.
+        self.declare_parameter('firmware_info_topic', '/pit/firmware')
         # A display command counts as "active" (sets the SystemState flag the
         # Teensy watches) only while received within this window.
         self.declare_parameter('display_timeout_sec', 0.5)
@@ -424,6 +428,18 @@ class PitNode(Node):
         self._write_lock = threading.Lock()
         # Touched only by the reader thread, which also publishes it.
         self._link = pit_link.LinkStats(time.monotonic())
+        self._fw_info = pit_info.FirmwareInfo(time.monotonic())
+        self._fw_resets = 0
+        self._fw_logged = pit_info.PENDING
+        self._pub_fw_info = self.create_publisher(
+            String,
+            str(self.get_parameter('firmware_info_topic').value),
+            QoSProfile(
+                depth=1,
+                reliability=QoSReliabilityPolicy.RELIABLE,
+                durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+            ),
+        )
         self._pub_diagnostics = self.create_publisher(DiagnosticArray, '/diagnostics', 10)
         self._running = True
 
@@ -448,6 +464,7 @@ class PitNode(Node):
         try:
             self._ser = serial.Serial(self._port, self._baud, timeout=0.05)
             self.get_logger().info(f'Opened {self._port}')
+            self._fw_info.restart(time.monotonic())
             return True
         except (serial.SerialException, OSError) as exc:
             self._ser = None
@@ -528,6 +545,8 @@ class PitNode(Node):
         speed = self._speed_sign * self._latest_speed if fresh else 0.0
         steer = self._steer_sign * self._latest_steer if fresh else 0.0
         state, dot, led = self._build_display(now)
+        if self._fw_info.requesting(now):
+            state |= SYS_INFO_REQUEST
         wire = pit.encode_command(
             clamp(steer), clamp(speed), system_state=state, dot_matrix=dot, led=led
         )
@@ -559,10 +578,16 @@ class PitNode(Node):
                 continue
             buffer.extend(chunk)
             while True:
-                telem, consumed = pit.scan_for_packet(buffer)
-                if telem is not None:
-                    self._link.frame(telem.timestamp_us, telem.crc_ok)
-                    self._publish_telemetry(telem)
+                packet, consumed = pit.scan_for_packet(buffer)
+                if isinstance(packet, pit.InfoChunk):
+                    self._fw_info.add(packet)
+                elif packet is not None:
+                    self._link.frame(packet.timestamp_us, packet.crc_ok)
+                    if self._link.counts['resets'] != self._fw_resets:
+                        # A Teensy restart may be a reflash: ask again.
+                        self._fw_resets = self._link.counts['resets']
+                        self._fw_info.restart(time.monotonic())
+                    self._publish_telemetry(packet)
                 elif consumed == 0:
                     break
                 else:
@@ -598,21 +623,51 @@ class PitNode(Node):
         return pub is not None and self._listened.get(id(pub), True)
 
     def _report_link(self) -> None:
-        """Publish the link statistics once a second (pit_link.py)."""
+        """Publish the link statistics and firmware info once a second (pit_link, pit_info)."""
         now = time.monotonic()
         if not self._link.due(now):
             return
-        report = self._link.report(now)
+        self._log_firmware()
+        msg = DiagnosticArray()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.status = [
+            self._diagnostic_status(pit_link.STATUS_NAME, self._link.report(now)),
+            self._diagnostic_status(pit_info.STATUS_NAME, self._fw_info.report()),
+        ]
+        self._pub_diagnostics.publish(msg)
+
+    def _diagnostic_status(self, name: str, report: dict[str, Any]) -> DiagnosticStatus:
         status = DiagnosticStatus()
         status.level = bytes([report['level']])
-        status.name = pit_link.STATUS_NAME
+        status.name = name
         status.message = report['message']
         status.hardware_id = str(self._port)
         status.values = [KeyValue(key=k, value=v) for k, v in report['values'].items()]
-        msg = DiagnosticArray()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.status = [status]
-        self._pub_diagnostics.publish(msg)
+        return status
+
+    def _log_firmware(self) -> None:
+        """Log and latch the firmware info when its request settles."""
+        state = self._fw_info.state
+        if state == self._fw_logged:
+            return
+        self._fw_logged = state
+        if state == pit_info.KNOWN:
+            self._pub_fw_info.publish(
+                String(data=self._fw_info.payload.decode('ascii', 'replace'))
+            )
+            report = self._fw_info.report()
+            log = (
+                self.get_logger().info
+                if report['level'] == pit_info.OK
+                else self.get_logger().warn
+            )
+            log(f'Firmware {self._fw_info.summary()}')
+        elif state == pit_info.UNKNOWN:
+            self._pub_fw_info.publish(String(data=''))
+            self.get_logger().warn(
+                'No firmware info reply within '
+                f'{self._fw_info.timeout:g} s (firmware before 0.9.0, or no Teensy)'
+            )
 
     def _setup_odometry(self, qos: QoSProfile) -> None:
         p = self.get_parameter

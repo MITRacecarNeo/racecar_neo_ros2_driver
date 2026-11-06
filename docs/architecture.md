@@ -340,6 +340,7 @@ patterns on `/dotmatrix/pixels`.
 | `/battery/cancel_shutdown` | `std_msgs/Empty` | dashboard (Cancel shutdown) | `battery_guard.py` |
 | `/rc/channels` | `std_msgs/Float32MultiArray` | `pit_node` | `mux_node` (when `rc_authority_enable`), user code |
 | `/rc/link` | `std_msgs/Bool` | `pit_node` | `mux_node` (when `rc_authority_enable`) |
+| `/pit/firmware` | `std_msgs/String` (latched; `key=value` lines, empty when unknown) | `pit_node` | user code |
 | `/odom` | `nav_msgs/Odometry` | `pit_node` | lab dashboards, user code |
 | `/odom/integrated`, `/tf` (`odom -> base_link`) | `nav_msgs/Odometry`, `tf2_msgs/TFMessage` | `pit_node` | user code |
 | `/camera/color` | `sensor_msgs/Image` | `realsense2_camera_node` | `edgetpu_node`, `webteleop`, `linefollow`, user code |
@@ -719,6 +720,19 @@ in the serial reader thread and published there once a second as
 frame rate under the RealSense driver's rate key, so `sysinfo`'s
 `DIAGNOSTIC_RATE_NAMES` gives the dashboard and `racecar status` the PIT
 rate without subscribing to the 200 Hz IMU topic.
+
+The same message carries `pit: firmware` (`pit_info.FirmwareInfo`). From
+each serial open, and again after a Teensy reset, `pit_node` sets the
+`info_request` bit (`0x20`) in its command frames until the firmware's info
+reply is complete or 2 s pass. The Teensy answers with `0xFEEDC0DE` chunks
+between telemetry frames; `pit_protocol.scan_for_packet` returns them as
+`InfoChunk`, and `pit_info.InfoAssembler` joins one revision in index order.
+The whole payload is latched on `/pit/firmware`; the status copies the
+version, label, commit, speed control, and ESC bounds, and warns on a test
+build (`fw.speed_control` other than `closed_loop`), an uncommitted build,
+or no reply (firmware before 0.9.0). The dashboard's Firmware chip and the
+`racecar status` `teensy firmware` row read it through
+`sysinfo.read_firmware_status`.
 
 `shake` and `poke` run `health_watch.Watch`: four threads (EXT5V as fast as
 vcgencmd answers; a 1 s loop for throttle bits and a data-root write; a

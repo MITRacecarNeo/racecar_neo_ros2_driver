@@ -1148,6 +1148,47 @@ class TestLink:
 
     def test_pit_rate_comes_from_the_link_report(self, dashboard):
         assert '/imu/lsm9ds1' not in dashboard.RATE_TOPICS
+
+
+class TestFirmware:
+    def _report(self, **values):
+        base = {
+            'state': 'known',
+            'fw.version': '0.9.1',
+            'fw.label': 'v0.9.1.10-pcb',
+            'fw.git': '574e229',
+            'fw.git_dirty': '0',
+            'fw.speed_control': 'closed_loop',
+        }
+        return {'level': 0, 'message': '', 'values': {**base, **values}}
+
+    def test_release_build(self, dashboard):
+        v = dashboard.firmware_view(self._report(), 1.0)
+        assert (v['status'], v['detail']) == ('healthy', '0.9.1 (v0.9.1.10-pcb, 574e229)')
+
+    def test_raw_pwm_build_is_yellow(self, dashboard):
+        v = dashboard.firmware_view(self._report(**{'fw.speed_control': 'raw_pwm'}), 1.0)
+        assert v['status'] == 'stale' and 'Open-loop PWM test build' in v['detail']
+
+    def test_uncommitted_build_is_yellow(self, dashboard):
+        v = dashboard.firmware_view(self._report(**{'fw.git_dirty': '1'}), 1.0)
+        assert v['status'] == 'stale' and v['detail'].endswith('Uncommitted build')
+
+    def test_no_reply_is_yellow(self, dashboard):
+        v = dashboard.firmware_view(
+            {'level': 1, 'message': '', 'values': {'state': 'unknown'}}, 1.0
+        )
+        assert v['status'] == 'stale' and '0.9.0' in v['detail']
+
+    def test_reading_or_missing_is_off(self, dashboard):
+        pending = {'level': 0, 'message': '', 'values': {'state': 'pending'}}
+        assert dashboard.firmware_view(pending, 1.0)['status'] == 'unsupervised'
+        assert dashboard.firmware_view(None, None)['status'] == 'unsupervised'
+        assert dashboard.firmware_view(self._report(), 10.0)['status'] == 'unsupervised'
+
+    def test_chip_on_the_home_page(self, dashboard):
+        html = (Path(dashboard.__file__).parent / 'dashboard.html').read_text()
+        assert "['health', 'firmware', 'board', 'Firmware', 'compute']" in html
         assert '/imu/lsm9ds1' in dashboard.DISPLAY_RATE_TOPICS
         assert "['health', 'link', 'pulse', 'Link', 'compute']" in dashboard.webui.read_page(
             dashboard._HTML_PATH

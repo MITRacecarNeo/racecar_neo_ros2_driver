@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+### Added
+
+- `pit_node` reads the Teensy firmware's info reply at start and after a
+  Teensy reset: the whole `key=value` payload latched on `/pit/firmware`, and
+  a `pit: firmware` status on `/diagnostics` with the version, label, commit,
+  speed control, and ESC bounds. The 8080 home page has a Firmware chip and
+  `racecar status` a `teensy firmware` row; both warn on a test build, an
+  uncommitted build, or firmware older than 0.9.0, which does not answer.
+
 ### Changed
 
 - Web teleop and wall follow turn lidar angles by the car's calibrated lidar

@@ -701,6 +701,13 @@ resets. `racecar status` has a `teensy link` row from it, and the 8080 Link
 chip shows it: yellow for a minute after a lost frame, CRC failure,
 reconnect, or reset, red with no report.
 
+`pit_node` also asks the Teensy for its firmware info when it starts and
+after a Teensy reset. The 8080 Firmware chip and the `racecar status`
+`teensy firmware` row show the version, label, and commit. They turn yellow
+for a test build (open-loop PWM or ESC calibration), a build with
+uncommitted changes, or firmware too old to answer (before 0.9.0). The full
+reply is on `/pit/firmware`.
+
 `racecar status` has `ext5v` and `nvme` rows: one EXT5V reading, and the
 drive's temperature, wear, and media errors. SMART needs root; setup installs
 `/etc/sudoers.d/racecar-nvme` (`scripts/sudoers.d-racecar-nvme`), which allows
@@ -1257,7 +1264,8 @@ Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
   does; one camera decoder for every page; fixes to `racecar health`'s
   battery floor, profile paths for `racecar log` and Features, and wall
   follow's server; telemetry frames failing the CRC dropped; odometry
-  ignores non-finite samples.
+  ignores non-finite samples; Teensy firmware version on 8080 and in
+  `racecar status`, full info on `/pit/firmware`.
 - **0.9.1** (2026-10-26): low-battery warning and safe shutdown
   (`racecar-battery-guard.service`: time left corrected for the sag while
   driving, a red line on terminals, banners on 8080 and the app pages, LED
