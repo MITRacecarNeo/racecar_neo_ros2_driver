@@ -224,7 +224,7 @@ Every app's server is built on `scripts/webui.py`:
 | `AppHandler` | `send`, `send_json`, `read_json` (body read before `do_POST`, at most 64 KiB, so keep-alive stays clean), `page`, `serve_asset` for `/ui/`, HTTP/1.1, no request log |
 | `serve()` | Threaded server, an optional spin thread, SIGINT and SIGTERM taken back from rclpy, then `cleanup` and the join |
 | `ros_spinner`, `spin_until_stopped` | Executor loop that logs an error and spins on; ends quietly at shutdown |
-| `fill`, `read_page`, `static_file` | `{{asset}}` (`ASSET_VERSION`), `{{home}}` (the 8080 port) and `{{driver}}` (`package.xml` version) filled in pages and shared scripts; `read_page` adds `web/footer.js` (driver version, firmware version from 8080 `/api/about`) and `web/home.js` (header Home button; closes the tab, else loads 8080; skipped on a page whose `<body>` has `data-home`) before `</body>` |
+| `fill`, `read_page`, `static_file` | `{{asset}}` (`ASSET_VERSION`), `{{home}}` (the 8080 port) and `{{driver}}` (`package.xml` version) filled in pages and shared scripts; `read_page` adds `web/footer.js` (driver version, firmware version from 8080 `/api/about`) and `web/home.js` (the header's `.rcn-mark` becomes a home link; closes the tab, else loads 8080; skipped on a page whose `<body>` has `data-home`) before `</body>` |
 | `same_origin`, `sibling_origin` | Origin checks for page-only calls and for CORS from the other app ports |
 | `scripts/web/` `ui.js`, `api.js`, `tune.js`, `logs.js` | The page side: helpers, POST and `/state` polling, tuning sliders, the Logs section (`docs/dashboards.md`) |
 

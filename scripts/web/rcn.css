@@ -80,19 +80,20 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 h1, h2 { font-family: var(--rcn-font-display); font-weight: 700; margin: 0; }
-/* Shared page footer (footer.js); stays at the bottom of flex-column pages. */
+/* Shared page footer (footer.js). Flex-column pages keep it last in the
+   flow; on other pages it sits at the bottom edge of a body at least one
+   screen tall (body.rcn-footed). */
 .rcn-footer {
-  display: flex; flex-wrap: wrap; justify-content: center; gap: 2px var(--rcn-space-4);
-  flex-shrink: 0; padding: 6px var(--rcn-space-4); border-top: 1px solid var(--rcn-steel);
-  font: 500 12px/18px var(--rcn-font-sans); color: var(--rcn-text-muted);
+  display: flex; flex-wrap: wrap; justify-content: center; gap: 0 var(--rcn-space-4);
+  flex-shrink: 0; padding: 2px var(--rcn-space-4) 3px;
+  font: 500 11px/15px var(--rcn-font-sans); color: var(--rcn-text-muted); opacity: 0.55;
 }
-.rcn-footer b { color: var(--rcn-text); font-weight: 600; }
-/* Home button (home.js), next to the mark in every page header. */
-.rcn-header .rcn-home { flex-shrink: 0; }
-@media (max-width: 600px) {
-  .rcn-header .rcn-home { padding: 6px 8px; }
-  .rcn-header .rcn-home .label { display: none; }
-}
+.rcn-footer b { font-weight: 500; }
+body.rcn-footed { position: relative; box-sizing: border-box; min-height: 100vh; min-height: 100dvh; }
+body.rcn-footed > .rcn-footer { position: absolute; left: 0; right: 0; bottom: 0; }
+/* The mark in every page header is the home shortcut (home.js). */
+.rcn-header .rcn-home { display: flex; flex-shrink: 0; border-radius: var(--rcn-radius-sm); }
+.rcn-header .rcn-home:hover .rcn-mark { opacity: 0.8; }
 h1 { font-size: 31px; line-height: 40px; }
 h2 { font-size: 25px; line-height: 32px; }
 h3 { font: 600 20px/28px var(--rcn-font-sans); margin: 0; }

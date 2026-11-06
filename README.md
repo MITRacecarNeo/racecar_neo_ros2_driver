@@ -414,10 +414,10 @@ does. A white border means the app is running.
 - Starting and stopping utilities from the page needs the permission rule
   that `scripts/setup_user_env.sh` installs.
 
-**Footer.** Every page the car serves shows the driver version, the Teensy
-firmware version, "racecar OS", and the copyright line at the bottom.
+**Footer.** Every page the car serves shows "racecar OS", the driver
+version, and the Teensy firmware version at the bottom of the screen.
 
-**Home button.** Every app page has a Home button next to the logo. It
+**Home shortcut.** On every app page, the R logo in the header goes home. It
 closes the tab and leaves the 8080 page in front. A tab opened from a
 bookmark loads the 8080 page instead.
 
@@ -1276,7 +1276,7 @@ Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
   ignores non-finite samples; Teensy firmware version on 8080 and in
   `racecar status`, full info on `/pit/firmware`; the battery guard no
   longer turns the car off after a brief supply sag; a footer with the
-  driver and firmware versions and a Home button on every page.
+  driver and firmware versions on every page; the R logo goes home.
 - **0.9.1** (2026-10-26): low-battery warning and safe shutdown
   (`racecar-battery-guard.service`: time left corrected for the sag while
   driving, a red line on terminals, banners on 8080 and the app pages, LED

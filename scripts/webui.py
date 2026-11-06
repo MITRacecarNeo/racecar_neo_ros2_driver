@@ -10,7 +10,7 @@ dashboards) builds its handler on AppHandler and runs it with serve():
   (the 8080 port from config/apps.yaml) and {{driver}} (the package version)
   when they are sent.
 - page() adds the shared footer (web/footer.js) and the header's home
-  button (web/home.js) to every page.
+  shortcut (web/home.js) to every page.
 - serve() runs a threaded server, an optional ROS spin thread, and a clean
   stop on SIGINT and SIGTERM.
 
@@ -41,7 +41,7 @@ PREFIX = '/ui/'
 CACHE_CONTROL = 'max-age=300'
 # Pages link the shared files as /ui/<file>?v={{asset}}; bump this when a file
 # in scripts/web/ changes, so browsers fetch the new copy at once.
-ASSET_VERSION = '18'
+ASSET_VERSION = '19'
 TYPES = {
     '.css': 'text/css; charset=utf-8',
     '.js': 'text/javascript; charset=utf-8',
@@ -90,7 +90,7 @@ def fill(text: str) -> str:
 
 
 def with_page_scripts(text: str) -> str:
-    """Add the footer and home button scripts before </body>, or at the end."""
+    """Add the footer and home shortcut scripts before </body>, or at the end."""
     if '</body>' in text:
         return text.replace('</body>', PAGE_TAGS + '\n</body>', 1)
     return text + PAGE_TAGS

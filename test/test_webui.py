@@ -149,7 +149,7 @@ class TestFill:
     def test_unreadable_page_is_an_error_page(self, webui, tmp_path):
         assert 'unreadable' in webui.read_page(tmp_path / 'absent.html')
 
-    def test_every_page_gets_the_footer_and_home_button(self, webui, tmp_path):
+    def test_every_page_gets_the_footer_and_home_shortcut(self, webui, tmp_path):
         page = tmp_path / 'p.html'
         page.write_text('<body><main></main></body>')
         text = webui.read_page(page)
@@ -167,7 +167,7 @@ class TestFill:
         xml = webui.PACKAGE_XML.read_text()
         assert webui.driver_version() == re.search(r'<version>([^<]+)<', xml).group(1)
 
-    def test_home_button_closes_the_tab_or_loads_the_home_page(self, webui):
+    def test_home_shortcut_closes_the_tab_or_loads_the_home_page(self, webui):
         body, _ = webui.static_file('/ui/home.js')
         text = body.decode()
         assert '{{' not in text and ':8080/' in text
@@ -175,14 +175,14 @@ class TestFill:
         dashboard = (webui.WEB_DIR.parent / 'dashboard.html').read_text()
         assert '<body data-home>' in dashboard
         assert 'window.close()' in text and 'location.href = home' in text
-        assert '#home' in text
+        assert "querySelector('.rcn-header .rcn-mark')" in text
 
     def test_footer_script_gets_the_versions_and_home_port(self, webui):
         body, _ = webui.static_file('/ui/footer.js')
         text = body.decode()
         assert '{{' not in text and ':8080/api/about' in text
         assert f'Driver {webui.driver_version()}' in text
-        assert 'racecar OS' in text and 'Copyright MIT RACECAR Neo 2026' in text
+        assert 'racecar OS' in text and 'Copyright' not in text
 
     @pytest.mark.parametrize('name', ['battery.js', 'override.js', 'lost.js'])
     def test_shared_scripts_reach_the_home_page(self, webui, name):

@@ -6,10 +6,10 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Added
 
-- A footer on every page the car serves: "racecar OS", the driver version,
-  the Teensy firmware version (from 8080 `/api/about`), and the copyright
-  line. `scripts/webui.py` adds it to each page.
-- A Home button next to the logo on every app page: it closes the tab and
+- A footer at the bottom of every page the car serves: "racecar OS", the
+  driver version, and the Teensy firmware version (from 8080 `/api/about`).
+  `scripts/webui.py` adds it to each page.
+- The R logo in every app page's header goes home: it closes the tab and
   leaves the 8080 page in front, or loads the 8080 page when the browser
   will not close the tab.
 - `pit_node` reads the Teensy firmware's info reply at start and after a
