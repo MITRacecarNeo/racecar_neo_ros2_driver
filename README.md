@@ -556,7 +556,7 @@ teleop.
 | When | What happens |
 |---|---|
 | 15 minutes left | A red line on every terminal and in the tmux status bar: "Low battery: 14 min left. Charge or swap the battery." A banner on 8080 and every app page. LOW, BATT, and "!" on the dot matrix. The LED strip flashes orange, then red. |
-| 5 minutes left | The same 60 s countdown, with Cancel shutdown on 8080 (once per boot). |
+| 5 minutes left | The same 60 s countdown, with Cancel shutdown on 8080 (once per boot). It also stops on its own when the time left climbs back above 10 minutes for 10 s. |
 | Battery at 7.1 V (3.55 V per cell) | A 60 s countdown: "Shutting down in 30 s." on terminals and pages, the seconds left on the dot matrix from 20 s, faster LED flashing. |
 | 0 s | "Turning the car off now. Turn off the power switch." SHUT and DOWN on the dot matrix. The guard stops a `racecar log` recording, the driving apps, autonomy (saving a map being built), and teleop, then powers off. |
 
@@ -567,7 +567,9 @@ draining. Do not leave the car unattended on battery.
 The time left comes from a measured discharge curve of the Gens ace 5000 mAh
 2S battery and the current over the last 5 minutes. The PIT firmware's LED
 charge bar uses the same curve. The guard reads the cell count at boot and
-measures the capacity of the battery in the car as it runs. The curve was
+measures the capacity of the battery in the car as it runs. A sudden drop
+the current cannot explain, such as a sagging bench supply, does not count
+toward that measurement. The curve was
 measured with the car idling; while driving, the guard adds back the
 voltage sag for the current above idle (30 mOhm times the extra amps), so
 time left holds steady between driving and standing. Tested on full
@@ -1265,7 +1267,8 @@ Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
   battery floor, profile paths for `racecar log` and Features, and wall
   follow's server; telemetry frames failing the CRC dropped; odometry
   ignores non-finite samples; Teensy firmware version on 8080 and in
-  `racecar status`, full info on `/pit/firmware`.
+  `racecar status`, full info on `/pit/firmware`; the battery guard no
+  longer turns the car off after a brief supply sag.
 - **0.9.1** (2026-10-26): low-battery warning and safe shutdown
   (`racecar-battery-guard.service`: time left corrected for the sag while
   driving, a red line on terminals, banners on 8080 and the app pages, LED

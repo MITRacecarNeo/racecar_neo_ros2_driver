@@ -247,7 +247,7 @@ class Announcer:
                 self._last_count = seconds
         if 'shutdown' in events:
             due.append(final_message())
-        if 'canceled' in events:
+        if 'canceled' in events or 'recovered' in events:
             due.append(canceled_message())
             self._last_count = None
         for msg in due:

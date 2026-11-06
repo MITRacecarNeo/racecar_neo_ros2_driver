@@ -59,6 +59,7 @@ battery_guard:
     shutdown_min: 5.0
 
     # true: the countdown also starts at shutdown_min left (held 60 s, can be
-    # canceled once). false: that estimate only warns; the floor still shuts
-    # down.
+    # canceled once, stops on its own when time left climbs back above
+    # shutdown_min plus 5 min for 10 s). false: that estimate only warns; the
+    # floor still shuts down.
     shutdown_enabled: true

@@ -641,7 +641,8 @@ count. Set `cells` in `params/battery.yaml` for a battery it cannot read.
 The countdown has no Cancel shutdown button: a countdown at the 7.1 V floor
 cannot be canceled. Turn the car off and change the battery. A countdown at
 5 minutes left can be canceled once per boot; the floor still shuts the car
-down.
+down. It also stops on its own when the time left climbs back above 10
+minutes for 10 s, as when a bench supply sagged and recovered.
 
 Time left jumps between driving and standing: the load correction is off or
 wrong for this battery. Run `python3 scripts/battery_curve.py` on its guard

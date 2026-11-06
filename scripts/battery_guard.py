@@ -11,7 +11,10 @@ second. Levels:
 - countdown: COUNTDOWN_SEC to shutdown. Starts when the 30 s median voltage
   is at or under the floor, or (with shutdown_enabled) when minutes left stay
   at or under shutdown_min for HOLD_SEC. An estimate countdown can be canceled
-  once per boot on /battery/cancel_shutdown; a floor countdown cannot.
+  once per boot on /battery/cancel_shutdown, and cancels itself when minutes
+  left over the last RECOVER_WINDOW_SEC stay above shutdown_min plus
+  RECOVER_MARGIN_MIN for RECOVER_HOLD_SEC (a supply that sagged and came
+  back); a floor countdown cannot be canceled.
 - off: the shutdown sequence has run.
 
 Stale or implausible readings never warn or start a countdown; a countdown
@@ -63,6 +66,11 @@ DISPLAY_SEC = 0.05
 HOLD_SEC = 60.0
 FLOOR_MEDIAN_SEC = 30.0
 COUNTDOWN_SEC = 60.0
+# Recovery inside an estimate countdown is judged on a short charge window:
+# the estimate's soc_window_sec median would take half the countdown to move.
+RECOVER_WINDOW_SEC = 10.0
+RECOVER_HOLD_SEC = 10.0
+RECOVER_MARGIN_MIN = 5.0
 # Minutes left must rise this far above warn_min to clear a warning.
 WARN_CLEAR_MARGIN_MIN = 2.0
 # Kept for the estimate window; also bounds memory.
@@ -103,6 +111,7 @@ class Guard:
     _warn_since: float | None = None
     _clear_since: float | None = None
     _short_since: float | None = None
+    _recover_since: float | None = None
     _learned_t: float | None = None
 
     def __post_init__(self) -> None:
@@ -141,6 +150,10 @@ class Guard:
             if now >= self.shutdown_at:
                 self.level = 'off'
                 events.append('shutdown')
+            elif self.trigger == 'estimate' and self._recovered(now):
+                self.level, self.trigger, self.shutdown_at = 'warn', '', None
+                self._short_since = None
+                events.append('recovered')
             return events
         if not est.valid:
             self._warn_since = self._clear_since = self._short_since = None
@@ -193,8 +206,25 @@ class Guard:
         recent.sort()
         return recent[len(recent) // 2] <= self.cfg.floor_volts(self.cells)
 
+    def _recovered(self, now: float) -> bool:
+        """Return True once the short-window estimate has held above the shutdown margin."""
+        assert self.cells is not None
+        cfg = replace(self.cfg, soc_window_sec=RECOVER_WINDOW_SEC)
+        fast = estimate(self.samples, now, cfg, self.cells, self.learner.capacity_mah)
+        minutes = fast.minutes_left if fast.valid else None
+        if (
+            minutes is None
+            or minutes <= self.cfg.shutdown_min + RECOVER_MARGIN_MIN
+            or self._floor_reached(now)
+        ):
+            self._recover_since = None
+            return False
+        self._recover_since = self._recover_since if self._recover_since is not None else now
+        return now - self._recover_since >= RECOVER_HOLD_SEC
+
     def _start_countdown(self, now: float, trigger: str) -> list[str]:
         self.level, self.trigger, self.shutdown_at = 'countdown', trigger, now + COUNTDOWN_SEC
+        self._recover_since = None
         return [f'countdown {trigger}']
 
 

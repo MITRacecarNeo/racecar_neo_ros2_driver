@@ -66,6 +66,13 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Fixed
 
+- Battery guard on a sagging supply: a countdown from the time estimate
+  stops when the time left climbs back above `shutdown_min` plus 5 minutes
+  for 10 s (judged on the last 10 s of readings); the floor countdown still
+  always finishes. The capacity learner leaves out a drop in charge that the
+  current drawn cannot explain (over 5 points between two readings) until
+  the charge comes back, so a supply sag no longer halves the capacity and
+  the time left.
 - Odometry drops a sample with a non-finite speed, yaw rate or time; one NaN
   held the integrated pose at NaN until teleop restarted. `pit_node` warns
   when it drops one.

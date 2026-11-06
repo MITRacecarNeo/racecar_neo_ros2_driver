@@ -14,6 +14,7 @@ from racecar_neo_ros2_driver.battery import (
     detect_cells,
     Estimate,
     estimate,
+    LEARN_STEP_PCT,
     soc_percent,
 )
 import yaml
@@ -251,6 +252,25 @@ class TestCapacityLearner:
     def test_fills_a_gap_at_the_last_current(self):
         learner = _discharge(CapacityLearner(self.cfg), 4000.0, to_drop=45.0, skip=[(600, 1200)])
         assert learner.measured_mah == pytest.approx(4000.0, rel=0.01)
+
+    def test_supply_step_is_not_use(self):
+        # A bench supply sagging at 2 A: the charge reading falls 74 to 13
+        # within seconds, far more than 2 A explains, then comes back.
+        learner = CapacityLearner(self.cfg)
+        t = 0.0
+        for soc in [74.0] * 60 + [40.0, 13.0] + [13.0] * 60 + [65.0] * 60:
+            learner.update(t, 2.0, soc)
+            t += 1.0
+        assert learner.drop_pct < LEARN_STEP_PCT
+        assert learner.measured_mah is None
+        assert learner.capacity_mah == 4700.0
+
+    def test_real_use_after_a_step_still_learns(self):
+        learner = CapacityLearner(self.cfg)
+        learner.update(0.0, 2.0, 95.0)
+        learner.update(1.0, 2.0, 60.0)  # step, left out
+        learner = _discharge(learner, 4000.0, to_drop=45.0, start_soc=60.0)
+        assert learner.measured_mah == pytest.approx(4000.0, rel=0.02)
 
     def test_counts_from_the_first_charge_reading(self):
         learner = CapacityLearner(self.cfg)

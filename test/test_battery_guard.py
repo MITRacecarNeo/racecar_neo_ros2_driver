@@ -141,6 +141,46 @@ class TestEstimateShutdown:
         _, events = _run(guard, FLOOR_V, 40, t)
         assert events == ['countdown floor']
 
+    def test_countdown_cancels_when_the_supply_recovers(self):
+        # A supply that sags into an estimate countdown and comes back.
+        guard = bg.Guard(BatteryConfig(shutdown_enabled=True))
+        t, _ = _run(guard, OK_V, 100, 0.0)
+        t, events = _run(guard, SHORT_V, 100, t)
+        assert guard.level == 'countdown' and guard.trigger == 'estimate'
+        t, events = _run(guard, OK_V, 30, t)
+        assert events == ['recovered']
+        assert guard.level == 'warn' and guard.shutdown_at is None
+        assert not guard.canceled  # the operator's one cancel is still there
+
+    def test_brief_recovery_does_not_cancel(self):
+        guard = bg.Guard(BatteryConfig(shutdown_enabled=True))
+        t, _ = _run(guard, SHORT_V, 100, 0.0)
+        t, events = _run(guard, OK_V, 8, t)
+        t, more = _run(guard, SHORT_V, 60, t)
+        assert 'shutdown' in events + more
+
+    def test_no_recovery_while_low(self):
+        guard = bg.Guard(BatteryConfig(shutdown_enabled=True))
+        t, _ = _run(guard, SHORT_V, 100, 0.0)
+        _, events = _run(guard, SHORT_V, 70, t)
+        assert events == ['shutdown']
+
+    def test_floor_countdown_never_recovers(self):
+        guard = bg.Guard(BatteryConfig())
+        t, _ = _run(guard, FLOOR_V, 40, 0.0)
+        _, events = _run(guard, OK_V, 70, t)
+        assert events == ['shutdown']
+
+    def test_diana_supply_sag(self):
+        # 2026-11-06 parity car on a wall supply: 7.80 V, sag to about 7.2 V
+        # for 100 s with the current barely moving, then back to 7.75 V.
+        guard = bg.Guard(BatteryConfig(shutdown_enabled=True))
+        t, _ = _run(guard, 7.80, 65, 0.0, amps=1.9)
+        t, events = _run(guard, 7.20, 100, t, amps=2.2)
+        t, more = _run(guard, 7.75, 120, t, amps=1.9)
+        assert 'shutdown' not in events + more
+        assert guard.learner.capacity_mah == 4700.0
+
 
 class TestCells:
     def test_detected_from_the_first_sample(self):
