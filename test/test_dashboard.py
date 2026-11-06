@@ -1186,6 +1186,13 @@ class TestFirmware:
         assert dashboard.firmware_view(None, None)['status'] == 'unsupervised'
         assert dashboard.firmware_view(self._report(), 10.0)['status'] == 'unsupervised'
 
+    def test_footer_versions(self, dashboard):
+        about = dashboard.about_view(self._report(), 1.0)
+        assert about == {'driver': dashboard.webui.driver_version(), 'firmware': '0.9.1'}
+        assert dashboard.about_view(None, None)['firmware'] is None
+        pending = {'level': 0, 'message': '', 'values': {'state': 'pending'}}
+        assert dashboard.about_view(pending, 1.0)['firmware'] is None
+
     def test_chip_on_the_home_page(self, dashboard):
         html = (Path(dashboard.__file__).parent / 'dashboard.html').read_text()
         assert "['health', 'firmware', 'board', 'Firmware', 'compute']" in html

@@ -6,8 +6,10 @@ dashboards) builds its handler on AppHandler and runs it with serve():
 
 - /ui/ serves scripts/web/ (styles, fonts, logos, icons, shared scripts), so
   every page works on the access point with no internet.
-- page() and the shared scripts fill {{asset}} (ASSET_VERSION) and {{home}}
-  (the 8080 port from config/apps.yaml) when they are sent.
+- page() and the shared scripts fill {{asset}} (ASSET_VERSION), {{home}}
+  (the 8080 port from config/apps.yaml) and {{driver}} (the package version)
+  when they are sent.
+- page() adds the shared footer (web/footer.js) to every page.
 - serve() runs a threaded server, an optional ROS spin thread, and a clean
   stop on SIGINT and SIGTERM.
 
@@ -17,10 +19,12 @@ No ROS import at module level; the terminal app runs without ROS.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+from functools import cache
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import logging
 from pathlib import Path
+import re
 import signal
 import threading
 import time
@@ -36,7 +40,7 @@ PREFIX = '/ui/'
 CACHE_CONTROL = 'max-age=300'
 # Pages link the shared files as /ui/<file>?v={{asset}}; bump this when a file
 # in scripts/web/ changes, so browsers fetch the new copy at once.
-ASSET_VERSION = '15'
+ASSET_VERSION = '16'
 TYPES = {
     '.css': 'text/css; charset=utf-8',
     '.js': 'text/javascript; charset=utf-8',
@@ -45,6 +49,8 @@ TYPES = {
     '.woff2': 'font/woff2',
     '.txt': 'text/plain; charset=utf-8',
 }
+PACKAGE_XML = Path(__file__).resolve().parent.parent / 'package.xml'
+FOOTER_TAG = '<script src="/ui/footer.js?v={{asset}}" defer></script>'
 # Shared files whose text gets the placeholders filled.
 FILLED = ('.js',)
 # Larger request bodies are refused; no app takes more than a few KiB.
@@ -60,9 +66,30 @@ def home_port() -> int:
     return apps.home_port()
 
 
+@cache
+def driver_version() -> str:
+    """Return the driver version from package.xml, or 'unknown'."""
+    try:
+        found = re.search(r'<version>([^<]+)</version>', PACKAGE_XML.read_text(encoding='utf-8'))
+    except OSError:
+        return 'unknown'
+    return found.group(1).strip() if found else 'unknown'
+
+
 def fill(text: str) -> str:
-    """Replace {{asset}} and {{home}} in a page or a shared script."""
-    return text.replace('{{asset}}', ASSET_VERSION).replace('{{home}}', str(home_port()))
+    """Replace {{asset}}, {{home}} and {{driver}} in a page or a shared script."""
+    return (
+        text.replace('{{asset}}', ASSET_VERSION)
+        .replace('{{home}}', str(home_port()))
+        .replace('{{driver}}', driver_version())
+    )
+
+
+def with_footer(text: str) -> str:
+    """Add the shared footer script before </body>, or at the end."""
+    if '</body>' in text:
+        return text.replace('</body>', FOOTER_TAG + '\n</body>', 1)
+    return text + FOOTER_TAG
 
 
 def static_file(request_path: str, root: Path = WEB_DIR) -> tuple[bytes, str] | None:
@@ -84,7 +111,7 @@ def static_file(request_path: str, root: Path = WEB_DIR) -> tuple[bytes, str] | 
 def read_page(path: Path) -> str:
     """Return a page with its placeholders filled, or a short error page when unreadable."""
     try:
-        return fill(path.read_text(encoding='utf-8'))
+        return fill(with_footer(path.read_text(encoding='utf-8')))
     except OSError as exc:
         return f'<!DOCTYPE html><body><pre>{path.name} unreadable: {exc}</pre>'
 

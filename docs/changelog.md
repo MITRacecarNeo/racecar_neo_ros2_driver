@@ -6,6 +6,9 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Added
 
+- A footer on every page the car serves: "racecar OS", the driver version,
+  the Teensy firmware version (from 8080 `/api/about`), and the copyright
+  line. `scripts/webui.py` adds it to each page.
 - `pit_node` reads the Teensy firmware's info reply at start and after a
   Teensy reset: the whole `key=value` payload latched on `/pit/firmware`, and
   a `pit: firmware` status on `/diagnostics` with the version, label, commit,

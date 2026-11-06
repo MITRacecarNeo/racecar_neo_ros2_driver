@@ -80,6 +80,13 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 h1, h2 { font-family: var(--rcn-font-display); font-weight: 700; margin: 0; }
+/* Shared page footer (footer.js); stays at the bottom of flex-column pages. */
+.rcn-footer {
+  display: flex; flex-wrap: wrap; justify-content: center; gap: 2px var(--rcn-space-4);
+  flex-shrink: 0; padding: 6px var(--rcn-space-4); border-top: 1px solid var(--rcn-steel);
+  font: 500 12px/18px var(--rcn-font-sans); color: var(--rcn-text-muted);
+}
+.rcn-footer b { color: var(--rcn-text); font-weight: 600; }
 h1 { font-size: 31px; line-height: 40px; }
 h2 { font-size: 25px; line-height: 32px; }
 h3 { font: 600 20px/28px var(--rcn-font-sans); margin: 0; }

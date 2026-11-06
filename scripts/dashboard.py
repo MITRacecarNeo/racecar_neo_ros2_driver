@@ -889,6 +889,16 @@ def firmware_view(report: dict[str, Any] | None, age: float | None) -> dict[str,
     return {'label': label, 'status': 'healthy', 'detail': detail}
 
 
+def about_view(report: dict[str, Any] | None, age: float | None) -> dict[str, Any]:
+    """Return the page footer's versions: the driver, and the firmware pit_node read."""
+    firmware = None
+    if report is not None and age is not None and age <= LINK_STALE_SEC:
+        values = report.get('values', {})
+        if values.get('state') == 'known':
+            firmware = values.get('fw.version')
+    return {'driver': webui.driver_version(), 'firmware': firmware}
+
+
 def _ext5v_loop() -> None:
     while _monitor_running:
         if viewing():
@@ -1419,6 +1429,12 @@ class DashboardHandler(webui.AppHandler):
             origin = lab_origin(self.headers.get('Origin'), self.headers.get('Host'))
             cors = {'Access-Control-Allow-Origin': origin, 'Vary': 'Origin'} if origin else {}
             self.send_json({'battery': current_battery()}, 200, cors)
+        elif url.path == '/api/about':
+            origin = lab_origin(self.headers.get('Origin'), self.headers.get('Host'))
+            cors = {'Access-Control-Allow-Origin': origin, 'Vary': 'Origin'} if origin else {}
+            self.send_json(
+                about_view(*(_sampler.firmware() if _sampler else (None, None))), 200, cors
+            )
         elif url.path == '/api/history':
             now = time.time()
             self.send_json(
