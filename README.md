@@ -1256,7 +1256,8 @@ Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
   wall follow use the car's calibrated lidar yaw, as the student library now
   does; one camera decoder for every page; fixes to `racecar health`'s
   battery floor, profile paths for `racecar log` and Features, and wall
-  follow's server.
+  follow's server; telemetry frames failing the CRC dropped; odometry
+  ignores non-finite samples.
 - **0.9.1** (2026-10-26): low-battery warning and safe shutdown
   (`racecar-battery-guard.service`: time left corrected for the sag while
   driving, a red line on terminals, banners on 8080 and the app pages, LED

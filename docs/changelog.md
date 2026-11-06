@@ -51,8 +51,15 @@ All notable changes to this project will be documented in this file. The format 
   `scripts/dashboards/racecar-app.service.in`, and now wait for the data
   drive and read its environment like the 8080, 8084 and 8086 units. Run
   `racecar setup dashboards` to update them.
+- `pit_node` drops telemetry frames that fail the CRC check (`require_crc`
+  now `true` in `config/pit.yaml`); they still count as CRC failures in the
+  link report.
 
 ### Fixed
+
+- Odometry drops a sample with a non-finite speed, yaw rate or time; one NaN
+  held the integrated pose at NaN until teleop restarted. `pit_node` warns
+  when it drops one.
 
 - Battery guard: the CSV log is written from its own thread. A stalled data
   drive (an NVMe sync can block for 30 s) held up the guard's whole loop, so

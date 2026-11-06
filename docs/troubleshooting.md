@@ -580,7 +580,8 @@ table in `report.md` lists every one with its time:
 `teensy link` (`racecar health link`, `racecar status`): `pit_node`'s
 counts since teleop started. Lost frames with no CRC failures are frames
 that never arrived; CRC failures are frames damaged on the wire, often
-noise from a loose UART wire or ground. A Teensy reset with no reconnect is
+noise from a loose UART wire or ground. `pit_node` drops a frame that fails
+the CRC, so sensor topics skip it. A Teensy reset with no reconnect is
 the Teensy restarting on its own, as when its supply dips; plugging or
 unplugging the IMU connector does this.
 

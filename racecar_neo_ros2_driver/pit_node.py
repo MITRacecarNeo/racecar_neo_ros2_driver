@@ -241,7 +241,7 @@ class PitNode(Node):
         self.declare_parameter('reconnect_period_sec', 2.0)
         self.declare_parameter('steering_sign', 1)
         self.declare_parameter('speed_sign', 1)
-        self.declare_parameter('require_crc', False)
+        self.declare_parameter('require_crc', True)
 
         # Power telemetry republish (INA226 bus voltage V, battery current A) and
         # the eight FlySky RC channels normalized to [-1, 1].
