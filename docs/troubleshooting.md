@@ -29,6 +29,7 @@ comment in the source can point here instead of carrying the full account.
 - [Data drive missing at boot](#data-drive-missing-at-boot)
 - [Health report failures](#health-report-failures)
 - [Lab dashboards](#lab-dashboards)
+- [Reverse from a standstill](#reverse-from-a-standstill)
 - [Low-battery shutdown](#low-battery-shutdown)
 - [Terminal app](#terminal-app)
 - [WiFi persistence](#wifi-persistence)
@@ -623,6 +624,26 @@ checkouts under `scripts/dashboards/` are gitignored and left in place.
 
 Saved tuning lives in the car profile's `dashboards/<name>.yaml`, never in
 the shipped `<name>.yaml`, so updating the driver keeps a car's tuning.
+
+## Reverse from a standstill
+
+The car moves forward but only twitches, whines, or locks in reverse from a
+standstill. Once it rolls, reverse works. The motor draws far more current
+than in forward during these stalls.
+
+Cause: the ESC program settings or its throttle calibration differ from the
+fleet standard. The firmware's reverse start is tuned for that standard.
+Maximum reverse force (item 6) at a value other than 50%, or a throttle
+calibration done with other endpoints, changes how much PWM the ESC needs to
+start in reverse.
+
+Fix: set the ESC program settings and redo the throttle calibration as in
+the handbook ([ESC program settings](handbook/calibration.md#esc-program-settings),
+[ESC throttle calibration](handbook/calibration.md#esc-throttle-calibration)).
+Then run `racecar calibrate dynamics`.
+
+Stall protection cuts a stall like this after about 0.5 s (`stall
+protection` row of `racecar status`).
 
 ## Low-battery shutdown
 
