@@ -822,6 +822,23 @@ class TestLinkCheck:
         assert diag.link_check(diag.RosResult()).status == 'SKIP'
 
 
+class TestStallCheck:
+    def _ros(self, diag, level, supported='1', message='Normal'):
+        report = {'level': level, 'message': message, 'values': {'supported': supported}}
+        return diag.RosResult(available=True, stall=report)
+
+    @pytest.mark.parametrize('level, status', [(0, 'OK'), (1, 'WARN'), (2, 'FAIL')])
+    def test_levels(self, diag, level, status):
+        assert diag.stall_check(self._ros(diag, level)).status == status
+
+    def test_older_firmware_skips(self, diag):
+        c = diag.stall_check(self._ros(diag, 0, supported='0'))
+        assert c.status == 'SKIP' and 'not in this firmware' in c.detail
+
+    def test_no_report_fails(self, diag):
+        assert diag.stall_check(diag.RosResult(available=True)).status == 'FAIL'
+
+
 class TestFirmwareCheck:
     def _ros(self, diag, level=0, message='0.9.1', **values):
         base = {'state': 'known', 'fw.label': 'v0.9.1.10-pcb', 'fw.git': '574e229'}

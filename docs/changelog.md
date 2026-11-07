@@ -19,6 +19,11 @@ All notable changes to this project will be documented in this file. The format 
   8080 home page has a Firmware chip and `racecar status` a `teensy
   firmware` row; both warn on a test build, an uncommitted build, or
   firmware older than 0.9.0, which does not answer, and list voltage dips.
+- Stall protection state from the firmware (telemetry EKF slots): `pit_node`
+  latches each change on `/pit/stall` and reports `pit: stall` on
+  `/diagnostics`; the 8080 Stall chip and the `racecar status` `stall
+  protection` row show normal, tripped, cooldown or lockout and the trips
+  since the Teensy booted.
 
 ### Changed
 

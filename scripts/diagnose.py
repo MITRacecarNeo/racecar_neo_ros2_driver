@@ -753,6 +753,7 @@ class RosResult:
     reported: dict[str, float] = field(default_factory=dict)
     link: list[dict[str, float]] = field(default_factory=list)
     firmware: dict[str, Any] | None = None
+    stall: dict[str, Any] | None = None
 
 
 _read_diagnostic_rates = sysinfo.read_diagnostic_rates
@@ -830,6 +831,7 @@ def sample_ros(window: float, specs: list[TopicSpec]) -> RosResult:
         reported: dict[str, float] = {}
         link: list[dict[str, float]] = []
         firmware: list[dict[str, Any]] = []
+        stall: list[dict[str, Any]] = []
         qos = QoSProfile(depth=10)
         qos.reliability = QoSReliabilityPolicy.BEST_EFFORT
         qos.durability = QoSDurabilityPolicy.VOLATILE
@@ -862,6 +864,9 @@ def sample_ros(window: float, specs: list[TopicSpec]) -> RosResult:
                     status = sysinfo.read_firmware_status(msg)
                     if status is not None:
                         firmware.append(status)
+                    status = sysinfo.read_stall_status(msg)
+                    if status is not None:
+                        stall.append(status)
 
                 node.create_subscription(DiagnosticArray, DIAGNOSTICS_TOPIC, on_diagnostics, qos)
             except Exception:  # noqa: BLE001 - fall through to "no rate"
@@ -901,6 +906,7 @@ def sample_ros(window: float, specs: list[TopicSpec]) -> RosResult:
         result.reported = dict(reported)
         result.link = list(link)
         result.firmware = firmware[-1] if firmware else None
+        result.stall = stall[-1] if stall else None
         result.available = True
     except Exception as exc:  # noqa: BLE001
         result.reason = f'{exc.__class__.__name__}: {exc}'
@@ -1011,6 +1017,27 @@ def firmware_check(ros: RosResult) -> Check:
         detail += f'; {dips} voltage dip{"s" if dips != 1 else ""} since boot'
         detail += f', lowest {lowest / 1000:.2f} V' if lowest > 0 else ''
     return Check(g, name, WARN if ros.firmware['level'] else OK, detail)
+
+
+def stall_check(ros: RosResult) -> Check:
+    """
+    Report the firmware's stall protection state (pit_stall.py).
+
+    Tripped or cooling down warns, lockout fails; firmware without stall
+    protection is skipped.
+    """
+    g, name = 'actuators', 'stall protection'
+    if not ros.available:
+        return Check(g, name, SKIP, ros.reason or 'no ROS graph')
+    if ros.stall is None:
+        return Check(g, name, FAIL, f'no report on {DIAGNOSTICS_TOPIC} from pit_node')
+    values = ros.stall['values']
+    if values.get('supported') == '0':
+        return Check(g, name, SKIP, 'not in this firmware')
+    if values.get('supported') != '1':
+        return Check(g, name, WARN, 'still reading the firmware info; run again')
+    status = {0: OK, 1: WARN, 2: FAIL}.get(int(ros.stall['level']), WARN)
+    return Check(g, name, status, ros.stall['message'])
 
 
 def actuator_checks(ros: RosResult) -> list[Check]:
@@ -1283,6 +1310,7 @@ def main() -> int:
         checks.append(firmware_check(ros))
     if 'actuators' in requested:
         checks.extend(actuator_checks(ros))
+        checks.append(stall_check(ros))
     if 'autonomy' in requested:
         checks.extend(autonomy_checks(autonomy_state, ros, sample_autonomy))
     checks.extend(host.get('system', []))

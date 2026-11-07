@@ -49,6 +49,7 @@ from sysinfo import (  # noqa: E402
     read_nvme_temp as _read_nvme_temp,
     read_rtc_voltage as _read_battery_voltage,
     read_soc_temp as _read_soc_temp,
+    read_stall_status,
     read_throttled as _read_throttled,
     read_under_voltage_alarm as _read_under_voltage_alarm,
     read_watchdog_state,
@@ -474,6 +475,7 @@ class _RateSampler(Node):
         self._link: tuple[dict[str, float], float] | None = None
         self._link_problem_at: float | None = None
         self._firmware: tuple[dict[str, Any], float] | None = None
+        self._stall: tuple[dict[str, Any], float] | None = None
         self._estimate: tuple[dict[str, str], float] | None = None
         latched = QoSProfile(
             depth=1,
@@ -514,9 +516,12 @@ class _RateSampler(Node):
 
     def _record_diagnostics(self, msg: DiagnosticArray) -> None:
         firmware = read_firmware_status(msg)
-        if firmware is not None:
-            with self._lock:
+        stall = read_stall_status(msg)
+        with self._lock:
+            if firmware is not None:
                 self._firmware = (firmware, time.monotonic())
+            if stall is not None:
+                self._stall = (stall, time.monotonic())
         updates: dict[str, float] = {}
         read_diagnostic_rates(msg, updates)
         if not updates:
@@ -573,6 +578,14 @@ class _RateSampler(Node):
             if self._firmware is None:
                 return None, None
             report, at = self._firmware
+            return dict(report), time.monotonic() - at
+
+    def stall(self) -> tuple[dict[str, Any] | None, float | None]:
+        """Return pit_node's last stall protection status and its age in seconds."""
+        with self._lock:
+            if self._stall is None:
+                return None, None
+            report, at = self._stall
             return dict(report), time.monotonic() - at
 
     def autonomy(self) -> tuple[dict[str, str] | None, float | None]:
@@ -888,6 +901,28 @@ def firmware_view(report: dict[str, Any] | None, age: float | None) -> dict[str,
     if values.get('fw.git_dirty') == '1':
         return {'label': label, 'status': 'stale', 'detail': f'{detail}. Uncommitted build'}
     return {'label': label, 'status': 'healthy', 'detail': detail}
+
+
+def stall_view(report: dict[str, Any] | None, age: float | None) -> dict[str, Any]:
+    """
+    Return the Stall chip: the firmware's stall protection state.
+
+    Yellow while tripped or cooling down, red in lockout; off with no report,
+    while the firmware info is read, or on firmware without stall protection.
+    """
+    label = 'Stall'
+    if report is None or age is None or age > LINK_STALE_SEC:
+        return {'label': label, 'status': 'unsupervised', 'detail': 'No report'}
+    values = report.get('values', {})
+    supported = values.get('supported')
+    if supported == '0':
+        return {'label': label, 'status': 'unsupervised', 'detail': 'Not in this firmware'}
+    if supported != '1':
+        return {'label': label, 'status': 'unsupervised', 'detail': 'Reading'}
+    status = {'0': 'healthy', '1': 'stale', '2': 'stale', '3': 'dead'}.get(
+        values.get('state', '0'), 'stale'
+    )
+    return {'label': label, 'status': status, 'detail': report.get('message', '')}
 
 
 def dips_note(values: dict[str, str]) -> str:
@@ -1370,6 +1405,7 @@ def _monitor_loop() -> None:
                 ),
                 'link': link_view(*(_sampler.link() if _sampler else (None, None, None))),
                 'firmware': firmware_view(*(_sampler.firmware() if _sampler else (None, None))),
+                'stall': stall_view(*(_sampler.stall() if _sampler else (None, None))),
             }
 
             snapshot = {

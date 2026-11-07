@@ -341,6 +341,7 @@ patterns on `/dotmatrix/pixels`.
 | `/rc/channels` | `std_msgs/Float32MultiArray` | `pit_node` | `mux_node` (when `rc_authority_enable`), user code |
 | `/rc/link` | `std_msgs/Bool` | `pit_node` | `mux_node` (when `rc_authority_enable`) |
 | `/pit/firmware` | `std_msgs/String` (latched; `key=value` lines, empty when unknown) | `pit_node` | user code |
+| `/pit/stall` | `diagnostic_msgs/DiagnosticStatus` (latched, on change; state, name, seconds_left, trips) | `pit_node` | user code, test logs |
 | `/odom` | `nav_msgs/Odometry` | `pit_node` | lab dashboards, user code |
 | `/odom/integrated`, `/tf` (`odom -> base_link`) | `nav_msgs/Odometry`, `tf2_msgs/TFMessage` | `pit_node` | user code |
 | `/camera/color` | `sensor_msgs/Image` | `realsense2_camera_node` | `edgetpu_node`, `webteleop`, `linefollow`, user code |
@@ -736,6 +737,15 @@ build (`fw.speed_control` other than `closed_loop`), an uncommitted build,
 or no reply (firmware before 0.9.0). The dashboard's Firmware chip and the
 `racecar status` `teensy firmware` row read it through
 `sysinfo.read_firmware_status`.
+
+`pit: stall` (`pit_stall.StallWatch`) decodes the firmware's stall
+protection from the telemetry EKF slots: state (0 normal, 1 tripped, 2
+cooldown, 3 lockout), seconds left, trips since the Teensy booted. Firmware
+without stall protection (no `fw.stall_protect=1`) sends zeros. A change is
+latched on `/pit/stall` from the reader thread, seconds left in 0.1 s steps,
+and trips, lockouts and the return to normal are logged. The 8080 Stall chip
+and the `racecar status` `stall protection` row read it through
+`sysinfo.read_stall_status`.
 
 `shake` and `poke` run `health_watch.Watch`: four threads (EXT5V as fast as
 vcgencmd answers; a 1 s loop for throttle bits and a data-root write; a

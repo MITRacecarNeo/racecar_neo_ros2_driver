@@ -714,7 +714,13 @@ reconnect, or reset, red with no report.
 a Teensy reset, and once a minute. The 8080 Firmware chip and the `racecar
 status` `teensy firmware` row show the version, label, and commit, and the
 battery voltage dips the firmware counted since boot with the lowest
-voltage. They turn yellow
+voltage.
+
+The firmware stops the motor when it stalls under load: throttle to neutral
+until the throttle returns to neutral, then a 2 s cooldown; 3 trips within 60
+s lock the motor out for 30 s. The 8080 Stall chip and the `racecar status`
+`stall protection` row show the state: yellow when tripped or cooling down,
+red during a lockout. `/pit/stall` carries each change. They turn yellow
 for a test build (open-loop PWM or ESC calibration), a build with
 uncommitted changes, or firmware too old to answer (before 0.9.0). The full
 reply is on `/pit/firmware`.
@@ -1276,7 +1282,8 @@ Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
   battery floor, profile paths for `racecar log` and Features, and wall
   follow's server; telemetry frames failing the CRC dropped; odometry
   ignores non-finite samples; Teensy firmware version on 8080 and in
-  `racecar status`, full info on `/pit/firmware`; the battery guard no
+  `racecar status`, full info on `/pit/firmware`; stall protection state on
+  8080, in `racecar status` and on `/pit/stall`; the battery guard no
   longer turns the car off after a brief supply sag; a footer with the
   driver and firmware versions on every page; the R logo goes home.
 - **0.9.1** (2026-10-26): low-battery warning and safe shutdown

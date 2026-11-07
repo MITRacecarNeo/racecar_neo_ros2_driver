@@ -261,6 +261,20 @@ class TestDiagnosticRates:
         }
         assert sysinfo.read_firmware_status(SimpleNamespace(status=[])) is None
 
+    def test_stall_status(self):
+        status = SimpleNamespace(
+            name='pit: stall',
+            level=b'\x02',
+            message='Lockout, 28 s',
+            values=[SimpleNamespace(key='state', value='3')],
+        )
+        msg = SimpleNamespace(status=[status])
+        assert sysinfo.read_stall_status(msg) == {
+            'level': 2,
+            'message': 'Lockout, 28 s',
+            'values': {'state': '3'},
+        }
+
 
 class TestMemory:
     MEMINFO = 'MemTotal:        8245972 kB\nMemFree:  100 kB\nMemAvailable:    6291456 kB\n'

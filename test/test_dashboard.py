@@ -1197,6 +1197,31 @@ class TestFirmware:
         assert dashboard.firmware_view(None, None)['status'] == 'unsupervised'
         assert dashboard.firmware_view(self._report(), 10.0)['status'] == 'unsupervised'
 
+    @pytest.mark.parametrize(
+        'supported, state, status',
+        [
+            ('1', '0', 'healthy'),
+            ('1', '1', 'stale'),
+            ('1', '2', 'stale'),
+            ('1', '3', 'dead'),
+            ('0', '0', 'unsupervised'),
+            ('', '0', 'unsupervised'),
+        ],
+    )
+    def test_stall_chip(self, dashboard, supported, state, status):
+        report = {
+            'level': 0,
+            'message': 'Normal',
+            'values': {'supported': supported, 'state': state},
+        }
+        assert dashboard.stall_view(report, 1.0)['status'] == status
+        assert dashboard.stall_view(None, None)['status'] == 'unsupervised'
+        assert dashboard.stall_view(report, 10.0)['detail'] == 'No report'
+
+    def test_stall_chip_on_the_home_page(self, dashboard):
+        html = (Path(dashboard.__file__).parent / 'dashboard.html').read_text()
+        assert "['health', 'stall', 'alert', 'Stall', 'actuation']" in html
+
     def test_footer_versions(self, dashboard):
         about = dashboard.about_view(self._report(), 1.0)
         assert about == {'driver': dashboard.webui.driver_version(), 'firmware': '0.9.1'}

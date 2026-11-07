@@ -596,6 +596,15 @@ unplugging the IMU connector does this.
 - `No info reply (firmware before 0.9.0)`: flash firmware 0.9.0 or later.
 - `still reading`: teleop just started. Run `racecar status` again.
 
+`stall protection` (`racecar status`, 8080 Stall chip): the motor stalled
+under load and the firmware cut the throttle.
+
+- `Tripped`: return the throttle or the gamepad stick to neutral.
+- `Cooldown`: wait the seconds shown. Driving resumes on its own.
+- `Lockout`: three trips in a minute. Wait 30 s. Check that the wheels turn
+  freely and nothing blocks the car.
+- `not in this firmware`: the firmware has no stall protection.
+
 `teleop` FAIL: shake and poke need the PIT stream. Start teleop with
 `racecar service start teleop`.
 

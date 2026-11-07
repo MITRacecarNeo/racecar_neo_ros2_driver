@@ -48,6 +48,7 @@ from tf2_ros import TransformBroadcaster
 from . import pit_info
 from . import pit_link
 from . import pit_protocol as pit
+from . import pit_stall
 from .limits import clamp
 from .mux_node import MuxMode, select_mode, shown_mode
 from .odometry import OdomIntegrator, OdomState, yaw_quaternion
@@ -271,6 +272,8 @@ class PitNode(Node):
         self.declare_parameter('led_alert_topic', '/led/alert')
         # Latched firmware info payload (key=value lines); empty when unknown.
         self.declare_parameter('firmware_info_topic', '/pit/firmware')
+        # Latched stall protection state (pit_stall.py), published on change.
+        self.declare_parameter('stall_topic', '/pit/stall')
         # A display command counts as "active" (sets the SystemState flag the
         # Teensy watches) only while received within this window.
         self.declare_parameter('display_timeout_sec', 0.5)
@@ -432,6 +435,16 @@ class PitNode(Node):
         self._fw_resets = 0
         self._fw_settled = 0
         self._fw_sent: str | None = None  # payload last latched
+        self._stall = pit_stall.StallWatch()
+        self._pub_stall = self.create_publisher(
+            DiagnosticStatus,
+            str(self.get_parameter('stall_topic').value),
+            QoSProfile(
+                depth=1,
+                reliability=QoSReliabilityPolicy.RELIABLE,
+                durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+            ),
+        )
         self._fw_logged: str | None = None  # summary last logged since a restart
         self._pub_fw_info = self.create_publisher(
             String,
@@ -635,6 +648,7 @@ class PitNode(Node):
         msg.status = [
             self._diagnostic_status(pit_link.STATUS_NAME, self._link.report(now)),
             self._diagnostic_status(pit_info.STATUS_NAME, self._fw_info.report()),
+            self._diagnostic_status(pit_stall.STATUS_NAME, self._stall_report()),
         ]
         self._pub_diagnostics.publish(msg)
 
@@ -646,6 +660,29 @@ class PitNode(Node):
         status.hardware_id = str(self._port)
         status.values = [KeyValue(key=k, value=v) for k, v in report['values'].items()]
         return status
+
+    def _stall_report(self) -> dict[str, Any]:
+        info = self._fw_info
+        supported = None
+        if info.state == pit_info.KNOWN:
+            supported = info.values.get('fw.stall_protect') == '1'
+        elif info.state == pit_info.UNKNOWN:
+            supported = False
+        return self._stall.report(supported)
+
+    def _publish_stall(self, before: pit_stall.StallState, now: pit_stall.StallState) -> None:
+        """Latch a stall state change; log trips, lockouts and the return to normal."""
+        self._pub_stall.publish(
+            self._diagnostic_status(pit_stall.STATUS_NAME, self._stall_report())
+        )
+        if now.state == before.state:
+            return
+        if now.state == 1:
+            self.get_logger().warn(f'Stall protection tripped ({now.trips} since Teensy boot)')
+        elif now.state == 3:
+            self.get_logger().warn(f'Stall protection lockout, {now.seconds_left:.0f} s')
+        elif now.state == 0:
+            self.get_logger().info('Stall protection back to normal')
 
     def _restart_firmware_info(self) -> None:
         self._fw_info.restart(time.monotonic())
@@ -789,6 +826,11 @@ class PitNode(Node):
             if failures % 100 == 1:
                 self.get_logger().warn(f'Dropping telemetry on CRC mismatch (count={failures})')
             return
+
+        before = self._stall.last
+        changed = self._stall.update(telem.ekf)
+        if changed is not None:
+            self._publish_stall(before, changed)
 
         stamp = self._telemetry_stamp(telem.timestamp_us)
         raw_accel = remap_axes(telem.accel, self._ag_order, self._ag_sign, self._accel_scale)
