@@ -715,13 +715,12 @@ class PitNode(Node):
             if summary == self._fw_logged:
                 return
             self._fw_logged = summary
-            report = self._fw_info.report()
-            log = (
-                self.get_logger().info
-                if report['level'] == pit_info.OK
-                else self.get_logger().warn
-            )
-            log(f'Firmware {summary}')
+            # rclpy fixes a call site's severity at its first call, so each
+            # severity needs its own line.
+            if self._fw_info.report()['level'] == pit_info.OK:
+                self.get_logger().info(f'Firmware {summary}')
+            else:
+                self.get_logger().warn(f'Firmware {summary}')
         elif state == pit_info.UNKNOWN:
             self._fw_sent = ''
             self._pub_fw_info.publish(String(data=''))

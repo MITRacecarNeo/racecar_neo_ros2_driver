@@ -78,6 +78,10 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Fixed
 
+- `mux_node` no longer raises when the safety override turns off after it
+  was on: rclpy fixes a log call's severity at its first call, and the on and
+  off messages shared one call with two severities. A test checks that no
+  log call picks its severity at run time.
 - Battery guard on a sagging supply: a countdown from the time estimate
   stops when the time left climbs back above `shutdown_min` plus 5 minutes
   for 10 s (judged on the last 10 s of readings); the floor countdown still
