@@ -122,3 +122,9 @@ class TestLed:
 
     def test_nothing_when_ok(self):
         assert bd.led_frame('ok', None, 0.0) is None
+
+
+def test_orange_matches_the_override_flash():
+    from racecar_neo_ros2_driver.pit_node import OVERRIDE_LED_RGB
+
+    assert bd.ORANGE == OVERRIDE_LED_RGB

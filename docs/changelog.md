@@ -27,6 +27,8 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Changed
 
+- The low-battery LED flash uses the same orange as the safety override flash
+  and the firmware, (255, 110, 0).
 - Web teleop and wall follow turn lidar angles by the car's calibrated lidar
   yaw (`laser_yaw_deg`, as the map viewer and 8080 Overview already did)
   instead of a fixed 180 degrees; the old rule (180 minus the raw angle) was
