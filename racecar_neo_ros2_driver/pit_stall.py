@@ -67,17 +67,26 @@ def decode(ekf: Sequence[float]) -> StallState:
 
 
 class StallWatch:
-    """The last decoded state; `update()` says when it changed."""
+    """
+    The last decoded state; `update()` says when it changed.
+
+    The first frame always counts as a change, so the latched topic holds a
+    state from the start.
+    """
 
     def __init__(self) -> None:
-        self.last = StallState()
+        self._seen: StallState | None = None
+
+    @property
+    def last(self) -> StallState:
+        return self._seen if self._seen is not None else StallState()
 
     def update(self, ekf: Sequence[float]) -> StallState | None:
         """Decode a frame; return the new state when it differs from the last."""
         state = decode(ekf)
-        if state == self.last:
+        if state == self._seen:
             return None
-        self.last = state
+        self._seen = state
         return state
 
     def report(self, supported: bool | None) -> dict[str, Any]:

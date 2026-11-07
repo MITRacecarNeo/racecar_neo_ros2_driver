@@ -21,9 +21,15 @@ class TestDecode:
 
 
 class TestWatch:
+    def test_first_frame_counts_as_a_change(self):
+        watch = pit_stall.StallWatch()
+        assert watch.last == pit_stall.StallState()
+        assert watch.update((0.0, 0.0, 0.0)) == pit_stall.StallState()
+        assert watch.update((0.0, 0.0, 0.0)) is None
+
     def test_reports_changes_only(self):
         watch = pit_stall.StallWatch()
-        assert watch.update((0.0, 0.0, 0.0)) is None
+        watch.update((0.0, 0.0, 0.0))
         tripped = watch.update((1.0, 0.0, 1.0))
         assert tripped is not None and tripped.state == 1
         assert watch.update((1.0, 0.0, 1.0)) is None

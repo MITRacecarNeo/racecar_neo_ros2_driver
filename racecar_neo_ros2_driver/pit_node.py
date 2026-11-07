@@ -670,11 +670,14 @@ class PitNode(Node):
             supported = False
         return self._stall.report(supported)
 
-    def _publish_stall(self, before: pit_stall.StallState, now: pit_stall.StallState) -> None:
-        """Latch a stall state change; log trips, lockouts and the return to normal."""
+    def _latch_stall(self) -> None:
         self._pub_stall.publish(
             self._diagnostic_status(pit_stall.STATUS_NAME, self._stall_report())
         )
+
+    def _publish_stall(self, before: pit_stall.StallState, now: pit_stall.StallState) -> None:
+        """Latch a stall state change; log trips, lockouts and the return to normal."""
+        self._latch_stall()
         if now.state == before.state:
             return
         if now.state == 1:
@@ -700,6 +703,8 @@ class PitNode(Node):
         if settled == self._fw_settled:
             return
         self._fw_settled = settled
+        # The stall entry's `supported` comes from the firmware info.
+        self._latch_stall()
         state = self._fw_info.state
         if state == pit_info.KNOWN:
             payload = self._fw_info.payload.decode('ascii', 'replace')
