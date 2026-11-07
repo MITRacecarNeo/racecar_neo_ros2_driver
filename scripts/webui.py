@@ -277,11 +277,22 @@ def spin_until_stopped(spin_once: Callable[[], None], running: Callable[[], bool
 
 
 def ros_spinner(*nodes: Any) -> Callable[[], None]:
-    """Return a loop for serve(spin=...) that spins `nodes` until rclpy shuts down."""
-    import rclpy
-    from rclpy.executors import SingleThreadedExecutor
+    """
+    Return a loop for serve(spin=...) that spins `nodes` until rclpy shuts down.
 
-    executor = SingleThreadedExecutor()
+    The EventsExecutor queues events instead of rebuilding a wait set over
+    every subscription on each message (racecar_neo_ros2_driver/spin.py); it
+    sits under rclpy.experimental in Jazzy, so a missing import falls back to
+    the default executor.
+    """
+    import rclpy
+
+    try:
+        from rclpy.experimental import EventsExecutor as Executor
+    except ImportError:
+        from rclpy.executors import SingleThreadedExecutor as Executor
+
+    executor = Executor()
     for node in nodes:
         executor.add_node(node)
 

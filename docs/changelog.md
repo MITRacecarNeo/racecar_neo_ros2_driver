@@ -27,6 +27,11 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Changed
 
+- The browser apps (8080 home, web teleop, line follow, wall follow, camera
+  label) spin ROS on the EventsExecutor, as the driver nodes do, instead of
+  rebuilding a wait set on every message. Web teleop with its page open drops
+  from 82% to 56% of a core and keeps up with the full camera rate (about
+  46 to 58 fps in place of about 30).
 - `racecar calibrate dynamics` drives nine runs: straight at speed 0.25, 0.5,
   0.75 and 1.0, reverse at 0.25, 0.5 and 1.0 (keys `..._rev025` and so on,
   steady speed negative), and the two circles. Each run's bag also records
