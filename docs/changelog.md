@@ -27,6 +27,11 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Changed
 
+- `racecar calibrate dynamics` drives nine runs: straight at speed 0.25, 0.5,
+  0.75 and 1.0, reverse at 0.25, 0.5 and 1.0 (keys `..._rev025` and so on,
+  steady speed negative), and the two circles. Each run's bag also records
+  `/encoder/speed`, `/odom`, `/mux_out`, `/imu/fused`, `/battery/voltage` and
+  `/tf`.
 - The low-battery LED flash uses the same orange as the safety override flash
   and the firmware, (255, 110, 0).
 - Web teleop and wall follow turn lidar angles by the car's calibrated lidar

@@ -1018,7 +1018,7 @@ racecar service restart teleop                            # nodes read the value
 | `calibrate_lidar.py` | `/scan`, `/odom/integrated`, `/motor` (recorded); `/joy` (RB) | `params/frames.yaml` (`laser_yaw_deg`) | `frames.launch.py` |
 | `calibrate_odom.py` | `/imu/lsm9ds1`, `/odom/integrated`, `/scan` | `params/odom.yaml` (`odometry.yaw_rate_scale`, `odometry.speed_scale`) | `pit_node` |
 | `calibrate_steering.py` | `/scan`, `/odom/integrated`, `/motor` (recorded); `/joy` (RB) | `params/throttle.yaml` (`steering_trim`) | `throttle_node` |
-| `calibrate_dynamics.py` | `/scan`, `/imu/lsm9ds1`, `/odom/integrated`, `/motor` (recorded); `/joy` (RB) | `params/dynamics.yaml` | the simulator (no node reads it) |
+| `calibrate_dynamics.py` | `/scan`, `/imu/lsm9ds1`, `/odom/integrated`, `/motor`, plus `/encoder/speed`, `/odom`, `/mux_out`, `/imu/fused`, `/battery/voltage`, `/tf` (recorded); `/joy` (RB) | `params/dynamics.yaml` | the simulator (no node reads it) |
 
 Each utility writes the file to the car profile; launch reads it at start,
 so a teleop restart applies it with no rebuild. A replaced file is kept under
@@ -1091,14 +1091,17 @@ moves the drift by up to about 3 deg/m between runs, so recalibrate only if
 it stays. Beyond 5 deg/m fails as a mechanical fault (servo horn or
 linkage). The trim `throttle_node` runs with must match the file.
 
-`calibrate_dynamics.py` measures the car for the simulator. It drives five
+`calibrate_dynamics.py` measures the car for the simulator. It drives nine
 fixed runs by itself while RB is held, and releasing RB while it drives stops
-the car: straight at speed 0.25, 0.5 and 1.0 (about 3.5 m of clear floor),
-then right-turn and left-turn circles at full lock at 0.25, each after 0.8 s
+the car: straight at speed 0.25, 0.5, 0.75 and 1.0, reverse at 0.25, 0.5 and
+1.0 (about 3.5 m of clear floor; reverse keys end in `rev025`, `rev05`,
+`rev10`, with a negative steady speed), then right-turn and left-turn circles at full lock at 0.25, each after 0.8 s
 straight (about 2.3 by 1.6 m of clear floor). Each run is recorded with
 `ros2 bag` under the `racecar log` directory and analyzed: steady speed, time
 to 90% of it, and stop distance and time after the command goes to 0 (from
-`/odom/integrated`, checked against the lidar between the rest scans); the
+`/odom/integrated`, checked against the lidar between the rest scans; the bag
+also holds `/encoder/speed`, `/odom`, `/mux_out`, `/imu/fused`,
+`/battery/voltage` and `/tf` for fitting the whole rise and stop); the
 rear-axle turning radius per side from chained lidar scan matches, the
 Ackermann inner and outer wheel angles (230 mm wheelbase, 178 mm track), the
 outer front tire track diameter, and the encoder's over-read in turns; and the

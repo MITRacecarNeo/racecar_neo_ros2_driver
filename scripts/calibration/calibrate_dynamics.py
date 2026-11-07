@@ -2,20 +2,24 @@
 """
 Vehicle dynamics for the simulator: steering angle, servo time, speed, stopping.
 
-The `dynamics` step of `racecar calibrate`. The car drives four fixed runs by
+The `dynamics` step of `racecar calibrate`. The car drives fixed runs by
 itself while the operator holds RB; each is recorded as a bag and analyzed.
 Results go to the car profile's params/dynamics.yaml, which no node reads: it records
 this car's measured values for the simulator. There is no --check.
 
 Runs (normalized commands, as on /drive; config/throttle.yaml gives m/s):
 
-    straight025, straight05, straight10   2 s still, speed 0.25 / 0.5 / 1.0
-                                           straight, then 0 and 3 s still
+    straight025, straight05, straight075, straight10
+                                           2 s still, speed 0.25 / 0.5 / 0.75 /
+                                           1.0 straight, then 0 and 3 s still
+    reverse025, reverse05, reverse10       the same in reverse at 0.25 / 0.5 /
+                                           1.0; keys tagged rev025, rev05, rev10
+                                           (steady speed negative)
     circle_right, circle_left              2 s still, speed 0.25 straight for
                                            0.8 s, full lock for 13 s, then 0
                                            and 3 s still
 
-Straight runs give the steady speed, the time to reach it, and the stop
+Straight and reverse runs give the steady speed, the time to reach it, and the stop
 distance and time after the command goes to 0, from /odom/integrated; the
 lidar's distance between the rest scans checks the encoder over the run.
 Circle runs chain lidar scan matches (each scan deskewed with the odometry)
@@ -69,7 +73,21 @@ from scan_match import (  # noqa: E402
 )
 
 TOOL = 'calibrate_dynamics.py'
-TOPICS = ['/scan', '/imu/lsm9ds1', '/odom/integrated', '/motor', '/drive']
+# The analysis reads the first five; the rest let the simulator fit its speed
+# loop to the whole rise and stop.
+TOPICS = [
+    '/scan',
+    '/imu/lsm9ds1',
+    '/odom/integrated',
+    '/motor',
+    '/drive',
+    '/encoder/speed',
+    '/odom',
+    '/mux_out',
+    '/imu/fused',
+    '/battery/voltage',
+    '/tf',
+]
 RATE_HZ = 50.0
 RB_BUTTON = 5  # config/mux.yaml autonomy_enable_button
 COUNTDOWN_SEC = 3.0
@@ -77,7 +95,11 @@ COUNTDOWN_SEC = 3.0
 RUNS: dict[str, list[tuple[float, float, float]]] = {
     'straight025': [(0.0, 0.0, 2.0), (0.25, 0.0, 3.0), (0.0, 0.0, 3.0)],
     'straight05': [(0.0, 0.0, 2.0), (0.5, 0.0, 3.0), (0.0, 0.0, 3.0)],
+    'straight075': [(0.0, 0.0, 2.0), (0.75, 0.0, 2.5), (0.0, 0.0, 3.0)],
     'straight10': [(0.0, 0.0, 2.0), (1.0, 0.0, 2.5), (0.0, 0.0, 3.0)],
+    'reverse025': [(0.0, 0.0, 2.0), (-0.25, 0.0, 3.0), (0.0, 0.0, 3.0)],
+    'reverse05': [(0.0, 0.0, 2.0), (-0.5, 0.0, 3.0), (0.0, 0.0, 3.0)],
+    'reverse10': [(0.0, 0.0, 2.0), (-1.0, 0.0, 2.5), (0.0, 0.0, 3.0)],
     # A short straight before the lock gives the center-to-lock steering step.
     'circle_right': [(0.0, 0.0, 2.0), (0.25, 0.0, 0.8), (0.25, -1.0, 13.0), (0.0, 0.0, 3.0)],
     'circle_left': [(0.0, 0.0, 2.0), (0.25, 0.0, 0.8), (0.25, 1.0, 13.0), (0.0, 0.0, 3.0)],
@@ -85,11 +107,18 @@ RUNS: dict[str, list[tuple[float, float, float]]] = {
 TITLES = {
     'straight025': 'straight at speed 0.25',
     'straight05': 'straight at speed 0.5',
+    'straight075': 'straight at speed 0.75',
     'straight10': 'straight at speed 1.0',
+    'reverse025': 'reverse at speed 0.25',
+    'reverse05': 'reverse at speed 0.5',
+    'reverse10': 'reverse at speed 1.0',
     'circle_right': 'right-turn circles at full lock, at speed 0.25',
     'circle_left': 'left-turn circles at full lock, at speed 0.25',
 }
 STRAIGHT_PLACE = 'Place the car at the start of the straight path, pointing along it.'
+REVERSE_PLACE = (
+    'Place the car at the far end of the straight path, with its rear pointing along it.'
+)
 CIRCLE_PLACE = 'Place the car at one end of the clear area, pointing along it.'
 # Wheelbase and track measured on a reference car, m.
 # Per car: odometry.wheelbase_m in odom.yaml / the profile's params/odom.yaml (measured).
@@ -173,7 +202,9 @@ def straight_metrics(
     """Speed `v` and path length `s` (both from /odom/integrated) at times `t`."""
     hold = (t >= t_off - 1.0) & (t < t_off)
     steady = float(np.mean(v[hold]))
-    rise = np.nonzero((t >= t_on) & (v >= 0.9 * steady))[0]
+    # Reverse runs have a negative steady speed; compare along its sign.
+    sign = 1.0 if steady >= 0 else -1.0
+    rise = np.nonzero((t >= t_on) & (sign * v >= 0.9 * abs(steady)))[0]
     after = np.nonzero(t >= t_off)[0]
     moving = after[np.abs(v[after]) > 0.0]
     i_off = after[0]
@@ -360,8 +391,9 @@ def rest_scan(bag: Bag, t0: float, t1: float) -> np.ndarray:
 
 
 def speed_tag(speed: float) -> str:
-    """Return a key suffix for a normalized speed: 0.25 -> '025', 1.0 -> '10'."""
-    return f'{speed:.2f}'.replace('.', '').rstrip('0').ljust(2, '0')
+    """Return a key suffix for a normalized speed: 0.25 -> '025', 1.0 -> '10', -0.5 -> 'rev05'."""
+    tag = f'{abs(speed):.2f}'.replace('.', '').rstrip('0').ljust(2, '0')
+    return f'rev{tag}' if speed < 0 else tag
 
 
 def analyze_straight(bag: Bag) -> tuple[dict[str, float], list[str]]:
@@ -582,7 +614,8 @@ def run_session() -> int:
 
     def show(i: int) -> None:
         log.info(f'Run {i + 1} of {len(runs)}: {TITLES[runs[i]]}')
-        log.info(CIRCLE_PLACE if runs[i].startswith('circle') else STRAIGHT_PLACE)
+        place = {'circle': CIRCLE_PLACE, 'reverse': REVERSE_PLACE}
+        log.info(next((p for k, p in place.items() if runs[i].startswith(k)), STRAIGHT_PLACE))
 
     def run_one(i: int) -> dict[str, float] | None:
         bag = driver.drive(runs[i])
