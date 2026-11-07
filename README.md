@@ -960,6 +960,10 @@ committed `config/lsm9ds1_cal.yaml`, `config/lsm9ds1_mag_cal.yaml`,
 own values go in `params/<name>.yaml` in the [car profile](#car-profile),
 which the launch files load after the committed file.
 
+The ESC program settings, the ESC throttle calibration, the per-car speed
+constants and the car record are in the handbook:
+[docs/handbook/calibration.md](docs/handbook/calibration.md).
+
 ```sh
 racecar calibrate status      # profile path, what is calibrated, when, stored values
 racecar calibrate             # every step but dynamics, in order, one guided session
