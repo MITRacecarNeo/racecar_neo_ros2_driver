@@ -1280,19 +1280,23 @@ switch it to slow mode before mapping.
 
 Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
 
-- **Unreleased**: one app registry (`config/apps.yaml`) for the 8080 tiles,
-  `racecar service` and the unit install; every app on one server base
-  (`scripts/webui.py`) and one page kit (`scripts/web/`); lab dashboards
-  share tuning, logs and live sliders (wall follow included); web teleop and
-  wall follow use the car's calibrated lidar yaw, as the student library now
-  does; one camera decoder for every page; fixes to `racecar health`'s
-  battery floor, profile paths for `racecar log` and Features, and wall
-  follow's server; telemetry frames failing the CRC dropped; odometry
-  ignores non-finite samples; Teensy firmware version on 8080 and in
-  `racecar status`, full info on `/pit/firmware`; stall protection state on
-  8080, in `racecar status` and on `/pit/stall`; the battery guard no
-  longer turns the car off after a brief supply sag; a footer with the
-  driver and firmware versions on every page; the R logo goes home.
+- **0.9.2** (2026-11-07): one app registry (`config/apps.yaml`) for the
+  8080 tiles, `racecar service` and the unit install; every app on one
+  server base (`scripts/webui.py`) and one page kit (`scripts/web/`); lab
+  dashboards share tuning, logs and live sliders (wall follow included); web
+  teleop and wall follow use the car's calibrated lidar yaw, as the student
+  library now does; one camera decoder for every page; the browser apps spin
+  ROS on the EventsExecutor (web teleop about a third less CPU at the full
+  camera rate); Teensy firmware version on 8080 and in `racecar status`,
+  full info on `/pit/firmware`; stall protection state on 8080, in
+  `racecar status` and on `/pit/stall`; telemetry frames failing the CRC
+  dropped; odometry ignores non-finite samples; the battery guard no longer
+  turns the car off after a brief supply sag; `racecar calibrate dynamics`
+  adds reverse and 0.75 runs; a calibration page in the handbook (ESC
+  settings, throttle calibration, car record); a footer with the driver and
+  firmware versions on every page; the R logo goes home; fixes to
+  `racecar health`'s battery floor, profile paths for `racecar log` and
+  Features, and wall follow's server. Pairs with firmware v0.9.2.
 - **0.9.1** (2026-10-26): low-battery warning and safe shutdown
   (`racecar-battery-guard.service`: time left corrected for the sag while
   driving, a red line on terminals, banners on 8080 and the app pages, LED
