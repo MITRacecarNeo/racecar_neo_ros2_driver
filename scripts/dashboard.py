@@ -884,9 +884,23 @@ def firmware_view(report: dict[str, Any] | None, age: float | None) -> dict[str,
     if control != 'closed_loop':
         test = FIRMWARE_TEST_BUILDS.get(control, f'Speed control {control}')
         return {'label': label, 'status': 'stale', 'detail': f'{detail}. {test}'}
+    detail += dips_note(values)
     if values.get('fw.git_dirty') == '1':
         return {'label': label, 'status': 'stale', 'detail': f'{detail}. Uncommitted build'}
     return {'label': label, 'status': 'healthy', 'detail': detail}
+
+
+def dips_note(values: dict[str, str]) -> str:
+    """Return '. N voltage dips, lowest X.XX V' from the firmware's power keys, or ''."""
+    try:
+        count = int(values.get('power.dip_count', '0'))
+        lowest = int(values.get('power.min_mv', '-1'))
+    except ValueError:
+        return ''
+    if count <= 0:
+        return ''
+    note = f'. {count} voltage dip{"s" if count != 1 else ""}'
+    return note + (f', lowest {lowest / 1000:.2f} V' if lowest > 0 else '')
 
 
 def about_view(report: dict[str, Any] | None, age: float | None) -> dict[str, Any]:

@@ -724,7 +724,10 @@ rate without subscribing to the 200 Hz IMU topic.
 The same message carries `pit: firmware` (`pit_info.FirmwareInfo`). From
 each serial open, and again after a Teensy reset, `pit_node` sets the
 `info_request` bit (`0x20`) in its command frames until the firmware's info
-reply is complete or 2 s pass. The Teensy answers with `0xFEEDC0DE` chunks
+reply is complete or 2 s pass. It asks again every 60 s
+(`pit_info.REFRESH_SEC`) for the values that change while the car runs (the
+`power.*` dip keys); a refresh keeps the last info until the new payload is
+in, and the log line repeats only when the build changes. The Teensy answers with `0xFEEDC0DE` chunks
 between telemetry frames; `pit_protocol.scan_for_packet` returns them as
 `InfoChunk`, and `pit_info.InfoAssembler` joins one revision in index order.
 The whole payload is latched on `/pit/firmware`; the status copies the

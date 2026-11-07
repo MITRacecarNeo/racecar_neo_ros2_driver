@@ -836,6 +836,12 @@ class TestFirmwareCheck:
         c = diag.firmware_check(self._ros(diag, 1, '0.9.1: open-loop PWM test build'))
         assert c.status == 'WARN' and 'open-loop' in c.detail
 
+    def test_voltage_dips_are_listed(self, diag):
+        c = diag.firmware_check(
+            self._ros(diag, **{'power.dip_count': '3', 'power.min_mv': '7010'})
+        )
+        assert c.status == 'OK' and c.detail.endswith('; 3 voltage dips since boot, lowest 7.01 V')
+
     def test_still_reading_warns(self, diag):
         assert diag.firmware_check(self._ros(diag, state='pending')).status == 'WARN'
 

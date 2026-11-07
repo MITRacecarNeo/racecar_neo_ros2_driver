@@ -12,12 +12,13 @@ All notable changes to this project will be documented in this file. The format 
 - The R logo in every app page's header goes home: it closes the tab and
   leaves the 8080 page in front, or loads the 8080 page when the browser
   will not close the tab.
-- `pit_node` reads the Teensy firmware's info reply at start and after a
-  Teensy reset: the whole `key=value` payload latched on `/pit/firmware`, and
+- `pit_node` reads the Teensy firmware's info reply at start, after a
+  Teensy reset, and once a minute: the whole `key=value` payload latched on `/pit/firmware`, and
   a `pit: firmware` status on `/diagnostics` with the version, label, commit,
-  speed control, and ESC bounds. The 8080 home page has a Firmware chip and
-  `racecar status` a `teensy firmware` row; both warn on a test build, an
-  uncommitted build, or firmware older than 0.9.0, which does not answer.
+  speed control, ESC bounds, and the battery voltage dips since boot. The
+  8080 home page has a Firmware chip and `racecar status` a `teensy
+  firmware` row; both warn on a test build, an uncommitted build, or
+  firmware older than 0.9.0, which does not answer, and list voltage dips.
 
 ### Changed
 

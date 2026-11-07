@@ -2,7 +2,10 @@
 Firmware info reply, requested and collected by pit_node.
 
 pit_node sets the info_request bit in its command frames from the moment the
-serial port opens until the whole payload is in or REPLY_TIMEOUT_SEC passes.
+serial port opens until the whole payload is in or REPLY_TIMEOUT_SEC passes,
+and again every REFRESH_SEC after that, since some values (the power.* dip
+keys) change while the car runs. A refresh keeps the last info until the new
+payload is in.
 The Teensy answers with info chunks between telemetry frames (pit_protocol
 InfoChunk); telemetry is unaffected. A Teensy reset or a serial reconnect
 starts a new request, since a reflash changes the firmware. Firmware before
@@ -23,6 +26,7 @@ from typing import Any
 from .pit_protocol import InfoChunk
 
 REPLY_TIMEOUT_SEC = 2.0
+REFRESH_SEC = 60.0
 STATUS_NAME = 'pit: firmware'
 
 OK, WARN = 0, 1
@@ -48,6 +52,9 @@ SHOWN_KEYS = (
     'esc.pwm_neutral_us',
     'esc.pwm_max_us',
     'power.max_current_a',
+    'power.min_mv',
+    'power.dip_count',
+    'power.last_dip_ms',
 )
 
 
@@ -96,8 +103,14 @@ class FirmwareInfo:
     and `restart()`, so the state sits behind a lock.
     """
 
-    def __init__(self, now: float, timeout_sec: float = REPLY_TIMEOUT_SEC) -> None:
+    def __init__(
+        self,
+        now: float,
+        timeout_sec: float = REPLY_TIMEOUT_SEC,
+        refresh_sec: float = REFRESH_SEC,
+    ) -> None:
         self.timeout = timeout_sec
+        self.refresh = refresh_sec
         self._lock = threading.Lock()
         # Counts requests that ended (payload in or timed out), so a reader
         # polling now and then sees a re-read even when it ended between polls.
@@ -111,20 +124,36 @@ class FirmwareInfo:
             self.values: dict[str, str] = {}
             self.payload = b''
             self._since = now
+            self._known_at = now
+            self._refreshing = False
             self._assembler = InfoAssembler()
 
     def requesting(self, now: float) -> bool:
         """Return True while the info_request bit belongs in the command frames."""
         with self._lock:
-            if self.state == PENDING and now - self._since > self.timeout:
-                self.state = UNKNOWN
-                self.settled += 1
-            return self.state == PENDING
+            if self.state == PENDING:
+                if now - self._since > self.timeout:
+                    self.state = UNKNOWN
+                    self.settled += 1
+                return self.state == PENDING
+            if self.state != KNOWN:
+                return False
+            if self._refreshing:
+                if now - self._since <= self.timeout:
+                    return True
+                # No reply to a refresh: keep the last info and try again later.
+                self._refreshing, self._known_at = False, now
+                return False
+            if now - self._known_at >= self.refresh:
+                self._refreshing, self._since = True, now
+                self._assembler = InfoAssembler()
+                return True
+            return False
 
-    def add(self, chunk: InfoChunk) -> bool:
+    def add(self, chunk: InfoChunk, now: float) -> bool:
         """Add a chunk; return True when it completed the payload."""
         with self._lock:
-            if self.state != PENDING:
+            if self.state != PENDING and not self._refreshing:
                 return False
             payload = self._assembler.add(chunk)
             if payload is None:
@@ -132,6 +161,7 @@ class FirmwareInfo:
             self.payload = payload
             self.values = parse_info(payload)
             self.state = KNOWN
+            self._refreshing, self._known_at = False, now
             self.settled += 1
             return True
 

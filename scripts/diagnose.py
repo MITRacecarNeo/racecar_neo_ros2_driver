@@ -1002,6 +1002,14 @@ def firmware_check(ros: RosResult) -> Check:
         return Check(g, name, WARN, 'still reading the firmware info; run again')
     build = ', '.join(v for v in (values.get('fw.label'), values.get('fw.git')) if v)
     detail = ros.firmware['message'] + (f' ({build})' if build else '')
+    try:
+        dips = int(values.get('power.dip_count', '0'))
+        lowest = int(values.get('power.min_mv', '-1'))
+    except ValueError:
+        dips, lowest = 0, -1
+    if dips > 0:
+        detail += f'; {dips} voltage dip{"s" if dips != 1 else ""} since boot'
+        detail += f', lowest {lowest / 1000:.2f} V' if lowest > 0 else ''
     return Check(g, name, WARN if ros.firmware['level'] else OK, detail)
 
 

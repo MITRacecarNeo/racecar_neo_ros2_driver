@@ -431,6 +431,8 @@ class PitNode(Node):
         self._fw_info = pit_info.FirmwareInfo(time.monotonic())
         self._fw_resets = 0
         self._fw_settled = 0
+        self._fw_sent: str | None = None  # payload last latched
+        self._fw_logged: str | None = None  # summary last logged since a restart
         self._pub_fw_info = self.create_publisher(
             String,
             str(self.get_parameter('firmware_info_topic').value),
@@ -464,7 +466,7 @@ class PitNode(Node):
         try:
             self._ser = serial.Serial(self._port, self._baud, timeout=0.05)
             self.get_logger().info(f'Opened {self._port}')
-            self._fw_info.restart(time.monotonic())
+            self._restart_firmware_info()
             return True
         except (serial.SerialException, OSError) as exc:
             self._ser = None
@@ -580,13 +582,13 @@ class PitNode(Node):
             while True:
                 packet, consumed = pit.scan_for_packet(buffer)
                 if isinstance(packet, pit.InfoChunk):
-                    self._fw_info.add(packet)
+                    self._fw_info.add(packet, time.monotonic())
                 elif packet is not None:
                     self._link.frame(packet.timestamp_us, packet.crc_ok)
                     if self._link.counts['resets'] != self._fw_resets:
                         # A Teensy restart may be a reflash: ask again.
                         self._fw_resets = self._link.counts['resets']
-                        self._fw_info.restart(time.monotonic())
+                        self._restart_firmware_info()
                     self._publish_telemetry(packet)
                 elif consumed == 0:
                     break
@@ -645,25 +647,41 @@ class PitNode(Node):
         status.values = [KeyValue(key=k, value=v) for k, v in report['values'].items()]
         return status
 
+    def _restart_firmware_info(self) -> None:
+        self._fw_info.restart(time.monotonic())
+        self._fw_logged = None
+
     def _log_firmware(self) -> None:
-        """Log and latch the firmware info each time a request settles."""
+        """
+        Latch the firmware info each time a request settles with a new payload.
+
+        The once-a-minute refresh changes only the power.* values, so the log
+        line comes once per serial open or Teensy reset, or when the build
+        changes.
+        """
         settled = self._fw_info.settled
         if settled == self._fw_settled:
             return
         self._fw_settled = settled
         state = self._fw_info.state
         if state == pit_info.KNOWN:
-            self._pub_fw_info.publish(
-                String(data=self._fw_info.payload.decode('ascii', 'replace'))
-            )
+            payload = self._fw_info.payload.decode('ascii', 'replace')
+            if payload != self._fw_sent:
+                self._fw_sent = payload
+                self._pub_fw_info.publish(String(data=payload))
+            summary = self._fw_info.summary()
+            if summary == self._fw_logged:
+                return
+            self._fw_logged = summary
             report = self._fw_info.report()
             log = (
                 self.get_logger().info
                 if report['level'] == pit_info.OK
                 else self.get_logger().warn
             )
-            log(f'Firmware {self._fw_info.summary()}')
+            log(f'Firmware {summary}')
         elif state == pit_info.UNKNOWN:
+            self._fw_sent = ''
             self._pub_fw_info.publish(String(data=''))
             self.get_logger().warn(
                 'No firmware info reply within '

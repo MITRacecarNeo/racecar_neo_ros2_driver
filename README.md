@@ -710,9 +710,11 @@ resets. `racecar status` has a `teensy link` row from it, and the 8080 Link
 chip shows it: yellow for a minute after a lost frame, CRC failure,
 reconnect, or reset, red with no report.
 
-`pit_node` also asks the Teensy for its firmware info when it starts and
-after a Teensy reset. The 8080 Firmware chip and the `racecar status`
-`teensy firmware` row show the version, label, and commit. They turn yellow
+`pit_node` also asks the Teensy for its firmware info when it starts, after
+a Teensy reset, and once a minute. The 8080 Firmware chip and the `racecar
+status` `teensy firmware` row show the version, label, and commit, and the
+battery voltage dips the firmware counted since boot with the lowest
+voltage. They turn yellow
 for a test build (open-loop PWM or ESC calibration), a build with
 uncommitted changes, or firmware too old to answer (before 0.9.0). The full
 reply is on `/pit/firmware`.

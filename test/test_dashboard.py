@@ -1170,6 +1170,17 @@ class TestFirmware:
         v = dashboard.firmware_view(self._report(**{'fw.speed_control': 'raw_pwm'}), 1.0)
         assert v['status'] == 'stale' and 'Open-loop PWM test build' in v['detail']
 
+    def test_voltage_dips_are_listed(self, dashboard):
+        v = dashboard.firmware_view(
+            self._report(**{'power.dip_count': '2', 'power.min_mv': '6950'}), 1.0
+        )
+        assert v['status'] == 'healthy'
+        assert v['detail'] == '0.9.1 (v0.9.1.10-pcb, 574e229). 2 voltage dips, lowest 6.95 V'
+        quiet = dashboard.firmware_view(
+            self._report(**{'power.dip_count': '0', 'power.min_mv': '-1'}), 1.0
+        )
+        assert 'dip' not in quiet['detail']
+
     def test_uncommitted_build_is_yellow(self, dashboard):
         v = dashboard.firmware_view(self._report(**{'fw.git_dirty': '1'}), 1.0)
         assert v['status'] == 'stale' and v['detail'].endswith('Uncommitted build')
