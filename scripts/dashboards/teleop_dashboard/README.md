@@ -27,8 +27,8 @@ Dashboard: `http://<car-ip>:8081`.
 | `racecar service enable webteleop` | start at every boot |
 | `racecar service logs webteleop` | follow the log |
 
-Saved tuning goes to `teleop.local.yaml` beside `teleop.yaml`; the shipped file
-keeps the defaults. Internals: `docs/dashboards.md` in the driver.
+Saved tuning goes to `dashboards/teleop.yaml` in the car profile
+(`~/.config/racecar`); the shipped `teleop.yaml` keeps the defaults. Internals: `docs/dashboards.md` in the driver.
 
 ## Driving
 
@@ -108,7 +108,7 @@ Save rewrites the numbers in place, so the comments in the yaml survive.
 
 Anything else publishing /drive will fight this service at the mux and the car will sit still or stutter:
 
-- The wallfollow, pursuit, eps, smartfollow, and linefollow dashboards all publish /drive. Stop them before starting this one: `racecar service stop wallfollow`, and the same for the others.
+- The wallfollow and linefollow dashboards both publish /drive. Stop them before starting this one: `racecar service stop wallfollow`, and the same for linefollow.
 - A leftover Jupyter kernel that ever created a racecar object keeps publishing /drive. Restart the jupyter service to clear them.
 
 Check with: `ros2 topic info -v /drive` (there should be exactly one publisher: webteleop).
@@ -126,4 +126,4 @@ The RACECAR Neo mux gates /drive on the RB bumper and zeroes output when /joy or
 
 ## Car specifics
 
-This package is calibrated for the RACECAR Neo: JPEG frames on /camera/color, D435i depth on /camera/depth, RPLIDAR angle mapping, steering sign, speed feedback from /odom, ROS Jazzy paths. The steering sign was verified physically on the sibling dashboards and is the same here.
+This package is calibrated for the RACECAR Neo: raw color frames on /camera/color, D435i depth on /camera/depth, RPLIDAR angle mapping, steering sign, speed feedback from /odom, ROS Jazzy paths. The steering sign was verified physically on the sibling dashboards and is the same here.

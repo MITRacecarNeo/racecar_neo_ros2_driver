@@ -55,15 +55,7 @@ for el in /dev/shm/fastrtps_port*_el; do
     fi
 done
 
-# Features chosen on the 8080 dashboard (scripts/features.py): the camera and
-# detections. Arguments given to this script win.
 SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
-mapfile -t FEATURE_ARGS < <(python3 "$SCRIPT_DIR/features.py" args "$@" || true)
-set -- "$@" "${FEATURE_ARGS[@]}"
-
-# Launch arguments, one per line, so the watchdog leaves disabled subsystems
-# (<name>_enable:=false) alone.
-printf '%s\n' "$@" > "$LOG_DIR/launch_args"
 
 # ROS2's internal logs (rosout, launch.log) land beside teleop.log.
 export ROS_LOG_DIR="$LOG_DIR"
@@ -85,6 +77,17 @@ fi
 
 # Per-car files left in the driver folder are ignored; say so in the log.
 python3 "$SCRIPT_DIR/racecar_profile.py" check || true
+
+# Features chosen on the 8080 dashboard (scripts/features.py): the camera and
+# detections. features.py imports the car profile module, so it runs after the
+# overlay.
+# Arguments given to this script win.
+mapfile -t FEATURE_ARGS < <(python3 "$SCRIPT_DIR/features.py" args "$@" || true)
+set -- "$@" "${FEATURE_ARGS[@]}"
+
+# Launch arguments, one per line, so the watchdog leaves disabled subsystems
+# (<name>_enable:=false) alone.
+printf '%s\n' "$@" > "$LOG_DIR/launch_args"
 
 # ---------------------------------------------------------------------------
 # Launch; `exec` so systemd tracks the ros2 launch PID, not this shell.

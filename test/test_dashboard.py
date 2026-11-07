@@ -9,7 +9,7 @@ import threading
 import time
 from types import SimpleNamespace
 
-from conftest import load_script
+from conftest import completed, load_script
 import pytest
 
 
@@ -208,27 +208,27 @@ class TestPower:
         assert watch.take() == (4.88, None)
 
     def test_page_keeps_the_lowest_since_it_opened(self, dashboard):
-        html = dashboard.DASHBOARD_HTML
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert "['health', 'power', 'bolt', 'Power', 'compute']" in html
         assert 'powerLow = Math.min(' in html and 'h.limits' in html
 
 
 class TestDashboardHTML:
     def test_html_template_present(self, dashboard):
-        assert '<!DOCTYPE html>' in dashboard.DASHBOARD_HTML
+        assert '<!DOCTYPE html>' in dashboard.webui.read_page(dashboard._HTML_PATH)
 
     def test_html_references_api_endpoint(self, dashboard):
-        html = dashboard.DASHBOARD_HTML
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert "'/api/status'" in html and "'/api/status?refresh=1'" in html
 
     def test_title_says_racecar(self, dashboard):
-        html = dashboard.DASHBOARD_HTML
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert 'RACECAR Neo' in html
         assert 'UAV Neo' not in html
 
     def test_system_health_section_present(self, dashboard):
         # The target div and the JS field name must agree.
-        html = dashboard.DASHBOARD_HTML
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert 'id="system-health"' in html
         assert 'data.system_health' in html
 
@@ -305,12 +305,12 @@ class FakeRun:
         self.calls.append(argv)
         if argv[1] == 'is-active':
             out = '\n'.join(self.states.get(u, 'inactive') for u in argv[2:])
-            return SimpleNamespace(stdout=out, returncode=0, stderr='')
+            return completed(stdout=out, returncode=0, stderr='')
         verb, unit = argv[-2], argv[-1]
         if self.fail == verb:
-            return SimpleNamespace(stdout='', returncode=1, stderr=self.stderr)
+            return completed(stdout='', returncode=1, stderr=self.stderr)
         self.states[unit] = 'active' if verb == 'start' else 'inactive'
-        return SimpleNamespace(stdout='', returncode=0, stderr='')
+        return completed(stdout='', returncode=0, stderr='')
 
 
 class TestHome:
@@ -424,8 +424,8 @@ class TestHome:
         assert not dashboard.app_ready(port, timeout=0.2)
 
     def test_launch_page_opens_then_waits(self, dashboard):
-        html = dashboard._read_page(dashboard._LAUNCH_PATH)
-        assert "fetch('/api/open'" in html and '/api/ready?app=' in html
+        html = dashboard.webui.read_page(dashboard._LAUNCH_PATH)
+        assert "RcnApi.post('/api/open'" in html and '/api/ready?app=' in html
         assert 'location.replace' in html and 'id="cancel"' in html
         assert 'window.close()' in html
         assert 'Try again' not in html
@@ -505,7 +505,7 @@ class TestHome:
         assert '49-racecar-teleop.rules' in (scripts / 'setup_user_env.sh').read_text()
 
     def test_page_uses_the_shared_assets(self, dashboard):
-        html = dashboard._load_dashboard_html()
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert '/ui/rcn.css' in html and '/ui/brand/' in html and '/launch?app=' in html
         assert html.count('/ui/brand/mark.png') == 1, 'one logo on the page, in color'
         assert '/ui/brand/lockup' not in html
@@ -555,7 +555,7 @@ class TestHistory:
         assert dashboard.BATTERY_WINDOW_SEC == 7200
 
     def test_page_charts_both_series(self, dashboard):
-        html = dashboard.DASHBOARD_HTML
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert "fetch('/api/history')" in html and "fetch('/api/overview')" in html
         for chart in ('ov-volts', 'ov-amps', 'ov-temp', 'ov-mem', 'ov-imu', 'ov-speed'):
             assert f'id="{chart}"' in html
@@ -590,7 +590,7 @@ class TestOnDemand:
         assert not s.warming()
 
     def test_view_tracking(self, dashboard, monkeypatch):
-        monkeypatch.setattr(dashboard, '_last_view', 0.0)
+        monkeypatch.setattr(dashboard, '_view', dashboard.webui.IdleGate(dashboard.VIEW_IDLE_SEC))
         dashboard._wake.clear()
         assert dashboard.note_view() is True and dashboard._wake.is_set()
         assert dashboard.viewing()
@@ -694,7 +694,7 @@ class TestOverrideEndpoint:
         assert post('go')[0] == 400
 
     def test_page_has_the_toggle_and_warning(self, dashboard):
-        html = dashboard._load_dashboard_html()
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert 'id="override"' in html and 'id="override-banner"' in html
         assert 'The car may start moving without warning. Do not leave it unattended.' in html
 
@@ -763,6 +763,12 @@ class TestFeatures:
         path.write_text('AUTONOMY_MODE=off\nAUTONOMY_MAP=hall\n')
         assert dashboard.last_run(path) == {}
 
+    def test_last_run_follows_the_mode_file_override(self, dashboard, tmp_path, monkeypatch):
+        path = tmp_path / 'other.conf'
+        path.write_text('AUTONOMY_MODE=mapping\nAUTONOMY_MAP=hall\n')
+        monkeypatch.setenv('RACECAR_AUTONOMY_CONF', str(path))
+        assert dashboard.last_run() == {'mode': 'mapping', 'map': 'hall'}
+
 
 class _ToolRun(FakeRun):
     """FakeRun that also answers `racecar map` calls."""
@@ -781,7 +787,7 @@ class _ToolRun(FakeRun):
             if action == 'resume':
                 self.states[AUTONOMY] = 'active'
             code = self.codes.get(action, 0)
-            return SimpleNamespace(stdout=f'{action} done\n', stderr='', returncode=code)
+            return completed(stdout=f'{action} done\n', stderr='', returncode=code)
         return super().__call__(argv, **kw)
 
 
@@ -840,7 +846,7 @@ class TestFeatureEndpoint:
         )
 
     def test_page_has_features(self, dashboard):
-        html = dashboard._load_dashboard_html()
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert 'id="features"' in html and 'id="autosheet"' in html
         assert 'needs the camera. Turn it on?' in html
 
@@ -875,7 +881,7 @@ class TestDrivingAppsAndAutonomy:
         assert dashboard.open_app('camlabel', run)[0] and run.tool == []
 
     def test_page_asks_before_stopping_autonomy(self, dashboard):
-        html = dashboard._load_dashboard_html()
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert 'Save it, stop it, and open' in html and 'will close.' in html
 
 
@@ -1027,20 +1033,20 @@ class TestBatteryEndpoints:
 
 class TestBatteryPage:
     def test_turn_off_tile_next_to_the_override(self, dashboard):
-        html = dashboard._load_dashboard_html()
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert html.index('id="override"') < html.index('id="poweroff"')
         assert html.index('id="poweroff"') < html.index('id="apps-utilities"')
         assert "confirm('Turn the car off?')" in html
         assert '/api/shutdown' in html
 
     def test_header_pills_banner_and_cancel(self, dashboard):
-        html = dashboard._load_dashboard_html()
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
         for element in ('batt-time', 'batt-power', 'battery-banner', 'battery-cancel'):
             assert f'id="{element}"' in html
         assert '/api/battery/cancel' in html
 
     def test_time_pill_switches_views(self, dashboard):
-        html = dashboard._load_dashboard_html()
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert "const PILL_VIEWS = ['percent', 'time', 'clock'];" in html
         assert 'until ${at.toLocaleTimeString' in html
         assert "store.set('rcn-battery-view', pillView)" in html
@@ -1068,7 +1074,7 @@ def _fake_network(argv, **kwargs):
         out = 'infrastructure\nDuck\n'
     else:
         out = NMCLI_DEVICES
-    return SimpleNamespace(returncode=0, stdout=out)
+    return completed(returncode=0, stdout=out)
 
 
 class TestNetwork:
@@ -1110,7 +1116,7 @@ class TestNetwork:
         assert clock['zone'] == time.localtime(1000.0).tm_zone
 
     def test_page_has_the_clock_and_network_pill(self, dashboard):
-        html = dashboard._load_dashboard_html()
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
         for element in ('clock', 'net-pill', 'net-menu', 'net-table'):
             assert f'id="{element}"' in html
         assert "['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']" in html
@@ -1142,5 +1148,106 @@ class TestLink:
 
     def test_pit_rate_comes_from_the_link_report(self, dashboard):
         assert '/imu/lsm9ds1' not in dashboard.RATE_TOPICS
+
+
+class TestFirmware:
+    def _report(self, **values):
+        base = {
+            'state': 'known',
+            'fw.version': '0.9.1',
+            'fw.label': 'v0.9.1.10-pcb',
+            'fw.git': '574e229',
+            'fw.git_dirty': '0',
+            'fw.speed_control': 'closed_loop',
+        }
+        return {'level': 0, 'message': '', 'values': {**base, **values}}
+
+    def test_release_build(self, dashboard):
+        v = dashboard.firmware_view(self._report(), 1.0)
+        assert (v['status'], v['detail']) == ('healthy', '0.9.1 (v0.9.1.10-pcb, 574e229)')
+
+    def test_raw_pwm_build_is_yellow(self, dashboard):
+        v = dashboard.firmware_view(self._report(**{'fw.speed_control': 'raw_pwm'}), 1.0)
+        assert v['status'] == 'stale' and 'Open-loop PWM test build' in v['detail']
+
+    def test_voltage_dips_are_listed(self, dashboard):
+        v = dashboard.firmware_view(
+            self._report(**{'power.dip_count': '2', 'power.min_mv': '6950'}), 1.0
+        )
+        assert v['status'] == 'healthy'
+        assert v['detail'] == '0.9.1 (v0.9.1.10-pcb, 574e229). 2 voltage dips, lowest 6.95 V'
+        quiet = dashboard.firmware_view(
+            self._report(**{'power.dip_count': '0', 'power.min_mv': '-1'}), 1.0
+        )
+        assert 'dip' not in quiet['detail']
+
+    def test_uncommitted_build_is_yellow(self, dashboard):
+        v = dashboard.firmware_view(self._report(**{'fw.git_dirty': '1'}), 1.0)
+        assert v['status'] == 'stale' and v['detail'].endswith('Uncommitted build')
+
+    def test_no_reply_is_yellow(self, dashboard):
+        v = dashboard.firmware_view(
+            {'level': 1, 'message': '', 'values': {'state': 'unknown'}}, 1.0
+        )
+        assert v['status'] == 'stale' and '0.9.0' in v['detail']
+
+    def test_reading_or_missing_is_off(self, dashboard):
+        pending = {'level': 0, 'message': '', 'values': {'state': 'pending'}}
+        assert dashboard.firmware_view(pending, 1.0)['status'] == 'unsupervised'
+        assert dashboard.firmware_view(None, None)['status'] == 'unsupervised'
+        assert dashboard.firmware_view(self._report(), 10.0)['status'] == 'unsupervised'
+
+    @pytest.mark.parametrize(
+        'supported, state, status',
+        [
+            ('1', '0', 'healthy'),
+            ('1', '1', 'stale'),
+            ('1', '2', 'stale'),
+            ('1', '3', 'dead'),
+            ('0', '0', 'unsupervised'),
+            ('', '0', 'unsupervised'),
+        ],
+    )
+    def test_stall_chip(self, dashboard, supported, state, status):
+        report = {
+            'level': 0,
+            'message': 'Normal',
+            'values': {'supported': supported, 'state': state},
+        }
+        assert dashboard.stall_view(report, 1.0)['status'] == status
+        assert dashboard.stall_view(None, None)['status'] == 'unsupervised'
+        assert dashboard.stall_view(report, 10.0)['detail'] == 'No report'
+
+    def test_stall_chip_on_the_home_page(self, dashboard):
+        html = (Path(dashboard.__file__).parent / 'dashboard.html').read_text()
+        assert "['health', 'stall', 'alert', 'Stall', 'actuation']" in html
+
+    def test_footer_versions(self, dashboard):
+        about = dashboard.about_view(self._report(), 1.0)
+        assert about == {'driver': dashboard.webui.driver_version(), 'firmware': '0.9.1'}
+        assert dashboard.about_view(None, None)['firmware'] is None
+        pending = {'level': 0, 'message': '', 'values': {'state': 'pending'}}
+        assert dashboard.about_view(pending, 1.0)['firmware'] is None
+
+    def test_chip_on_the_home_page(self, dashboard):
+        html = (Path(dashboard.__file__).parent / 'dashboard.html').read_text()
+        assert "['health', 'firmware', 'board', 'Firmware', 'compute']" in html
         assert '/imu/lsm9ds1' in dashboard.DISPLAY_RATE_TOPICS
-        assert "['health', 'link', 'pulse', 'Link', 'compute']" in dashboard.DASHBOARD_HTML
+        assert "['health', 'link', 'pulse', 'Link', 'compute']" in dashboard.webui.read_page(
+            dashboard._HTML_PATH
+        )
+
+
+class TestBatteryPillsFresh:
+    def test_lost_contact_hides_the_pills(self, dashboard):
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
+        start = html.index(".catch(() => {\n      setOverall('err', 'No contact');")
+        end = start + 300
+        catch = html[start:end]
+        assert "$('batt-time').hidden = true;" in catch
+        assert "$('batt-power').hidden = true;" in catch
+
+    def test_tab_brought_back_updates_at_once(self, dashboard):
+        assert "document.addEventListener('visibilitychange'" in dashboard.webui.read_page(
+            dashboard._HTML_PATH
+        )

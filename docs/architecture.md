@@ -199,6 +199,39 @@ stops a running autonomy run, restarts teleop (allowed by
 loads a localization map from the last pose. The autonomy tile runs the same
 `racecar map` commands: resume, stop, and save then stop.
 
+### App registry
+
+`config/apps.yaml` lists every app the car serves in a browser: id, name,
+icon, port, group, unit, whether it publishes `/drive` (`exclusive`), whether
+8080 may start it, what it needs, and for lab dashboards the folder and
+script. `racecar_neo_ros2_driver/apps.py` reads it, and runs as a plain script
+for the shell side.
+
+```
+config/apps.yaml ──▶ apps.py ─┬─▶ dashboard.py   tiles, open_app, Clear apps, CORS ports
+                              ├─▶ map_control.py DRIVING_APPS (stopped by mapping)
+                              ├─▶ safe_shutdown  DRIVING_UNITS
+                              ├─▶ each app       its PORT
+                              └─▶ apps.py list ─┬─▶ setup_dashboards.sh  units from
+                                                │   scripts/dashboards/racecar-app.service.in
+                                                └─▶ racecar service      one-at-a-time rule
+```
+
+Every app's server is built on `scripts/webui.py`:
+
+| Piece | Gives |
+|---|---|
+| `AppHandler` | `send`, `send_json`, `read_json` (body read before `do_POST`, at most 64 KiB, so keep-alive stays clean), `page`, `serve_asset` for `/ui/`, HTTP/1.1, no request log |
+| `serve()` | Threaded server, an optional spin thread, SIGINT and SIGTERM taken back from rclpy, then `cleanup` and the join |
+| `ros_spinner`, `spin_until_stopped` | Executor loop on the EventsExecutor (default executor when the import is missing) that logs an error and spins on; ends quietly at shutdown |
+| `fill`, `read_page`, `static_file` | `{{asset}}` (`ASSET_VERSION`), `{{home}}` (the 8080 port) and `{{driver}}` (`package.xml` version) filled in pages and shared scripts; `read_page` adds `web/footer.js` (driver version, firmware version from 8080 `/api/about`) and `web/home.js` (the header's `.rcn-mark` becomes a home link; closes the tab, else loads 8080; skipped on a page whose `<body>` has `data-home`) before `</body>` |
+| `same_origin`, `sibling_origin` | Origin checks for page-only calls and for CORS from the other app ports |
+| `scripts/web/` `ui.js`, `api.js`, `tune.js`, `logs.js` | The page side: helpers, POST and `/state` polling, tuning sliders, the Logs section (`docs/dashboards.md`) |
+
+A new app is one entry, its unit, and for 8080 start and stop its unit in
+`scripts/polkit/49-racecar-dashboards.rules`; `test/test_apps.py` checks that
+the rule grants exactly the startable apps.
+
 ### Lab dashboards
 
 Four dashboards in `scripts/dashboards/` run as `racecar-*` units, installed
@@ -307,6 +340,8 @@ patterns on `/dotmatrix/pixels`.
 | `/battery/cancel_shutdown` | `std_msgs/Empty` | dashboard (Cancel shutdown) | `battery_guard.py` |
 | `/rc/channels` | `std_msgs/Float32MultiArray` | `pit_node` | `mux_node` (when `rc_authority_enable`), user code |
 | `/rc/link` | `std_msgs/Bool` | `pit_node` | `mux_node` (when `rc_authority_enable`) |
+| `/pit/firmware` | `std_msgs/String` (latched; `key=value` lines, empty when unknown) | `pit_node` | user code |
+| `/pit/stall` | `diagnostic_msgs/DiagnosticStatus` (latched, on change; state, name, seconds_left, trips) | `pit_node` | user code, test logs |
 | `/odom` | `nav_msgs/Odometry` | `pit_node` | lab dashboards, user code |
 | `/odom/integrated`, `/tf` (`odom -> base_link`) | `nav_msgs/Odometry`, `tf2_msgs/TFMessage` | `pit_node` | user code |
 | `/camera/color` | `sensor_msgs/Image` | `realsense2_camera_node` | `edgetpu_node`, `webteleop`, `linefollow`, user code |
@@ -686,6 +721,31 @@ in the serial reader thread and published there once a second as
 frame rate under the RealSense driver's rate key, so `sysinfo`'s
 `DIAGNOSTIC_RATE_NAMES` gives the dashboard and `racecar status` the PIT
 rate without subscribing to the 200 Hz IMU topic.
+
+The same message carries `pit: firmware` (`pit_info.FirmwareInfo`). From
+each serial open, and again after a Teensy reset, `pit_node` sets the
+`info_request` bit (`0x20`) in its command frames until the firmware's info
+reply is complete or 2 s pass. It asks again every 60 s
+(`pit_info.REFRESH_SEC`) for the values that change while the car runs (the
+`power.*` dip keys); a refresh keeps the last info until the new payload is
+in, and the log line repeats only when the build changes. The Teensy answers with `0xFEEDC0DE` chunks
+between telemetry frames; `pit_protocol.scan_for_packet` returns them as
+`InfoChunk`, and `pit_info.InfoAssembler` joins one revision in index order.
+The whole payload is latched on `/pit/firmware`; the status copies the
+version, label, commit, speed control, and ESC bounds, and warns on a test
+build (`fw.speed_control` other than `closed_loop`), an uncommitted build,
+or no reply (firmware before 0.9.0). The dashboard's Firmware chip and the
+`racecar status` `teensy firmware` row read it through
+`sysinfo.read_firmware_status`.
+
+`pit: stall` (`pit_stall.StallWatch`) decodes the firmware's stall
+protection from the telemetry EKF slots: state (0 normal, 1 tripped, 2
+cooldown, 3 lockout), seconds left, trips since the Teensy booted. Firmware
+without stall protection (no `fw.stall_protect=1`) sends zeros. A change is
+latched on `/pit/stall` from the reader thread, seconds left in 0.1 s steps,
+and trips, lockouts and the return to normal are logged. The 8080 Stall chip
+and the `racecar status` `stall protection` row read it through
+`sysinfo.read_stall_status`.
 
 `shake` and `poke` run `health_watch.Watch`: four threads (EXT5V as fast as
 vcgencmd answers; a 1 s loop for throttle bits and a data-root write; a

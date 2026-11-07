@@ -52,17 +52,22 @@ WRITE_FILE = '.racecar-health-write'
 LINK_TOPIC = '/imu/lsm9ds1'
 SCAN_TOPIC = '/scan'
 
+# Kernel log lines that mean the drive or its PCIe link misbehaved; health.py
+# checks a whole boot against the same patterns.
+NVME_ERROR = re.compile(
+    r'nvme\S*:?\s.*(timeout|I/O error|resetting controller|controller is down|abort|failed)'
+    r'|Buffer I/O error on dev nvme',
+    re.IGNORECASE,
+)
+PCIE_ERROR = re.compile(
+    r'PCIe Bus Error|AER: (Corrected|Uncorrected|Multiple)|link down|link reset',
+    re.IGNORECASE,
+)
 KERNEL_EVENTS = (
     ('usb', re.compile(r'USB disconnect|reset \S+ USB device', re.IGNORECASE)),
     ('under-voltage', re.compile(r'undervoltage', re.IGNORECASE)),
-    (
-        'nvme',
-        re.compile(
-            r'nvme\S*:?\s.*(timeout|I/O error|resetting controller|controller is down|abort)',
-            re.IGNORECASE,
-        ),
-    ),
-    ('pcie', re.compile(r'PCIe Bus Error|AER: (Corrected|Uncorrected|Multiple)|link down', re.I)),
+    ('nvme', NVME_ERROR),
+    ('pcie', PCIE_ERROR),
 )
 
 

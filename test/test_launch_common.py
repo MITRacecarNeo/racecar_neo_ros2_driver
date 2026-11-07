@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from conftest import load_launch
 from launch.actions import DeclareLaunchArgument
 from launch_ros.actions import Node
 import pytest
@@ -81,13 +82,7 @@ class TestShippedLaunchFiles:
 
     @staticmethod
     def _load(name):
-        import importlib.util
-
-        path = Path(__file__).parent.parent / 'launch' / f'{name}.launch.py'
-        spec = importlib.util.spec_from_file_location(name, path)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        return mod.generate_launch_description()
+        return load_launch(name).generate_launch_description()
 
     def test_pit_args(self, share):
         assert _args(self._load('pit')) == [

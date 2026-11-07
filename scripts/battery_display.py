@@ -28,7 +28,8 @@ import math
 ROWS, COLS = 8, 24
 LED_COUNT = 84
 SEGMENT = 7
-ORANGE = (255, 90, 0)
+# One orange on the LED strip: pit_node OVERRIDE_LED_RGB and the firmware's.
+ORANGE = (255, 110, 0)
 # The firmware's charge bar red (CRGB::Red).
 RED = (255, 0, 0)
 LED_SWAPS_PER_SEC = {'warn': 1.0, 'countdown': 2.0, 'final': 4.0, 'off': 4.0}

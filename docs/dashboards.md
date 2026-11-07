@@ -10,6 +10,7 @@ described in its own README. Install and use: README,
 - [Shared structure](#shared-structure)
 - [Tuning and logs](#tuning-and-logs)
 - [Lidar convention](#lidar-convention)
+- [New app checklist](#new-app-checklist)
 - [webteleop](#webteleop)
 - [linefollow](#linefollow)
 - [wallfollow](#wallfollow)
@@ -25,7 +26,9 @@ Each dashboard is one Python process: a ROS node plus a stdlib HTTP server
 | `<name>.py` | The node (subscriptions, the `/drive` timer), the HTTP handler, and pure helpers the tests reach without a node |
 | `<name>.html` | The page: controls, canvases, charts; polls `GET /state` |
 | `<name>.yaml` | Shipped defaults for every tunable |
-| `racecar-<name>.service.in` | Unit template; `@DIR@` is substituted at install |
+
+Each dashboard is an entry in `config/apps.yaml` with its `dir` and `script`;
+its unit is rendered from `scripts/dashboards/racecar-app.service.in`.
 
 `/drive` comes from a timer (15 Hz), never from a browser post. A command older
 than `cmd_timeout` reads as released, so a closed tab, a dropped link, or a
@@ -35,40 +38,102 @@ last command forever.
 Steering is negated on publish: positive on the wire turns this car left
 (verified on the car).
 
-Three threads share the state: the ROS executor, the HTTP request threads, and
-the main thread in `serve_forever`. Everything shared sits behind one `_lock`,
-never held across an encode or a network write. `rclpy.init()` installs signal
-handlers that stop ROS but leave `serve_forever` blocked, so `main` takes the
-signals back and calls `shutdown` off the serving thread.
+The handler is a `webui.AppHandler` and `main` ends in `webui.serve()`
+(`scripts/webui.py`, the same for every app): HTTP/1.1 keep-alive, the
+request body read before `do_POST`, `/ui/` assets, pages with `{{asset}}`
+and `{{home}}` filled in, a threaded server, and a ROS spin thread that
+survives an error. Three threads share the state: the ROS executor, the HTTP
+request threads, and the main thread in `serve_forever`. Everything shared
+sits behind one `_lock`, never held across an encode or a network write.
+
+The page side is shared too (`scripts/web/`): the app-page section of
+`rcn.css` (`rcn-main`, `rcn-section`, `rcn-tools`, `rcn-state`, `rcn-zoom`,
+`rcn-slider`, `rcn-toast`, `data-tip`), `ui.js` (`RcnUi`: element, escape,
+pills, canvas colors from the CSS tokens, live camera frames, toasts),
+`api.js` (`RcnApi`: POST JSON, and a `/state` poll with one request in flight
+that stops while the tab is hidden), `tune.js` (`RcnTune.sliders`: live
+sliders that send at most one `POST /params` per 60 ms and follow what the
+app clamped) and `logs.js` (`RcnLogs.mount`: the Logs section). A page keeps
+its grid columns and what only it draws.
 
 ## Tuning and logs
+
+Both come from `scripts/labkit.py`; each dashboard makes a `Tuning` (its
+tunables, a clamp function, whole-number and file-only keys) and a `RunLog`
+(its CSV header) and passes them its `_lock`.
 
 Tuning loads the shipped `<name>.yaml`, then `dashboards/<name>.yaml` in the
 car profile (`~/.config/racecar`, `racecar_neo_ros2_driver/car_profile.py`) on
 top when it exists. Save writes only the profile file (seeded from the
-defaults on the first save) and rewrites its numbers in place so the comments
-survive. The file it replaces goes to the profile's `history/`. The shipped
-file stays unchanged, so a driver update keeps a car's tuning.
+defaults on the first save): it rewrites the numbers in place so the comments
+survive, and appends any tunable the file lacks, so a file saved before a
+setting existed gains it. Wall follow's `mode` is never written; it is chosen
+by editing the file. The file it replaces goes to the profile's `history/`.
+The shipped file stays unchanged, so a driver update keeps a car's tuning.
+Slider changes become marks on the charts; a drag of one slider within 1 s is
+one mark.
 
 CSV logs go to `dashboards/<name>/` under the data root
-(`racecar_neo_ros2_driver/data_root.py`) and are listed and downloaded
-through the page.
+(`racecar_neo_ros2_driver/data_root.py`) as `LogN.csv`: the header, the marks
+inside the saved window as `# mark` lines, then the rows behind the live
+chart. `GET /logs`, `GET /logs/<name>` and `POST /logs/save` list, send and
+save them.
 
 ## Lidar convention
 
-`LIDAR_MOUNT_YAW_DEG` is the raw scan angle that points at the car's nose:
+Lab angles are 0 at the nose and positive to the car's right. A ray at raw
+scan angle r points r + yaw counterclockwise from the nose, where yaw is the
+lidar's mount from the car's frames (`laser_yaw_deg` in `config/frames.yaml`,
+with the car profile's calibrated value on top), so:
 
 ```
-student_deg = LIDAR_MOUNT_YAW_DEG - raw_deg
+lab_deg = -(raw_deg + laser_yaw_deg)      wrapped to -180..180
 ```
 
-The RPLIDAR faces aft over 360 degrees at 1080 points, so the nose sits at the
-raw 180 edge and the constant is `180.0`. An object in front reports at raw
-180, one off the car's right at raw +90: a yaw, not a handedness flip, so the
-order around the circle is kept and only the origin moves. Indices and angles
-come from each message's `angle_min` and `angle_increment` and wrap modulo the
-point count, so nothing assumes a sweep width. webteleop and wallfollow carry
-the constant; linefollow does not read the lidar.
+The RPLIDAR faces aft over 360 degrees at 1080 points: the shipped yaw is
+180, the calibrated one close to it (179.619 on the reference car). An object
+in front reports at raw 180, one off the car's right at raw +90. Helpers in
+`racecar_neo_ros2_driver/frames.py`: `laser_mount()`, `student_deg()`,
+`raw_rad()` and `student_scan()`; the map viewer and 8080 Overview read the
+same mount. Indices and angles come from each message's `angle_min` and
+`angle_increment`, so nothing assumes a sweep width. webteleop and wallfollow
+read the lidar; linefollow does not. The student library's `LidarReal` turns
+its samples by the same yaw, read from the base_link to laser transform on
+`/tf_static`.
+
+## New app checklist
+
+A new browser app is assembled from the shared pieces, not copied from a
+sibling. Port numbers, unit names and the one-at-a-time rule come from the
+registry; a hard-coded port or unit list is a bug.
+
+1. Registry: an entry in `config/apps.yaml` (id, name, icon from
+   `scripts/web/icons.svg`, port, group, unit `racecar-<id>`, `exclusive`
+   when it publishes `/drive`, `startable`, `needs`). A lab dashboard adds
+   `dir` and `script`, and `setup_dashboards.sh` renders its unit from
+   `racecar-app.service.in`; another app ships its own unit in `scripts/`.
+2. Start from 8080: a startable app's unit goes in
+   `scripts/polkit/49-racecar-dashboards.rules` (`test/test_apps.py` fails
+   until it does).
+3. Server: `PORT = apps.port('<id>')`; a handler on `webui.AppHandler`
+   (`serve_asset`, `page`, `send`, `send_json`, `read_json`); `main` ends in
+   `webui.serve(PORT, Handler, spin=webui.ros_spinner(node),
+   cleanup=webui.ros_shutdown)`. Subscriptions that cost CPU go behind a
+   `webui.IdleGate`.
+4. Sensors: camera frames through `imaging` (`bgr`, `depth_m`, `fit_width`,
+   `jpeg`, `depth_preview`); lidar angles through `frames` (`laser_mount`,
+   `student_deg`, `raw_rad`, `student_scan`).
+5. A lab dashboard: `labkit.Tuning` and `labkit.RunLog` with the app's lock,
+   `labkit.drive_msg` for every `/drive` message.
+6. Page: link `rcn.css`, `ui.js`, `api.js` and what it uses of `charts.js`,
+   `tune.js`, `logs.js`, `lidar.js`, `lost.js`, `battery.js` and
+   `override.js` (a driving app) as `/ui/<file>?v={{asset}}`; set
+   `data-app` on `<html>`; lay out with `rcn-main` and `rcn-section`; poll
+   with `RcnApi.poll`; draw canvas colors from `RcnUi.token`. Keep in the
+   page only its grid and what only it draws.
+7. Tests: a `test/test_dashboard_<id>.py` for the app's own logic; the
+   registry, asset and page-kit tests in `test_apps.py` and `test_webui.py`
+   cover the rest.
 
 ## webteleop
 

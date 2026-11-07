@@ -3,20 +3,16 @@
 import subprocess
 from types import SimpleNamespace
 
-from conftest import load_script
+from conftest import completed, load_script
 import pytest
 
 sysinfo = load_script('sysinfo')
 
 
-def _completed(stdout, returncode=0):
-    return SimpleNamespace(stdout=stdout, returncode=returncode)
-
-
 @pytest.fixture
 def fake_run(monkeypatch):
     """Replace subprocess.run in sysinfo; set .result or .exc on the returned stub."""
-    stub = SimpleNamespace(result=_completed(''), exc=None, calls=[])
+    stub = SimpleNamespace(result=completed(''), exc=None, calls=[])
 
     def run(cmd, **_kwargs):
         stub.calls.append(cmd)
@@ -53,7 +49,7 @@ class TestDecodeThrottled:
         assert sysinfo.decode_throttled('error=1') == (None, [])
 
     def test_read_throttled_uses_vcgencmd(self, fake_run):
-        fake_run.result = _completed('throttled=0x50000\n')
+        fake_run.result = completed('throttled=0x50000\n')
         assert sysinfo.read_throttled()[0] == 0x50000
         assert fake_run.calls == [['vcgencmd', 'get_throttled']]
 
@@ -90,11 +86,11 @@ class TestClassifyRtc:
 
 class TestRtcVoltage:
     def test_parses_pmic_output(self, fake_run):
-        fake_run.result = _completed('     BATT_V volt(24)=2.91650000V\n')
+        fake_run.result = completed('     BATT_V volt(24)=2.91650000V\n')
         assert sysinfo.read_rtc_voltage() == pytest.approx(2.9165)
 
     def test_nonzero_exit_is_none(self, fake_run):
-        fake_run.result = _completed('', returncode=255)
+        fake_run.result = completed('', returncode=255)
         assert sysinfo.read_rtc_voltage() is None
 
     def test_timeout_is_none(self, fake_run):
@@ -121,12 +117,12 @@ class TestPmicRails:
         assert sysinfo.parse_pmic_adc('error=1 error_msg="Command not registered"') == {}
 
     def test_read_ext5v_asks_for_one_rail(self, fake_run):
-        fake_run.result = _completed('     EXT5V_V volt(24)=4.80000000V\n')
+        fake_run.result = completed('     EXT5V_V volt(24)=4.80000000V\n')
         assert sysinfo.read_ext5v() == pytest.approx(4.8)
         assert fake_run.calls[-1] == ['vcgencmd', 'pmic_read_adc', 'EXT5V_V']
 
     def test_unreadable_is_none(self, fake_run):
-        fake_run.result = _completed('', returncode=255)
+        fake_run.result = completed('', returncode=255)
         assert sysinfo.read_ext5v() is None
 
     @pytest.mark.parametrize(
@@ -149,12 +145,12 @@ class TestNvme:
     def test_smart_kelvin_to_celsius(self):
         def run(argv, **_kw):
             assert argv == sysinfo.NVME_SMART_ARGV
-            return _completed('{"temperature": 330, "percent_used": 2, "media_errors": 0}')
+            return completed('{"temperature": 330, "percent_used": 2, "media_errors": 0}')
 
         smart = sysinfo.read_nvme_smart(run)
         assert smart == {'temperature': 57, 'percent_used': 2, 'media_errors': 0}
 
-    @pytest.mark.parametrize('result', [_completed('', 1), _completed('not json')])
+    @pytest.mark.parametrize('result', [completed('', 1), completed('not json')])
     def test_smart_unreadable_is_none(self, result):
         assert sysinfo.read_nvme_smart(lambda argv, **kw: result) is None
 
@@ -178,11 +174,11 @@ class TestUnderVoltageAlarm:
 
 class TestRunCmd:
     def test_returns_stdout(self, fake_run):
-        fake_run.result = _completed('out\n')
+        fake_run.result = completed('out\n')
         assert sysinfo.run_cmd(['true']) == 'out\n'
 
     def test_nonzero_exit_is_empty(self, fake_run):
-        fake_run.result = _completed('partial', returncode=1)
+        fake_run.result = completed('partial', returncode=1)
         assert sysinfo.run_cmd(['false']) == ''
 
     def test_missing_binary_is_empty(self, fake_run):
@@ -247,6 +243,38 @@ class TestDiagnosticRates:
         }
         assert sysinfo.read_link_status(SimpleNamespace(status=[])) is None
 
+    def test_firmware_status(self):
+        status = SimpleNamespace(
+            name='pit: firmware',
+            level=b'\x01',
+            message='0.9.1: open-loop PWM test build',
+            values=[
+                SimpleNamespace(key='state', value='known'),
+                SimpleNamespace(key='fw.speed_control', value='raw_pwm'),
+            ],
+        )
+        msg = SimpleNamespace(status=[SimpleNamespace(name='pit: teensy link', values=[]), status])
+        assert sysinfo.read_firmware_status(msg) == {
+            'level': 1,
+            'message': '0.9.1: open-loop PWM test build',
+            'values': {'state': 'known', 'fw.speed_control': 'raw_pwm'},
+        }
+        assert sysinfo.read_firmware_status(SimpleNamespace(status=[])) is None
+
+    def test_stall_status(self):
+        status = SimpleNamespace(
+            name='pit: stall',
+            level=b'\x02',
+            message='Lockout, 28 s',
+            values=[SimpleNamespace(key='state', value='3')],
+        )
+        msg = SimpleNamespace(status=[status])
+        assert sysinfo.read_stall_status(msg) == {
+            'level': 2,
+            'message': 'Lockout, 28 s',
+            'values': {'state': '3'},
+        }
+
 
 class TestMemory:
     MEMINFO = 'MemTotal:        8245972 kB\nMemFree:  100 kB\nMemAvailable:    6291456 kB\n'
@@ -281,7 +309,7 @@ class TestCpuTimes:
 
 class TestArmClock:
     def test_firmware_clock_in_mhz(self, fake_run):
-        fake_run.result = _completed('frequency(0)=1000008576\n')
+        fake_run.result = completed('frequency(0)=1000008576\n')
         current, _maximum = sysinfo.read_arm_clock()
         assert current == 1000
         assert fake_run.calls[0] == ['vcgencmd', 'measure_clock', 'arm']
@@ -310,11 +338,11 @@ class TestDisk:
 class TestNtp:
     @pytest.mark.parametrize('stdout,expected', [('yes\n', True), ('no\n', False)])
     def test_synchronized_flag(self, fake_run, stdout, expected):
-        fake_run.result = _completed(stdout)
+        fake_run.result = completed(stdout)
         assert sysinfo.ntp_synchronized() is expected
 
     def test_timedatectl_failure_is_none(self, fake_run):
-        fake_run.result = _completed('', returncode=1)
+        fake_run.result = completed('', returncode=1)
         assert sysinfo.ntp_synchronized() is None
 
 

@@ -6,23 +6,20 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Callable
 import http.client
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import json
 import logging
 from pathlib import Path
 import secrets
 import shutil
-import signal
 import socket
 import subprocess
 import sys
 import threading
 import time
-from types import FrameType
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
+from racecar_neo_ros2_driver import apps, fileio
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
@@ -46,11 +43,13 @@ from sysinfo import (  # noqa: E402
     NVME_TEMP_WARN_C,
     read_diagnostic_rates,
     read_ext5v as _read_ext5v,
+    read_firmware_status,
     read_link_status,
     read_memory as _read_memory,
     read_nvme_temp as _read_nvme_temp,
     read_rtc_voltage as _read_battery_voltage,
     read_soc_temp as _read_soc_temp,
+    read_stall_status,
     read_throttled as _read_throttled,
     read_under_voltage_alarm as _read_under_voltage_alarm,
     read_watchdog_state,
@@ -61,94 +60,14 @@ import webui  # noqa: E402
 # Configuration
 # ---------------------------------------------------------------------------
 
-PORT = 8080
+PORT = apps.home_port()
 
-# Home page apps. Core apps start at boot, except Terminal, which starts when
-# opened. Utilities start when opened and stop with Clear apps. Starting and
-# stopping needs scripts/polkit/49-racecar-dashboards.rules.
-# `exclusive` utilities publish /drive, so one runs at a time. An app with no
-# unit is shown but opens nothing.
-APPS: list[dict[str, Any]] = [
-    {
-        'id': 'terminal',
-        'name': 'Terminal',
-        'icon': 'terminal',
-        'port': 8086,
-        'group': 'core',
-        'unit': 'racecar-terminal',
-        'exclusive': False,
-        'startable': True,
-        'desc': 'Open a terminal',
-    },
-    {
-        'id': 'jupyter',
-        'name': 'JupyterLab',
-        'icon': 'notebook',
-        'port': 8888,
-        'group': 'core',
-        'unit': 'racecar-jupyter',
-        'exclusive': False,
-        'startable': False,
-        'desc': 'Notebooks and code',
-    },
-    {
-        'id': 'mapview',
-        'name': 'Map Viewer',
-        'icon': 'map',
-        'port': 8084,
-        'group': 'core',
-        'unit': 'racecar-mapview',
-        'exclusive': False,
-        'startable': False,
-        'desc': 'Build and load maps',
-    },
-    {
-        'id': 'webteleop',
-        'name': 'Web Teleop',
-        'icon': 'gamepad',
-        'port': 8081,
-        'group': 'utilities',
-        'unit': 'racecar-webteleop',
-        'exclusive': True,
-        'startable': True,
-        'desc': 'Drive from the browser with camera and lidar',
-    },
-    {
-        'id': 'linefollow',
-        'name': 'Line Follow',
-        'icon': 'line',
-        'port': 8082,
-        'group': 'utilities',
-        'unit': 'racecar-linefollow',
-        'exclusive': True,
-        'startable': True,
-        'desc': 'Follow a colored line with the camera',
-        'needs': 'camera',
-    },
-    {
-        'id': 'wallfollow',
-        'name': 'Wall Follow',
-        'icon': 'wall',
-        'port': 8083,
-        'group': 'utilities',
-        'unit': 'racecar-wallfollow',
-        'exclusive': True,
-        'startable': True,
-        'desc': 'Follow walls with the lidar',
-    },
-    {
-        'id': 'camlabel',
-        'name': 'Camera Label',
-        'icon': 'tag',
-        'port': 8085,
-        'group': 'utilities',
-        'unit': 'racecar-camlabel',
-        'exclusive': False,
-        'startable': True,
-        'desc': 'Capture camera frames and label them for training',
-        'needs': 'camera',
-    },
-]
+# Home page apps, from config/apps.yaml (racecar_neo_ros2_driver/apps.py). Core
+# apps start at boot, except Terminal, which starts when opened. Utilities
+# start when opened and stop with Clear apps. Starting and stopping needs
+# scripts/polkit/49-racecar-dashboards.rules. `exclusive` utilities publish
+# /drive, so one runs at a time.
+APPS: list[dict[str, Any]] = apps.all_apps()
 
 # Features: parts of the car that cost CPU and can be turned off. The camera
 # and detections are teleop subsystems (scripts/features.py); changing one
@@ -170,7 +89,6 @@ FEATURES: list[dict[str, Any]] = [
 ]
 TELEOP_UNIT = 'racecar-teleop.service'
 AUTONOMY_UNIT = 'racecar-autonomy.service'
-AUTONOMY_MODE_FILE = Path.home() / '.config' / 'racecar' / 'autonomy.conf'
 MAP_TOOL = [sys.executable, str(Path(__file__).resolve().parent / 'racecar_map.py')]
 MAP_TOOL_TIMEOUT_SEC = 180.0
 # Time for the sensors to come up after a teleop restart before autonomy resumes.
@@ -178,7 +96,7 @@ TELEOP_SETTLE_SEC = 10.0
 READY_TIMEOUT_SEC = 1.0
 SYSTEMCTL_TIMEOUT_SEC = 30.0
 RATE_WINDOW_SEC = 3.0
-MAPVIEW_PORT = 8084
+MAPVIEW_PORT = apps.port('mapview')
 # /autonomy/status arrives at 1 Hz; older than this, the node has stopped.
 AUTONOMY_STALE_SEC = 5.0
 # The Data and RTC chips; the Power chip refreshes every tick.
@@ -255,7 +173,7 @@ _latest_status: dict[str, Any] = {
     'rates': {},
     'system_health': {},
     'watchdog_log': [],
-    'log_dir': str(Path.home() / 'logs' / 'latest'),
+    'log_dir': str(fileio.latest_log_dir()),
     'autonomy': {},
     'apps': [],
 }
@@ -385,13 +303,7 @@ def override_origin(origin: str | None, host: str | None) -> str | None:
     The lab pages (scripts/web/override.js) run on their own ports, so the
     browser needs a CORS header to read the reply.
     """
-    if not origin or not host:
-        return None
-    o, h = urlparse(origin), urlparse(f'//{host}')
-    ports = {a['port'] for a in APPS if a['exclusive']}
-    if o.scheme == 'http' and o.hostname == h.hostname and o.port in ports:
-        return origin
-    return None
+    return webui.sibling_origin(origin, host, (a['port'] for a in APPS if a['exclusive']))
 
 
 def estimate_view(values: dict[str, str] | None, age: float | None) -> dict[str, Any] | None:
@@ -505,20 +417,12 @@ def clock_view(now: float) -> dict[str, Any]:
 
 def page_origin(origin: str | None, host: str | None) -> bool:
     """Return True for a request from this page (same host and port) or not from a browser."""
-    if not origin:
-        return True
-    return bool(host) and urlparse(origin).netloc == host
+    return webui.same_origin(origin, host, allow_missing=True)
 
 
 def lab_origin(origin: str | None, host: str | None) -> str | None:
     """Return `origin` when an app page on this car (its own port) may read /api/battery."""
-    if not origin or not host:
-        return None
-    o, h = urlparse(origin), urlparse(f'//{host}')
-    ports = {a['port'] for a in APPS if a['port']}
-    if o.scheme == 'http' and o.hostname == h.hostname and o.port in ports:
-        return origin
-    return None
+    return webui.sibling_origin(origin, host, (a['port'] for a in APPS))
 
 
 def turn_off(run: Callable[..., Any] = subprocess.run) -> list[str]:
@@ -570,6 +474,8 @@ class _RateSampler(Node):
         self._autonomy: tuple[dict[str, str], float] | None = None
         self._link: tuple[dict[str, float], float] | None = None
         self._link_problem_at: float | None = None
+        self._firmware: tuple[dict[str, Any], float] | None = None
+        self._stall: tuple[dict[str, Any], float] | None = None
         self._estimate: tuple[dict[str, str], float] | None = None
         latched = QoSProfile(
             depth=1,
@@ -609,6 +515,13 @@ class _RateSampler(Node):
                 dq.popleft()
 
     def _record_diagnostics(self, msg: DiagnosticArray) -> None:
+        firmware = read_firmware_status(msg)
+        stall = read_stall_status(msg)
+        with self._lock:
+            if firmware is not None:
+                self._firmware = (firmware, time.monotonic())
+            if stall is not None:
+                self._stall = (stall, time.monotonic())
         updates: dict[str, float] = {}
         read_diagnostic_rates(msg, updates)
         if not updates:
@@ -658,6 +571,22 @@ class _RateSampler(Node):
                 return None, None, problem
             report, at = self._link
             return dict(report), now - at, problem
+
+    def firmware(self) -> tuple[dict[str, Any] | None, float | None]:
+        """Return pit_node's last firmware info status and its age in seconds."""
+        with self._lock:
+            if self._firmware is None:
+                return None, None
+            report, at = self._firmware
+            return dict(report), time.monotonic() - at
+
+    def stall(self) -> tuple[dict[str, Any] | None, float | None]:
+        """Return pit_node's last stall protection status and its age in seconds."""
+        with self._lock:
+            if self._stall is None:
+                return None, None
+            report, at = self._stall
+            return dict(report), time.monotonic() - at
 
     def autonomy(self) -> tuple[dict[str, str] | None, float | None]:
         """Return the last /autonomy/status values and their age in seconds."""
@@ -764,7 +693,7 @@ def _get_node_list() -> list[str]:
     return sampler.node_list()
 
 
-WATCHDOG_LOG = Path.home() / 'logs' / 'latest' / 'watchdog.log'
+WATCHDOG_LOG = fileio.latest_log_dir() / 'watchdog.log'
 # Byte offset of the last Clear, beside the log of this teleop session.
 WATCHDOG_CLEARED = WATCHDOG_LOG.with_name('watchdog.cleared')
 
@@ -937,6 +866,86 @@ def link_view(
     else:
         status = 'healthy'
     return {'label': 'Teensy link', 'status': status, 'detail': detail}
+
+
+# fw.speed_control values of the firmware test builds, as the chip names them.
+FIRMWARE_TEST_BUILDS = {
+    'raw_pwm': 'Open-loop PWM test build. Drive commands set raw PWM, not speed',
+    'esc_cal': 'ESC calibration build. Not for driving',
+}
+
+
+def firmware_view(report: dict[str, Any] | None, age: float | None) -> dict[str, Any]:
+    """
+    Return the Firmware chip: the Teensy firmware pit_node read at start.
+
+    Yellow for a test build, an uncommitted build, or no reply; off with no
+    report or while reading.
+    """
+    label = 'Firmware'
+    if report is None or age is None or age > LINK_STALE_SEC:
+        return {'label': label, 'status': 'unsupervised', 'detail': 'No report'}
+    values = report.get('values', {})
+    state = values.get('state')
+    if state == 'pending':
+        return {'label': label, 'status': 'unsupervised', 'detail': 'Reading'}
+    if state != 'known':
+        return {'label': label, 'status': 'stale', 'detail': 'No reply. Firmware older than 0.9.0'}
+    build = ', '.join(v for v in (values.get('fw.label'), values.get('fw.git')) if v)
+    detail = values.get('fw.version', '?') + (f' ({build})' if build else '')
+    control = values.get('fw.speed_control', 'closed_loop')
+    if control != 'closed_loop':
+        test = FIRMWARE_TEST_BUILDS.get(control, f'Speed control {control}')
+        return {'label': label, 'status': 'stale', 'detail': f'{detail}. {test}'}
+    detail += dips_note(values)
+    if values.get('fw.git_dirty') == '1':
+        return {'label': label, 'status': 'stale', 'detail': f'{detail}. Uncommitted build'}
+    return {'label': label, 'status': 'healthy', 'detail': detail}
+
+
+def stall_view(report: dict[str, Any] | None, age: float | None) -> dict[str, Any]:
+    """
+    Return the Stall chip: the firmware's stall protection state.
+
+    Yellow while tripped or cooling down, red in lockout; off with no report,
+    while the firmware info is read, or on firmware without stall protection.
+    """
+    label = 'Stall'
+    if report is None or age is None or age > LINK_STALE_SEC:
+        return {'label': label, 'status': 'unsupervised', 'detail': 'No report'}
+    values = report.get('values', {})
+    supported = values.get('supported')
+    if supported == '0':
+        return {'label': label, 'status': 'unsupervised', 'detail': 'Not in this firmware'}
+    if supported != '1':
+        return {'label': label, 'status': 'unsupervised', 'detail': 'Reading'}
+    status = {'0': 'healthy', '1': 'stale', '2': 'stale', '3': 'dead'}.get(
+        values.get('state', '0'), 'stale'
+    )
+    return {'label': label, 'status': status, 'detail': report.get('message', '')}
+
+
+def dips_note(values: dict[str, str]) -> str:
+    """Return '. N voltage dips, lowest X.XX V' from the firmware's power keys, or ''."""
+    try:
+        count = int(values.get('power.dip_count', '0'))
+        lowest = int(values.get('power.min_mv', '-1'))
+    except ValueError:
+        return ''
+    if count <= 0:
+        return ''
+    note = f'. {count} voltage dip{"s" if count != 1 else ""}'
+    return note + (f', lowest {lowest / 1000:.2f} V' if lowest > 0 else '')
+
+
+def about_view(report: dict[str, Any] | None, age: float | None) -> dict[str, Any]:
+    """Return the page footer's versions: the driver, and the firmware pit_node read."""
+    firmware = None
+    if report is not None and age is not None and age <= LINK_STALE_SEC:
+        values = report.get('values', {})
+        if values.get('state') == 'known':
+            firmware = values.get('fw.version')
+    return {'driver': webui.driver_version(), 'firmware': firmware}
 
 
 def _ext5v_loop() -> None:
@@ -1135,11 +1144,9 @@ def activate(target: str, run: Callable[..., Any] = subprocess.run) -> tuple[boo
 
 def last_run(path: Path | None = None) -> dict[str, str]:
     """Return the mode and map of the last autonomy run from its mode file, or {}."""
-    try:
-        lines = (path or AUTONOMY_MODE_FILE).read_text().splitlines()
-    except OSError:
-        return {}
-    values = dict(line.split('=', 1) for line in lines if '=' in line)
+    from map_control import read_mode_file
+
+    values = read_mode_file(path)
     mode, name = values.get('AUTONOMY_MODE', ''), values.get('AUTONOMY_MAP', '')
     if mode not in ('mapping', 'localization') or not name:
         return {}
@@ -1304,22 +1311,21 @@ def _refresh_apps() -> None:
         _latest_status['apps'] = apps
 
 
-_last_view = 0.0
+_view = webui.IdleGate(VIEW_IDLE_SEC)
 _wake = threading.Event()
 
 
 def note_view() -> bool:
     """Record a page request; return True when monitoring was idle until now."""
-    global _last_view
-    idle = not viewing()
-    _last_view = time.monotonic()
-    if idle:
+    viewing()
+    opened = _view.touch()
+    if opened:
         _wake.set()
-    return idle
+    return opened
 
 
 def viewing() -> bool:
-    return time.monotonic() - _last_view < VIEW_IDLE_SEC
+    return _view.check()
 
 
 def _monitor_loop() -> None:
@@ -1398,6 +1404,8 @@ def _monitor_loop() -> None:
                     *_ext5v.take(), _read_throttled()[0], _read_under_voltage_alarm()
                 ),
                 'link': link_view(*(_sampler.link() if _sampler else (None, None, None))),
+                'firmware': firmware_view(*(_sampler.firmware() if _sampler else (None, None))),
+                'stall': stall_view(*(_sampler.stall() if _sampler else (None, None))),
             }
 
             snapshot = {
@@ -1408,7 +1416,7 @@ def _monitor_loop() -> None:
                 'rates': rates,
                 'system_health': system_health,
                 'watchdog_log': _read_watchdog_tail(),
-                'log_dir': str(Path.home() / 'logs' / 'latest'),
+                'log_dir': str(fileio.latest_log_dir()),
                 'autonomy': autonomy_view(*(_sampler.autonomy() if _sampler else (None, None))),
                 'apps': app_list(unit_states(_app_units())),
                 'battery': current_battery(),
@@ -1440,47 +1448,25 @@ _HTML_PATH = Path(__file__).resolve().parent / 'dashboard.html'
 _LAUNCH_PATH = Path(__file__).resolve().parent / 'dashboard_launch.html'
 
 
-def _read_page(path: Path) -> str:
-    try:
-        return path.read_text(encoding='utf-8')
-    except OSError as exc:
-        return f'<!DOCTYPE html><body><pre>{path.name} unreadable: {exc}</pre>'
-
-
-def _load_dashboard_html() -> str:
-    return _read_page(_HTML_PATH)
-
-
-DASHBOARD_HTML = _load_dashboard_html()
-
-
-class DashboardHandler(BaseHTTPRequestHandler):
+class DashboardHandler(webui.AppHandler):
     """Serve GET / (HTML) and GET /api/status (JSON snapshot)."""
 
     def do_GET(self) -> None:
-        asset = webui.static_file(self.path)
-        if asset is not None:
-            self.send_response(200)
-            self.send_header('Content-Type', asset[1])
-            self.send_header('Content-Length', str(len(asset[0])))
-            self.send_header('Cache-Control', webui.CACHE_CONTROL)
-            self.end_headers()
-            self.wfile.write(asset[0])
+        if self.serve_asset():
             return
         url = urlparse(self.path)
         query = parse_qs(url.query)
         if url.path == '/':
-            self._send_html(_load_dashboard_html())
+            self.page(_HTML_PATH)
         elif url.path == '/launch':
-            self._send_html(_read_page(_LAUNCH_PATH))
+            self.page(_LAUNCH_PATH)
         elif url.path == '/api/status':
             if note_view():
                 # The cached snapshot may be minutes old; refresh what is cheap.
                 _refresh_apps()
             if query.get('refresh') == ['1']:
                 _refresh_apps()
-            self._send_json(
-                200,
+            self.send_json(
                 {
                     **get_status(),
                     'battery': current_battery(),
@@ -1492,11 +1478,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
         elif url.path == '/api/battery':
             origin = lab_origin(self.headers.get('Origin'), self.headers.get('Host'))
             cors = {'Access-Control-Allow-Origin': origin, 'Vary': 'Origin'} if origin else {}
-            self._send_json(200, {'battery': current_battery()}, cors)
+            self.send_json({'battery': current_battery()}, 200, cors)
+        elif url.path == '/api/about':
+            origin = lab_origin(self.headers.get('Origin'), self.headers.get('Host'))
+            cors = {'Access-Control-Allow-Origin': origin, 'Vary': 'Origin'} if origin else {}
+            self.send_json(
+                about_view(*(_sampler.firmware() if _sampler else (None, None))), 200, cors
+            )
         elif url.path == '/api/history':
             now = time.time()
-            self._send_json(
-                200,
+            self.send_json(
                 {
                     'now': now,
                     'window_sec': BATTERY_WINDOW_SEC,
@@ -1506,10 +1497,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             )
         elif url.path == '/api/overview':
             if _overview is None:
-                self._send_json(503, {})
+                self.send_json({}, 503)
             else:
                 _overview.touch()
-                self._send_json(200, _overview.state())
+                self.send_json(_overview.state(), 200)
         elif url.path in ('/api/overview/color.jpg', '/api/overview/depth.jpg'):
             name = url.path.rsplit('/', 1)[1].split('.')[0]
             if _overview is not None:
@@ -1518,70 +1509,46 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if frame is None:
                 self.send_error(404)
             else:
-                self.send_response(200)
-                self.send_header('Content-Type', 'image/jpeg')
-                self.send_header('Content-Length', str(len(frame)))
-                self.send_header('Cache-Control', 'no-store')
-                self.end_headers()
-                self.wfile.write(frame)
+                self.send(200, frame, 'image/jpeg', cache='no-store')
         elif url.path == '/api/ready':
             app = next((a for a in APPS if a['id'] == query.get('app', [''])[0]), None)
             if app is None:
-                self._send_json(404, {'ready': False})
+                self.send_json({'ready': False}, 404)
             else:
-                self._send_json(200, {'ready': app_ready(app['port']), 'port': app['port']})
+                self.send_json({'ready': app_ready(app['port']), 'port': app['port']}, 200)
         else:
             self.send_error(404)
-
-    def _send_html(self, text: str) -> None:
-        content = text.encode()
-        self.send_response(200)
-        self.send_header('Content-Type', 'text/html; charset=utf-8')
-        self.send_header('Content-Length', str(len(content)))
-        self.end_headers()
-        self.wfile.write(content)
-
-    def _send_json(self, code: int, data: Any, headers: dict[str, str] | None = None) -> None:
-        body = json.dumps(data).encode()
-        self.send_response(code)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Content-Length', str(len(body)))
-        for key, value in (headers or {}).items():
-            self.send_header(key, value)
-        self.end_headers()
-        self.wfile.write(body)
 
     def do_POST(self) -> None:  # noqa: N802
         if self.path == '/api/clear-apps':
             ok, message = clear_apps()
             _refresh_apps()
             log.info('clear apps: %s', message)
-            self._send_json(200 if ok else 400, {'ok': ok, 'message': message})
+            self.send_json({'ok': ok, 'message': message}, 200 if ok else 400)
             return
         if self.path == '/api/clear-log':
             ok, message = clear_watchdog_log()
-            self._send_json(200 if ok else 400, {'ok': ok, 'message': message})
+            self.send_json({'ok': ok, 'message': message}, 200 if ok else 400)
             return
         if self.path in ('/api/shutdown', '/api/battery/cancel'):
             if not page_origin(self.headers.get('Origin'), self.headers.get('Host')):
-                self._send_json(403, {'ok': False, 'message': 'Not allowed from this page.'})
+                self.send_json({'ok': False, 'message': 'Not allowed from this page.'}, 403)
                 return
             if self.path == '/api/battery/cancel':
                 if _sampler is not None:
                     _sampler.cancel_shutdown()
                 log.warning('Shutdown cancel requested from %s', self.client_address[0])
-                self._send_json(200, {'ok': True, 'message': 'Shutdown canceled.'})
+                self.send_json({'ok': True, 'message': 'Shutdown canceled.'}, 200)
                 return
             log.warning('Turn off requested from %s', self.client_address[0])
-            self._send_json(200, {'ok': True, 'message': FINAL_MESSAGE})
+            self.send_json({'ok': True, 'message': FINAL_MESSAGE}, 200)
             threading.Thread(target=turn_off, daemon=True).start()
             return
         if self.path not in ('/api/open', '/api/override', '/api/feature'):
             self.send_error(404)
             return
         try:
-            length = int(self.headers.get('Content-Length') or 0)
-            body = json.loads(self.rfile.read(length) or b'{}')
+            body = self.read_json()
             target = str(body.get('app', ''))
             action = str(body.get('action', ''))
             feature, on = str(body.get('feature', '')), bool(body.get('on'))
@@ -1590,7 +1557,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             on = False
         if self.path == '/api/feature':
             ok, message = change_feature(feature, on, action)
-            self._send_json(200 if ok else 400, {'ok': ok, 'message': message})
+            self.send_json({'ok': ok, 'message': message}, 200 if ok else 400)
             return
         if self.path == '/api/override':
             self._override(action)
@@ -1598,7 +1565,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         ok, message = open_app(target)
         _refresh_apps()
         log.info('open %s: %s', target, message)
-        self._send_json(200 if ok else 400, {'ok': ok, 'message': message})
+        self.send_json({'ok': ok, 'message': message}, 200 if ok else 400)
 
     def _override(self, action: str) -> None:
         now = time.monotonic()
@@ -1614,12 +1581,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 log.info('Safety override turned off')
             _override.stop()
         else:
-            self._send_json(400, {'ok': False, 'message': 'Unknown action.'}, cors)
+            self.send_json({'ok': False, 'message': 'Unknown action.'}, 400, cors)
             return
-        self._send_json(200, {'ok': True, **_override.view(now)}, cors)
-
-    def log_message(self, fmt: str, *args: Any) -> None:
-        """Suppress default per-request logging."""
+        self.send_json({'ok': True, **_override.view(now)}, 200, cors)
 
 
 # ---------------------------------------------------------------------------
@@ -1630,7 +1594,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 def main() -> None:
     global _monitor_running, _sampler, _overview
 
-    logdir = Path.home() / 'logs' / 'latest'
+    logdir = fileio.latest_log_dir()
     handlers: list[logging.Handler] = [logging.StreamHandler(sys.stderr)]
     try:
         if logdir.exists():
@@ -1652,47 +1616,31 @@ def main() -> None:
 
     _overview = Overview(sampler)
 
-    def _spin_sampler() -> None:
-        try:
-            rclpy.spin(sampler)
-        except (KeyboardInterrupt, SystemExit):
-            pass
-        except Exception:  # noqa: BLE001
-            log.exception('rclpy.spin terminated')
-
-    spinner = threading.Thread(target=_spin_sampler, daemon=True)
-    spinner.start()
-    log.info('rclpy sampler spinning')
-
     monitor = threading.Thread(target=_monitor_loop, daemon=True)
     monitor.start()
     threading.Thread(target=_ext5v_loop, daemon=True).start()
     log.info('Background monitor started')
 
-    server = ThreadingHTTPServer(('0.0.0.0', PORT), DashboardHandler)
-    server.daemon_threads = True
-    log.info('Dashboard listening on http://0.0.0.0:%d', PORT)
-
-    def _shutdown(signum: int, _frame: FrameType | None) -> None:
+    def stop() -> None:
         global _monitor_running
-        log.info('Received signal %d, shutting down', signum)
+        log.info('Stopping')
         _monitor_running = False
-        threading.Thread(target=server.shutdown).start()
 
-    signal.signal(signal.SIGTERM, _shutdown)
-    signal.signal(signal.SIGINT, _shutdown)
-
-    try:
-        server.serve_forever()
-    finally:
+    def cleanup() -> None:
+        global _monitor_running
         _monitor_running = False
-        server.server_close()
         monitor.join(timeout=5)
-        # rclpy shutdown wakes the spin thread; destroying the node while it
-        # waits can block or abort the interpreter at exit.
-        rclpy.try_shutdown()
-        spinner.join(timeout=2)
+        webui.ros_shutdown()
         log.info('Dashboard stopped')
+
+    log.info('Dashboard listening on http://0.0.0.0:%d', PORT)
+    # The executor spins once at a time: subscriptions are created and
+    # destroyed from other threads (rates while a page is open, Overview
+    # frames), and a destroy that lands while it builds its wait set raises
+    # once; the next spin rebuilds the set without it.
+    webui.serve(
+        PORT, DashboardHandler, spin=webui.ros_spinner(sampler), on_stop=stop, cleanup=cleanup
+    )
 
 
 if __name__ == '__main__':

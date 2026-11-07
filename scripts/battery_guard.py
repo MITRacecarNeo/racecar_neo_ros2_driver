@@ -11,7 +11,10 @@ second. Levels:
 - countdown: COUNTDOWN_SEC to shutdown. Starts when the 30 s median voltage
   is at or under the floor, or (with shutdown_enabled) when minutes left stay
   at or under shutdown_min for HOLD_SEC. An estimate countdown can be canceled
-  once per boot on /battery/cancel_shutdown; a floor countdown cannot.
+  once per boot on /battery/cancel_shutdown, and cancels itself when minutes
+  left over the last RECOVER_WINDOW_SEC stay above shutdown_min plus
+  RECOVER_MARGIN_MIN for RECOVER_HOLD_SEC (a supply that sagged and came
+  back); a floor countdown cannot be canceled.
 - off: the shutdown sequence has run.
 
 Stale or implausible readings never warn or start a countdown; a countdown
@@ -29,7 +32,7 @@ import argparse
 from collections import deque
 from collections.abc import Sequence
 import csv
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import json
 import logging
 import os
@@ -46,7 +49,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from battery_alert import Announcer  # noqa: E402
 import battery_display  # noqa: E402
-from racecar_neo_ros2_driver import car_profile, data_root  # noqa: E402
+from racecar_neo_ros2_driver import battery, data_root  # noqa: E402
 from racecar_neo_ros2_driver.battery import (  # noqa: E402
     BatteryConfig,
     CapacityLearner,
@@ -63,11 +66,18 @@ DISPLAY_SEC = 0.05
 HOLD_SEC = 60.0
 FLOOR_MEDIAN_SEC = 30.0
 COUNTDOWN_SEC = 60.0
+# Recovery inside an estimate countdown is judged on a short charge window:
+# the estimate's soc_window_sec median would take half the countdown to move.
+RECOVER_WINDOW_SEC = 10.0
+RECOVER_HOLD_SEC = 10.0
+RECOVER_MARGIN_MIN = 5.0
 # Minutes left must rise this far above warn_min to clear a warning.
 WARN_CLEAR_MARGIN_MIN = 2.0
 # Kept for the estimate window; also bounds memory.
 HISTORY_SEC = 600.0
 LAST_SHUTDOWN_FILE = 'last_shutdown.json'
+# Longest wait for last_shutdown.json before the shutdown goes ahead.
+RECORD_WAIT_SEC = 2.0
 CSV_FIELDS = (
     'time',
     'volts',
@@ -101,6 +111,7 @@ class Guard:
     _warn_since: float | None = None
     _clear_since: float | None = None
     _short_since: float | None = None
+    _recover_since: float | None = None
     _learned_t: float | None = None
 
     def __post_init__(self) -> None:
@@ -139,6 +150,10 @@ class Guard:
             if now >= self.shutdown_at:
                 self.level = 'off'
                 events.append('shutdown')
+            elif self.trigger == 'estimate' and self._recovered(now):
+                self.level, self.trigger, self.shutdown_at = 'warn', '', None
+                self._short_since = None
+                events.append('recovered')
             return events
         if not est.valid:
             self._warn_since = self._clear_since = self._short_since = None
@@ -191,8 +206,25 @@ class Guard:
         recent.sort()
         return recent[len(recent) // 2] <= self.cfg.floor_volts(self.cells)
 
+    def _recovered(self, now: float) -> bool:
+        """Return True once the short-window estimate has held above the shutdown margin."""
+        assert self.cells is not None
+        cfg = replace(self.cfg, soc_window_sec=RECOVER_WINDOW_SEC)
+        fast = estimate(self.samples, now, cfg, self.cells, self.learner.capacity_mah)
+        minutes = fast.minutes_left if fast.valid else None
+        if (
+            minutes is None
+            or minutes <= self.cfg.shutdown_min + RECOVER_MARGIN_MIN
+            or self._floor_reached(now)
+        ):
+            self._recover_since = None
+            return False
+        self._recover_since = self._recover_since if self._recover_since is not None else now
+        return now - self._recover_since >= RECOVER_HOLD_SEC
+
     def _start_countdown(self, now: float, trigger: str) -> list[str]:
         self.level, self.trigger, self.shutdown_at = 'countdown', trigger, now + COUNTDOWN_SEC
+        self._recover_since = None
         return [f'countdown {trigger}']
 
 
@@ -222,7 +254,14 @@ def status_values(guard: Guard, now: float) -> dict[str, str]:
 
 
 class CsvLog:
-    """Append rows to a CSV, flushed and synced per row so a power cut loses at most one."""
+    """
+    Append rows to a CSV from a writer thread, flushed and synced per row.
+
+    write() only queues the row. A data drive that stalls (an NVMe sync can
+    block for 30 s) then holds up the log, never the guard's tick, its
+    /battery/estimate, or a shutdown. A power cut loses at most the rows
+    still queued.
+    """
 
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -230,16 +269,27 @@ class CsvLog:
         self.path = path
         self._file: IO[str] = open(path, 'a', newline='', buffering=1)
         self._writer = csv.writer(self._file, lineterminator='\n')
+        self._rows: queue.Queue[list[Any] | None] = queue.Queue()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
         if new:
             self.write(CSV_FIELDS)
 
     def write(self, row: Sequence[Any]) -> None:
-        self._writer.writerow(row)
-        self._file.flush()
-        os.fsync(self._file.fileno())
+        self._rows.put(list(row))
 
-    def close(self) -> None:
-        self._file.close()
+    def _run(self) -> None:
+        while (row := self._rows.get()) is not None:
+            self._writer.writerow(row)
+            self._file.flush()
+            os.fsync(self._file.fileno())
+
+    def close(self, timeout: float = 5.0) -> None:
+        """Write what is queued, waiting at most `timeout`, then close the file."""
+        self._rows.put(None)
+        self._thread.join(timeout)
+        if not self._thread.is_alive():
+            self._file.close()
 
 
 def csv_row(sample: Sample | None, guard: Guard, event: str) -> list[str]:
@@ -274,14 +324,9 @@ def write_last_shutdown(folder: Path, trigger: str, now: float, guard: Guard) ->
 
 
 def load_config(floor_cell_volts: float | None = None) -> BatteryConfig:
-    """Return config/battery.yaml with the car profile's override on top."""
-    from ament_index_python.packages import get_package_share_directory
-
-    config_dir = Path(get_package_share_directory('racecar_neo_ros2_driver')) / 'config'
-    params = car_profile.node_params('battery', 'battery_guard', config_dir)
-    if floor_cell_volts is not None:
-        params['floor_cell_volts'] = floor_cell_volts
-    return BatteryConfig.from_params(params)
+    """Return the battery settings, with --floor-cell-volts on top when given."""
+    cfg = battery.load_config()
+    return cfg if floor_cell_volts is None else replace(cfg, floor_cell_volts=floor_cell_volts)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -412,7 +457,14 @@ def main(argv: list[str] | None = None) -> int:
                 shown_until = (guard.shutdown_at or 0.0) + battery_display.SHUTDOWN_FRAMES_SEC
             time.sleep(max(0.0, shown_until - time.time()))
             if not args.dry_run:
-                write_last_shutdown(folder, guard.trigger, time.time(), guard)
+                # A stalled data drive must not hold up the power off.
+                record = threading.Thread(
+                    target=write_last_shutdown,
+                    args=(folder, guard.trigger, time.time(), guard),
+                    daemon=True,
+                )
+                record.start()
+                record.join(RECORD_WAIT_SEC)
 
             def report(line: str) -> None:
                 log.warning('Shutdown: %s', line)

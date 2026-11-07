@@ -29,6 +29,7 @@ comment in the source can point here instead of carrying the full account.
 - [Data drive missing at boot](#data-drive-missing-at-boot)
 - [Health report failures](#health-report-failures)
 - [Lab dashboards](#lab-dashboards)
+- [Reverse from a standstill](#reverse-from-a-standstill)
 - [Low-battery shutdown](#low-battery-shutdown)
 - [Terminal app](#terminal-app)
 - [WiFi persistence](#wifi-persistence)
@@ -580,9 +581,30 @@ table in `report.md` lists every one with its time:
 `teensy link` (`racecar health link`, `racecar status`): `pit_node`'s
 counts since teleop started. Lost frames with no CRC failures are frames
 that never arrived; CRC failures are frames damaged on the wire, often
-noise from a loose UART wire or ground. A Teensy reset with no reconnect is
+noise from a loose UART wire or ground. `pit_node` drops a frame that fails
+the CRC, so sensor topics skip it. A Teensy reset with no reconnect is
 the Teensy restarting on its own, as when its supply dips; plugging or
 unplugging the IMU connector does this.
+
+`teensy firmware` (`racecar status`, 8080 Firmware chip): the firmware
+`pit_node` read when it started.
+
+- `open-loop PWM test build`: `/drive` speed sets raw ESC PWM, not a speed.
+  Flash a release build before driving.
+- `ESC calibration build`: the car is set up for ESC calibration. Flash a
+  release build before driving.
+- `uncommitted build`: the firmware was built from changed source.
+- `No info reply (firmware before 0.9.0)`: flash firmware 0.9.0 or later.
+- `still reading`: teleop just started. Run `racecar status` again.
+
+`stall protection` (`racecar status`, 8080 Stall chip): the motor stalled
+under load and the firmware cut the throttle.
+
+- `Tripped`: return the throttle or the gamepad stick to neutral.
+- `Cooldown`: wait the seconds shown. Driving resumes on its own.
+- `Lockout`: three trips in a minute. Wait 30 s. Check that the wheels turn
+  freely and nothing blocks the car.
+- `not in this firmware`: the firmware has no stall protection.
 
 `teleop` FAIL: shake and poke need the PIT stream. Start teleop with
 `racecar service start teleop`.
@@ -591,9 +613,9 @@ unplugging the IMU connector does this.
 
 `scripts/setup_dashboards.sh`, `scripts/dashboards/`.
 
-Each unit is rendered from the dashboard's `.service.in`, substituting its
-directory and adding the discovery scope, rather than copied, so the unit
-always points at the tree it was installed from.
+Each unit is rendered from `scripts/dashboards/racecar-app.service.in` with
+the app's name, port, folder and script from `config/apps.yaml`, plus the
+discovery scope, so the unit always points at the tree it was installed from.
 
 The script also stops, disables and removes the units of the three retired
 dashboards (`eps`, `pursuit`, `smartfollow`), so a car upgraded from v0.8.0
@@ -602,6 +624,26 @@ checkouts under `scripts/dashboards/` are gitignored and left in place.
 
 Saved tuning lives in the car profile's `dashboards/<name>.yaml`, never in
 the shipped `<name>.yaml`, so updating the driver keeps a car's tuning.
+
+## Reverse from a standstill
+
+The car moves forward but only twitches, whines, or locks in reverse from a
+standstill. Once it rolls, reverse works. The motor draws far more current
+than in forward during these stalls.
+
+Cause: the ESC program settings or its throttle calibration differ from the
+fleet standard. The firmware's reverse start is tuned for that standard.
+Maximum reverse force (item 6) at a value other than 50%, or a throttle
+calibration done with other endpoints, changes how much PWM the ESC needs to
+start in reverse.
+
+Fix: set the ESC program settings and redo the throttle calibration as in
+the handbook ([ESC program settings](handbook/calibration.md#esc-program-settings),
+[ESC throttle calibration](handbook/calibration.md#esc-throttle-calibration)).
+Then run `racecar calibrate dynamics`.
+
+Stall protection cuts a stall like this after about 0.5 s (`stall
+protection` row of `racecar status`).
 
 ## Low-battery shutdown
 
@@ -618,7 +660,8 @@ The car turned off on its own:
    a second; the `event` column marks the warning, countdown, and steps.
 
 No time or power in the 8080 header: the guard is not running, or it has
-read under 30 s of the battery. `systemctl status racecar-battery-guard`
+read under 30 s of the battery, or the page has lost contact with the car
+(the status pill reads "No contact"). `systemctl status racecar-battery-guard`
 shows which. Teleop must be running, since `pit_node` reads the battery.
 
 "Unknown battery" in the journal: the first voltage fits no cell count
@@ -628,7 +671,8 @@ count. Set `cells` in `params/battery.yaml` for a battery it cannot read.
 The countdown has no Cancel shutdown button: a countdown at the 7.1 V floor
 cannot be canceled. Turn the car off and change the battery. A countdown at
 5 minutes left can be canceled once per boot; the floor still shuts the car
-down.
+down. It also stops on its own when the time left climbs back above 10
+minutes for 10 s, as when a bench supply sagged and recovered.
 
 Time left jumps between driving and standing: the load correction is off or
 wrong for this battery. Run `python3 scripts/battery_curve.py` on its guard

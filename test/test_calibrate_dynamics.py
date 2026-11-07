@@ -78,17 +78,40 @@ class TestChain:
 
 class TestKeys:
     def test_speed_tags(self, md):
-        assert [md.speed_tag(v) for v in (0.25, 0.5, 1.0)] == ['025', '05', '10']
+        assert [md.speed_tag(v) for v in (0.25, 0.5, 0.75, 1.0)] == ['025', '05', '075', '10']
+        assert [md.speed_tag(v) for v in (-0.25, -0.5, -1.0)] == ['rev025', 'rev05', 'rev10']
 
     def test_calibrate_lists_every_key_the_tool_writes(self, md):
         cal = load_script('calibrate')
         (step,) = [s for s in cal.STEPS if s.key == 'dynamics']
+        straight = [k for k in md.RUNS if not k.startswith('circle')]
+        assert len(straight) == 7
         written = {
-            f'{n}_{md.speed_tag(r[1][0])}'
-            for r in [md.RUNS[k] for k in ('straight025', 'straight05', 'straight10')]
+            f'{n}_{md.speed_tag(md.RUNS[k][1][0])}'
+            for k in straight
             for n in ('steady_speed_mps', 'rise_90_s', 'stop_distance_mm', 'stop_time_s')
         }
         assert written <= set(step.keys)
+
+    def test_reverse_straight_metrics(self, md):
+        t = np.arange(0.0, 8.0, 0.02)
+        on, off = 2.0, 5.0
+        v = np.where(t < on, 0.0, np.where(t < off, -0.6 * np.minimum(1.0, (t - on) / 0.5), 0.0))
+        s = np.concatenate(([0.0], np.cumsum(np.abs(v[1:]) * 0.02)))
+        r = md.straight_metrics(t, v, s, on, off)
+        assert r.steady_mps == pytest.approx(-0.6)
+        assert r.rise_90_s == pytest.approx(0.45, abs=0.03)
+
+    def test_bags_hold_the_topics_the_simulator_fits(self, md):
+        for topic in (
+            '/encoder/speed',
+            '/odom',
+            '/mux_out',
+            '/imu/fused',
+            '/battery/voltage',
+            '/tf',
+        ):
+            assert topic in md.TOPICS
 
 
 class TestDriveGate:

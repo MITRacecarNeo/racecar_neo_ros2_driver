@@ -42,11 +42,13 @@ from rclpy.qos import (
 from rclpy.time import Time
 from sensor_msgs.msg import BatteryState, Imu, Joy, MagneticField
 import serial
-from std_msgs.msg import Bool, Float32, Float32MultiArray, UInt8MultiArray
+from std_msgs.msg import Bool, Float32, Float32MultiArray, String, UInt8MultiArray
 from tf2_ros import TransformBroadcaster
 
+from . import pit_info
 from . import pit_link
 from . import pit_protocol as pit
+from . import pit_stall
 from .limits import clamp
 from .mux_node import MuxMode, select_mode, shown_mode
 from .odometry import OdomIntegrator, OdomState, yaw_quaternion
@@ -61,6 +63,7 @@ SYS_MODE_AUTO = 2
 SYS_DOTMATRIX_ACTIVE = 0x04
 SYS_LED_ACTIVE = 0x08
 SYS_DRIVER_STARTING = 0x10
+SYS_INFO_REQUEST = 0x20
 
 # Odometry covariance sentinels. ROS convention puts -1 in the first element of
 # a block that was not estimated at all; a large finite variance marks a single
@@ -241,7 +244,7 @@ class PitNode(Node):
         self.declare_parameter('reconnect_period_sec', 2.0)
         self.declare_parameter('steering_sign', 1)
         self.declare_parameter('speed_sign', 1)
-        self.declare_parameter('require_crc', False)
+        self.declare_parameter('require_crc', True)
 
         # Power telemetry republish (INA226 bus voltage V, battery current A) and
         # the eight FlySky RC channels normalized to [-1, 1].
@@ -267,6 +270,10 @@ class PitNode(Node):
         # frames above and the override flash while they are fresh.
         self.declare_parameter('dotmatrix_alert_topic', '/dotmatrix/alert')
         self.declare_parameter('led_alert_topic', '/led/alert')
+        # Latched firmware info payload (key=value lines); empty when unknown.
+        self.declare_parameter('firmware_info_topic', '/pit/firmware')
+        # Latched stall protection state (pit_stall.py), published on change.
+        self.declare_parameter('stall_topic', '/pit/stall')
         # A display command counts as "active" (sets the SystemState flag the
         # Teensy watches) only while received within this window.
         self.declare_parameter('display_timeout_sec', 0.5)
@@ -424,6 +431,30 @@ class PitNode(Node):
         self._write_lock = threading.Lock()
         # Touched only by the reader thread, which also publishes it.
         self._link = pit_link.LinkStats(time.monotonic())
+        self._fw_info = pit_info.FirmwareInfo(time.monotonic())
+        self._fw_resets = 0
+        self._fw_settled = 0
+        self._fw_sent: str | None = None  # payload last latched
+        self._stall = pit_stall.StallWatch()
+        self._pub_stall = self.create_publisher(
+            DiagnosticStatus,
+            str(self.get_parameter('stall_topic').value),
+            QoSProfile(
+                depth=1,
+                reliability=QoSReliabilityPolicy.RELIABLE,
+                durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+            ),
+        )
+        self._fw_logged: str | None = None  # summary last logged since a restart
+        self._pub_fw_info = self.create_publisher(
+            String,
+            str(self.get_parameter('firmware_info_topic').value),
+            QoSProfile(
+                depth=1,
+                reliability=QoSReliabilityPolicy.RELIABLE,
+                durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+            ),
+        )
         self._pub_diagnostics = self.create_publisher(DiagnosticArray, '/diagnostics', 10)
         self._running = True
 
@@ -448,6 +479,7 @@ class PitNode(Node):
         try:
             self._ser = serial.Serial(self._port, self._baud, timeout=0.05)
             self.get_logger().info(f'Opened {self._port}')
+            self._restart_firmware_info()
             return True
         except (serial.SerialException, OSError) as exc:
             self._ser = None
@@ -528,6 +560,8 @@ class PitNode(Node):
         speed = self._speed_sign * self._latest_speed if fresh else 0.0
         steer = self._steer_sign * self._latest_steer if fresh else 0.0
         state, dot, led = self._build_display(now)
+        if self._fw_info.requesting(now):
+            state |= SYS_INFO_REQUEST
         wire = pit.encode_command(
             clamp(steer), clamp(speed), system_state=state, dot_matrix=dot, led=led
         )
@@ -559,10 +593,16 @@ class PitNode(Node):
                 continue
             buffer.extend(chunk)
             while True:
-                telem, consumed = pit.scan_for_packet(buffer)
-                if telem is not None:
-                    self._link.frame(telem.timestamp_us, telem.crc_ok)
-                    self._publish_telemetry(telem)
+                packet, consumed = pit.scan_for_packet(buffer)
+                if isinstance(packet, pit.InfoChunk):
+                    self._fw_info.add(packet, time.monotonic())
+                elif packet is not None:
+                    self._link.frame(packet.timestamp_us, packet.crc_ok)
+                    if self._link.counts['resets'] != self._fw_resets:
+                        # A Teensy restart may be a reflash: ask again.
+                        self._fw_resets = self._link.counts['resets']
+                        self._restart_firmware_info()
+                    self._publish_telemetry(packet)
                 elif consumed == 0:
                     break
                 else:
@@ -598,21 +638,96 @@ class PitNode(Node):
         return pub is not None and self._listened.get(id(pub), True)
 
     def _report_link(self) -> None:
-        """Publish the link statistics once a second (pit_link.py)."""
+        """Publish the link statistics and firmware info once a second (pit_link, pit_info)."""
         now = time.monotonic()
         if not self._link.due(now):
             return
-        report = self._link.report(now)
+        self._log_firmware()
+        msg = DiagnosticArray()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.status = [
+            self._diagnostic_status(pit_link.STATUS_NAME, self._link.report(now)),
+            self._diagnostic_status(pit_info.STATUS_NAME, self._fw_info.report()),
+            self._diagnostic_status(pit_stall.STATUS_NAME, self._stall_report()),
+        ]
+        self._pub_diagnostics.publish(msg)
+
+    def _diagnostic_status(self, name: str, report: dict[str, Any]) -> DiagnosticStatus:
         status = DiagnosticStatus()
         status.level = bytes([report['level']])
-        status.name = pit_link.STATUS_NAME
+        status.name = name
         status.message = report['message']
         status.hardware_id = str(self._port)
         status.values = [KeyValue(key=k, value=v) for k, v in report['values'].items()]
-        msg = DiagnosticArray()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.status = [status]
-        self._pub_diagnostics.publish(msg)
+        return status
+
+    def _stall_report(self) -> dict[str, Any]:
+        info = self._fw_info
+        supported = None
+        if info.state == pit_info.KNOWN:
+            supported = info.values.get('fw.stall_protect') == '1'
+        elif info.state == pit_info.UNKNOWN:
+            supported = False
+        return self._stall.report(supported)
+
+    def _latch_stall(self) -> None:
+        self._pub_stall.publish(
+            self._diagnostic_status(pit_stall.STATUS_NAME, self._stall_report())
+        )
+
+    def _publish_stall(self, before: pit_stall.StallState, now: pit_stall.StallState) -> None:
+        """Latch a stall state change; log trips, lockouts and the return to normal."""
+        self._latch_stall()
+        if now.state == before.state:
+            return
+        if now.state == 1:
+            self.get_logger().warn(f'Stall protection tripped ({now.trips} since Teensy boot)')
+        elif now.state == 3:
+            self.get_logger().warn(f'Stall protection lockout, {now.seconds_left:.0f} s')
+        elif now.state == 0:
+            self.get_logger().info('Stall protection back to normal')
+
+    def _restart_firmware_info(self) -> None:
+        self._fw_info.restart(time.monotonic())
+        self._fw_logged = None
+
+    def _log_firmware(self) -> None:
+        """
+        Latch the firmware info each time a request settles with a new payload.
+
+        The once-a-minute refresh changes only the power.* values, so the log
+        line comes once per serial open or Teensy reset, or when the build
+        changes.
+        """
+        settled = self._fw_info.settled
+        if settled == self._fw_settled:
+            return
+        self._fw_settled = settled
+        # The stall entry's `supported` comes from the firmware info.
+        self._latch_stall()
+        state = self._fw_info.state
+        if state == pit_info.KNOWN:
+            payload = self._fw_info.payload.decode('ascii', 'replace')
+            if payload != self._fw_sent:
+                self._fw_sent = payload
+                self._pub_fw_info.publish(String(data=payload))
+            summary = self._fw_info.summary()
+            if summary == self._fw_logged:
+                return
+            self._fw_logged = summary
+            # rclpy fixes a call site's severity at its first call, so each
+            # severity needs its own line.
+            if self._fw_info.report()['level'] == pit_info.OK:
+                self.get_logger().info(f'Firmware {summary}')
+            else:
+                self.get_logger().warn(f'Firmware {summary}')
+        elif state == pit_info.UNKNOWN:
+            self._fw_sent = ''
+            self._pub_fw_info.publish(String(data=''))
+            self.get_logger().warn(
+                'No firmware info reply within '
+                f'{self._fw_info.timeout:g} s (firmware before 0.9.0, or no Teensy)'
+            )
 
     def _setup_odometry(self, qos: QoSProfile) -> None:
         p = self.get_parameter
@@ -715,6 +830,11 @@ class PitNode(Node):
             if failures % 100 == 1:
                 self.get_logger().warn(f'Dropping telemetry on CRC mismatch (count={failures})')
             return
+
+        before = self._stall.last
+        changed = self._stall.update(telem.ekf)
+        if changed is not None:
+            self._publish_stall(before, changed)
 
         stamp = self._telemetry_stamp(telem.timestamp_us)
         raw_accel = remap_axes(telem.accel, self._ag_order, self._ag_sign, self._accel_scale)

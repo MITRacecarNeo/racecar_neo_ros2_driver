@@ -4,8 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>RACECAR Neo terminal</title>
-<link rel="stylesheet" href="/ui/rcn.css?v=13">
-<script src="/ui/battery.js?v=13" defer></script>
+<link rel="stylesheet" href="/ui/rcn.css?v={{asset}}">
+<script src="/ui/ui.js?v={{asset}}"></script>
+<script src="/ui/api.js?v={{asset}}"></script>
+<script src="/ui/battery.js?v={{asset}}" defer></script>
 <link rel="icon" href="/ui/brand/app-icon-32.png">
 <link rel="apple-touch-icon" href="/ui/brand/app-icon-180.png">
 <style>
@@ -64,9 +66,9 @@
 // Layout: a tree of terminals and splits, saved on the car so a reload or another
 // device opens the same terminals. Terminals are placed absolutely from the tree and
 // never moved in the page: moving an iframe reloads it and reconnects.
-const $ = (id) => document.getElementById(id);
+const { $, esc, store } = RcnUi;
 const MAX_PANES = 8;
-const LOST = 'Lost contact with the car.';
+const { LOST } = RcnApi;
 // Scroll bar inside each terminal in the theme's colors: steel thumb, orange on hover.
 const PANE_STYLE = `
   .xterm-viewport { scrollbar-color: #505166 #000000; scrollbar-width: thin; }
@@ -76,10 +78,6 @@ const PANE_STYLE = `
   .xterm-viewport::-webkit-scrollbar-thumb:hover { background: #f49a4b; }
 `;
 const FONT_SIZES = [10, 11, 12, 13, 14, 16, 18, 20, 24];
-const store = {
-  get: (k, d) => { try { return localStorage.getItem(k) ?? d; } catch (err) { return d; } },
-  set: (k, v) => { try { localStorage.setItem(k, v); } catch (err) { /* not remembered */ } },
-};
 let layout = null;
 // -1 until the first load, so a car with no saved layout (version 0) still draws.
 let version = -1;
@@ -331,7 +329,6 @@ function presetRow(p, kind) {
   const del = kind === 'user' ? `<button class="delete" data-del="${esc(p.name)}" title="Delete">x</button>` : '';
   return `<div class="row"><button data-apply="${esc(p.name)}" data-kind="${kind}">${esc(p.name)}</button>${del}</div>`;
 }
-function esc(t) { return String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 function renderPresets() {
   const mine = presets.user.length
     ? `<div class="group">Your presets</div>${presets.user.map((p) => presetRow(p, 'user')).join('')}` : '';
@@ -404,7 +401,7 @@ $('import-file').onchange = async () => {
 };
 
 async function post(path, body) {
-  const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const r = await RcnApi.post(path, body);
   if (r.status === 401) location.reload();
   return r;
 }

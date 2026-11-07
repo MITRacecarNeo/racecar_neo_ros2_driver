@@ -42,14 +42,13 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import battery_guard  # noqa: E402, I100  sibling script, after the path insert
-from racecar_neo_ros2_driver import car_profile  # noqa: E402
+from racecar_neo_ros2_driver import battery  # noqa: E402
 from racecar_neo_ros2_driver.battery import (  # noqa: E402
     battery_soc,
     BatteryConfig,
     detect_cells,
 )
 
-CONFIG_DIR = Path(__file__).resolve().parent.parent / 'config'
 # Samples further apart than this are a gap; charge across it counts at the
 # last current.
 GAP_SEC = 5.0
@@ -91,8 +90,7 @@ def load(paths: Sequence[Path]) -> list[Row]:
 
 
 def config(r_internal: float | None = None) -> BatteryConfig:
-    params = car_profile.node_params('battery', 'battery_guard', CONFIG_DIR)
-    cfg = BatteryConfig.from_params(params)
+    cfg = battery.load_config()
     return cfg if r_internal is None else replace(cfg, r_internal_ohm=r_internal)
 
 

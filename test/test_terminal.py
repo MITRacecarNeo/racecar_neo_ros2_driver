@@ -7,9 +7,8 @@ import os
 from pathlib import Path
 import socket
 import threading
-from types import SimpleNamespace
 
-from conftest import load_script
+from conftest import completed, load_script
 import pytest
 
 term = load_script('terminal')
@@ -73,18 +72,6 @@ class TestRules:
     )
     def test_client_allowed(self, ip, allow_lan, allowed):
         assert term.client_allowed(ip, allow_lan) is allowed
-
-    @pytest.mark.parametrize(
-        'origin, host, ok',
-        [
-            ('http://10.42.0.1:8086', '10.42.0.1:8086', True),
-            ('http://evil.example', '10.42.0.1:8086', False),
-            ('http://10.42.0.1:8080', '10.42.0.1:8086', False),
-            (None, '10.42.0.1:8086', False),
-        ],
-    )
-    def test_origin_ok(self, origin, host, ok):
-        assert term.origin_ok(origin, host) is ok
 
     @pytest.mark.parametrize(
         'path, target',
@@ -347,7 +334,7 @@ class TestLayout:
 
         def run(argv, **kwargs):
             calls.append(argv)
-            return SimpleNamespace(returncode=0)
+            return completed(returncode=0)
 
         assert term.close_pane('b', run)
         assert calls == [['tmux', '-L', 'racecar-terminal', 'kill-session', '-t', 'rcn-b']]
@@ -476,7 +463,7 @@ class TestPresets:
 
         def run(argv, **kwargs):
             calls.append(argv)
-            return SimpleNamespace(returncode=0, stdout='line 1\nline 2\n\n\n')
+            return completed(returncode=0, stdout='line 1\nline 2\n\n\n')
 
         assert term.scrollback('a', run) == 'line 1\nline 2\n'
         assert calls[0][-2:] == ['-t', 'rcn-a'] and '-S' in calls[0]

@@ -33,7 +33,6 @@ import json
 import mmap
 import os
 from pathlib import Path
-import re
 import statistics
 import subprocess
 import sys
@@ -108,16 +107,8 @@ SPEED_FILE = '.racecar-health-speed'
 SPEED_WARN_WRITE_MBS = 100.0
 SPEED_WARN_READ_MBS = 150.0
 
-# Kernel log lines that mean the drive or its PCIe link misbehaved.
-NVME_ERROR = re.compile(
-    r'nvme\S*:?\s.*(timeout|I/O error|resetting controller|controller is down|abort|failed)'
-    r'|Buffer I/O error on dev nvme',
-    re.IGNORECASE,
-)
-PCIE_ERROR = re.compile(
-    r'PCIe Bus Error|AER: (Corrected|Uncorrected|Multiple)|link down|link reset',
-    re.IGNORECASE,
-)
+NVME_ERROR = health_watch.NVME_ERROR
+PCIE_ERROR = health_watch.PCIE_ERROR
 
 Run = Callable[..., Any]
 
@@ -211,12 +202,10 @@ def battery_row(samples: Sequence[tuple[float, float]], floor_cell_volts: float)
 
 
 def floor_cell_volts() -> float:
-    """Return the guard's floor per cell: config/battery.yaml with the car profile on top."""
-    from racecar_neo_ros2_driver import car_profile
-    from racecar_neo_ros2_driver.battery import BatteryConfig
+    """Return the guard's floor per cell, from the same settings the guard reads."""
+    from racecar_neo_ros2_driver import battery
 
-    params = car_profile.node_params('battery', 'battery_guard', CONFIG_DIR)
-    return BatteryConfig.from_params(params).floor_cell_volts
+    return battery.load_config().floor_cell_volts
 
 
 class BatterySampler:

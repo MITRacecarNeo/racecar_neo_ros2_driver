@@ -51,6 +51,10 @@ THROTTLE_BITS = {
 # driver's per-stream rates, and pit_node's Teensy link, whose frame rate is
 # the rate of every PIT topic (racecar_neo_ros2_driver/pit_link.py).
 LINK_STATUS_NAME = 'pit: teensy link'
+# pit_node's firmware info and stall protection statuses
+# (racecar_neo_ros2_driver/pit_info.py, pit_stall.py).
+FIRMWARE_STATUS_NAME = 'pit: firmware'
+STALL_STATUS_NAME = 'pit: stall'
 DIAGNOSTIC_RATE_NAMES = {
     'camera: color': '/camera/color',
     'camera: depth': '/camera/depth',
@@ -111,6 +115,40 @@ def read_link_status(msg: Any) -> dict[str, float] | None:
         level = status.level
         out['level'] = float(level[0] if isinstance(level, (bytes, bytearray)) else level)
         return out
+    return None
+
+
+def read_firmware_status(msg: Any) -> dict[str, Any] | None:
+    """
+    Return pit_node's firmware info status from one DiagnosticArray, or None.
+
+    Keys: level (0 OK, 1 WARN), message, and values (state pending, known or
+    unknown, plus fw.version, fw.label, fw.git, fw.speed_control and the other
+    keys the firmware reported).
+    """
+    return _read_status(msg, FIRMWARE_STATUS_NAME)
+
+
+def read_stall_status(msg: Any) -> dict[str, Any] | None:
+    """
+    Return pit_node's stall protection status from one DiagnosticArray, or None.
+
+    Keys as read_firmware_status; values hold supported ('1', '0', or '' while
+    the firmware info is being read), state, name, seconds_left, and trips.
+    """
+    return _read_status(msg, STALL_STATUS_NAME)
+
+
+def _read_status(msg: Any, name: str) -> dict[str, Any] | None:
+    for status in msg.status:
+        if status.name != name:
+            continue
+        level = status.level
+        return {
+            'level': level[0] if isinstance(level, (bytes, bytearray)) else int(level),
+            'message': status.message,
+            'values': {v.key: v.value for v in status.values},
+        }
     return None
 
 
@@ -402,7 +440,9 @@ def read_watchdog_state(log_dir: Path | None = None) -> dict[str, Any] | None:
     Adds `age_sec` (seconds since the watchdog last wrote it) and `stale`
     (older than WATCHDOG_STALE_POLLS polls).
     """
-    path = (log_dir or Path.home() / 'logs' / 'latest') / WATCHDOG_STATE_FILE
+    from racecar_neo_ros2_driver import fileio
+
+    path = (log_dir or fileio.latest_log_dir()) / WATCHDOG_STATE_FILE
     try:
         state: dict[str, Any] = json.loads(path.read_text())
         updated = datetime.fromisoformat(state['updated'])

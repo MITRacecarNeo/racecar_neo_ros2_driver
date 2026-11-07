@@ -4,8 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RACECAR Neo</title>
-<link rel="stylesheet" href="/ui/rcn.css?v=13">
-<script src="/ui/battery.js?v=13" defer></script>
+<link rel="stylesheet" href="/ui/rcn.css?v={{asset}}">
+<script src="/ui/ui.js?v={{asset}}"></script>
+<script src="/ui/api.js?v={{asset}}"></script>
+<script src="/ui/battery.js?v={{asset}}" defer></script>
 <link rel="icon" href="/ui/brand/app-icon-32.png">
 <style>
   main { max-width: 420px; margin: 0 auto; padding: 15vh var(--rcn-space-4) var(--rcn-space-8); text-align: center; }
@@ -68,11 +70,9 @@ async function launch() {
   $('glyph').innerHTML = `<svg class="rcn-icon"><use href="/ui/icons.svg#${app.icon}"/></svg>`;
   $('title').textContent = `Opening ${app.name}...`;
   try {
-    const r = await (await fetch('/api/open', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ app: id }),
-    })).json();
+    const r = await (await RcnApi.post('/api/open', { app: id })).json();
     if (!r.ok) { fail(r.message); return; }
-  } catch (err) { fail('Lost contact with the car.'); return; }
+  } catch (err) { fail(RcnApi.LOST); return; }
 
   const t0 = Date.now();
   for (;;) {

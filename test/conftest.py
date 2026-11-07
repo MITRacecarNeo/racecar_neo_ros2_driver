@@ -3,7 +3,7 @@
 import importlib.util
 from pathlib import Path
 import sys
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -32,6 +32,35 @@ def load_script(name: str) -> ModuleType:
     sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def load_dashboard(name: str) -> ModuleType:
+    """Import scripts/dashboards/<name>_dashboard/<name>.py, registered as `name`."""
+    path = SCRIPTS / 'dashboards' / f'{name}_dashboard' / f'{name}.py'
+    existing = sys.modules.get(name)
+    if existing is not None and Path(getattr(existing, '__file__', '') or '').resolve() == path:
+        return existing
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_launch(name: str) -> ModuleType:
+    """Import launch/<name>.launch.py (not registered: launch files are read, never imported)."""
+    path = SCRIPTS.parent / 'launch' / f'{name}.launch.py'
+    spec = importlib.util.spec_from_file_location(f'{name}_launch', path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def completed(stdout: str = '', returncode: int = 0, stderr: str = '') -> SimpleNamespace:
+    """Stand in for the subprocess.CompletedProcess a fake run returns."""
+    return SimpleNamespace(stdout=stdout, returncode=returncode, stderr=stderr)
 
 
 @pytest.fixture(scope='session', autouse=True)

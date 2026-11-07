@@ -1,7 +1,12 @@
 """Unit tests for racecar_neo_ros2_driver/pit_link.py."""
 
+from pathlib import Path
+
 from racecar_neo_ros2_driver import pit_link
 from racecar_neo_ros2_driver import pit_protocol as pit
+import yaml
+
+PIT_YAML = Path(__file__).resolve().parents[1] / 'config' / 'pit.yaml'
 
 
 def _stream(stats, start_us, count, step_us=5000, crc_ok=True):
@@ -76,3 +81,8 @@ class TestSkippedBytes:
         _, consumed = pit.scan_for_packet(buf)
         stats.skipped(consumed)
         assert stats.counts['skipped_bytes'] == consumed > 0
+
+
+def test_shipped_config_drops_crc_failures():
+    params = yaml.safe_load(PIT_YAML.read_text())['pit_node']['ros__parameters']
+    assert params['require_crc'] is True

@@ -59,11 +59,12 @@ DYNAMICS_SETUP = (
     'Use a clear area of about 2.3 by 1.6 meters for driving circles.\n'
     'Connect the controller. Hold RB to autonomously drive the car.'
 )
-# calibrate_dynamics.py writes these; per speed (0.25, 0.5, 1.0) and per side.
+# calibrate_dynamics.py writes these; per speed (0.25, 0.5, 0.75, 1.0 forward;
+# 0.25, 0.5, 1.0 reverse) and per side.
 DYNAMICS_KEYS = tuple(
     [
         f'{name}_{tag}'
-        for tag in ('025', '05', '10')
+        for tag in ('025', '05', '075', '10', 'rev025', 'rev05', 'rev10')
         for name in ('steady_speed_mps', 'rise_90_s', 'stop_distance_mm', 'stop_time_s')
     ]
     + [

@@ -111,13 +111,14 @@ racecar() {
             local -a core_units=("racecar-teleop" "racecar-watchdog"
                                  "racecar-dashboard" "racecar-jupyter"
                                  "racecar-mapview" "racecar-battery-guard")
-            # Lab dashboards, installed by setup_dashboards.sh. All three
-            # publish /drive; a second publisher fights the mux, so starting
-            # one stops the others.
-            local -a dash_units=("racecar-webteleop" "racecar-linefollow"
-                                 "racecar-wallfollow")
-            # Apps that do not drive; they run alongside the above.
-            local -a app_units=("racecar-camlabel" "racecar-terminal")
+            # From config/apps.yaml. Apps that publish /drive: a second
+            # publisher fights the mux, so starting one stops the others.
+            local apps_py="$pkg_dir/racecar_neo_ros2_driver/apps.py"
+            local -a dash_units app_units
+            mapfile -t dash_units < <(python3 "$apps_py" list --where exclusive=true --fields unit)
+            # Apps started on demand that do not drive; they run alongside.
+            mapfile -t app_units < <(python3 "$apps_py" list --where startable=true \
+                                     --where exclusive=false --fields unit)
             case "$action" in
                 install)
                     bash "$pkg_dir/scripts/setup_services.sh"

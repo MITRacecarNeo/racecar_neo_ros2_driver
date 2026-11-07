@@ -430,12 +430,11 @@ class MuxNode(Node):
         if active != self._override_was:
             self._override_was = active
             self._override_pub.publish(Bool(data=active))
-            log = self.get_logger().warn if active else self.get_logger().info
-            log(
-                'Safety override on: /drive forwarded without RB'
-                if active
-                else 'Safety override off'
-            )
+            # rclpy fixes a call site's severity at its first call.
+            if active:
+                self.get_logger().warn('Safety override on: /drive forwarded without RB')
+            else:
+                self.get_logger().info('Safety override off')
         if not active:
             return None
         if self._joy_mode(now) == MuxMode.GAMEPAD:

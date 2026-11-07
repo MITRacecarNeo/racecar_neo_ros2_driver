@@ -80,6 +80,20 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 h1, h2 { font-family: var(--rcn-font-display); font-weight: 700; margin: 0; }
+/* Shared page footer (footer.js). Flex-column pages keep it last in the
+   flow; on other pages it sits at the bottom edge of a body at least one
+   screen tall (body.rcn-footed). */
+.rcn-footer {
+  display: flex; flex-wrap: wrap; justify-content: center; gap: 0 var(--rcn-space-4);
+  flex-shrink: 0; padding: 2px var(--rcn-space-4) 3px;
+  font: 500 11px/15px var(--rcn-font-sans); color: var(--rcn-text-muted); opacity: 0.55;
+}
+.rcn-footer b { font-weight: 500; }
+body.rcn-footed { position: relative; box-sizing: border-box; min-height: 100vh; min-height: 100dvh; }
+body.rcn-footed > .rcn-footer { position: absolute; left: 0; right: 0; bottom: 0; }
+/* The mark in every page header is the home shortcut (home.js). */
+.rcn-header .rcn-home { display: flex; flex-shrink: 0; border-radius: var(--rcn-radius-sm); }
+.rcn-header .rcn-home:hover .rcn-mark { opacity: 0.8; }
 h1 { font-size: 31px; line-height: 40px; }
 h2 { font-size: 25px; line-height: 32px; }
 h3 { font: 600 20px/28px var(--rcn-font-sans); margin: 0; }
@@ -192,3 +206,50 @@ pre.rcn-code, .rcn-code {
 #rcn-lost .box { max-width: 420px; text-align: center; display: grid; gap: var(--rcn-space-3); justify-items: center; }
 #rcn-lost .rcn-mark { height: 40px; width: auto; }
 
+
+/* App pages: the layout every app page shares (lab dashboards first). Each
+   page keeps only its own grid columns and app-specific parts. */
+.rcn-header .rcn-heading { display: flex; flex-direction: column; min-width: 0; }
+.rcn-header .rcn-meta { font: 600 13px/18px var(--rcn-font-sans); color: var(--rcn-text-muted); }
+.rcn-header .rcn-meta b { color: var(--rcn-text); font-variant-numeric: tabular-nums; }
+.rcn-main { max-width: 1500px; margin: 0 auto; padding: var(--rcn-space-4); display: grid; gap: var(--rcn-space-4); }
+.rcn-section { background: var(--rcn-surface); border-radius: var(--rcn-radius-md); padding: var(--rcn-space-4); min-width: 0; }
+.rcn-section > h2, .rcn-section > .rcn-head h2 { font-size: 20px; line-height: 28px; margin: 0 0 var(--rcn-space-3); }
+.rcn-section h3 { font: 600 16px/24px var(--rcn-font-sans); margin: 0 0 var(--rcn-space-2); }
+.rcn-head { display: flex; align-items: center; justify-content: space-between; gap: var(--rcn-space-2); margin-bottom: var(--rcn-space-3); }
+.rcn-section > .rcn-head h2 { margin: 0; }
+.rcn-caption { font: 600 13px/18px var(--rcn-font-sans); color: var(--rcn-text-muted); margin-top: var(--rcn-space-2); }
+.rcn-tools { display: flex; flex-wrap: wrap; gap: var(--rcn-space-2); align-items: center; margin-top: var(--rcn-space-4); }
+.rcn-tools select.rcn-input { max-width: 220px; }
+.rcn-tools .rcn-caption { margin-top: 0; }
+.rcn-readout { font: 400 13px/20px var(--rcn-font-mono); color: var(--rcn-code-text); white-space: pre-wrap; margin-top: var(--rcn-space-3); }
+/* Live camera frames and dark drawing areas. */
+.rcn-view { background: var(--rcn-code-bg); border-radius: var(--rcn-radius-sm); width: 100%; display: block; aspect-ratio: 4 / 3; object-fit: contain; }
+canvas.rcn-canvas { background: var(--rcn-code-bg); border-radius: var(--rcn-radius-sm); width: 100%; display: block; }
+/* A drawing with + and - zoom buttons over its top right corner. */
+.rcn-zoombox { position: relative; }
+.rcn-zoom { position: absolute; right: var(--rcn-space-2); top: var(--rcn-space-2); display: flex; flex-direction: column; gap: var(--rcn-space-1); }
+.rcn-zoom .rcn-btn { width: 36px; height: 36px; padding: 0; justify-content: center; background: var(--rcn-bg); }
+/* A big one-word state: ok as is, accent while acting, err when something is wrong. */
+.rcn-state { font: 700 22px/28px var(--rcn-font-display); text-align: center; border-radius: var(--rcn-radius-md); padding: var(--rcn-space-4) var(--rcn-space-2); background: var(--rcn-bg); color: var(--rcn-text); }
+.rcn-state.accent { background: var(--rcn-orange); color: var(--rcn-ink); }
+.rcn-state.err { background: var(--rcn-crimson); color: var(--rcn-paper); }
+/* Tuning sliders from /ui/tune.js. */
+.rcn-slider { display: block; margin-top: var(--rcn-space-3); color: var(--rcn-text-muted); font-weight: 600; }
+.rcn-slider b { color: var(--rcn-text); font-variant-numeric: tabular-nums; }
+.rcn-slider input[type="range"] { width: 100%; }
+.rcn-chart + .rcn-legend { margin-top: var(--rcn-space-2); }
+/* Short confirmations from RcnUi.toast(). */
+.rcn-toast { position: fixed; left: 50%; bottom: var(--rcn-space-6); transform: translateX(-50%); padding: var(--rcn-space-2) var(--rcn-space-4); border-radius: var(--rcn-radius-md); background: var(--rcn-ink); border: 1px solid var(--rcn-steel); font-weight: 600; opacity: 0; transition: opacity 0.2s; pointer-events: none; z-index: 50; }
+.rcn-toast.show { opacity: 1; }
+
+/* Hover and keyboard-focus explanations: data-tip="..." on any element. */
+[data-tip] { position: relative; }
+[data-tip]::after {
+  content: attr(data-tip); position: absolute; left: 50%; top: calc(100% + 6px); transform: translateX(-50%);
+  width: max-content; max-width: 240px; padding: 6px 10px; border-radius: var(--rcn-radius-sm);
+  background: var(--rcn-ink); color: var(--rcn-paper); border: 1px solid var(--rcn-steel);
+  font: 600 13px/18px var(--rcn-font-sans); text-align: left; white-space: normal;
+  opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 0.12s; z-index: 20;
+}
+[data-tip]:hover::after, [data-tip]:focus-visible::after, [data-tip].tip-open::after { opacity: 1; visibility: visible; }

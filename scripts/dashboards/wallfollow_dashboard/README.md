@@ -28,14 +28,14 @@ Dashboard: `http://<car-ip>:8083`.
 | `racecar service enable wallfollow` | start at every boot |
 | `racecar service logs wallfollow` | follow the log |
 
-Saved tuning goes to `wallfollow.local.yaml` beside `wallfollow.yaml`; the shipped file
-keeps the defaults. Internals: `docs/dashboards.md` in the driver.
+Saved tuning goes to `dashboards/wallfollow.yaml` in the car profile
+(`~/.config/racecar`); the shipped `wallfollow.yaml` keeps the defaults. Internals: `docs/dashboards.md` in the driver.
 
 ## Dashboard
 
 - Lidar view: scan points, the averaging windows or search arc in gray, and the measured rays in orange. Scroll or use + and - to zoom.
 - Error chart: the last 30 s of error against the setpoint (cm in static mode, -1 to 1 in dynamic), with dashed lines at parameter changes.
-- Tune panel: speed is a 0 to 1 slider that applies while dragging; the other values apply on Apply.
+- Tune panel: every setting is a slider that applies while dragging. Static mode shows look_angle; dynamic mode shows width and side_weight.
 - Save and Load write and read wallfollow.yaml on the car. Reset (top bar) re-reads it. Stop (top bar) sets speed to 0.
 - Save log snapshots the error chart to LogN.csv. Load log draws a saved one with the error and the measured speed.
 
@@ -92,4 +92,4 @@ The RACECAR Neo mux gates /drive on the RB bumper and zeroes output when /joy or
 
 ## Car specifics
 
-This package is calibrated for the RACECAR Neo: RPLIDAR angle mapping via LIDAR_MOUNT_YAW_DEG (the lidar faces aft over 360 degrees at 1080 points, so the nose sits at raw 180), steering sign, speed feedback from /odom, ROS Jazzy paths. Both signs were verified physically on the car.
+This package is calibrated for the RACECAR Neo: RPLIDAR angles turned by the car's calibrated lidar yaw (`laser_yaw_deg`; the lidar faces aft over 360 degrees at 1080 points, so the nose sits near raw 180), steering sign, speed feedback from /odom, ROS Jazzy paths. Both signs were verified physically on the car.

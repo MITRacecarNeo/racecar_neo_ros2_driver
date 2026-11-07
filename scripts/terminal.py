@@ -25,7 +25,7 @@ scripts/terminal_login.html.
 from __future__ import annotations
 
 from collections.abc import Callable
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 import ipaddress
 import json
 import logging
@@ -34,21 +34,20 @@ from pathlib import Path
 import pwd
 import re
 import secrets
-import signal
 import socket
 import subprocess
 import sys
 import threading
 import time
-from types import FrameType
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from racecar_neo_ros2_driver import apps, fileio  # noqa: E402, I100
 import webui  # noqa: E402
 
-PORT = 8086
+PORT = apps.port('terminal')
 SCRIPT_DIR = Path(__file__).resolve().parent
 CONFIG_DIR = SCRIPT_DIR.parent / 'config'
 TMUX_SOCKET = 'racecar-terminal'
@@ -153,11 +152,6 @@ def client_allowed(ip: str, allow_lan: bool) -> bool:
     except ValueError:
         return False
     return addr.is_loopback or addr in AP_NETWORK
-
-
-def origin_ok(origin: str | None, host: str | None) -> bool:
-    """Return True when a WebSocket comes from a page this server sent (same host and port)."""
-    return bool(origin and host) and urlparse(origin or '').netloc == host
 
 
 def pane_target(path: str) -> tuple[str, str] | None:
@@ -270,10 +264,7 @@ class LayoutStore:
             if base != current['version']:
                 return False, current
             state = {'version': current['version'] + 1, 'layout': clean}
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.path.with_name(f'.{self.path.name}.tmp')
-            tmp.write_text(json.dumps(state))
-            tmp.replace(self.path)
+            fileio.write_atomic(self.path, json.dumps(state))
             return True, state
 
 
@@ -324,10 +315,7 @@ class PresetStore:
         return out
 
     def _write(self, presets: list[dict[str, Any]]) -> None:
-        self.user.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.user.with_name(f'.{self.user.name}.tmp')
-        tmp.write_text(json.dumps(presets, indent=2))
-        tmp.replace(self.user)
+        fileio.write_atomic(self.user, json.dumps(presets, indent=2))
 
     def listing(self) -> dict[str, list[dict[str, Any]]]:
         return {'builtin': self._read(self.builtin), 'user': self._read(self.user)}
@@ -554,8 +542,8 @@ class Context:
 
 
 def make_handler(ctx: Context) -> type[BaseHTTPRequestHandler]:
-    class Handler(BaseHTTPRequestHandler):
-        protocol_version = 'HTTP/1.1'
+    class Handler(webui.AppHandler):
+        cache = 'no-store'
 
         def _token(self) -> str | None:
             for part in (self.headers.get('Cookie') or '').split(';'):
@@ -567,68 +555,47 @@ def make_handler(ctx: Context) -> type[BaseHTTPRequestHandler]:
         def _allowed(self) -> bool:
             return client_allowed(self.client_address[0], ctx.allow_lan())
 
-        def _send(
-            self, code: int, body: bytes, kind: str, headers: dict[str, str] | None = None
-        ) -> None:
-            self.send_response(code)
-            self.send_header('Content-Type', kind)
-            self.send_header('Content-Length', str(len(body)))
-            self.send_header('Cache-Control', 'no-store')
-            for key, value in (headers or {}).items():
-                self.send_header(key, value)
-            self.end_headers()
-            self.wfile.write(body)
-
         def _redirect(self, where: str, headers: dict[str, str] | None = None) -> None:
-            self._send(303, b'', 'text/plain', {'Location': where, **(headers or {})})
-
-        def _page(self, name: str) -> None:
-            self._send(200, (SCRIPT_DIR / name).read_bytes(), 'text/html; charset=utf-8')
+            self.send(303, b'', 'text/plain', headers={'Location': where, **(headers or {})})
 
         def do_GET(self) -> None:  # noqa: N802
-            asset = webui.static_file(self.path)
-            if asset is not None:
-                self._send(200, asset[0], asset[1], {'Cache-Control': webui.CACHE_CONTROL})
+            if self.serve_asset():
                 return
             if not self._allowed():
-                self._send(403, b'Not allowed from this network.', 'text/plain')
+                self.send(403, b'Not allowed from this network.', 'text/plain')
                 return
             now = time.time()
             path = urlparse(self.path).path
             if path == '/':
                 live = ctx.sessions.touch(self._token(), now)
-                self._page('terminal.html' if live else 'terminal_login.html')
+                self.page(SCRIPT_DIR / ('terminal.html' if live else 'terminal_login.html'))
                 return
             if path.startswith(f'{PANE_BASE}/'):
                 self._pane(now)
                 return
             if path in ('/api/layout', '/api/presets'):
                 if not ctx.sessions.touch(self._token(), now):
-                    self._json(401, {'message': 'Log in first.'})
+                    self.send_json({'message': 'Log in first.'}, 401)
                     return
-                self._json(
-                    200, ctx.layout.load() if path == '/api/layout' else ctx.presets.listing()
+                self.send_json(
+                    ctx.layout.load() if path == '/api/layout' else ctx.presets.listing()
                 )
                 return
-            self._send(404, b'Not found.', 'text/plain')
-
-        def _json(self, code: int, data: Any) -> None:
-            self._send(code, json.dumps(data).encode(), 'application/json')
+            self.send(404, b'Not found.', 'text/plain')
 
         def _api_post(self, path: str) -> None:
             """Layout and terminal calls from the page: a session and this page's Origin."""
             if not ctx.sessions.touch(self._token(), time.time()):
-                self._json(401, {'message': 'Log in first.'})
+                self.send_json({'message': 'Log in first.'}, 401)
                 return
             origin = self.headers.get('Origin')
-            if origin and not origin_ok(origin, self.headers.get('Host')):
-                self._json(403, {'message': 'Not allowed from this page.'})
+            if origin and not webui.same_origin(origin, self.headers.get('Host')):
+                self.send_json({'message': 'Not allowed from this page.'}, 403)
                 return
             try:
-                length = min(int(self.headers.get('Content-Length') or 0), 65536)
-                body = json.loads(self.rfile.read(length) or b'{}')
+                body = self.read_json()
             except ValueError:
-                self._json(400, {'message': 'Bad request.'})
+                self.send_json({'message': 'Bad request.'}, 400)
                 return
             if path == '/api/layout':
                 try:
@@ -636,9 +603,9 @@ def make_handler(ctx: Context) -> type[BaseHTTPRequestHandler]:
                         int(body.get('version', -1)), body.get('layout')
                     )
                 except (ValueError, TypeError):
-                    self._json(400, {'message': 'Bad layout.'})
+                    self.send_json({'message': 'Bad layout.'}, 400)
                     return
-                self._json(200 if saved else 409, state)
+                self.send_json(state, 200 if saved else 409)
                 return
             if path.startswith('/api/presets/'):
                 self._presets(path.rsplit('/', 1)[1], body)
@@ -647,14 +614,14 @@ def make_handler(ctx: Context) -> type[BaseHTTPRequestHandler]:
                 self._scrollback(body)
                 return
             ok = ctx.close(str(body.get('id', '')))
-            self._json(200 if ok else 404, {'ok': ok})
+            self.send_json({'ok': ok}, 200 if ok else 404)
 
         def _presets(self, action: str, body: dict[str, Any]) -> None:
             try:
                 if action == 'apply':
                     preset = ctx.presets.find(str(body.get('name', '')), str(body.get('kind', '')))
                     if preset is None:
-                        self._json(404, {'message': 'No such preset.'})
+                        self.send_json({'message': 'No such preset.'}, 404)
                         return
                     tree = fresh_ids(preset['layout'])
                     ctx.start(tree)
@@ -663,36 +630,36 @@ def make_handler(ctx: Context) -> type[BaseHTTPRequestHandler]:
                     if saved:
                         for old in pane_ids(current['layout']):
                             ctx.close(old)
-                    self._json(200 if saved else 409, state)
+                    self.send_json(state, 200 if saved else 409)
                 elif action == 'save':
                     ctx.presets.save([body])
-                    self._json(200, ctx.presets.listing())
+                    self.send_json(ctx.presets.listing(), 200)
                 elif action == 'import':
                     presets = body.get('presets')
                     count = ctx.presets.save(presets if isinstance(presets, list) else [])
-                    self._json(200, {**ctx.presets.listing(), 'imported': count})
+                    self.send_json({**ctx.presets.listing(), 'imported': count}, 200)
                 elif action == 'delete':
                     ok = ctx.presets.delete(str(body.get('name', '')))
-                    self._json(200 if ok else 404, ctx.presets.listing())
+                    self.send_json(ctx.presets.listing(), 200 if ok else 404)
                 else:
-                    self._json(404, {'message': 'Not found.'})
+                    self.send_json({'message': 'Not found.'}, 404)
             except (ValueError, TypeError):
-                self._json(400, {'message': 'Bad preset.'})
+                self.send_json({'message': 'Bad preset.'}, 400)
 
         def _scrollback(self, body: dict[str, Any]) -> None:
             """Return a terminal's scrollback for download and keep a copy on the car."""
             text = ctx.capture(str(body.get('id', '')))
             if text is None:
-                self._json(404, {'message': 'No such terminal.'})
+                self.send_json({'message': 'No such terminal.'}, 404)
                 return
             name = export_name(str(body.get('title', '')), time.time())
             path = ctx.exports() / name
             path.write_text(text)
-            self._json(200, {'name': name, 'path': str(path), 'text': text})
+            self.send_json({'name': name, 'path': str(path), 'text': text}, 200)
 
         def do_POST(self) -> None:  # noqa: N802
             if not self._allowed():
-                self._send(403, b'Not allowed from this network.', 'text/plain')
+                self.send(403, b'Not allowed from this network.', 'text/plain')
                 return
             path = urlparse(self.path).path
             if path in ('/api/layout', '/api/pane/close', '/api/scrollback') or path.startswith(
@@ -705,14 +672,13 @@ def make_handler(ctx: Context) -> type[BaseHTTPRequestHandler]:
                 self._redirect('/', {'Set-Cookie': f'{COOKIE}=; Max-Age=0; Path=/'})
                 return
             if path != '/login':
-                self._send(404, b'Not found.', 'text/plain')
+                self.send(404, b'Not found.', 'text/plain')
                 return
             now = time.time()
             if ctx.guard.locked(now):
                 self._redirect('/?e=locked')
                 return
-            length = min(int(self.headers.get('Content-Length') or 0), 4096)
-            form = parse_qs(self.rfile.read(length).decode('utf-8', 'replace'))
+            form = parse_qs(self.body[:4096].decode('utf-8', 'replace'))
             password = (form.get('password') or [''])[0]
             ok = bool(password) and ctx.authenticate(ctx.user, password)
             ctx.guard.record(ok, now)
@@ -728,26 +694,27 @@ def make_handler(ctx: Context) -> type[BaseHTTPRequestHandler]:
         def _pane(self, now: float) -> None:
             token = self._token()
             if not ctx.sessions.touch(token, now):
-                self._send(401, b'Log in first.', 'text/plain')
+                self.send(401, b'Log in first.', 'text/plain')
                 return
             target = pane_target(self.path)
             if target is None:
-                self._send(404, b'No such terminal.', 'text/plain')
+                self.send(404, b'No such terminal.', 'text/plain')
                 return
             upgrade = (self.headers.get('Upgrade') or '').lower() == 'websocket'
-            if upgrade and not origin_ok(self.headers.get('Origin'), self.headers.get('Host')):
-                self._send(403, b'Not allowed from this page.', 'text/plain')
+            origin = self.headers.get('Origin')
+            if upgrade and not webui.same_origin(origin, self.headers.get('Host')):
+                self.send(403, b'Not allowed from this page.', 'text/plain')
                 return
             pane, ttyd_path = target
             if pane in ctx.closed:
-                self._send(404, b'No such terminal.', 'text/plain')
+                self.send(404, b'No such terminal.', 'text/plain')
                 return
             request = upstream_request('GET', ttyd_path, pane, list(self.headers.items()), upgrade)
             try:
                 upstream = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 upstream.connect(str(ctx.sock))
             except OSError:
-                self._send(503, b'The terminal is starting. Reload in a moment.', 'text/plain')
+                self.send(503, b'The terminal is starting. Reload in a moment.', 'text/plain')
                 return
             upstream.sendall(request)
             self.close_connection = True
@@ -810,20 +777,8 @@ def main() -> int:
     sock = runtime_dir() / 'ttyd.sock'
     ttyd = Ttyd(sock, CONFIG_DIR / 'terminal.tmux.conf')
     ttyd.start()
-    server = ThreadingHTTPServer(('', PORT), make_handler(Context(sock)))
-    server.daemon_threads = True
-
-    def stop(signum: int, _frame: FrameType | None) -> None:
-        threading.Thread(target=server.shutdown, daemon=True).start()
-
-    signal.signal(signal.SIGTERM, stop)
-    signal.signal(signal.SIGINT, stop)
     log.info('Terminal on port %d; ttyd socket %s', PORT, sock)
-    try:
-        server.serve_forever()
-    finally:
-        ttyd.stop()
-        server.server_close()
+    webui.serve(PORT, make_handler(Context(sock)), cleanup=ttyd.stop)
     return 0
 
 

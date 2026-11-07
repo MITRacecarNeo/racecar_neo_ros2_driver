@@ -8,7 +8,7 @@
 (function () {
   'use strict';
   const PERIOD_MS = 3000;
-  const url = `${location.protocol}//${location.hostname}:8080/api/battery`;
+  const url = `${location.protocol}//${location.hostname}:{{home}}/api/battery`;
   const FINAL = 'Turning the car off now. Turn off the power switch.';
   let estimate = null;
   let deadline = null;

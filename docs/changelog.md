@@ -4,6 +4,139 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-11-07
+
+### Added
+
+- A footer at the bottom of every page the car serves: "racecar OS", the
+  driver version, and the Teensy firmware version (from 8080 `/api/about`).
+  `scripts/webui.py` adds it to each page.
+- The R logo in every app page's header goes home: it closes the tab and
+  leaves the 8080 page in front, or loads the 8080 page when the browser
+  will not close the tab.
+- `pit_node` reads the Teensy firmware's info reply at start, after a
+  Teensy reset, and once a minute: the whole `key=value` payload latched on `/pit/firmware`, and
+  a `pit: firmware` status on `/diagnostics` with the version, label, commit,
+  speed control, ESC bounds, and the battery voltage dips since boot. The
+  8080 home page has a Firmware chip and `racecar status` a `teensy
+  firmware` row; both warn on a test build, an uncommitted build, or
+  firmware older than 0.9.0, which does not answer, and list voltage dips.
+- Stall protection state from the firmware (telemetry EKF slots): `pit_node`
+  latches each change on `/pit/stall` and reports `pit: stall` on
+  `/diagnostics`; the 8080 Stall chip and the `racecar status` `stall
+  protection` row show normal, tripped, cooldown or lockout and the trips
+  since the Teensy booted.
+
+### Changed
+
+- The browser apps (8080 home, web teleop, line follow, wall follow, camera
+  label) spin ROS on the EventsExecutor, as the driver nodes do, instead of
+  rebuilding a wait set on every message. Web teleop with its page open drops
+  from 82% to 56% of a core and keeps up with the full camera rate (about
+  46 to 58 fps in place of about 30).
+- `racecar calibrate dynamics` drives nine runs: straight at speed 0.25, 0.5,
+  0.75 and 1.0, reverse at 0.25, 0.5 and 1.0 (keys `..._rev025` and so on,
+  steady speed negative), and the two circles. Each run's bag also records
+  `/encoder/speed`, `/odom`, `/mux_out`, `/imu/fused`, `/battery/voltage` and
+  `/tf`.
+- The low-battery LED flash uses the same orange as the safety override flash
+  and the firmware, (255, 110, 0).
+- Web teleop and wall follow turn lidar angles by the car's calibrated lidar
+  yaw (`laser_yaw_deg`, as the map viewer and 8080 Overview already did)
+  instead of a fixed 180 degrees; the old rule (180 minus the raw angle) was
+  right only for a yaw of exactly 0 or 180. Helpers in `frames.py`
+  (`laser_mount`, `student_deg`, `raw_rad`, `student_scan`); both pages draw
+  the scan with `scripts/web/lidar.js`.
+- Camera frames on every page decode through one module (`imaging.py`), which
+  honors padded image rows. The 8080 Overview depth view uses the lab
+  dashboards' ramp and nearest-neighbor scaling, so holes in the depth image
+  stay holes.
+- Lab dashboards build `/drive` in one place (`labkit.drive_msg`): the speed
+  cap and the steering sign.
+- The map viewer, 8080 Overview and 8080 monitoring share one rule for
+  subscriptions kept open while a page is viewing (`webui.IdleGate`).
+- Lab dashboard pages share one page kit (`scripts/web/ui.js`, `api.js`,
+  `tune.js`, `logs.js`, and an app-page section in `rcn.css`); the 8080
+  home page, launch page, map viewer and terminal use its helpers and POST.
+  Save and Load on every lab page confirm with a short message.
+- Wall follow tunes with sliders that apply while dragging, like line follow
+  and web teleop; the number fields and Apply are gone. Static mode now
+  shows `look_angle`. Line follow's `min_area` is a slider too.
+- Lab pages stop asking for updates while the tab is hidden and catch up as
+  soon as it is shown. A hidden web teleop tab hands the dot matrix and LED
+  strip back to the car after about 3 s.
+- Lab dashboards share their tuning and run logs (`scripts/labkit.py`). Save
+  works the same on all three: values rewritten in place with comments kept,
+  and settings the saved file lacks appended (wall follow did this alone;
+  web teleop and line follow now do too). Wall follow's `mode` stays
+  file-only.
+- Every app (8080, map viewer, terminal, lab dashboards) serves through one
+  shared base, `scripts/webui.py`: `AppHandler` and `serve()`. All of them now
+  keep connections alive (HTTP/1.1), read a request body before handling it
+  (bodies over 64 KiB are refused), stop cleanly on SIGTERM, and keep
+  spinning ROS after an error; the map viewer's ROS thread no longer ends on
+  the first one. Pages link shared files as `?v={{asset}}` and the shared
+  scripts reach the home page as `{{home}}`; both are filled in when sent.
+- App registry: `config/apps.yaml` lists every browser app (port, unit,
+  group, `/drive` publisher, start from 8080), read by
+  `racecar_neo_ros2_driver/apps.py`. The 8080 tiles, the driving-app rules of
+  `racecar map` and the safe shutdown, every app's port, `racecar service`
+  and `setup_dashboards.sh` read it instead of their own lists.
+- Lab dashboard units are rendered from one template,
+  `scripts/dashboards/racecar-app.service.in`, and now wait for the data
+  drive and read its environment like the 8080, 8084 and 8086 units. Run
+  `racecar setup dashboards` to update them.
+- `pit_node` drops telemetry frames that fail the CRC check (`require_crc`
+  now `true` in `config/pit.yaml`); they still count as CRC failures in the
+  link report.
+
+### Fixed
+
+- `mux_node` no longer raises when the safety override turns off after it
+  was on: rclpy fixes a log call's severity at its first call, and the on and
+  off messages shared one call with two severities. A test checks that no
+  log call picks its severity at run time.
+- Battery guard on a sagging supply: a countdown from the time estimate
+  stops when the time left climbs back above `shutdown_min` plus 5 minutes
+  for 10 s (judged on the last 10 s of readings); the floor countdown still
+  always finishes. The capacity learner leaves out a drop in charge that the
+  current drawn cannot explain (over 5 points between two readings) until
+  the charge comes back, so a supply sag no longer halves the capacity and
+  the time left.
+- Odometry drops a sample with a non-finite speed, yaw rate or time; one NaN
+  held the integrated pose at NaN until teleop restarted. `pit_node` warns
+  when it drops one.
+
+- Battery guard: the CSV log is written from its own thread. A stalled data
+  drive (an NVMe sync can block for 30 s) held up the guard's whole loop, so
+  `/battery/estimate` stopped and the 8080 battery pills disappeared until it
+  recovered; the warning and shutdown checks waited too. The shutdown record
+  waits at most 2 s before the power off.
+- 8080 dashboard: its ROS thread spins once at a time and survives an error.
+  A rate subscription destroyed when the last page closed could land while
+  the executor built its wait set; the error ended the thread, and the
+  battery, rates, and every other ROS input stayed stale until the service
+  restarted.
+- 8080 battery pills hide when the page loses contact with the car, and a tab
+  brought back from the background updates at once, so old figures never read
+  as current.
+- `racecar health` reads the battery floor from the same settings as the
+  battery guard (`battery.load_config`); it read the source tree's copy while
+  the guard read the installed one. `scripts/battery_curve.py` uses it too.
+- `racecar log` and the 8080 feature choice keep their files in the car
+  profile (`RACECAR_CONFIG_DIR`, `XDG_CONFIG_HOME`), like the rest of the
+  car's settings. `launch_teleop.sh` reads the features after the ROS
+  overlay. `racecar log config` saves through a rename.
+- `racecar health shake` flags the same NVMe and PCIe kernel errors as
+  `racecar health nvme`; it missed failed commands, buffer I/O errors, and
+  link resets.
+- 8080 Autonomy tile follows `RACECAR_AUTONOMY_CONF` when it reads the last
+  run.
+- Wall follow (8083) serves requests in parallel, like the other apps; one
+  slow client held up the page's polling.
+- Lab dashboard READMEs: saved tuning lives in the car profile, not
+  `<name>.local.yaml`; retired dashboards dropped from the conflict lists.
+
 ## [0.9.1] - 2026-10-26
 
 ### Added
@@ -1569,7 +1702,8 @@ Design notes and migration from v1:
 - Parameter YAMLs: `config/gamepad.yaml`, `mux.yaml`, `throttle.yaml`, `pwm.yaml`
 - Project files: `README.md`, `LICENSE` (GPLv3), `.gitignore`, `.gitattributes`
 
-[Unreleased]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.9.2...HEAD
+[0.9.2]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.8.3...v0.9.0
 [0.8.3]: https://github.com/MITRacecarNeo/racecar_neo_ros2_driver/compare/v0.8.2...v0.8.3

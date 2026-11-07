@@ -15,11 +15,14 @@ from collections import deque
 from collections.abc import Callable
 import math
 from pathlib import Path
+import sys
 import threading
 import time
 from typing import Any
 
-import numpy as np
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from webui import IdleGate  # noqa: E402
 
 IDLE_SEC = 10.0
 CAMERA_IDLE_SEC = 3.0
@@ -30,11 +33,7 @@ PREVIEW_WIDTH = 320
 JPEG_QUALITY = 60
 SCAN_MAX_M = 8.0
 SCAN_STRIDE = 3
-DEPTH_NEAR_M = 0.2
 DEPTH_FAR_M = 4.0
-# Pixels with no depth: flat gray, so the stereo blind strip on the left and
-# floor closer than the minimum range do not read as a dark object.
-NO_DEPTH_BGR = (102, 81, 80)
 
 # name: (topic, message type path)
 FEEDS = {
@@ -51,33 +50,6 @@ def _msg_class(path: str) -> Any:
     return getattr(__import__(f'{pkg}.msg', fromlist=[name]), name)
 
 
-def image_array(msg: Any) -> np.ndarray | None:
-    """Return a sensor_msgs/Image as an HxWxC (color) or HxW (depth) array."""
-    h, w = msg.height, msg.width
-    buf = np.frombuffer(bytes(msg.data), dtype=np.uint16 if msg.encoding == '16UC1' else np.uint8)
-    if msg.encoding == '16UC1':
-        return buf.reshape(h, msg.step // 2)[:, :w]
-    if msg.encoding in ('rgb8', 'bgr8'):
-        img = buf.reshape(h, msg.step)[:, : w * 3].reshape(h, w, 3)
-        return img[:, :, ::-1] if msg.encoding == 'rgb8' else img
-    if msg.encoding == 'mono8':
-        return buf.reshape(h, msg.step)[:, :w]
-    return None
-
-
-def colorize_depth(depth_mm: np.ndarray, far_m: float = DEPTH_FAR_M) -> np.ndarray:
-    """Return a BGR preview of depth: bright is near, dark is far, gray is no reading."""
-    import cv2
-
-    metres = depth_mm.astype(np.float32) / 1000.0
-    valid = metres > 0
-    norm = np.clip((metres - DEPTH_NEAR_M) / max(far_m - DEPTH_NEAR_M, 1e-3), 0.0, 1.0)
-    ramp = (40 + (1.0 - norm) * 215).astype(np.uint8)
-    out = cv2.applyColorMap(ramp, cv2.COLORMAP_INFERNO)
-    out[~valid] = NO_DEPTH_BGR
-    return out
-
-
 def scan_points(
     ranges: list[float], angle_min: float, angle_inc: float, mount: tuple[float, float, float]
 ) -> list[list[float]]:
@@ -91,25 +63,6 @@ def scan_points(
         a = angle_min + i * angle_inc + yaw
         out.append([round(lx + r * math.cos(a), 2), round(ly + r * math.sin(a), 2)])
     return out
-
-
-def laser_mount_from_config(config_dir: Path | None) -> tuple[float, float, float]:
-    """Return the lidar's (x, y, yaw) in base_link from frames.yaml, or the origin."""
-    try:
-        from racecar_neo_ros2_driver.frames import load_frames
-
-        if config_dir is None:
-            from ament_index_python.packages import get_package_share_directory
-
-            config_dir = Path(get_package_share_directory('racecar_neo_ros2_driver')) / 'config'
-        f = load_frames(config_dir)
-        return (
-            f.get('laser_x_mm', 0.0) / 1000.0,
-            f.get('laser_y_mm', 0.0) / 1000.0,
-            math.radians(f.get('laser_yaw_deg', 0.0)),
-        )
-    except Exception:  # noqa: BLE001  the view still draws, unrotated
-        return (0.0, 0.0, 0.0)
 
 
 class Overview:
@@ -129,32 +82,36 @@ class Overview:
         self._deserialize = deserialize
         self._lock = threading.Lock()
         self._handles: dict[str, Any] = {}
-        self.last_frame_request = 0.0
         self._latest: dict[str, tuple[bytes, float]] = {}
         self._jpeg: dict[str, tuple[bytes, float]] = {}
         self.imu: deque[list[float]] = deque(maxlen=int(GRAPH_SEC * GRAPH_HZ))
         self.speed: deque[list[float]] = deque(maxlen=int(GRAPH_SEC * GRAPH_HZ))
-        self.active = False
-        self.last_request = 0.0
-        self._mount = laser_mount_from_config(config_dir)
+        others = [n for n in FEEDS if n not in CAMERAS]
+        cameras = [n for n in CAMERAS if n in FEEDS]
+        self.gate = IdleGate(IDLE_SEC, lambda: self._open(others), self._close)
+        self.cameras = IdleGate(
+            CAMERA_IDLE_SEC, lambda: self._open(cameras), lambda: self._drop(cameras)
+        )
+        from racecar_neo_ros2_driver import frames
+
+        values = frames.current() if config_dir is None else frames.load_frames(config_dir)
+        self._mount = frames.laser_mount(values)
         threading.Thread(target=self._sample, daemon=True).start()
 
     # -- subscriptions --
 
+    @property
+    def active(self) -> bool:
+        return self.gate.open
+
     def touch(self) -> None:
         with self._lock:
-            self.last_request = time.monotonic()
-            if not self.active:
-                self._open([n for n in FEEDS if n not in CAMERAS])
-                self.active = True
+            self.gate.touch()
 
     def touch_cameras(self) -> None:
         with self._lock:
-            self.last_request = self.last_frame_request = time.monotonic()
-            if not self.active:
-                self._open([n for n in FEEDS if n not in CAMERAS])
-                self.active = True
-            self._open([n for n in CAMERAS if n in FEEDS and n not in self._handles])
+            self.gate.touch()
+            self.cameras.touch()
 
     def _open(self, names: list[str]) -> None:
         from rclpy.qos import qos_profile_sensor_data
@@ -183,7 +140,7 @@ class Overview:
         self._jpeg.clear()
         self.imu.clear()
         self.speed.clear()
-        self.active = False
+        self.cameras.open = False
 
     def _store(self, name: str) -> Callable[[bytes], None]:
         def cb(data: bytes) -> None:
@@ -203,12 +160,9 @@ class Overview:
         while True:
             time.sleep(1.0 / GRAPH_HZ)
             with self._lock:
-                if self.active and time.monotonic() - self.last_request > IDLE_SEC:
-                    self._close()
-                elif time.monotonic() - self.last_frame_request > CAMERA_IDLE_SEC:
-                    self._drop([n for n in CAMERAS if n in self._handles])
-                if not self.active:
+                if not self.gate.check():
                     continue
+                self.cameras.check()
                 now = time.time()
                 imu = self._decode('imu')
                 if imu is not None:
@@ -245,7 +199,7 @@ class Overview:
 
     def jpeg(self, name: str, max_age: float = 0.25) -> bytes | None:
         """Return a small JPEG of the latest color or depth frame; cached for max_age s."""
-        import cv2
+        from racecar_neo_ros2_driver import imaging
 
         with self._lock:
             cached = self._jpeg.get(name)
@@ -254,16 +208,18 @@ class Overview:
             decoded = self._decode(name)
         if decoded is None:
             return None
-        img = image_array(decoded[0])
-        if img is None:
-            return None
+        msg = decoded[0]
         if name == 'depth':
-            img = colorize_depth(img)
-        scale = PREVIEW_WIDTH / img.shape[1]
-        small = cv2.resize(
-            img, (PREVIEW_WIDTH, max(1, int(img.shape[0] * scale))), interpolation=cv2.INTER_AREA
-        )
-        data = cv2.imencode('.jpg', small, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])[1].tobytes()
+            data = imaging.depth_preview(msg, PREVIEW_WIDTH, DEPTH_FAR_M, JPEG_QUALITY)
+        else:
+            img = imaging.bgr(msg)
+            data = (
+                None
+                if img is None
+                else imaging.jpeg(imaging.fit_width(img, PREVIEW_WIDTH), JPEG_QUALITY)
+            )
+        if data is None:
+            return None
         with self._lock:
             self._jpeg[name] = (data, time.monotonic())
         return data

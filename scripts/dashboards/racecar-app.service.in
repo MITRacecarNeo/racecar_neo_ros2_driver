@@ -1,5 +1,7 @@
 [Unit]
-Description=RACECAR Neo Web Teleop Dashboard (port 8081)
+Description=RACECAR Neo @NAME@ Dashboard (port @PORT@)
+Wants=racecar-data.service
+After=racecar-data.service
 After=racecar-teleop.service
 
 [Service]
@@ -9,10 +11,12 @@ Group=racecar
 ExecStart=/bin/bash -c '\
     source /opt/ros/jazzy/setup.bash && \
     source /home/racecar/ros2_ws/install/setup.bash && \
-    exec python3 @DIR@/teleop.py'
+    exec python3 @DIR@/@SCRIPT@'
 Restart=on-failure
 RestartSec=5
 Environment=HOME=/home/racecar
+# RACECAR_DATA_DIR, from racecar-data.service.
+EnvironmentFile=-/run/racecar/environment
 WorkingDirectory=@DIR@
 
 [Install]

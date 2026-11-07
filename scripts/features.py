@@ -17,6 +17,8 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 
+from racecar_neo_ros2_driver import fileio
+
 # Feature id -> teleop.launch.py subsystem.
 SUBSYSTEMS = {'camera': 'realsense', 'detections': 'edgetpu'}
 DEFAULTS = {'camera': True, 'detections': False}
@@ -28,7 +30,9 @@ LAUNCH_ARGS_FILE = 'launch_args'
 
 
 def state_file() -> Path:
-    return Path.home() / '.config' / 'racecar' / 'features.conf'
+    from racecar_neo_ros2_driver import car_profile
+
+    return car_profile.profile_dir() / 'features.conf'
 
 
 def boot_id() -> str:
@@ -43,11 +47,7 @@ def read(path: Path | None = None, boot: str | None = None) -> dict[str, bool]:
     path = path or state_file()
     boot = boot_id() if boot is None else boot
     values = dict(DEFAULTS)
-    try:
-        lines = path.read_text().splitlines()
-    except OSError:
-        return values
-    fields = dict(line.split('=', 1) for line in lines if '=' in line)
+    fields = fileio.read_keyvals(path)
     if not boot or fields.get('BOOT_ID') != boot:
         return values
     for name in values:
@@ -59,11 +59,8 @@ def read(path: Path | None = None, boot: str | None = None) -> dict[str, bool]:
 def write(values: dict[str, bool], path: Path | None = None, boot: str | None = None) -> None:
     path = path or state_file()
     boot = boot_id() if boot is None else boot
-    path.parent.mkdir(parents=True, exist_ok=True)
     lines = [f'BOOT_ID={boot}'] + [f'{k.upper()}={int(v)}' for k, v in values.items()]
-    tmp = path.with_suffix('.tmp')
-    tmp.write_text('\n'.join(lines) + '\n')
-    tmp.replace(path)
+    fileio.write_atomic(path, '\n'.join(lines) + '\n')
 
 
 def resolve(values: dict[str, bool]) -> dict[str, bool]:
@@ -99,7 +96,7 @@ def launch_args(values: dict[str, bool], given: list[str] | None = None) -> list
 
 def running(log_dir: Path | None = None) -> dict[str, bool]:
     """Return the features the running teleop was launched with (logs/latest/launch_args)."""
-    path = (log_dir or Path.home() / 'logs' / 'latest') / LAUNCH_ARGS_FILE
+    path = (log_dir or fileio.latest_log_dir()) / LAUNCH_ARGS_FILE
     try:
         lines = path.read_text().splitlines()
     except OSError:

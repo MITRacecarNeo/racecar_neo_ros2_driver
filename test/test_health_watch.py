@@ -25,6 +25,9 @@ class TestKernelEvents:
             ('hwmon hwmon1: Undervoltage detected!', 'under-voltage'),
             ('nvme nvme0: I/O tag 591 (824f) QID 3 timeout, completion polled', 'nvme'),
             ('pcieport 0000:00:00.0: AER: Corrected error received', 'pcie'),
+            ('Buffer I/O error on dev nvme0n1p1, logical block 0', 'nvme'),
+            ('nvme nvme0: Identify Controller failed (-4)', 'nvme'),
+            ('brcm-pcie 1000110000.pcie: link reset', 'pcie'),
         ],
     )
     def test_faults(self, line, kind):
@@ -40,6 +43,10 @@ class TestKernelEvents:
     )
     def test_ordinary_lines(self, line):
         assert watch.kernel_event(line) is None
+
+    def test_health_uses_the_same_patterns(self):
+        assert health.NVME_ERROR == watch.NVME_ERROR
+        assert health.PCIE_ERROR == watch.PCIE_ERROR
 
 
 class TestThrottle:

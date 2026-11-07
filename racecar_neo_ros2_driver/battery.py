@@ -30,6 +30,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields
 from itertools import pairwise
+from pathlib import Path
 from statistics import median
 from typing import Any
 
@@ -63,6 +64,10 @@ MAX_CELLS = 6
 # A battery change without a reboot (a bench supply carrying the Pi) shows as
 # charge rising this far above the start; learning starts over.
 LEARN_RESET_RISE_PCT = 10.0
+# A change in charge between two readings that differs from what the charge
+# drawn explains by more than this is a supply step (a sagging bench supply,
+# a loose lead), not use; the learner leaves it out.
+LEARN_STEP_PCT = 5.0
 
 
 @dataclass(frozen=True)
@@ -124,6 +129,14 @@ class BatteryConfig:
         return (
             self.plausible_min_cell_volts * cells < volts < self.plausible_max_cell_volts * cells
         )
+
+
+def load_config(directory: Path | None = None) -> BatteryConfig:
+    """Return config/battery.yaml with the car profile's override on top."""
+    from racecar_neo_ros2_driver import car_profile, paths
+
+    params = car_profile.node_params('battery', 'battery_guard', directory or paths.config_dir())
+    return BatteryConfig.from_params(params)
 
 
 @dataclass(frozen=True)
@@ -213,7 +226,9 @@ class CapacityLearner:
     charge over the fraction used; the result moves from capacity_mah to the
     measured value as the drop reaches learn_full_drop_pct, clamped to
     learn_min_ratio to learn_max_ratio of capacity_mah. A gap between samples
-    is filled at the last current.
+    is filled at the last current. A drop in charge the drawn current cannot
+    explain (over LEARN_STEP_PCT between two readings) is left out of the
+    drop until a rise gives it back.
     """
 
     def __init__(self, cfg: BatteryConfig) -> None:
@@ -225,15 +240,30 @@ class CapacityLearner:
         self._mah = 0.0
         self._soc_start: float | None = None
         self._soc_now: float | None = None
+        self._soc_raw: float | None = None
+        self._stepped = 0.0  # charge left out as supply steps, percent
 
     def update(self, t: float, amps: float, soc: float | None) -> None:
         """Add a sample; `soc` is the current estimate's charge, None until it has one."""
+        drawn = 0.0
         if self._last is not None:
             dt = max(0.0, t - self._last[0])
-            self._mah += self._last[1] * dt / 3.6
+            drawn = self._last[1] * dt / 3.6
+            self._mah += drawn
         self._last = (t, amps)
         if soc is None:
             return
+        if self._soc_raw is not None:
+            change = self._soc_raw - soc
+            explained = drawn / self._cfg.capacity_mah * 100.0
+            if change - explained > LEARN_STEP_PCT:
+                self._stepped += change
+            elif -change > LEARN_STEP_PCT:
+                # A rise first gives back steps left out before (the supply
+                # recovered); the rest is a fresh battery, handled below.
+                self._stepped -= min(-change, self._stepped)
+        self._soc_raw = soc
+        soc += self._stepped
         if self._soc_start is not None and soc > self._soc_start + LEARN_RESET_RISE_PCT:
             self.reset()
             self._last = (t, amps)

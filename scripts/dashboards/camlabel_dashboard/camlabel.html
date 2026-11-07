@@ -4,26 +4,22 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Camera label - RACECAR Neo</title>
-<link rel="stylesheet" href="/ui/rcn.css?v=13">
-<script src="/ui/battery.js?v=13" defer></script>
+<link rel="stylesheet" href="/ui/rcn.css?v={{asset}}">
+<script src="/ui/battery.js?v={{asset}}" defer></script>
 <link rel="icon" href="/ui/brand/app-icon-32.png">
-<script src="/ui/lost.js?v=13" defer></script>
+<script src="/ui/lost.js?v={{asset}}" defer></script>
+<script src="/ui/ui.js?v={{asset}}"></script>
+<script src="/ui/api.js?v={{asset}}"></script>
 <style>
-  .rcn-header .heading { display: flex; flex-direction: column; min-width: 0; }
-  .rcn-header .meta { font: 600 13px/18px var(--rcn-font-sans); color: var(--rcn-text-muted); }
-  .rcn-header .meta b { color: var(--rcn-text); font-variant-numeric: tabular-nums; }
-  .rcn-header .meta abbr { text-decoration: underline dotted; cursor: help; }
-  main { max-width: 1500px; margin: 0 auto; padding: var(--rcn-space-4); display: grid; gap: var(--rcn-space-4); }
+  .rcn-header .rcn-meta abbr { text-decoration: underline dotted; cursor: help; }
   .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--rcn-space-4); }
   @media (max-width: 1000px) { .grid { grid-template-columns: 1fr; } }
-  .card { background: var(--rcn-surface); border-radius: var(--rcn-radius-md); padding: var(--rcn-space-4); min-width: 0; }
-  .card h2 { font-size: 20px; line-height: 28px; margin-bottom: var(--rcn-space-2); }
-  .card h2.stepped { display: flex; align-items: center; gap: var(--rcn-space-2); }
+  .rcn-section > h2 { margin-bottom: var(--rcn-space-2); }
+  .rcn-section > h2.stepped { display: flex; align-items: center; gap: var(--rcn-space-2); }
   .step { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--rcn-orange); color: var(--rcn-ink); font: 700 15px/1 var(--rcn-font-sans); }
   .note { color: var(--rcn-text-muted); font-weight: 600; margin-bottom: var(--rcn-space-3); }
   canvas { width: 100%; height: auto; display: block; background: var(--rcn-code-bg); border-radius: var(--rcn-radius-sm); aspect-ratio: 4 / 3; }
   #lab { cursor: crosshair; touch-action: none; }
-  .tools { display: flex; flex-wrap: wrap; gap: var(--rcn-space-2); align-items: center; margin-top: var(--rcn-space-3); }
   .readout { font: 600 14px/20px var(--rcn-font-sans); color: var(--rcn-text-muted); margin-top: var(--rcn-space-3); }
   label.field { display: block; font-weight: 600; margin-top: var(--rcn-space-3); }
   label.field .rcn-input { display: block; width: 100%; max-width: 320px; margin-top: var(--rcn-space-1); }
@@ -37,30 +33,30 @@
 <body>
 <header class="rcn-header">
   <img class="rcn-mark" src="/ui/brand/mark.png" alt="RACECAR Neo">
-  <div class="heading">
+  <div class="rcn-heading">
     <span class="rcn-title">Camera label</span>
-    <span class="meta">unlabeled <b id="ucount">0</b> &middot; labeled <b id="lcount">0</b> &middot;
+    <span class="rcn-meta">unlabeled <b id="ucount">0</b> &middot; labeled <b id="lcount">0</b> &middot;
       <abbr title="Snaps save at this resolution.">camera</abbr> <b id="res">-</b> &middot;
       <abbr title="Live preview only.">preview</abbr> <b id="pres">-</b></span>
   </div>
 </header>
 
-<main>
+<main class="rcn-main">
 <div class="grid">
-  <div class="card">
+  <div class="rcn-section">
     <h2 class="stepped"><span class="step">1</span>Collect</h2>
     <div class="note">Point the car at what you want to label, then press Snap.</div>
     <canvas id="cam" width="640" height="480"></canvas>
-    <div class="tools"><button class="rcn-btn primary small" onclick="snap()">Snap</button></div>
+    <div class="rcn-tools"><button class="rcn-btn primary small" onclick="snap()">Snap</button></div>
     <div class="readout" id="snapinfo">Spacebar also snaps.</div>
   </div>
-  <div class="card">
+  <div class="rcn-section">
     <h2 class="stepped"><span class="step">2</span>Label</h2>
     <div class="note">Type the class name first. Then click one corner, move, and click again to place the box.</div>
     <canvas id="lab" width="640" height="480"></canvas>
     <label class="field" for="cls">Class name for new boxes
       <input id="cls" class="rcn-input" type="text" placeholder="cone" value=""></label>
-    <div class="tools">
+    <div class="rcn-tools">
       <button class="rcn-btn quiet small" onclick="nav(-1)">Prev</button>
       <button class="rcn-btn quiet small" onclick="nav(1)">Next</button>
       <button class="rcn-btn primary small" onclick="saveLabels()">Save labels</button>
@@ -71,40 +67,31 @@
   </div>
 </div>
 
-<div class="card">
+<div class="rcn-section">
   <h2>Unlabeled images (<span id="ucount2">0</span>)</h2>
   <div class="thumbs" id="uthumbs">None yet. Snap some frames above.</div>
 </div>
 
-<div class="card">
+<div class="rcn-section">
   <h2>Labeled images (<span id="lcount2">0</span>)</h2>
   <div class="thumbs" id="lthumbs">None yet.</div>
   <canvas id="revcam" width="640" height="480" style="display: none"></canvas>
   <div class="readout" id="revinfo"></div>
-  <div class="tools"><button class="rcn-btn danger small" id="delbtn" style="display: none" onclick="delLabeled()">Delete image</button></div>
+  <div class="rcn-tools"><button class="rcn-btn danger small" id="delbtn" style="display: none" onclick="delLabeled()">Delete image</button></div>
 </div>
 </main>
 
 <script>
+const { post } = RcnApi;
+const { token, font } = RcnUi;
 // ---- Live view (collect) ----
 const cam = document.getElementById('cam'), camx = cam.getContext('2d');
 const limg = new Image();
 limg.onload = () => camx.drawImage(limg, 0, 0, cam.width, cam.height);
-// Pull frames one at a time so a congested link drops frame rate instead
-// of building a lag queue. Pauses when the tab is hidden.
-(function liveLoop() {
-  if (document.hidden) { setTimeout(liveLoop, 250); return; }
-  const t = Date.now();
-  const done = () => {
-    limg.removeEventListener('load', done); limg.removeEventListener('error', done);
-    setTimeout(liveLoop, Math.max(20, 160 - (Date.now() - t)));
-  };
-  limg.addEventListener('load', done); limg.addEventListener('error', done);
-  limg.src = '/frame?' + t;
-})();
+RcnUi.frames(limg, '/frame', 160);
 
 function snap() {
-  fetch('/snap', { method: 'POST' }).then(r => {
+  post('/snap').then(r => {
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.json();
   }).then(d => {
@@ -128,12 +115,13 @@ function drawLab() {
   labx.clearRect(0, 0, lab.width, lab.height);
   if (current === null) return;
   labx.drawImage(uimg, 0, 0, lab.width, lab.height);
-  labx.font = '600 14px Barlow, Arial, sans-serif'; labx.lineWidth = 2; labx.strokeStyle = '#f49a4b';
+  const accent = token('--rcn-orange'), ink = token('--rcn-ink');
+  labx.font = font(14); labx.lineWidth = 2; labx.strokeStyle = accent;
   for (const b of boxes) {
     labx.strokeRect(b.x, b.y, b.w, b.h);
-    labx.fillStyle = '#f49a4b';
+    labx.fillStyle = accent;
     labx.fillRect(b.x, b.y - 18, labx.measureText(b.cls).width + 10, 18);
-    labx.fillStyle = '#231f20';
+    labx.fillStyle = ink;
     labx.fillText(b.cls, b.x + 5, b.y - 5);
   }
   if (drag) {
@@ -141,9 +129,9 @@ function drawLab() {
     labx.strokeRect(drag.x, drag.y, drag.w, drag.h);
     labx.setLineDash([]);
     const size = `${Math.round(drag.w)} x ${Math.round(drag.h)}`;
-    labx.fillStyle = '#f49a4b';
+    labx.fillStyle = accent;
     labx.fillRect(drag.x, drag.y + drag.h, labx.measureText(size).width + 10, 18);
-    labx.fillStyle = '#231f20';
+    labx.fillStyle = ink;
     labx.fillText(size, drag.x + 5, drag.y + drag.h + 13);
   }
 }
@@ -251,16 +239,14 @@ function saveLabels() {
   const out = boxes.map(b => ({ cls: b.cls,
     cx: (b.x + b.w / 2) / lab.width, cy: (b.y + b.h / 2) / lab.height,
     w: b.w / lab.width, h: b.h / lab.height }));
-  fetch('/label', { method: 'POST', body: JSON.stringify({ n: current, boxes: out }) })
+  post('/label', { n: current, boxes: out })
     .then(() => refresh().then(advance))
     .catch(() => refresh().then(advance));
 }
 
-
-
 function delImg() {
   if (current === null) return;
-  fetch('/delu', { method: 'POST', body: JSON.stringify({ n: current }) })
+  post('/delu', { n: current })
     .then(() => refresh().then(advance));
 }
 
@@ -311,12 +297,13 @@ const rimg = new Image();
 let revBoxes = [], currentLabeled = null;
 rimg.onload = () => {
   rctx.drawImage(rimg, 0, 0, rc.width, rc.height);
-  rctx.font = '600 14px Barlow, Arial, sans-serif'; rctx.lineWidth = 2; rctx.strokeStyle = '#f49a4b';
+  const accent = token('--rcn-orange'), ink = token('--rcn-ink');
+  rctx.font = font(14); rctx.lineWidth = 2; rctx.strokeStyle = accent;
   for (const b of revBoxes) {
     rctx.strokeRect(b.x, b.y, b.w, b.h);
-    rctx.fillStyle = '#f49a4b';
+    rctx.fillStyle = accent;
     rctx.fillRect(b.x, b.y - 18, rctx.measureText(b.cls).width + 10, 18);
-    rctx.fillStyle = '#231f20';
+    rctx.fillStyle = ink;
     rctx.fillText(b.cls, b.x + 5, b.y - 5);
   }
 };
@@ -337,7 +324,7 @@ function showLabeled(n) {
 function delLabeled() {
   if (currentLabeled === null) return;
   if (!confirm(`Delete img${currentLabeled} and its labels?`)) return;
-  fetch('/dell', { method: 'POST', body: JSON.stringify({ n: currentLabeled }) }).then(() => {
+  post('/dell', { n: currentLabeled }).then(() => {
     currentLabeled = null;
     rc.style.display = 'none';
     document.getElementById('delbtn').style.display = 'none';
@@ -345,7 +332,6 @@ function delLabeled() {
     refresh();
   });
 }
-
 
 refresh();
 </script>

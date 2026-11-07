@@ -46,24 +46,18 @@ message; they stop DISPLAY_HOLD_S after the page stops polling.
 
 from collections import deque
 from collections.abc import Callable
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import math
 from pathlib import Path
-import re
-import signal
 import sys
 import threading
 import time
 from typing import Any
 
 from ackermann_msgs.msg import AckermannDriveStamped
-import cv2
 from nav_msgs.msg import Odometry
-import numpy as np
-from racecar_neo_ros2_driver import car_profile, data_root
+from racecar_neo_ros2_driver import apps, frames, imaging
 import rclpy
-from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from rclpy.serialization import deserialize_message
@@ -76,55 +70,24 @@ except ImportError:
     # A car without vision_msgs still gets every other view; the Detections
     # toggle reports itself unavailable rather than taking the page down.
     Detection2DArray = None
-import yaml
 
-PORT = 8081
+PORT = apps.port('webteleop')
 BASE = Path(__file__).resolve().parent
 # The shared styles, fonts and logos are served from scripts/web/ (webui.py).
 sys.path.insert(0, str(BASE.parents[1]))
-import webui  # noqa: E402, I100
+import labkit  # noqa: E402, I100
+import webui  # noqa: E402
 
-# Shipped defaults stay untouched; saved tuning goes to the per-car file,
-# which loads on top of them, in the car profile (dashboards/<name>.yaml).
-DEFAULTS_PATH = BASE / 'teleop.yaml'
-YAML_PATH = car_profile.dashboard_settings('teleop')
-LOG_DIR = data_root.current()[0] / 'dashboards' / 'teleop'
-
-MAX_SPEED = 1.0  # hard throttle cap either way, as drive_real.set_max_speed
 PUBLISH_RATE_HZ = 15.0  # /drive rate, independent of the browser
 PREVIEW_RATE_HZ = 15.0
-# The live chart is 420 px wide; send an even sample of the history rather
-# than every row. The log csv keeps all of them.
-HIST_POINTS = 300
 
 TUNE_KEYS = ('speed', 'angle')
 
-# Raw scan angle that points at the car's nose, in degrees.
-#
-# The RACECAR Neo mounts its RPLIDAR facing aft over 360 degrees at 1080
-# points, so the nose sits at the raw +/-180 edge of the sweep rather than at
-# 0. Measured on hardware: an object in front reports at raw 180, and one off
-# the car's right at raw +90.
-#
-#     student_deg = LIDAR_MOUNT_YAW_DEG - raw_deg
-#
-# The view read 180 degrees out before this constant existed, which is the
-# v0.8.0 known limitation: the plain negation below it assumed the neoracer's
-# forward-facing 270 degree mount. Set this to 0.0 for such a lidar. Nothing
-# here assumes a sweep width; the angle comes from the message's own
-# angle_min and angle_increment. Same convention and constant as
-# wallfollow.py, which steers on it.
-LIDAR_MOUNT_YAW_DEG = 180.0
-
-# Depth coloring. Near reads bright and far reads dark, on the perceptually
-# uniform inferno ramp: a single ordered scale, so a step in color is a step
-# in distance, and it survives being read by a color blind student. The ramp
-# starts at DEPTH_FLOOR rather than 0 so the darkest real reading is still
-# above black. No return is flat gray, so the stereo blind strip on the left
-# and floor closer than the minimum range do not read as a dark object.
-DEPTH_FLOOR = 24
-DEPTH_NEAR_M = 0.15  # below the D435i minimum range; nothing valid is nearer
-NO_RETURN_BGR = (102, 81, 80)
+# The lidar's yaw in base_link from the car's frames (config/frames.yaml, with
+# the car profile's calibrated value on top): about 180 degrees on the RACECAR
+# Neo, whose RPLIDAR faces aft. Lab angles are 0 at the nose and positive to
+# the car's right (frames.student_deg); nothing here assumes a sweep width.
+LASER_YAW = frames.laser_mount()[2]
 
 # Detections older than this are dropped rather than left frozen on the
 # frame. The overlay is only honest if a stale box disappears.
@@ -141,7 +104,7 @@ LED_RESEND_S = 0.2
 DISPLAY_HOLD_S = 3.0
 
 _lock = threading.Lock()
-_params: dict = {}
+_marks = labkit.Marks()
 _state: dict = {
     'fwd': 0,
     'turn': 0,
@@ -165,13 +128,6 @@ _preview = b''
 _depth_preview = b''
 # The browser's command and when it last arrived. Read by the timer.
 _cmd: dict = {'fwd': 0, 'turn': 0, 'stamp': 0.0}
-_hist: deque = deque(maxlen=1200)
-# Full rows behind the live chart. POST /logs/save snapshots this to a csv,
-# so a saved log is exactly what was on the screen.
-_rows: deque = deque(maxlen=1200)
-# Parameter-change markers [t, label] shown on the charts. Saved into logs
-# as "# mark" lines.
-_marks: deque = deque(maxlen=40)
 _sense: deque = deque(maxlen=int(SENSE_S * PUBLISH_RATE_HZ))
 # Latest serialized messages, decoded by the timer: {name: (bytes, stamp)}.
 _raw: dict = {}
@@ -179,85 +135,21 @@ _raw: dict = {}
 # 'pixels' or 'text' for the matrix; leds is 252 bytes or None.
 _display: dict = {'kind': None, 'pixels': [], 'text': '', 'leds': None}
 _last_poll = 0.0
-_T0 = time.monotonic()
-
-
-def _now() -> float:
-    return round(time.monotonic() - _T0, 2)
-
-
-def _add_mark(label: str) -> None:
-    # Coalesce rapid updates: the sliders fire while they are dragged.
-    if (
-        _marks
-        and _now() - _marks[-1][0] < 1.0
-        and _marks[-1][1].split(' ')[0] == label.split(' ')[0]
-    ):
-        _marks[-1] = [_now(), label]
-    else:
-        _marks.append([_now(), label])
-
-
-def clamp_speed(speed: float) -> float:
-    """
-    Clamp throttle to [-MAX_SPEED, MAX_SPEED].
-
-    Every speed that leaves this program passes through here, so /drive can
-    never carry more than 1.0 in either direction.
-    """
-    return max(-MAX_SPEED, min(MAX_SPEED, float(speed)))
 
 
 def _clean(p: dict[str, Any]) -> None:
     """Clamp every tunable into its range. Caller holds _lock."""
-    p['speed'] = max(0.0, clamp_speed(p['speed']))
+    p['speed'] = labkit.clamp_speed(p['speed'])
     p['angle'] = max(0.0, min(1.0, float(p['angle'])))
     p['cmd_timeout'] = max(0.1, float(p.get('cmd_timeout', 0.5)))
     p['depth_max_m'] = max(0.5, float(p.get('depth_max_m', 4.0)))
 
 
-def load_params() -> None:
-    with _lock:
-        before = json.dumps(_params, sort_keys=True)
-        _params.update(yaml.safe_load(DEFAULTS_PATH.read_text()))
-        if YAML_PATH.exists():
-            _params.update(yaml.safe_load(YAML_PATH.read_text()) or {})
-        _clean(_params)
-        if before != '{}' and before != json.dumps(_params, sort_keys=True):
-            _add_mark('yaml load')
-
-
-def save_params() -> None:
-    """Rewrite the numeric values in place so the yaml comments survive."""
-    if not YAML_PATH.exists():
-        car_profile.write_text(YAML_PATH, DEFAULTS_PATH.read_text())
-    scalar = re.compile(r'^([A-Za-z_]\w*):([ \t]*)[-\d.eE+]+(.*)$')
-    out = []
-    with _lock:
-        for raw in YAML_PATH.read_text().splitlines(keepends=True):
-            m = scalar.match(raw.rstrip('\n'))
-            if m:
-                key, gap, tail = m.groups()
-                v = _params.get(key)
-                if isinstance(v, (int, float)):
-                    out.append(f'{key}:{gap}{v}{tail}\n')
-                    continue
-            out.append(raw)
-    car_profile.write_text(YAML_PATH, ''.join(out))
-
-
-def update_params(data: dict[str, Any]) -> list[str]:
-    """Apply a posted subset of TUNE_KEYS. Returns the change labels."""
-    with _lock:
-        before = dict(_params)
-        for k in TUNE_KEYS:
-            if k in data:
-                _params[k] = float(data[k])
-        _clean(_params)
-        changed = [f'{k} {_params[k]:g}' for k in TUNE_KEYS if before.get(k) != _params[k]]
-        if changed:
-            _add_mark(', '.join(changed))
-    return changed
+# Shipped defaults in teleop.yaml; saved tuning in the car profile
+# (dashboards/teleop.yaml), loaded on top.
+TUNING = labkit.Tuning('teleop', BASE / 'teleop.yaml', TUNE_KEYS, _lock, _marks, clean=_clean)
+_params = TUNING.params
+LOG = labkit.RunLog('teleop', 't,fwd,turn,speed_cmd,steer,speed_ms', _marks)
 
 
 def _axis(v: Any) -> int:
@@ -441,19 +333,9 @@ class TeleopNode(Node):
             self._leds_sent = now
             self._pub_leds.publish(UInt8MultiArray(data=d['leds']))
 
-    @staticmethod
-    def _student_deg(msg: LaserScan, i: int) -> float:
-        """Student angle of ray `i`: 0 the nose, positive the car's right."""
-        raw = math.degrees(msg.angle_min + i * msg.angle_increment)
-        return (LIDAR_MOUNT_YAW_DEG - raw + 180.0) % 360.0 - 180.0
-
     def _scan_cb(self, msg: LaserScan) -> None:
         # Every third ray is plenty for a 420 px view.
-        scan = [
-            [round(self._student_deg(msg, i), 1), round(msg.ranges[i], 3)]
-            for i in range(0, len(msg.ranges), 3)
-            if msg.range_min < msg.ranges[i] < msg.range_max
-        ]
+        scan = frames.student_scan(msg, LASER_YAW)
         with _lock:
             _state['scan'] = scan
 
@@ -476,12 +358,7 @@ class TeleopNode(Node):
         if now - self._last_preview < 1.0 / PREVIEW_RATE_HZ:
             return
         self._last_preview = now
-        if msg.encoding == 'jpeg':
-            arr = cv2.imdecode(np.frombuffer(bytes(msg.data), np.uint8), cv2.IMREAD_COLOR)
-        else:
-            arr = np.frombuffer(msg.data, dtype=np.uint8).reshape(msg.height, msg.width, -1)
-            if msg.encoding == 'rgb8':
-                arr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+        arr = imaging.bgr(msg)
         if arr is None:
             return
         h, w = arr.shape[:2]
@@ -489,48 +366,29 @@ class TeleopNode(Node):
         with _lock:
             p = dict(_params)
         pw = int(p['preview_width'])
-        small = cv2.resize(arr, (pw, max(1, round(pw * h / w))))
-        quality = [cv2.IMWRITE_JPEG_QUALITY, int(p['preview_quality'])]
+        frame = imaging.jpeg(imaging.fit_width(arr, pw), p['preview_quality'])
         with _lock:
-            _preview = cv2.imencode('.jpg', small, quality)[1].tobytes()
+            _preview = frame
             _state['res'] = [w, h]
 
     def _depth_cb(self, msg: Image) -> None:
-        """
-        Colorize the depth frame for the browser.
-
-        16UC1 is millimeters, the D435i default; 32FC1 is meters, which some
-        drivers publish instead. Both reach the ramp as meters.
-        """
+        """Colorize the depth frame for the browser."""
         global _depth_preview
         now = time.monotonic()
         self._depth_stamps = self._tick_fps(self._depth_stamps, now, 'depth_fps')
         if now - self._last_depth_preview < 1.0 / PREVIEW_RATE_HZ:
             return
         self._last_depth_preview = now
-        if msg.encoding in ('16UC1', 'mono16'):
-            raw = np.frombuffer(msg.data, dtype=np.uint16).reshape(msg.height, msg.width)
-            meters = raw.astype(np.float32) / 1000.0
-        elif msg.encoding == '32FC1':
-            meters = np.frombuffer(msg.data, dtype=np.float32).reshape(msg.height, msg.width)
-        else:
-            return
-        h, w = meters.shape
         with _lock:
             p = dict(_params)
-        pw = int(p['preview_width'])
-        # Nearest neighbour, not area: averaging a valid reading against a
-        # zero would invent a surface halfway to a hole in the depth image.
-        small = cv2.resize(
-            meters, (pw, max(1, round(pw * h / w))), interpolation=cv2.INTER_NEAREST
+        frame = imaging.depth_preview(
+            msg, int(p['preview_width']), p['depth_max_m'], p['preview_quality']
         )
+        if frame is None:
+            return
         with _lock:
-            _depth_preview = cv2.imencode(
-                '.jpg',
-                _colorize_depth(small, p['depth_max_m']),
-                [cv2.IMWRITE_JPEG_QUALITY, int(p['preview_quality'])],
-            )[1].tobytes()
-            _state['depth_res'] = [w, h]
+            _depth_preview = frame
+            _state['depth_res'] = [msg.width, msg.height]
 
     def _det_cb(self, msg: Any) -> None:
         """
@@ -587,21 +445,18 @@ class TeleopNode(Node):
         timed_out = held and now - stamp > p['cmd_timeout']
         if timed_out:
             fwd = turn = 0
-        self._speed_cmd = clamp_speed(fwd * p['speed'])
+        self._speed_cmd = labkit.clamp_speed(fwd * p['speed'], reverse=True)
         self._steer_cmd = max(-1.0, min(1.0, turn * p['angle']))
 
-        out = AckermannDriveStamped()
-        out.drive.speed = self._speed_cmd
-        out.drive.steering_angle = float(-self._steer_cmd)  # wire positive = left on this car
-        self._pub.publish(out)
+        self._pub.publish(labkit.drive_msg(self._speed_cmd, self._steer_cmd, reverse=True))
 
-        t = _now()
+        t = labkit.now()
         sensors = self._sample_sensors(t)
         self._send_display(now)
-        _rows.append(
+        LOG.rows.append(
             f'{t},{fwd},{turn},{self._speed_cmd:.3f},{self._steer_cmd:.3f},{self._enc:.3f}\n'
         )
-        _hist.append([t, round(self._enc, 3), round(self._speed_cmd, 3)])
+        LOG.hist.append([t, round(self._enc, 3), round(self._speed_cmd, 3)])
         with _lock:
             _state.update(
                 {
@@ -612,7 +467,7 @@ class TeleopNode(Node):
                     'speed_cmd': round(self._speed_cmd, 3),
                     'steer': round(self._steer_cmd, 3),
                     'enc_speed': round(self._enc, 3),
-                    'hist': _thin(_hist),
+                    'hist': LOG.thin(),
                     'marks': list(_marks),
                     'sense': list(_sense),
                     **sensors,
@@ -620,70 +475,25 @@ class TeleopNode(Node):
             )
 
 
-def _colorize_depth(meters: np.ndarray, far_m: float) -> np.ndarray:
-    """
-    Turn depth in meters into a BGR preview.
-
-    Bright is near, dark is far, pure black is no return. A reading beyond
-    far_m clamps to the dark end rather than dropping out, so a far wall
-    still reads as a wall.
-    """
-    valid = meters > 0
-    near = min(DEPTH_NEAR_M, far_m)
-    span = max(far_m - near, 1e-3)
-    norm = np.clip((meters - near) / span, 0.0, 1.0)
-    ramp = (DEPTH_FLOOR + (1.0 - norm) * (255 - DEPTH_FLOOR)).astype(np.uint8)
-    out = cv2.applyColorMap(ramp, cv2.COLORMAP_INFERNO)
-    out[~valid] = NO_RETURN_BGR
-    return out
-
-
-def _thin(hist: deque) -> list:
-    """Even sample of `hist` down to HIST_POINTS, newest row always kept."""
-    rows = list(hist)
-    stride = max(1, len(rows) // HIST_POINTS)
-    if stride == 1:
-        return rows
-    sent = rows[::stride]
-    if sent[-1] is not rows[-1]:
-        sent.append(rows[-1])
-    return sent
-
-
-def _log_number(name: str) -> int:
-    """Log7.csv -> 7, so lists sort numerically. Anything else sorts first."""
-    m = re.match(r'Log(\d+)\.csv$', name)
-    return int(m.group(1)) if m else 0
-
-
-class Handler(BaseHTTPRequestHandler):
-    protocol_version = 'HTTP/1.1'
-
+class Handler(webui.AppHandler):
     def do_GET(self) -> None:
         global _last_poll
-        asset = webui.static_file(self.path)
-        if asset is not None:
-            self.send_response(200)
-            self.send_header('Content-Type', asset[1])
-            self.send_header('Content-Length', str(len(asset[0])))
-            self.send_header('Cache-Control', webui.CACHE_CONTROL)
-            self.end_headers()
-            self.wfile.write(asset[0])
+        if self.serve_asset():
             return
         if self.path == '/':
-            self._send((BASE / 'teleop.html').read_bytes(), 'text/html; charset=utf-8')
+            self.page(BASE / 'teleop.html')
         elif self.path.startswith('/frame'):
             with _lock:
                 data = _preview
             if data:
-                self._send(data, 'image/jpeg', cache='no-store')
+                self.send(200, data, 'image/jpeg', cache='no-store')
             else:
                 self.send_error(503)
         elif self.path.startswith('/depth'):
             with _lock:
                 data = _depth_preview
             if data:
-                self._send(data, 'image/jpeg', cache='no-store')
+                self.send(200, data, 'image/jpeg', cache='no-store')
             else:
                 self.send_error(503)
         elif self.path == '/state':
@@ -697,102 +507,41 @@ class Handler(BaseHTTPRequestHandler):
                         'display': {'kind': _display['kind'], 'text': _display['text']},
                     }
                 )
-            self._send(body.encode(), 'application/json')
-        elif self.path == '/logs':
-            names = sorted((f.name for f in LOG_DIR.glob('*.csv')), key=_log_number)
-            self._send(json.dumps(names).encode(), 'application/json')
-        elif self.path.startswith('/logs/'):
-            f = LOG_DIR / Path(self.path).name
-            if f.is_file():
-                self._send(f.read_bytes(), 'text/csv')
-            else:
-                self.send_error(404)
-        else:
+            self.send(200, body.encode(), 'application/json')
+        elif not LOG.get(self):
             self.send_error(404)
 
     def do_POST(self) -> None:
         if self.path == '/cmd':
-            set_cmd(self._body())
+            set_cmd(self.read_json())
         elif self.path == '/params':
-            update_params(self._body())
-        elif self.path == '/logs/save':
-            LOG_DIR.mkdir(parents=True, exist_ok=True)
-            latest = max((_log_number(f.name) for f in LOG_DIR.glob('Log*.csv')), default=0)
-            name = f'Log{latest + 1}.csv'
-            rows = list(_rows)
-            tmin = float(rows[0].split(',')[0]) if rows else 0.0
-            with open(LOG_DIR / name, 'w') as f:
-                f.write('t,fwd,turn,speed_cmd,steer,speed_ms\n')
-                f.writelines(f'# mark,{t},{label}\n' for t, label in list(_marks) if t >= tmin)
-                f.writelines(rows)
-            self._send(name.encode(), 'text/plain')
+            TUNING.update(self.read_json())
+        elif LOG.post(self):
             return
         elif self.path == '/matrix':
-            set_display('pixels', self._body().get('pixels', []))
+            set_display('pixels', self.read_json().get('pixels', []))
         elif self.path == '/text':
-            set_display('text', self._body().get('text', ''))
+            set_display('text', self.read_json().get('text', ''))
         elif self.path == '/leds':
-            set_display('leds', self._body().get('colors', []))
+            set_display('leds', self.read_json().get('colors', []))
         elif self.path == '/display/release':
             set_display('release', None)
         elif self.path == '/save':
-            save_params()
+            TUNING.save()
         elif self.path == '/load':
-            load_params()
+            TUNING.load()
         else:
             self.send_error(404)
             return
-        self._send(b'ok', 'text/plain')
-
-    def _body(self) -> Any:
-        return json.loads(self.rfile.read(int(self.headers['Content-Length'])))
-
-    def _send(self, body: bytes, ctype: str, cache: str | None = None) -> None:
-        self.send_response(200)
-        self.send_header('Content-Type', ctype)
-        self.send_header('Content-Length', str(len(body)))
-        if cache:
-            self.send_header('Cache-Control', cache)
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, fmt: str, *args: Any) -> None:
-        pass
-
-
-def _spin(node: Node) -> None:
-    try:
-        rclpy.spin(node)
-    except ExternalShutdownException:
-        pass
+        self.send(200, b'ok', 'text/plain')
 
 
 def main() -> None:
-    load_params()
+    TUNING.load()
     rclpy.init()
     node = TeleopNode()
-    spin = threading.Thread(target=_spin, args=(node,), daemon=True)
-    spin.start()
-    server = ThreadingHTTPServer(('0.0.0.0', PORT), Handler)
-
-    # rclpy.init() installs SIGINT/SIGTERM handlers that shut the ROS context
-    # down but leave serve_forever() blocked, so the process outlives the
-    # signal until systemd's TimeoutStopSec expires and SIGKILLs it. Take the
-    # signals back. shutdown() has to run off the serving thread or it
-    # deadlocks waiting for the loop it is called from.
-    def stop(*_: Any) -> None:
-        threading.Thread(target=server.shutdown, daemon=True).start()
-
-    signal.signal(signal.SIGTERM, stop)
-    signal.signal(signal.SIGINT, stop)
-
     print(f'Web teleop dashboard on http://0.0.0.0:{PORT}')
-    server.serve_forever()
-
-    # Unwind the ROS wait before the interpreter tears the context down;
-    # otherwise the spin thread aborts the process from C++.
-    rclpy.shutdown()
-    spin.join(timeout=2)
+    webui.serve(PORT, Handler, spin=webui.ros_spinner(node), cleanup=webui.ros_shutdown)
 
 
 if __name__ == '__main__':

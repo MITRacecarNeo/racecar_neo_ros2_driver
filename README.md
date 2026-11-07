@@ -185,7 +185,7 @@ Twelve phases, all under `scripts/`:
 9. **`setup_workspace.sh`**: clones `sllidar_ros2` at a pinned commit and runs `colcon build --symlink-install`; `setup_all.sh` then runs `racecar profile migrate` (see [Car profile](#car-profile))
 10. **`setup_jupyter.sh`**: `pip install --user jupyterlab` and the library's notebook packages (pinned), creates `~/jupyter_ws/`, links `~/jupyter_ws/data` and `~/jupyter_ws/maps` to the [data root](#car-data)
 11. **`setup_services.sh`**: installs and enables the core systemd units (`racecar-{data,teleop,watchdog,dashboard,jupyter,mapview}.service`), installs `racecar-autonomy.service` disabled, and installs `/etc/profile.d/racecar-data.sh`
-12. **`setup_dashboards.sh`**: installs a stopped, disabled `racecar-*` unit for each of the four lab dashboards in `scripts/dashboards/` (web teleop, line follow, wall follow, camera label) and removes units left by retired dashboards (`RACECAR_DASHBOARDS=0` skips it)
+12. **`setup_dashboards.sh`**: installs a stopped, disabled `racecar-*` unit for each lab dashboard listed in `config/apps.yaml` (web teleop, line follow, wall follow, camera label) and removes units left by retired dashboards (`RACECAR_DASHBOARDS=0` skips it)
 
 Individual phase scripts can be run on their own to re-do or skip steps (e.g. `racecar setup networking` for just the networking phase, or `bash scripts/setup_udev.sh` to reinstall the udev rules after a hardware swap).
 
@@ -209,7 +209,7 @@ racecar service start       # default: start teleop (watchdog follows via Wants=
 racecar service stop        # default: stop teleop (watchdog follows via BindsTo=)
 racecar service logs teleop # journalctl -u racecar-teleop -f
 racecar service start wallfollow  # a lab dashboard; stops the other /drive publishers
-racecar service enable wallfollow # enable one unit; bare `enable` covers the core five
+racecar service enable wallfollow # enable one unit; bare `enable` covers the core six
 
 racecar setup all                       # run the 12-phase orchestrator
 racecar setup networking --ssid=racecar-neo-2   # configure eth0 addressing + ALFA-dongle AP
@@ -414,6 +414,13 @@ does. A white border means the app is running.
 - Starting and stopping utilities from the page needs the permission rule
   that `scripts/setup_user_env.sh` installs.
 
+**Footer.** Every page the car serves shows "racecar OS", the driver
+version, and the Teensy firmware version at the bottom of the screen.
+
+**Home shortcut.** On every app page, the R logo in the header goes home. It
+closes the tab and leaves the 8080 page in front. A tab opened from a
+bookmark loads the 8080 page instead.
+
 **Features.** Expand it below the apps. Parts of the car that use the most
 CPU; turn off what a lab does not need. A white border means on.
 
@@ -529,7 +536,7 @@ racecar service stop wallfollow
 **One at a time.** All three publish `/drive`, and a second publisher fights the
 mux, so `racecar service start` stops the others before starting the one you
 asked for. Units install disabled; `racecar service enable <name>` makes one
-survive a reboot, and bare `racecar service enable` covers only the core five.
+survive a reboot, and bare `racecar service enable` covers only the core six.
 
 **Safety.** `mux_node` forwards `/drive` only while the RB bumper is held, and
 zeroes the output when `/joy` or the active source goes stale. See
@@ -556,7 +563,7 @@ teleop.
 | When | What happens |
 |---|---|
 | 15 minutes left | A red line on every terminal and in the tmux status bar: "Low battery: 14 min left. Charge or swap the battery." A banner on 8080 and every app page. LOW, BATT, and "!" on the dot matrix. The LED strip flashes orange, then red. |
-| 5 minutes left | The same 60 s countdown, with Cancel shutdown on 8080 (once per boot). |
+| 5 minutes left | The same 60 s countdown, with Cancel shutdown on 8080 (once per boot). It also stops on its own when the time left climbs back above 10 minutes for 10 s. |
 | Battery at 7.1 V (3.55 V per cell) | A 60 s countdown: "Shutting down in 30 s." on terminals and pages, the seconds left on the dot matrix from 20 s, faster LED flashing. |
 | 0 s | "Turning the car off now. Turn off the power switch." SHUT and DOWN on the dot matrix. The guard stops a `racecar log` recording, the driving apps, autonomy (saving a map being built), and teleop, then powers off. |
 
@@ -567,7 +574,9 @@ draining. Do not leave the car unattended on battery.
 The time left comes from a measured discharge curve of the Gens ace 5000 mAh
 2S battery and the current over the last 5 minutes. The PIT firmware's LED
 charge bar uses the same curve. The guard reads the cell count at boot and
-measures the capacity of the battery in the car as it runs. The curve was
+measures the capacity of the battery in the car as it runs. A sudden drop
+the current cannot explain, such as a sagging bench supply, does not count
+toward that measurement. The curve was
 measured with the car idling; while driving, the guard adds back the
 voltage sag for the current above idle (30 mOhm times the extra amps), so
 time left holds steady between driving and standing. Tested on full
@@ -700,6 +709,21 @@ failures, bytes skipped while finding a frame, reconnects, and Teensy
 resets. `racecar status` has a `teensy link` row from it, and the 8080 Link
 chip shows it: yellow for a minute after a lost frame, CRC failure,
 reconnect, or reset, red with no report.
+
+`pit_node` also asks the Teensy for its firmware info when it starts, after
+a Teensy reset, and once a minute. The 8080 Firmware chip and the `racecar
+status` `teensy firmware` row show the version, label, and commit, and the
+battery voltage dips the firmware counted since boot with the lowest
+voltage.
+
+The firmware stops the motor when it stalls under load: throttle to neutral
+until the throttle returns to neutral, then a 2 s cooldown; 3 trips within 60
+s lock the motor out for 30 s. The 8080 Stall chip and the `racecar status`
+`stall protection` row show the state: yellow when tripped or cooling down,
+red during a lockout. `/pit/stall` carries each change. They turn yellow
+for a test build (open-loop PWM or ESC calibration), a build with
+uncommitted changes, or firmware too old to answer (before 0.9.0). The full
+reply is on `/pit/firmware`.
 
 `racecar status` has `ext5v` and `nvme` rows: one EXT5V reading, and the
 drive's temperature, wear, and media errors. SMART needs root; setup installs
@@ -936,6 +960,10 @@ committed `config/lsm9ds1_cal.yaml`, `config/lsm9ds1_mag_cal.yaml`,
 own values go in `params/<name>.yaml` in the [car profile](#car-profile),
 which the launch files load after the committed file.
 
+The ESC program settings, the ESC throttle calibration, the per-car speed
+constants and the car record are in the handbook:
+[docs/handbook/calibration.md](docs/handbook/calibration.md).
+
 ```sh
 racecar calibrate status      # profile path, what is calibrated, when, stored values
 racecar calibrate             # every step but dynamics, in order, one guided session
@@ -994,7 +1022,7 @@ racecar service restart teleop                            # nodes read the value
 | `calibrate_lidar.py` | `/scan`, `/odom/integrated`, `/motor` (recorded); `/joy` (RB) | `params/frames.yaml` (`laser_yaw_deg`) | `frames.launch.py` |
 | `calibrate_odom.py` | `/imu/lsm9ds1`, `/odom/integrated`, `/scan` | `params/odom.yaml` (`odometry.yaw_rate_scale`, `odometry.speed_scale`) | `pit_node` |
 | `calibrate_steering.py` | `/scan`, `/odom/integrated`, `/motor` (recorded); `/joy` (RB) | `params/throttle.yaml` (`steering_trim`) | `throttle_node` |
-| `calibrate_dynamics.py` | `/scan`, `/imu/lsm9ds1`, `/odom/integrated`, `/motor` (recorded); `/joy` (RB) | `params/dynamics.yaml` | the simulator (no node reads it) |
+| `calibrate_dynamics.py` | `/scan`, `/imu/lsm9ds1`, `/odom/integrated`, `/motor`, plus `/encoder/speed`, `/odom`, `/mux_out`, `/imu/fused`, `/battery/voltage`, `/tf` (recorded); `/joy` (RB) | `params/dynamics.yaml` | the simulator (no node reads it) |
 
 Each utility writes the file to the car profile; launch reads it at start,
 so a teleop restart applies it with no rebuild. A replaced file is kept under
@@ -1067,14 +1095,17 @@ moves the drift by up to about 3 deg/m between runs, so recalibrate only if
 it stays. Beyond 5 deg/m fails as a mechanical fault (servo horn or
 linkage). The trim `throttle_node` runs with must match the file.
 
-`calibrate_dynamics.py` measures the car for the simulator. It drives five
+`calibrate_dynamics.py` measures the car for the simulator. It drives nine
 fixed runs by itself while RB is held, and releasing RB while it drives stops
-the car: straight at speed 0.25, 0.5 and 1.0 (about 3.5 m of clear floor),
-then right-turn and left-turn circles at full lock at 0.25, each after 0.8 s
+the car: straight at speed 0.25, 0.5, 0.75 and 1.0, reverse at 0.25, 0.5 and
+1.0 (about 3.5 m of clear floor; reverse keys end in `rev025`, `rev05`,
+`rev10`, with a negative steady speed), then right-turn and left-turn circles at full lock at 0.25, each after 0.8 s
 straight (about 2.3 by 1.6 m of clear floor). Each run is recorded with
 `ros2 bag` under the `racecar log` directory and analyzed: steady speed, time
 to 90% of it, and stop distance and time after the command goes to 0 (from
-`/odom/integrated`, checked against the lidar between the rest scans); the
+`/odom/integrated`, checked against the lidar between the rest scans; the bag
+also holds `/encoder/speed`, `/odom`, `/mux_out`, `/imu/fused`,
+`/battery/voltage` and `/tf` for fitting the whole rise and stop); the
 rear-axle turning radius per side from chained lidar scan matches, the
 Ackermann inner and outer wheel angles (230 mm wheelbase, 178 mm track), the
 outer front tire track diameter, and the encoder's over-read in turns; and the
@@ -1249,6 +1280,23 @@ switch it to slow mode before mapping.
 
 Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
 
+- **0.9.2** (2026-11-07): one app registry (`config/apps.yaml`) for the
+  8080 tiles, `racecar service` and the unit install; every app on one
+  server base (`scripts/webui.py`) and one page kit (`scripts/web/`); lab
+  dashboards share tuning, logs and live sliders (wall follow included); web
+  teleop and wall follow use the car's calibrated lidar yaw, as the student
+  library now does; one camera decoder for every page; the browser apps spin
+  ROS on the EventsExecutor (web teleop about a third less CPU at the full
+  camera rate); Teensy firmware version on 8080 and in `racecar status`,
+  full info on `/pit/firmware`; stall protection state on 8080, in
+  `racecar status` and on `/pit/stall`; telemetry frames failing the CRC
+  dropped; odometry ignores non-finite samples; the battery guard no longer
+  turns the car off after a brief supply sag; `racecar calibrate dynamics`
+  adds reverse and 0.75 runs; a calibration page in the handbook (ESC
+  settings, throttle calibration, car record); a footer with the driver and
+  firmware versions on every page; the R logo goes home; fixes to
+  `racecar health`'s battery floor, profile paths for `racecar log` and
+  Features, and wall follow's server. Pairs with firmware v0.9.2.
 - **0.9.1** (2026-10-26): low-battery warning and safe shutdown
   (`racecar-battery-guard.service`: time left corrected for the sag while
   driving, a red line on terminals, banners on 8080 and the app pages, LED

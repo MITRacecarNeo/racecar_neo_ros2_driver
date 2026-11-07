@@ -7,7 +7,7 @@
 (function () {
   'use strict';
   const PERIOD_MS = 1000;
-  const url = `${location.protocol}//${location.hostname}:8080/api/override`;
+  const url = `${location.protocol}//${location.hostname}:{{home}}/api/override`;
   let epoch = 0;
   let banner = null;
 

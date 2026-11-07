@@ -31,7 +31,7 @@ import subprocess
 import time
 from typing import Any
 
-from racecar_neo_ros2_driver import autonomy as au, data_root
+from racecar_neo_ros2_driver import apps, autonomy as au, data_root, fileio
 from racecar_neo_ros2_driver.maps import map_root, parse_pose, ROOT_ENV, valid_name
 
 UNIT = 'racecar-autonomy.service'
@@ -85,16 +85,7 @@ def mode_file() -> Path:
 
 
 def read_mode_file(path: Path | None = None) -> dict[str, str]:
-    values: dict[str, str] = {}
-    try:
-        lines = (path or mode_file()).read_text().splitlines()
-    except OSError:
-        return values
-    for line in lines:
-        key, sep, value = line.strip().partition('=')
-        if sep and not key.startswith('#'):
-            values[key.strip()] = value.strip()
-    return values
+    return fileio.read_keyvals(path or mode_file())
 
 
 def write_mode_file(values: dict[str, str], path: Path | None = None) -> None:
@@ -103,10 +94,7 @@ def write_mode_file(values: dict[str, str], path: Path | None = None) -> None:
     merged = dict.fromkeys(KEYS, '')
     merged['AUTONOMY_FOXGLOVE'] = read_mode_file(path).get('AUTONOMY_FOXGLOVE', '0') or '0'
     merged.update(values)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + '.tmp')
-    tmp.write_text(''.join(f'{k}={merged[k]}\n' for k in KEYS))
-    os.replace(tmp, path)
+    fileio.write_atomic(path, ''.join(f'{k}={merged[k]}\n' for k in KEYS))
 
 
 def new_session(now: datetime) -> str:
@@ -181,13 +169,9 @@ def saved_pose(
 
 
 def current_frames() -> dict[str, float] | None:
-    try:
-        from ament_index_python.packages import get_package_share_directory
-        from racecar_neo_ros2_driver.frames import load_frames
+    from racecar_neo_ros2_driver import frames
 
-        return load_frames(Path(get_package_share_directory('racecar_neo_ros2_driver')) / 'config')
-    except Exception:  # noqa: BLE001  the comparison is advisory
-        return None
+    return frames.current()
 
 
 def frame_changes(meta: dict[str, Any], current: dict[str, float] | None) -> list[str]:
@@ -373,11 +357,7 @@ def _control(action: str) -> None:
 # slam_toolbox. Starting mapping or localization stops them; the map viewer
 # and the apps page ask first. Stopping them is allowed by
 # scripts/polkit/49-racecar-dashboards.rules.
-DRIVING_APPS = (
-    ('racecar-webteleop.service', 'Web Teleop'),
-    ('racecar-linefollow.service', 'Line Follow'),
-    ('racecar-wallfollow.service', 'Wall Follow'),
-)
+DRIVING_APPS = tuple((f"{a['unit']}.service", a['name']) for a in apps.driving_apps())
 
 
 def running_driving_apps() -> list[str]:

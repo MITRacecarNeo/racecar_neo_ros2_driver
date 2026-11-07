@@ -234,10 +234,9 @@ def status_level(localized: bool, has_map_odom: bool, seconds_running: float) ->
 
 def write_yaml_atomic(path: Path, data: dict[str, Any]) -> None:
     """Write YAML through a temporary file and a rename, so readers never see half a file."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + '.tmp')
-    tmp.write_text(yaml.safe_dump(data, sort_keys=False))
-    os.replace(tmp, path)
+    from .fileio import write_atomic
+
+    write_atomic(path, yaml.safe_dump(data, sort_keys=False))
 
 
 def replace_dir(tmp: Path, final: Path) -> None:

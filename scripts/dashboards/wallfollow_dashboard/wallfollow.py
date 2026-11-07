@@ -13,20 +13,16 @@ Two forms, selected by `mode` in wallfollow.yaml (file edit only, no UI switch):
   dynamic: steer toward the most open heading in a front arc, with obstacles
            inflated by the car's half-width. side_weight biases one side.
 
-Angles use the student convention (0 = nose, positive = right). The mapping
-from a raw scan angle to that convention is LIDAR_MOUNT_YAW_DEG, set for the
-RACECAR Neo; see the constant. /drive steering is negated on publish: positive
-on the wire turns this car left (physically verified; the car steered mirrored
-without the negation). Speed feedback comes from /odom.
+Angles use the lab convention (0 = nose, positive = right), turned from raw
+scan angles by the car's calibrated lidar yaw; see LASER_YAW. /drive steering
+is negated on publish: positive on the wire turns this car left (physically
+verified; the car steered mirrored without the negation). Speed feedback comes
+from /odom.
 """
 
-from collections import deque
-from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import math
 from pathlib import Path
-import re
-import signal
 import sys
 import threading
 import time
@@ -34,117 +30,62 @@ from typing import Any
 
 from ackermann_msgs.msg import AckermannDriveStamped
 from nav_msgs.msg import Odometry
-from racecar_neo_ros2_driver import car_profile, data_root
+from racecar_neo_ros2_driver import apps, frames
 import rclpy
-from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
-import yaml
 
-PORT = 8083
+PORT = apps.port('wallfollow')
 BASE = Path(__file__).resolve().parent
 # The shared styles, fonts and logos are served from scripts/web/ (webui.py).
 sys.path.insert(0, str(BASE.parents[1]))
-import webui  # noqa: E402, I100
+import labkit  # noqa: E402, I100
+import webui  # noqa: E402
 
-# Shipped defaults stay untouched; saved tuning goes to the per-car file,
-# which loads on top of them, in the car profile (dashboards/<name>.yaml).
-DEFAULTS_PATH = BASE / 'wallfollow.yaml'
-YAML_PATH = car_profile.dashboard_settings('wallfollow')
-LOG_DIR = data_root.current()[0] / 'dashboards' / 'wallfollow'
-
-MAX_SPEED = 1.0  # hard throttle cap, same idea as drive_real.set_max_speed
 SEARCH_STEP = 2  # degrees between candidate headings (dynamic)
 HALF_CLEAR = 0.21  # meters, car half-width plus margin, inflates obstacles
 CENTER_BIAS = 0.006  # score penalty per degree off-center, stops ping-pong
 
-# Raw scan angle that points at the car's nose, in degrees.
-#
-# The RACECAR Neo mounts its RPLIDAR facing aft, so the nose sits at the raw
-# +/-180 edge of the sweep rather than at 0. Measured on hardware: an object
-# in front reports at raw 180, and one off the car's right at raw +90.
-# The neoracer read 0 at the nose over a 270 degree sweep, which is why this
-# dashboard steered into walls on a Neo before the constant existed.
-#
-#     student_deg = LIDAR_MOUNT_YAW_DEG - raw_deg
-#
-# Set this to 0.0 for a forward-facing lidar. Nothing else here assumes a
-# sweep width: indices come from the message's own angle_min and
-# angle_increment and wrap modulo the point count, so a 360 degree / 1080
-# point scan and a 270 degree scan both work.
-LIDAR_MOUNT_YAW_DEG = 180.0
+# The lidar's yaw in base_link from the car's frames (config/frames.yaml, with
+# the car profile's calibrated value on top): about 180 degrees on the RACECAR
+# Neo, whose RPLIDAR faces aft. Lab angles are 0 at the nose and positive to
+# the car's right (frames.student_deg); nothing here assumes a sweep width.
+LASER_YAW = frames.laser_mount()[2]
 
 _lock = threading.Lock()
-_params: dict = {}
+_marks = labkit.Marks()
 _state: dict = {'scan': [], 'hist': [], 'overlay': {}, 'enc_speed': 0.0}
-_hist: deque = deque(maxlen=600)
-# Full rows behind the live chart. POST /logs/save snapshots this to a csv,
-# so a saved log is exactly what was on the screen.
-_rows: deque = deque(maxlen=600)
-# Parameter-change markers [t, label] shown on the charts, so a run can be
-# judged before vs after a tuning change. Saved into logs as "# mark" lines.
-_marks: deque = deque(maxlen=40)
-_T0 = time.monotonic()
 
 
-def _now() -> float:
-    return round(time.monotonic() - _T0, 2)
+TUNE_KEYS = (
+    'speed',
+    'kp',
+    'kd',
+    'speed_kp',
+    'speed_kd',
+    'window',
+    'lookahead',
+    'look_angle',
+    'width',
+    'side_weight',
+)
 
 
-def _add_mark(label: str) -> None:
-    # Coalesce rapid updates (the speed slider fires while dragging).
-    if (
-        _marks
-        and _now() - _marks[-1][0] < 1.0
-        and _marks[-1][1].split(' ')[0] == label.split(' ')[0]
-    ):
-        _marks[-1] = [_now(), label]
-    else:
-        _marks.append([_now(), label])
+def _clean(p: dict[str, Any]) -> None:
+    """Clamp the speed; read the mode as 0 static or 1 dynamic. Caller holds _lock."""
+    p['speed'] = labkit.clamp_speed(p['speed'])
+    # Older yamls spell the mode out.
+    p['mode'] = 1 if str(p['mode']).strip() in ('1', 'dynamic') else 0
 
 
-def set_max_speed(speed: float) -> float:
-    """
-    Clamp throttle to [0, MAX_SPEED].
-
-    Every speed that leaves this program passes through here, so /drive can
-    never carry more than 1.0.
-    """
-    return max(0.0, min(MAX_SPEED, float(speed)))
-
-
-def load_params() -> None:
-    with _lock:
-        before = dict(_params)
-        _params.update(yaml.safe_load(DEFAULTS_PATH.read_text()))
-        if YAML_PATH.exists():
-            _params.update(yaml.safe_load(YAML_PATH.read_text()) or {})
-        _params['speed'] = set_max_speed(_params['speed'])
-        _params.setdefault('lookahead', 3.0)  # older yaml files lack these keys
-        _params.setdefault('max_mps', 4.0)
-        _params.setdefault('speed_kp', 0.18)
-        _params.setdefault('speed_kd', 0.05)
-        # 0 = static, 1 = dynamic. Older yamls spell the mode out.
-        _params['mode'] = 1 if str(_params['mode']).strip() in ('1', 'dynamic') else 0
-        if before and before != _params:
-            _add_mark('yaml load')
-
-
-def save_params() -> None:
-    """Rewrite the numeric values in place so the yaml comments survive."""
-    if not YAML_PATH.exists():
-        car_profile.write_text(YAML_PATH, DEFAULTS_PATH.read_text())
-    text = YAML_PATH.read_text()
-    with _lock:
-        for k, v in _params.items():
-            if k == 'mode':
-                continue
-            if re.search(rf'(?m)^{k}:', text):
-                text = re.sub(rf'(?m)^{k}:\s*[-\d.eE+]+', f'{k}: {v}', text)
-            else:
-                text += f'{k}: {v}\n'
-    car_profile.write_text(YAML_PATH, text)
+# Shipped defaults in wallfollow.yaml; saved tuning in the car profile
+# (dashboards/wallfollow.yaml), loaded on top.
+TUNING = labkit.Tuning(
+    'wallfollow', BASE / 'wallfollow.yaml', TUNE_KEYS, _lock, _marks, clean=_clean, fixed=('mode',)
+)
+_params = TUNING.params
+LOG = labkit.RunLog('wallfollow', 't,error,steer,speed_cmd,speed_ms', _marks, maxlen=600)
 
 
 class WallFollowNode(Node):
@@ -167,14 +108,13 @@ class WallFollowNode(Node):
     @staticmethod
     def _index_at(msg: LaserScan, deg: float) -> int:
         """Ray index for a student angle (0 = nose, positive = right)."""
-        raw = math.radians(LIDAR_MOUNT_YAW_DEG - deg)
+        raw = frames.raw_rad(deg, LASER_YAW)
         return round((raw - msg.angle_min) / msg.angle_increment) % len(msg.ranges)
 
     @staticmethod
     def _student_deg(msg: LaserScan, i: int) -> float:
-        """Student angle of ray `i`, wrapped to (-180, 180]."""
-        raw = math.degrees(msg.angle_min + i * msg.angle_increment)
-        return (LIDAR_MOUNT_YAW_DEG - raw + 180.0) % 360.0 - 180.0
+        """Lab angle of ray `i`, -180 to 180."""
+        return frames.student_deg(msg.angle_min + i * msg.angle_increment, LASER_YAW)
 
     def _mean_at(self, msg: LaserScan, deg: float, window: float) -> float:
         """Average range (m) in a `window`-deg cone at `deg` (0 = nose, + = right)."""
@@ -271,14 +211,11 @@ class WallFollowNode(Node):
             self._speed_cmd = max(0.0, min(1.0, p['speed'] + self._trim))
         self._last_speed_error = serr
 
-        out = AckermannDriveStamped()
-        out.drive.speed = set_max_speed(self._speed_cmd)
-        out.drive.steering_angle = float(-cmd)  # wire positive = left on this car
-        self._pub.publish(out)
+        self._pub.publish(labkit.drive_msg(self._speed_cmd, cmd))
 
-        t = _now()
-        _rows.append(f'{t},{error:.4f},{cmd:.4f},{self._speed_cmd:.3f},{self._enc:.3f}\n')
-        _hist.append([t, round(error, 4)])
+        t = labkit.now()
+        LOG.rows.append(f'{t},{error:.4f},{cmd:.4f},{self._speed_cmd:.3f},{self._enc:.3f}\n')
+        LOG.hist.append([t, round(error, 4)])
         overlay.update(
             {
                 'error': round(error, 4),
@@ -286,149 +223,53 @@ class WallFollowNode(Node):
                 'speed_cmd': round(self._speed_cmd, 3),
             }
         )
-        scan = [
-            [round(self._student_deg(msg, i), 1), round(msg.ranges[i], 3)]
-            for i in range(0, len(msg.ranges), 3)
-            if msg.range_min < msg.ranges[i] < msg.range_max
-        ]
+        scan = frames.student_scan(msg, LASER_YAW)
         with _lock:
             _state.update(
                 {
                     'scan': scan,
                     'overlay': overlay,
-                    'hist': list(_hist),
+                    'hist': list(LOG.hist),
                     'marks': list(_marks),
                     'enc_speed': round(self._enc, 3),
                 }
             )
 
 
-def _log_number(name: str) -> int:
-    """Log7.csv -> 7, so lists sort numerically. Anything else sorts first."""
-    m = re.match(r'Log(\d+)\.csv$', name)
-    return int(m.group(1)) if m else 0
-
-
-class Handler(BaseHTTPRequestHandler):
+class Handler(webui.AppHandler):
     def do_GET(self) -> None:
-        asset = webui.static_file(self.path)
-        if asset is not None:
-            self.send_response(200)
-            self.send_header('Content-Type', asset[1])
-            self.send_header('Content-Length', str(len(asset[0])))
-            self.send_header('Cache-Control', webui.CACHE_CONTROL)
-            self.end_headers()
-            self.wfile.write(asset[0])
+        if self.serve_asset():
             return
         if self.path == '/':
-            self._send((BASE / 'wallfollow.html').read_bytes(), 'text/html; charset=utf-8')
+            self.page(BASE / 'wallfollow.html')
         elif self.path == '/state':
             with _lock:
                 body = json.dumps({**_state, 'params': _params})
-            self._send(body.encode(), 'application/json')
-        elif self.path == '/logs':
-            names = sorted((f.name for f in LOG_DIR.glob('*.csv')), key=_log_number)
-            self._send(json.dumps(names).encode(), 'application/json')
-        elif self.path.startswith('/logs/'):
-            f = LOG_DIR / Path(self.path).name
-            if f.is_file():
-                self._send(f.read_bytes(), 'text/csv')
-            else:
-                self.send_error(404)
-        else:
+            self.send(200, body.encode(), 'application/json')
+        elif not LOG.get(self):
             self.send_error(404)
 
     def do_POST(self) -> None:
         if self.path == '/params':
-            data = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
-            with _lock:
-                changed = []
-                for k in (
-                    'speed',
-                    'kp',
-                    'kd',
-                    'speed_kp',
-                    'speed_kd',
-                    'window',
-                    'lookahead',
-                    'look_angle',
-                    'width',
-                    'side_weight',
-                ):
-                    if k in data:
-                        v = float(data[k])
-                        if k == 'speed':
-                            v = set_max_speed(v)
-                        if _params.get(k) != v:
-                            _params[k] = v
-                            changed.append(f'{k} {v:g}')
-                if changed:
-                    _add_mark(', '.join(changed))
-        elif self.path == '/logs/save':
-            LOG_DIR.mkdir(parents=True, exist_ok=True)
-            latest = max((_log_number(f.name) for f in LOG_DIR.glob('Log*.csv')), default=0)
-            name = f'Log{latest + 1}.csv'
-            rows = list(_rows)
-            tmin = float(rows[0].split(',')[0]) if rows else 0.0
-            with open(LOG_DIR / name, 'w') as f:
-                f.write('t,error,steer,speed_cmd,speed_ms\n')
-                f.writelines(f'# mark,{t},{label}\n' for t, label in list(_marks) if t >= tmin)
-                f.writelines(rows)
-            self._send(name.encode(), 'text/plain')
+            TUNING.update(self.read_json())
+        elif LOG.post(self):
             return
         elif self.path == '/save':
-            save_params()
+            TUNING.save()
         elif self.path == '/load':
-            load_params()
+            TUNING.load()
         else:
             self.send_error(404)
             return
-        self._send(b'ok', 'text/plain')
-
-    def _send(self, body: bytes, ctype: str) -> None:
-        self.send_response(200)
-        self.send_header('Content-Type', ctype)
-        self.send_header('Content-Length', str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, fmt: str, *args: Any) -> None:
-        pass
-
-
-def _spin(node: Node) -> None:
-    try:
-        rclpy.spin(node)
-    except ExternalShutdownException:
-        pass
+        self.send(200, b'ok', 'text/plain')
 
 
 def main() -> None:
-    load_params()
+    TUNING.load()
     rclpy.init()
     node = WallFollowNode()
-    spin = threading.Thread(target=_spin, args=(node,), daemon=True)
-    spin.start()
-    server = HTTPServer(('0.0.0.0', PORT), Handler)
-
-    # rclpy.init() installs SIGINT/SIGTERM handlers that shut the ROS context
-    # down but leave serve_forever() blocked, so the process outlives the
-    # signal until systemd's TimeoutStopSec expires and SIGKILLs it. Take the
-    # signals back. shutdown() has to run off the serving thread or it
-    # deadlocks waiting for the loop it is called from.
-    def stop(*_: Any) -> None:
-        threading.Thread(target=server.shutdown, daemon=True).start()
-
-    signal.signal(signal.SIGTERM, stop)
-    signal.signal(signal.SIGINT, stop)
-
     print(f'Wall-follow dashboard on http://0.0.0.0:{PORT} (mode={_params["mode"]})')
-    server.serve_forever()
-
-    # Unwind the ROS wait before the interpreter tears the context down;
-    # otherwise the spin thread aborts the process from C++.
-    rclpy.shutdown()
-    spin.join(timeout=2)
+    webui.serve(PORT, Handler, spin=webui.ros_spinner(node), cleanup=webui.ros_shutdown)
 
 
 if __name__ == '__main__':

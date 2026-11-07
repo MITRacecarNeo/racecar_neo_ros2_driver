@@ -67,6 +67,16 @@ class TestLaunchArgs:
     def test_running_without_arguments_means_on(self, features, tmp_path):
         assert features.running(tmp_path) == {'camera': True, 'detections': True}
 
+    def test_state_file_lives_in_the_car_profile(self, features, car_profile_dir):
+        assert features.state_file() == car_profile_dir / 'features.conf'
+
+    def test_launch_script_reads_features_after_the_overlay(self):
+        from pathlib import Path
+
+        script = Path(__file__).resolve().parent.parent / 'scripts' / 'launch_teleop.sh'
+        text = script.read_text()
+        assert text.index('install/setup.bash') < text.index('features.py" args')
+
     def test_launch_script_passes_the_features(self):
         from pathlib import Path
 

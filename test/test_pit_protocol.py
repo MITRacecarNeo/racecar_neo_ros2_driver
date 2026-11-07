@@ -200,3 +200,84 @@ class TestFraming:
         telem, dropped = pit.scan_for_packet(buf)
         assert telem is None
         assert dropped == 47 and len(buf) == 3
+
+
+# Reference packet shared with the firmware's tests (racecar-pit-firmware
+# docs/protocol.md): payload "info=1\n", revision 3, chunk 0 of 1.
+INFO_REFERENCE = bytes.fromhex(
+    'de c0 ed fe 01 03 19 00 07 00 00 00 00 00 01 00 69 6e 66 6f 3d 31 0a d4 60'
+)
+
+
+def _build_info(data, revision=1, index=0, count=1, payload_bytes=None, good_crc=True):
+    size = pit.INFO_HEADER_SIZE + len(data) + 2
+    total = len(data) if payload_bytes is None else payload_bytes
+    body = struct.pack('<IBBHIHH', pit.INFO_MAGIC, 1, revision, size, total, index, count) + data
+    crc = pit.crc16_ccitt(body) ^ (0 if good_crc else 0xFFFF)
+    return body + struct.pack('<H', crc)
+
+
+class TestInfoChunk:
+    def test_reference_packet(self):
+        chunk = pit.decode_info_chunk(INFO_REFERENCE)
+        assert chunk == pit.InfoChunk(
+            revision=3, payload_bytes=7, index=0, count=1, data=b'info=1\n'
+        )
+
+    def test_builder_matches_reference(self):
+        assert _build_info(b'info=1\n', revision=3) == INFO_REFERENCE
+
+    def test_bad_crc_is_none(self):
+        assert pit.decode_info_chunk(_build_info(b'a=1\n', good_crc=False)) is None
+
+    @pytest.mark.parametrize('index, count', [(1, 1), (0, 0)])
+    def test_bad_index_is_none(self, index, count):
+        assert pit.decode_info_chunk(_build_info(b'a=1\n', index=index, count=count)) is None
+
+    def test_length_field_must_match(self):
+        pkt = bytearray(_build_info(b'a=1\n'))
+        pkt[6] += 1
+        assert pit.decode_info_chunk(bytes(pkt)) is None
+
+
+class TestInfoFraming:
+    def test_info_between_telemetry(self):
+        buf = bytearray(
+            _build_telemetry(timestamp=1) + INFO_REFERENCE + _build_telemetry(timestamp=2)
+        )
+        first, _ = pit.scan_for_packet(buf)
+        info, consumed = pit.scan_for_packet(buf)
+        second, _ = pit.scan_for_packet(buf)
+        assert first.timestamp_us == 1 and second.timestamp_us == 2
+        assert isinstance(info, pit.InfoChunk) and consumed == len(INFO_REFERENCE)
+        assert len(buf) == 0
+
+    def test_waits_for_whole_chunk(self):
+        buf = bytearray(INFO_REFERENCE[:10])
+        assert pit.scan_for_packet(buf) == (None, 0)
+        buf.extend(INFO_REFERENCE[10:20])
+        assert pit.scan_for_packet(buf) == (None, 0)
+        buf.extend(INFO_REFERENCE[20:])
+        chunk, _ = pit.scan_for_packet(buf)
+        assert chunk.data == b'info=1\n'
+
+    def test_bad_chunk_resyncs_on_the_next_telemetry(self):
+        buf = bytearray(_build_info(b'a=1\n', good_crc=False) + _build_telemetry(timestamp=7))
+        packets = []
+        dropped = 0
+        while True:
+            packet, consumed = pit.scan_for_packet(buf)
+            if packet is not None:
+                packets.append(packet)
+            elif consumed == 0:
+                break
+            else:
+                dropped += consumed
+        assert [p.timestamp_us for p in packets] == [7]
+        assert dropped == pit.INFO_HEADER_SIZE + 4 + 2
+
+    def test_implausible_length_steps_past_the_magic(self):
+        pkt = bytearray(INFO_REFERENCE)
+        pkt[6:8] = struct.pack('<H', 4000)
+        buf = bytearray(pkt)
+        assert pit.scan_for_packet(buf) == (None, 4)

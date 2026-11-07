@@ -3,7 +3,7 @@
 import os
 from types import SimpleNamespace
 
-from conftest import load_script
+from conftest import completed, load_script
 
 ba = load_script('battery_alert')
 
@@ -31,7 +31,7 @@ class TestMessages:
 
 
 def _no_tmux(argv, **_kwargs):
-    return SimpleNamespace(returncode=1, stdout='', stderr='no server')
+    return completed(returncode=1, stdout='', stderr='no server')
 
 
 class _Recorder:
@@ -93,10 +93,10 @@ class TestDelivery:
             calls.append(argv)
             socket = argv[2] if argv[1] == '-L' else None
             if 'list-clients' in argv:
-                return SimpleNamespace(returncode=0, stdout='\n'.join(clients.get(socket, [])))
+                return completed(returncode=0, stdout='\n'.join(clients.get(socket, [])))
             if 'list-panes' in argv:
-                return SimpleNamespace(returncode=0, stdout='\n'.join(panes.get(socket, [])))
-            return SimpleNamespace(returncode=0, stdout='')
+                return completed(returncode=0, stdout='\n'.join(panes.get(socket, [])))
+            return completed(returncode=0, stdout='')
 
         return run, calls
 

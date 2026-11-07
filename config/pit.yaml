@@ -16,8 +16,8 @@ pit_node:
     steering_sign: -1
     speed_sign: 1
 
-    # Firmware CRC is valid; false pending a longer soak of the CRC path.
-    require_crc: false
+    # Frames failing the CRC-16 check are dropped (counted in the link report).
+    require_crc: true
 
     # Link presence from raw pulse widths; mux_node gates on it.
     rc_link_topic: "/rc/link"

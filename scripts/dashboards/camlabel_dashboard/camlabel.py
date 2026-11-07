@@ -17,26 +17,23 @@ with long browser caching, and one combined /info endpoint keep the
 many-cars-one-room WiFi load low.
 """
 
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import re
-import signal
 import sys
 import threading
 from typing import Any
 
 import cv2
 import numpy as np
-from racecar_neo_ros2_driver import data_root
+from racecar_neo_ros2_driver import apps, data_root, imaging
 import rclpy
-from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
 import yaml
 
-PORT = 8085
+PORT = apps.port('camlabel')
 BASE = Path(__file__).resolve().parent
 # The shared styles, fonts and logos are served from scripts/web/ (webui.py).
 sys.path.insert(0, str(BASE.parents[1]))
@@ -72,23 +69,16 @@ class CameraNode(Node):
 
     def _cb(self, msg: Image) -> None:
         global _live, _preview, _cam_res
-        if msg.encoding == 'jpeg':
-            data = bytes(msg.data)
-            arr = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
-        else:
-            # Raw frame fallback for other camera drivers.
-            arr = np.frombuffer(msg.data, dtype=np.uint8).reshape(msg.height, msg.width, -1)
-            if msg.encoding == 'rgb8':
-                arr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
-            data = cv2.imencode('.jpg', arr)[1].tobytes()
-        prev, res = data, [msg.width, msg.height]
-        if arr is not None:
-            h, w = arr.shape[:2]
-            res = [w, h]
-            pw = int(_cfg['preview_width'])
-            small = cv2.resize(arr, (pw, max(1, round(pw * h / w))))
-            quality = [cv2.IMWRITE_JPEG_QUALITY, int(_cfg['preview_quality'])]
-            prev = cv2.imencode('.jpg', small, quality)[1].tobytes()
+        arr = imaging.bgr(msg)
+        if arr is None:
+            return
+        # A JPEG frame is saved as it came; a raw one is encoded once.
+        data = bytes(msg.data) if msg.encoding == 'jpeg' else imaging.jpeg(arr, 95)
+        h, w = arr.shape[:2]
+        res = [w, h]
+        prev = imaging.jpeg(
+            imaging.fit_width(arr, int(_cfg['preview_width'])), _cfg['preview_quality']
+        )
         with _lock:
             _live = data
             _preview = prev
@@ -160,31 +150,20 @@ def _thumb(path: Path) -> bytes:
     return t
 
 
-class Handler(BaseHTTPRequestHandler):
-    # Keep-alive: reuse one TCP connection per viewer instead of a new
-    # handshake per request. Matters a lot on congested WiFi.
-    protocol_version = 'HTTP/1.1'
-
+class Handler(webui.AppHandler):
     def _query_n(self) -> int:
         return int(self.path.split('n=')[1].split('&')[0])
 
     def do_GET(self) -> None:
-        asset = webui.static_file(self.path)
-        if asset is not None:
-            self.send_response(200)
-            self.send_header('Content-Type', asset[1])
-            self.send_header('Content-Length', str(len(asset[0])))
-            self.send_header('Cache-Control', webui.CACHE_CONTROL)
-            self.end_headers()
-            self.wfile.write(asset[0])
+        if self.serve_asset():
             return
         if self.path == '/':
-            self._send((BASE / 'camlabel.html').read_bytes(), 'text/html; charset=utf-8')
+            self.page(BASE / 'camlabel.html')
         elif self.path.startswith('/frame'):
             with _lock:
                 data = _preview
             if data:
-                self._send(data, 'image/jpeg', cache='no-store')
+                self.send(200, data, 'image/jpeg', cache='no-store')
             else:
                 self.send_error(503)
         elif self.path == '/info':
@@ -198,7 +177,7 @@ class Handler(BaseHTTPRequestHandler):
                     'labeled': _entries(IMAGES, 'img*.jpg'),
                 }
             )
-            self._send(body.encode(), 'application/json')
+            self.send(200, body.encode(), 'application/json')
         elif self.path.startswith('/uimg?'):
             self._send_file(UNLABELED / f'u{self._query_n()}.jpg')
         elif self.path.startswith('/img?'):
@@ -208,7 +187,7 @@ class Handler(BaseHTTPRequestHandler):
             f = pool / f'{stem}{self._query_n()}.jpg'
             data = _thumb(f) if f.is_file() else b''
             if data:
-                self._send(data, 'image/jpeg', cache=CACHE_FOREVER)
+                self.send(200, data, 'image/jpeg', cache=CACHE_FOREVER)
             else:
                 self.send_error(404)
         elif self.path.startswith('/label?'):
@@ -229,7 +208,7 @@ class Handler(BaseHTTPRequestHandler):
                             'h': float(h),
                         }
                     )
-            self._send(json.dumps({'boxes': boxes}).encode(), 'application/json')
+            self.send(200, json.dumps({'boxes': boxes}).encode(), 'application/json')
         else:
             self.send_error(404)
 
@@ -244,9 +223,9 @@ class Handler(BaseHTTPRequestHandler):
                 _ensure_dataset()
                 n = _next_unlabeled_number()
                 (UNLABELED / f'u{n}.jpg').write_bytes(data)
-            self._send(json.dumps({'n': n}).encode(), 'application/json')
+            self.send(200, json.dumps({'n': n}).encode(), 'application/json')
         elif self.path == '/label':
-            req = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+            req = self.read_json()
             src = UNLABELED / f'u{int(req["n"])}.jpg'
             if not src.is_file():
                 self.send_error(404)
@@ -261,40 +240,28 @@ class Handler(BaseHTTPRequestHandler):
                     for b in req['boxes']
                 ]
                 (LABELS / f'img{m}.txt').write_text('\n'.join(lines) + '\n' if lines else '')
-            self._send(json.dumps({'img': m}).encode(), 'application/json')
+            self.send(200, json.dumps({'img': m}).encode(), 'application/json')
         elif self.path == '/dell':
-            req = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+            req = self.read_json()
             n = int(req['n'])
             for f in (IMAGES / f'img{n}.jpg', LABELS / f'img{n}.txt'):
                 if f.is_file():
                     f.unlink()
-            self._send(b'ok', 'text/plain')
+            self.send(200, b'ok', 'text/plain')
         elif self.path == '/delu':
-            req = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+            req = self.read_json()
             f = UNLABELED / f'u{int(req["n"])}.jpg'
             if f.is_file():
                 f.unlink()
-            self._send(b'ok', 'text/plain')
+            self.send(200, b'ok', 'text/plain')
         else:
             self.send_error(404)
 
     def _send_file(self, f: Path) -> None:
         if f.is_file():
-            self._send(f.read_bytes(), 'image/jpeg', cache=CACHE_FOREVER)
+            self.send(200, f.read_bytes(), 'image/jpeg', cache=CACHE_FOREVER)
         else:
             self.send_error(404)
-
-    def _send(self, body: bytes, ctype: str, cache: str | None = None) -> None:
-        self.send_response(200)
-        self.send_header('Content-Type', ctype)
-        self.send_header('Content-Length', str(len(body)))
-        if cache:
-            self.send_header('Cache-Control', cache)
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, fmt: str, *args: Any) -> None:
-        pass
 
 
 def _ensure_dataset() -> None:
@@ -302,42 +269,15 @@ def _ensure_dataset() -> None:
         d.mkdir(parents=True, exist_ok=True)
 
 
-def _spin(node: Node) -> None:
-    try:
-        rclpy.spin(node)
-    except ExternalShutdownException:
-        pass
-
-
 def main() -> None:
     _ensure_dataset()
     rclpy.init()
     node = CameraNode()
-    spin = threading.Thread(target=_spin, args=(node,), daemon=True)
-    spin.start()
-    server = ThreadingHTTPServer(('0.0.0.0', PORT), Handler)
-
-    # rclpy.init() installs SIGINT/SIGTERM handlers that shut the ROS context
-    # down but leave serve_forever() blocked, so the process outlives the
-    # signal until systemd's TimeoutStopSec expires and SIGKILLs it. Take the
-    # signals back. shutdown() has to run off the serving thread or it
-    # deadlocks waiting for the loop it is called from.
-    def stop(*_: Any) -> None:
-        threading.Thread(target=server.shutdown, daemon=True).start()
-
-    signal.signal(signal.SIGTERM, stop)
-    signal.signal(signal.SIGINT, stop)
-
     print(
         f'Camera label dashboard on http://0.0.0.0:{PORT} '
         f'(preview {_cfg["preview_width"]}px, dataset {DATASET})'
     )
-    server.serve_forever()
-
-    # Unwind the ROS wait before the interpreter tears the context down;
-    # otherwise the spin thread aborts the process from C++.
-    rclpy.shutdown()
-    spin.join(timeout=2)
+    webui.serve(PORT, Handler, spin=webui.ros_spinner(node), cleanup=webui.ros_shutdown)
 
 
 if __name__ == '__main__':
