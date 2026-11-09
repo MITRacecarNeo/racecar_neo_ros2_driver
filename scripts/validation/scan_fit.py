@@ -217,18 +217,13 @@ def localized_against_fit(
 
 def read_bag(bag: Path, every: int = 3) -> dict[str, Any]:
     """Return scans (every Nth), map -> odom, odom -> base_link, and base_link -> laser."""
-    import rosbag2_py
+    from racecar_neo_ros2_driver.bags import open_reader
+    from racecar_neo_ros2_driver.geometry import yaw_of as yaw
     from rclpy.serialization import deserialize_message
     from sensor_msgs.msg import LaserScan
-    from racecar_neo_ros2_driver.geometry import yaw_of as yaw
     from tf2_msgs.msg import TFMessage
 
-    reader = rosbag2_py.SequentialReader()
-    reader.open(
-        rosbag2_py.StorageOptions(uri=str(bag), storage_id='mcap'),
-        rosbag2_py.ConverterOptions('cdr', 'cdr'),
-    )
-    reader.set_filter(rosbag2_py.StorageFilter(topics=['/scan', '/tf', '/tf_static']))
+    reader, _ = open_reader(bag, ['/scan', '/tf', '/tf_static'])
     scans, map_odom, odom_base = [], [], []
     base_laser: Pose | None = None
     n = 0

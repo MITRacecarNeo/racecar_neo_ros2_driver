@@ -860,17 +860,12 @@ def read_bag(
     bag: Path,
 ) -> tuple[list[tuple[float, float, float, float]], list[tuple[float, float, float]]]:
     """Return map -> odom (t, x, y, yaw) and /odom/integrated (t, x, y) from a bag."""
-    import rosbag2_py
-    from rclpy.serialization import deserialize_message
     from nav_msgs.msg import Odometry
+    from racecar_neo_ros2_driver.bags import open_reader
+    from rclpy.serialization import deserialize_message
     from tf2_msgs.msg import TFMessage
 
-    reader = rosbag2_py.SequentialReader()
-    reader.open(
-        rosbag2_py.StorageOptions(uri=str(bag), storage_id='mcap'),
-        rosbag2_py.ConverterOptions('cdr', 'cdr'),
-    )
-    reader.set_filter(rosbag2_py.StorageFilter(topics=['/tf', '/odom/integrated']))
+    reader, _ = open_reader(bag, ['/tf', '/odom/integrated'])
     map_odom, odom = [], []
     while reader.has_next():
         topic, data, t = reader.read_next()

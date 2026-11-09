@@ -108,21 +108,14 @@ def run_from_arrays(
 
 def read_bag(bag: Path) -> Run:
     """Read `/odom/integrated` and `/motor` from a bag (any storage the bag declares)."""
-    import rosbag2_py
+    from racecar_neo_ros2_driver.bags import open_reader
     from rclpy.serialization import deserialize_message
     from rosidl_runtime_py.utilities import get_message
 
-    info = rosbag2_py.Info().read_metadata(str(bag), '')
-    reader = rosbag2_py.SequentialReader()
-    reader.open(
-        rosbag2_py.StorageOptions(uri=str(bag), storage_id=info.storage_identifier),
-        rosbag2_py.ConverterOptions('cdr', 'cdr'),
-    )
-    types = {m.name: m.type for m in reader.get_all_topics_and_types()}
+    reader, types = open_reader(bag, TOPICS)
     missing = [topic for topic in TOPICS[:1] if topic not in types]
     if missing:
         raise ValueError(f'{bag} has no {", ".join(missing)}; record it with racecar log')
-    reader.set_filter(rosbag2_py.StorageFilter(topics=[t for t in TOPICS if t in types]))
     classes = {name: get_message(types[name]) for name in TOPICS if name in types}
 
     cols: dict[str, list[float]] = {k: [] for k in ('t', 'x', 'y', 'yaw', 'v', 'w', 'st', 's')}

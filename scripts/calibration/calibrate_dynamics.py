@@ -296,17 +296,11 @@ class Bag:
 
 
 def read_bag(path: Path, axis: int = 2, sign: float = 1.0) -> Bag:
-    import rosbag2_py
+    from racecar_neo_ros2_driver.bags import open_reader
     from rclpy.serialization import deserialize_message
     from rosidl_runtime_py.utilities import get_message
 
-    info = rosbag2_py.Info().read_metadata(str(path), '')
-    reader = rosbag2_py.SequentialReader()
-    reader.open(
-        rosbag2_py.StorageOptions(uri=str(path), storage_id=info.storage_identifier),
-        rosbag2_py.ConverterOptions('cdr', 'cdr'),
-    )
-    types = {t.name: t.type for t in reader.get_all_topics_and_types()}
+    reader, types = open_reader(path)
     classes = {n: get_message(types[n]) for n in TOPICS if n in types}
     odom, gyro, motor, scans = [], [], [], []
     while reader.has_next():
