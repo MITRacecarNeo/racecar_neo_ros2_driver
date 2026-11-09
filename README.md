@@ -940,7 +940,7 @@ start or load; see [docs/advanced-settings.md](docs/advanced-settings.md),
 Setup installs the student library and labs named in `config/student_library.yaml`:
 
 - The library repo at its pinned tag, read-only in `/opt/racecar-neo/library-<tag>/`. Its `library/` folder is linked at `~/jupyter_ws/racecar-neo/library`.
-- The labs repo at the tip of `main`, in `~/jupyter_ws/racecar-neo/labs`. Setup clones them only when that folder does not exist.
+- The labs repo's `labs/` folder at the tip of `main`, in `~/jupyter_ws/racecar-neo/labs`. Setup installs them only when that folder does not exist.
 
 ```bash
 racecar library install             # pinned library, and fresh labs from main
@@ -948,7 +948,7 @@ racecar library install --no-labs   # library only; labs stay as they are
 racecar library --status            # selected library, pinned and installed versions
 ```
 
-`racecar library install` moves an existing labs folder to `~/backups/YYYYMMDD_HHMMSS_racecar-neo-labs-<tag>` before it clones, so a student's work is kept. A library folder that is not the link moves to `~/backups` the same way. Older library tags stay in `/opt/racecar-neo` for rollback. Both need internet.
+`racecar library install` moves an existing labs folder to `~/backups/YYYYMMDD_HHMMSS_racecar-neo-labs-<tag>` before it installs the new one, so a student's work is kept. A library folder that is not the link moves to `~/backups` the same way. Older library tags stay in `/opt/racecar-neo` for rollback. Both need internet.
 
 `racecar library --select <folder>` chooses which library Python imports: `racecar-neo`, or another `~/jupyter_ws` folder with a `library/` and `labs/` pair copied from a computer. The first install selects `racecar-neo` when nothing is selected.
 

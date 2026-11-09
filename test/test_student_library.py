@@ -38,12 +38,24 @@ class FakeRun:
             rc = 0 if self.reachable else 2
         elif args[:2] == ['git', 'clone']:
             dest = Path(args[-1])
-            (dest / '.git').mkdir(parents=True)
-            if 'library' in args[-2]:
+            if '--bare' in args:
+                dest.mkdir(parents=True)
+                (dest / 'HEAD').write_text('ref: refs/heads/main\n')
+            else:
+                (dest / '.git').mkdir(parents=True)
                 (dest / 'library').mkdir()
                 (dest / 'library' / 'racecar_core.py').write_text('')
-            else:
-                (dest / 'labs').mkdir()
+        elif args[:2] == ['git', '--git-dir']:
+            verb = args[3]
+            if verb == 'describe':
+                out = self.describe + '\n'
+            elif verb == 'rev-parse':
+                out = 'abc1234\n'
+            elif verb == 'archive':
+                self.archive = Path(args[args.index('-o') + 1])
+                self.archive.write_text('tar')
+        elif args[0] == 'tar':
+            (Path(args[-1]) / 'labs' / 'lab_a').mkdir(parents=True)
         elif args[:2] == ['git', '-C']:
             out = self.describe + '\n'
         elif args[0] == 'mkdir':
@@ -130,13 +142,23 @@ class TestInstall:
         (jws / 'labs' / '.git').mkdir(parents=True)
         (jws / 'labs' / 'grand_prix.py').write_text('student work')
         run = FakeRun(describe='v0.9.0-bot-3-gabc123')
-        sl.install_labs(PIN, jws, backups, 0, run, quiet)
+        sl.install_labs(PIN, jws, backups, 0, run, quiet, tmp_path / 'cache')
         moved = list(backups.iterdir())
         assert moved[0].name.endswith('racecar-neo-labs-v0.9.0-bot-3-gabc123')
         assert (moved[0] / 'grand_prix.py').read_text() == 'student work'
-        assert (jws / 'labs' / 'labs').is_dir()
-        clone = [c for c in run.calls if 'clone' in c][0]
-        assert clone[0] == 'git' and clone[clone.index('--branch') + 1] == 'main'
+        assert (jws / 'labs' / 'lab_a').is_dir() and not (jws / 'labs' / 'labs').exists()
+        assert sl.describe(jws / 'labs', run) == 'v0.9.0-bot-3-gabc123'
+        assert not (jws / '.labs.new').exists() and not run.archive.exists()
+        archive = [c for c in run.calls if 'archive' in c][0]
+        assert archive[-2:] == ['main', 'labs']
+
+    def test_second_install_fetches_the_cache(self, sl, tmp_path):
+        jws, cache, run = tmp_path / 'jws', tmp_path / 'cache', FakeRun()
+        sl.install_labs(PIN, jws, tmp_path / 'backups', 0, run, quiet, cache)
+        run.calls.clear()
+        sl.install_labs(PIN, jws, tmp_path / 'backups', 1, run, quiet, cache)
+        assert not any('clone' in c for c in run.calls)
+        assert any('fetch' in c for c in run.calls)
 
     def test_failed_labs_clone_keeps_the_old_folder(self, sl, tmp_path):
         jws = tmp_path / 'jws'
@@ -146,7 +168,7 @@ class TestInstall:
             return subprocess.CompletedProcess(argv, 128, '', '')
 
         with pytest.raises(RuntimeError):
-            sl.install_labs(PIN, jws, tmp_path / 'backups', 0, failing, quiet)
+            sl.install_labs(PIN, jws, tmp_path / 'backups', 0, failing, quiet, tmp_path / 'c')
         assert (jws / 'labs').is_dir() and not (tmp_path / 'backups').exists()
 
     def test_selects_racecar_neo_only_when_nothing_is_selected(self, sl, tmp_path):

@@ -945,7 +945,9 @@ through sudo. `diagnose.check_data_root` gives the `racecar status` row, and
 `setup_jupyter.sh` with `--labs-if-missing`) clones the library as root into
 `/opt/racecar-neo/library-<tag>/`, precompiles it, and points the
 `~/jupyter_ws/racecar-neo/library` link at its `library/` folder; the labs
-are a user-owned clone in `~/jupyter_ws/racecar-neo/labs`. Folders it
+repo is a bare clone in `~/.cache/racecar-neo/labs.git`, and only its
+`labs/` folder is unpacked into `~/jupyter_ws/racecar-neo/labs`, stamped
+with its version in `.racecar-labs-version`. Folders it
 replaces move to `~/backups/<time>_racecar-neo-<labs|library>-<tag>`.
 Python finds the selected library through `racecar_student.pth` in user
 site-packages (`racecar library --select`); driver code finds the pinned

@@ -5,8 +5,9 @@ Student library and labs on the car, behind `racecar library install` and `statu
 The library is cloned as root at the tag in config/student_library.yaml into
 /opt/racecar-neo/library-<tag>/, so students cannot edit it, and its library/
 folder is linked at ~/jupyter_ws/racecar-neo/library. Older tags stay beside
-it. The labs are cloned at the tip of their branch into
-~/jupyter_ws/racecar-neo/labs. A labs folder already there, or a library that
+it. The labs repo's labs/ folder, at the tip of its branch, is unpacked into
+~/jupyter_ws/racecar-neo/labs from a bare clone kept in
+~/.cache/racecar-neo/labs.git. A labs folder already there, or a library that
 is a real folder rather than the link, is moved to
 ~/backups/YYYYMMDD_HHMMSS_racecar-neo-<labs|library>-<tag> first, so a
 student's work is kept.
@@ -31,6 +32,7 @@ from typing import Any
 import yaml
 
 OPT_ROOT = Path('/opt/racecar-neo')
+LABS_CACHE = Path('.cache') / 'racecar-neo' / 'labs.git'  # under the home folder
 FOLDER = 'racecar-neo'
 STAMP_FMT = '%Y%m%d_%H%M%S'
 NETWORK_TIMEOUT_SEC = 20.0
@@ -62,8 +64,20 @@ def backup_name(kind: str, tag: str, now: float) -> str:
     return f'{time.strftime(STAMP_FMT, time.localtime(now))}_racecar-neo-{kind}-{safe}'
 
 
+VERSION_FILE = '.racecar-labs-version'
+
+
 def describe(folder: Path, run: Run = subprocess.run) -> str:
-    """Return the folder's `git describe --tags --always`, or 'untracked' for a plain copy."""
+    """
+    Return the folder's version, or 'untracked' for a plain copy.
+
+    Installed labs carry it on the first line of their version file; a clone
+    answers `git describe`.
+    """
+    stamp = folder / VERSION_FILE
+    if stamp.is_file():
+        first = stamp.read_text().splitlines()
+        return first[0].strip() if first and first[0].strip() else 'untracked'
     if not (folder / '.git').exists():
         return 'untracked'
     r = run(
@@ -134,6 +148,13 @@ def link_library(
     say(f'{link} -> {target}')
 
 
+def _git(run: Run, argv: list[str]) -> str:
+    r = run(argv, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f'failed: {" ".join(argv)}')
+    return str(r.stdout).strip()
+
+
 def install_labs(
     pin: dict[str, Any],
     jws: Path,
@@ -141,21 +162,45 @@ def install_labs(
     now: float,
     run: Run,
     say: Callable[[str], None],
+    cache: Path,
 ) -> None:
-    """Clone the labs at the branch tip; an existing labs folder goes to backups first."""
+    """
+    Put the repo's labs/ folder at jws/labs from the branch tip, one level deep.
+
+    The repo is kept as a bare clone in `cache` (fetched on later installs);
+    only its labs/ folder is unpacked, stamped with the version. An existing
+    labs folder goes to backups first.
+    """
     jws.mkdir(parents=True, exist_ok=True)
     labs = jws / 'labs'
     tmp = jws / '.labs.new'
     if tmp.exists():
         raise RuntimeError(f'{tmp} is left from an earlier run; move it away and retry')
-    argv = ['git', 'clone', '--quiet', '--branch', pin['branch'], pin['labs_repo'], str(tmp)]
-    if run(argv).returncode != 0:
-        raise RuntimeError(f'failed: {" ".join(argv)}')
+    git = ['git', '--git-dir', str(cache)]
+    branch = pin['branch']
+    if (cache / 'HEAD').is_file():
+        _git(run, [*git, 'fetch', '--quiet', '--tags', 'origin', '+refs/heads/*:refs/heads/*'])
+    else:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        _git(run, ['git', 'clone', '--quiet', '--bare', pin['labs_repo'], str(cache)])
+    version = _git(run, [*git, 'describe', '--tags', '--always', branch])
+    commit = _git(run, [*git, 'rev-parse', branch])
+    tmp.mkdir()
+    archive = jws / '.labs.tar'
+    _git(run, [*git, 'archive', '--format=tar', '-o', str(archive), branch, 'labs'])
+    try:
+        _git(run, ['tar', '-xf', str(archive), '-C', str(tmp)])
+    finally:
+        archive.unlink(missing_ok=True)
+    if not (tmp / 'labs').is_dir():
+        raise RuntimeError(f'no labs/ folder in {pin["labs_repo"]} at {branch}')
+    (tmp / 'labs' / VERSION_FILE).write_text(f'{version}\n{commit}\n{pin["labs_repo"]} {branch}\n')
     if labs.exists() or labs.is_symlink():
         moved = move_to_backups(labs, 'labs', backups, now, run)
         say(f'moved the old labs folder to {moved}')
-    os.rename(tmp, labs)
-    say(f'labs {describe(labs, run)} cloned into {labs}')
+    os.rename(tmp / 'labs', labs)
+    tmp.rmdir()
+    say(f'labs {version} installed in {labs}')
 
 
 def select_if_unset(lib_link: Path, pth: Path, say: Callable[[str], None]) -> None:
@@ -188,7 +233,7 @@ def cmd_install(args: argparse.Namespace, run: Run = subprocess.run) -> int:
         lib = install_library(pin, OPT_ROOT, run, print)
         link_library(lib, jws, backups, now, run, print)
         if labs_wanted:
-            install_labs(pin, jws, backups, now, run, print)
+            install_labs(pin, jws, backups, now, run, print, home / LABS_CACHE)
         elif args.labs_if_missing:
             print(f'labs kept in {jws / "labs"} (racecar library install replaces them)')
     except (RuntimeError, OSError) as exc:

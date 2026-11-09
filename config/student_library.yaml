@@ -3,7 +3,7 @@
 #
 # library: cloned at `tag` into /opt/racecar-neo/library-<tag>/ (read-only);
 #          its library/ folder is linked at ~/jupyter_ws/racecar-neo/library.
-# labs:    cloned at the tip of `branch` into ~/jupyter_ws/racecar-neo/labs;
+# labs:    the repo's labs/ folder at the tip of `branch`, in ~/jupyter_ws/racecar-neo/labs;
 #          an existing labs folder is moved to ~/backups first.
 
 library:

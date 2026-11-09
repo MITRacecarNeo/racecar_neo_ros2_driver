@@ -15,7 +15,7 @@ All notable changes to this project will be documented in this file. The format 
 - Setup installs the student library at the tag in
   `config/student_library.yaml`, read-only in
   `/opt/racecar-neo/library-<tag>/` and linked at
-  `~/jupyter_ws/racecar-neo/library`, and clones the labs from `main` into
+  `~/jupyter_ws/racecar-neo/library`, and puts the labs repo's `labs/` folder from `main` in
   `~/jupyter_ws/racecar-neo/labs`. `racecar library install` reinstalls
   both, moving existing labs to `~/backups` first; `racecar library
   --status` lists pinned and installed versions.

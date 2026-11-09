@@ -890,7 +890,7 @@ Actions:
   install [--tag T] [--no-labs]
                      Install the pinned library (config/student_library.yaml)
                      read-only in /opt/racecar-neo/library-<tag>/, link it at
-                     ~/jupyter_ws/racecar-neo/library, and clone the labs from
+                     ~/jupyter_ws/racecar-neo/library, and install the labs from
                      main into ~/jupyter_ws/racecar-neo/labs. A labs folder
                      already there moves to ~/backups first. Needs internet.
   --select <folder>  Point the .pth at ~/jupyter_ws/<folder>/library/.
