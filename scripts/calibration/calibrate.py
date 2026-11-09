@@ -27,7 +27,7 @@ import sys
 import tempfile
 from typing import Any
 
-from racecar_neo_ros2_driver import car_profile, units
+from racecar_neo_ros2_driver import car_profile, steering, units
 import yaml
 
 HERE = Path(__file__).resolve().parent
@@ -49,6 +49,11 @@ RUN_PROMPT_BACK = 'Press Enter to run, s to skip, b to go back a step, and q to 
 LIDAR_SETUP = (
     'Use a clear straight path of about 2 meters with walls or furniture nearby.\n'
     'Connect the controller. Hold RB to autonomously drive the car.'
+)
+CAMERA_SETUP = (
+    'Turn the camera on: 8080 home page, Features, Camera.\n'
+    'Set the car on its wheels on a flat floor.\n'
+    'Clear the floor 2 meters ahead of the car.'
 )
 STEERING_SETUP = (
     'Use a clear area of about 3 by 3 meters surrounded by walls or furniture.\n'
@@ -144,6 +149,15 @@ STEPS = (
         check=LIDAR_SETUP,
     ),
     Step(
+        'camera',
+        'RealSense mount pitch, roll and height',
+        'calibrate_camera.py',
+        CAMERA_SETUP,
+        'frames',
+        ('camera_pitch_deg', 'camera_roll_deg', 'camera_bottom_z_mm'),
+        check=CAMERA_SETUP,
+    ),
+    Step(
         'odom',
         'Odometry yaw and speed scale',
         'calibrate_odom.py',
@@ -154,7 +168,7 @@ STEPS = (
     ),
     Step(
         'steering',
-        'Steering trim',
+        'Steering trim and command-to-curvature table',
         'calibrate_steering.py',
         STEERING_SETUP,
         'throttle',
@@ -231,7 +245,22 @@ def status_lines(config_dir: Path, color: bool = False) -> list[str]:
         values = step_values(step)
         width = max((len(k) for k in values), default=0)
         lines += [f'  {k:<{width}}  {fmt(values[k], 7)}' for k in step.keys if k in values]
+        if step.key == 'steering':
+            lines.append(f'  {table_summary(steering.load())}')
     return lines
+
+
+def table_summary(table: steering.SteeringTable | None) -> str:
+    """Return the steering table's line in `racecar calibrate status`."""
+    if table is None:
+        return 'steering_table  not measured'
+    right, left = table.max_curvature()
+    return (
+        f'steering_table  {len(table.command)} commands, full lock radius '
+        f'{1 / left:.2f} m left, {-1 / right:.2f} m right'
+        + (', own reverse table' if table.curvature_reverse else '')
+        + (f', {table.measured}' if table.measured else '')
+    )
 
 
 def status_rows(config_dir: Path) -> list[tuple[str, str, str]]:

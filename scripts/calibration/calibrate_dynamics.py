@@ -332,6 +332,8 @@ def read_bag(path: Path, axis: int = 2, sign: float = 1.0) -> Bag:
             ok = np.isfinite(ranges) & (ranges >= msg.range_min) & (ranges <= msg.range_max)
             beams = st + msg.time_increment * np.arange(ranges.size)
             scans.append((st + msg.scan_time, ranges[ok], angles[ok], beams[ok]))
+    if len(odom) < 2:
+        raise ValueError(f'{path.name}: no /odom/integrated recorded; drive the run again')
     o = np.array(odom)
     xy = o[:, 1:3]
     path_m = np.concatenate(([0.0], np.cumsum(np.hypot(*np.diff(xy, axis=0).T))))

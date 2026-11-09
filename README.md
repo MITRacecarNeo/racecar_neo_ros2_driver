@@ -1037,8 +1037,9 @@ ros2 run racecar_neo_ros2_driver calibrate_imu.py         # LSM9DS1 accel bias +
 ros2 run racecar_neo_ros2_driver calibrate_mag.py         # LSM9DS1 hard/soft iron
 ros2 run racecar_neo_ros2_driver calibrate_realsense_imu.py   # D435i accel bias + scale, gyro bias
 ros2 run racecar_neo_ros2_driver calibrate_lidar.py       # lidar yaw from the direction of travel; the car drives itself while RB is held
+ros2 run racecar_neo_ros2_driver calibrate_camera.py      # RealSense mount pitch, roll and height from the floor
 ros2 run racecar_neo_ros2_driver calibrate_odom.py        # odometry against the lidar: circles, then a straight run
-ros2 run racecar_neo_ros2_driver calibrate_steering.py    # steering trim against the lidar; the car drives itself while RB is held
+ros2 run racecar_neo_ros2_driver calibrate_steering.py    # steering trim and curvature table against the lidar; the car drives itself while RB is held
 ros2 run racecar_neo_ros2_driver calibrate_dynamics.py    # simulator dynamics; the car drives itself while RB is held
 racecar service restart teleop                            # nodes read the values at start
 ```
@@ -1049,8 +1050,9 @@ racecar service restart teleop                            # nodes read the value
 | `calibrate_mag.py` | `/mag/raw` | `params/lsm9ds1_mag_cal.yaml` | `pit_node` |
 | `calibrate_realsense_imu.py` | `/imu/realsense` | `params/realsense_cal.yaml` | `imu_fusion_node` |
 | `calibrate_lidar.py` | `/scan`, `/odom/integrated`, `/motor` (recorded); `/joy` (RB) | `params/frames.yaml` (`laser_yaw_deg`) | `frames.launch.py` |
+| `calibrate_camera.py` | `/camera/depth`, `/camera/depth/camera_info`, `/camera/accel/sample`, `/tf` | `params/frames.yaml` (`camera_pitch_deg`, `camera_roll_deg`, `camera_bottom_z_mm`) | `frames.launch.py` |
 | `calibrate_odom.py` | `/imu/lsm9ds1`, `/odom/integrated`, `/scan` | `params/odom.yaml` (`odometry.yaw_rate_scale`, `odometry.speed_scale`) | `pit_node` |
-| `calibrate_steering.py` | `/scan`, `/odom/integrated`, `/motor` (recorded); `/joy` (RB) | `params/throttle.yaml` (`steering_trim`) | `throttle_node` |
+| `calibrate_steering.py` | `/scan`, `/odom/integrated`, `/motor` (recorded); `/joy` (RB) | `params/throttle.yaml` (`steering_trim`), `params/steering_table.yaml` | `throttle_node`; `racecar_neo_ros2_driver.steering` |
 | `calibrate_dynamics.py` | `/scan`, `/imu/lsm9ds1`, `/odom/integrated`, `/motor`, plus `/encoder/speed`, `/odom`, `/mux_out`, `/imu/fused`, `/battery/voltage`, `/tf` (recorded); `/joy` (RB) | `params/dynamics.yaml` | the simulator (no node reads it) |
 
 Each utility writes the file to the car profile; launch reads it at start,
@@ -1096,14 +1098,44 @@ The scene must stay still between the two scans, and a room works better
 than a long corridor. Each step keeps the other's value in
 `params/odom.yaml`.
 
+`calibrate_camera.py` measures how the RealSense sits on the car; the lens
+and depth calibration is the camera's own, from the factory. With the car on
+its wheels on a flat floor, clear 2 m ahead, it fits a plane to the floor in
+about 3 s of depth and expresses it at the tripod screw, where the URDF
+rotates the camera: the plane's tilt gives `camera_pitch_deg` and
+`camera_roll_deg`, its distance `camera_bottom_z_mm`. Yaw keeps its value.
+The camera's accelerometer is a cross-check: a difference over 1 deg from the
+floor names an unlevel floor or the RealSense IMU calibration. `--check`
+passes within 0.5 deg and 5 mm of the file. The camera feature must be on.
+
 `calibrate_steering.py` sets the steering trim, the offset `throttle_node`
-adds to every steering command so the car drives straight at steering 0. It
-drives seven short runs by itself while RB is held, one per steering command
-(0, +/-0.25, +/-0.5, +/-1.0), each needing about 3 by 3 m of clear floor. In
-each run the wheels are set with the car still and the steering never
-changes, so the car moves on one arc; the lidar scans at rest before and
-after give its chord and heading change, and curvature = 2 sin(heading / 2) /
-chord, with no encoder distance. The command that drives straight is the
+adds to every steering command so the car drives straight at steering 0, and
+measures the command-to-curvature table. It drives by itself while RB is
+held, one pair of legs per steering command at speed 0.25: forward on an
+arc, then backing up about the same distance at the same steering, so the
+car ends near where it started. Straight first, then the left commands
+(0.125, 0.25, 0.375, 0.5, 0.75, 1.0), then the same to the right, in about 3
+by 3 m of clear floor. Every run is driven first; between runs you can drive
+the car back to its mark with the controller (LB). Then every run is
+analyzed, one progress line each, and the runs that could not be measured
+are offered to drive again (or `s` finishes without them; the table needs
+full lock on both sides). Backing up at tight steering the wheels slip at
+the start, so a reverse leg's lidar distance may be well under the
+encoder's; the curvature comes from the lidar alone. In each leg
+the wheels are set with the car still and the steering never changes, so the
+car moves on one arc; the lidar scans at rest before and after give its chord
+and heading change, and curvature = 2 sin(heading / 2) / chord per meter
+traveled, positive to the left in both directions, with no encoder distance.
+
+The forward legs give the table, written to `params/steering_table.yaml`
+(`steering_table.command`, `steering_table.curvature_per_m`, under `/**` so
+any node can load it; `racecar_neo_ros2_driver/steering.py` reads it and
+converts either way). The reverse legs are written as
+`steering_table.curvature_per_m_reverse` only when one differs from forward
+by more than 10%. The same pairs at speed 0.5 for +/-0.5 and +/-1.0 report
+how much the curvature changes with speed. The table is refused when the
+curvature does not rise with the command, and it is stored in the terms of
+the trim written with it. The command that drives straight is the
 drift at 0 divided by the slope near center (from +/-0.25; at +/-0.5 the
 curvature already flattens toward full lock). The new trim is the old one
 plus that command; a change under 0.01 (about 5 us of servo pulse, below what
@@ -1118,7 +1150,8 @@ it; it does not write it. With `odometry.turn_gain` set to k in
 1 + k (1/cos delta - 1), with delta from the gyro (atan(wheelbase x yaw
 rate / speed), `odometry.wheelbase_m`), above 0.1 m/s. The default 0 turns
 the correction off.
-`--check` drives straight at command 0: drift within 1 deg/m passes. Up to
+`--check` drives the pairs at 0 and +/-0.5: the +/-0.5 legs must match the
+table within 10%, and the drift at 0 within 1 deg/m passes. Up to
 5 deg/m warns, and the warning names servo and linkage play, which alone
 moves the drift by up to about 3 deg/m between runs, so recalibrate only if
 it stays. Beyond 5 deg/m fails as a mechanical fault (servo horn or

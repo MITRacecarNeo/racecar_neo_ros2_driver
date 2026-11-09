@@ -270,7 +270,7 @@ class TestChecks:
             cal, 'run_checks', lambda steps: seen.extend(s.key for s in steps) or 0
         )
         assert cal.main(['check']) == 0
-        assert seen == ['imu', 'mag', 'realsense', 'lidar', 'odom', 'steering']
+        assert seen == ['imu', 'mag', 'realsense', 'lidar', 'camera', 'odom', 'steering']
 
     def test_check_of_an_unknown_step_is_a_usage_error(self, cal):
         assert cal.main(['check', 'gps']) == 2
@@ -446,3 +446,15 @@ class TestSessionBack:
         monkeypatch.setattr(cal, 'ask', ask)
         cal.run_checks([s for s in cal.STEPS if s.key in ('imu', 'mag')])
         assert prompts == [cal.RUN_PROMPT, cal.RUN_PROMPT_BACK]
+
+
+class TestSteeringTableStatus:
+    def test_summary(self, cal):
+        from racecar_neo_ros2_driver import steering
+
+        assert cal.table_summary(None) == 'steering_table  not measured'
+        t = steering.SteeringTable((-1.0, 0.0, 1.0), (-2.0, 0.0, 2.5), measured='2026-11-09 10:00')
+        assert cal.table_summary(t) == (
+            'steering_table  3 commands, full lock radius 0.40 m left, 0.50 m right, '
+            '2026-11-09 10:00'
+        )

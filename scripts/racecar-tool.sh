@@ -1384,7 +1384,7 @@ _racecar_complete() {
 
     case "$sub" in
         calibrate)
-            COMPREPLY=( $(compgen -W "status check imu mag realsense lidar odom steering dynamics --help" -- "$cur") )
+            COMPREPLY=( $(compgen -W "status check imu mag realsense lidar camera odom steering dynamics --help" -- "$cur") )
             ;;
         launch)
             local launch_dir="$HOME/ros2_ws/src/racecar_neo_ros2_driver/launch"

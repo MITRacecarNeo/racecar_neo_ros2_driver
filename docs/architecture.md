@@ -972,10 +972,11 @@ fails or there is too little data.
   /mag/raw ────────▶ calibrate_mag.py ───────────▶ params/lsm9ds1_mag_cal.yaml ─┴─▶ pit_node
   /imu/realsense ──▶ calibrate_realsense_imu.py ─▶ params/realsense_cal.yaml ─────▶ imu_fusion_node
   /scan ───────────▶ calibrate_lidar.py ─────────▶ params/frames.yaml ────────────▶ frames.launch.py
+  /camera/depth ───▶ calibrate_camera.py ────────▶ params/frames.yaml ────────────▶ frames.launch.py
   /imu/lsm9ds1, ───▶ calibrate_odom.py ──────────▶ params/odom.yaml ──────────────▶ pit_node (odometry)
   /odom/integrated
   /scan, ──────────▶ calibrate_steering.py ──────▶ params/throttle.yaml ──────────▶ throttle_node
-  /odom/integrated
+  /odom/integrated                             └──▶ params/steering_table.yaml ────▶ steering.py
   /scan, ──────────▶ calibrate_dynamics.py ──────▶ params/dynamics.yaml ──────────▶ the simulator
   /odom/integrated
 ```

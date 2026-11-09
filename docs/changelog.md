@@ -12,6 +12,13 @@ All notable changes to this project will be documented in this file. The format 
 - `setup_all.sh --from N` resumes at phase N and `--skip N,M` leaves phases
   out; a failed phase prints the command that resumes there.
 - `racecar setup services` runs `setup_services.sh` (the core units).
+- `racecar calibrate steering` measures the command-to-curvature table from
+  forward/reverse pairs (straight, then left, then right; every run driven
+  first, then analyzed, then the failed ones offered again), and writes it to
+  `params/steering_table.yaml` in the car profile;
+  `racecar_neo_ros2_driver/steering.py` reads it.
+- `racecar calibrate camera` (`calibrate_camera.py`): RealSense mount pitch,
+  roll and height from the floor plane in the depth image.
 - Setup installs the student library at the tag in
   `config/student_library.yaml`, read-only in
   `/opt/racecar-neo/library-<tag>/` and linked at
