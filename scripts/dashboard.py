@@ -421,7 +421,7 @@ def page_origin(origin: str | None, host: str | None) -> bool:
 
 
 def lab_origin(origin: str | None, host: str | None) -> str | None:
-    """Return `origin` when an app page on this car (its own port) may read /api/battery."""
+    """Return `origin` when an app page on this car (its own port) may read 8080 state."""
     return webui.sibling_origin(origin, host, (a['port'] for a in APPS))
 
 
@@ -923,6 +923,29 @@ def stall_view(report: dict[str, Any] | None, age: float | None) -> dict[str, An
         values.get('state', '0'), 'stale'
     )
     return {'label': label, 'status': status, 'detail': report.get('message', '')}
+
+
+def stall_banner(report: dict[str, Any] | None, age: float | None) -> dict[str, Any]:
+    """
+    Return the stall banner state for every page: tripped, cooldown, lockout or none.
+
+    None with no fresh report, on firmware without stall protection, or while
+    driving is normal. `seconds_left` counts down the cooldown or lockout.
+    """
+    none: dict[str, Any] = {'state': None, 'seconds_left': None}
+    if report is None or age is None or age > LINK_STALE_SEC:
+        return none
+    values = report.get('values', {})
+    if values.get('supported') != '1':
+        return none
+    state = {'1': 'tripped', '2': 'cooldown', '3': 'lockout'}.get(values.get('state', '0'))
+    if state is None:
+        return none
+    try:
+        seconds = max(0.0, float(values.get('seconds_left', '0')) - age)
+    except ValueError:
+        seconds = 0.0
+    return {'state': state, 'seconds_left': None if state == 'tripped' else round(seconds, 1)}
 
 
 def dips_note(values: dict[str, str]) -> str:
@@ -1479,6 +1502,14 @@ class DashboardHandler(webui.AppHandler):
             origin = lab_origin(self.headers.get('Origin'), self.headers.get('Host'))
             cors = {'Access-Control-Allow-Origin': origin, 'Vary': 'Origin'} if origin else {}
             self.send_json({'battery': current_battery()}, 200, cors)
+        elif url.path == '/api/stall':
+            origin = lab_origin(self.headers.get('Origin'), self.headers.get('Host'))
+            cors = {'Access-Control-Allow-Origin': origin, 'Vary': 'Origin'} if origin else {}
+            self.send_json(
+                {'stall': stall_banner(*(_sampler.stall() if _sampler else (None, None)))},
+                200,
+                cors,
+            )
         elif url.path == '/api/about':
             origin = lab_origin(self.headers.get('Origin'), self.headers.get('Host'))
             cors = {'Access-Control-Allow-Origin': origin, 'Vary': 'Origin'} if origin else {}

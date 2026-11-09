@@ -695,8 +695,9 @@ class TestOverrideEndpoint:
 
     def test_page_has_the_toggle_and_warning(self, dashboard):
         html = dashboard.webui.read_page(dashboard._HTML_PATH)
-        assert 'id="override"' in html and 'id="override-banner"' in html
+        assert 'id="override"' in html and '/ui/override.js?v=' in html
         assert 'The car may start moving without warning. Do not leave it unattended.' in html
+        assert 'RcnOverride.onChange' in html
 
 
 class TestOverrideOrigin:
@@ -1030,6 +1031,16 @@ class TestBatteryEndpoints:
         assert status == 200 and server.cors == 'http://127.0.0.1:8084'
         assert body['battery']['estimate']['shutdown_in'] == 42.0
 
+    def test_stall_for_a_lab_page(self, server, dashboard, monkeypatch):
+        class Sampler:
+            def stall(self):
+                return {'values': {'supported': '1', 'state': '2', 'seconds_left': '2.0'}}, 0.5
+
+        monkeypatch.setattr(dashboard, '_sampler', Sampler())
+        status, body = server('GET', '/api/stall', {'Origin': 'http://127.0.0.1:8084'})
+        assert status == 200 and server.cors == 'http://127.0.0.1:8084'
+        assert body['stall'] == {'state': 'cooldown', 'seconds_left': 1.5}
+
 
 class TestBatteryPage:
     def test_turn_off_tile_next_to_the_override(self, dashboard):
@@ -1039,18 +1050,24 @@ class TestBatteryPage:
         assert "confirm('Turn the car off?')" in html
         assert '/api/shutdown' in html
 
-    def test_header_pills_banner_and_cancel(self, dashboard):
+    def test_header_pills_and_cancel_on_the_shared_banner(self, dashboard):
         html = dashboard.webui.read_page(dashboard._HTML_PATH)
-        for element in ('batt-time', 'batt-power', 'battery-banner', 'battery-cancel'):
+        for element in ('batt-time', 'batt-power'):
             assert f'id="{element}"' in html
         assert '/api/battery/cancel' in html
+        assert 'RcnBattery.onCancel' in html and 'RcnBattery.update(e)' in html
+        # The shared scripts draw the banners; this page keeps no copy.
+        for element in ('battery-banner', 'override-banner', 'battery-cancel'):
+            assert f'id="{element}"' not in html
 
     def test_time_pill_switches_views(self, dashboard):
         html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert "const PILL_VIEWS = ['percent', 'time', 'clock'];" in html
         assert 'until ${at.toLocaleTimeString' in html
         assert "store.set('rcn-battery-view', pillView)" in html
-        assert 'Turning the car off now. Turn off the power switch.' in html
+        assert 'RcnBattery.final()' in html
+        shared = (dashboard.webui.WEB_DIR / 'battery.js').read_text()
+        assert f"'{dashboard.FINAL_MESSAGE}'" in shared
 
 
 NMCLI_DEVICES = """wlan1:wifi:connected:racecar-neo-ap
@@ -1217,6 +1234,32 @@ class TestFirmware:
         assert dashboard.stall_view(report, 1.0)['status'] == status
         assert dashboard.stall_view(None, None)['status'] == 'unsupervised'
         assert dashboard.stall_view(report, 10.0)['detail'] == 'No report'
+
+    @pytest.mark.parametrize(
+        'state, left, age, want',
+        [
+            ('0', '0.0', 0.5, {'state': None, 'seconds_left': None}),
+            ('1', '0.0', 0.5, {'state': 'tripped', 'seconds_left': None}),
+            ('2', '2.0', 0.5, {'state': 'cooldown', 'seconds_left': 1.5}),
+            ('3', '30.0', 1.0, {'state': 'lockout', 'seconds_left': 29.0}),
+            ('3', '0.4', 1.0, {'state': 'lockout', 'seconds_left': 0.0}),
+        ],
+    )
+    def test_stall_banner(self, dashboard, state, left, age, want):
+        report = {'values': {'supported': '1', 'state': state, 'seconds_left': left}}
+        assert dashboard.stall_banner(report, age) == want
+
+    @pytest.mark.parametrize(
+        'report, age',
+        [
+            (None, None),
+            ({'values': {'supported': '1', 'state': '3', 'seconds_left': '9'}}, 10.0),
+            ({'values': {'supported': '0', 'state': '3', 'seconds_left': '9'}}, 0.5),
+            ({'values': {'supported': '', 'state': '3', 'seconds_left': '9'}}, 0.5),
+        ],
+    )
+    def test_no_stall_banner_without_a_fresh_supported_report(self, dashboard, report, age):
+        assert dashboard.stall_banner(report, age)['state'] is None
 
     def test_stall_chip_on_the_home_page(self, dashboard):
         html = (Path(dashboard.__file__).parent / 'dashboard.html').read_text()

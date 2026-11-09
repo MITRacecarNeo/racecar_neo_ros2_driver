@@ -117,16 +117,6 @@
 </header>
 
 <main>
-  <div class="rcn-override" id="override-banner" role="alert" hidden>
-    <svg class="rcn-icon"><use href="/ui/icons.svg#alert"/></svg>
-    <span id="override-text">Safety switch override is on. The car may move without warning. Do not leave it unattended.</span>
-    <button class="rcn-btn small" id="override-off">Turn off</button>
-  </div>
-  <div class="rcn-override" id="battery-banner" role="alert" hidden>
-    <svg class="rcn-icon"><use href="/ui/icons.svg#battery"/></svg>
-    <span id="battery-text"></span>
-    <button class="rcn-btn small" id="battery-cancel" hidden>Cancel shutdown</button>
-  </div>
   <h2 class="apps-title">Apps</h2>
   <div class="bar-row group-row"><div class="rcn-eyebrow">Core</div></div>
   <div class="apps">
@@ -244,6 +234,9 @@
   </div>
 </main>
 
+<script src="/ui/battery.js?v={{asset}}"></script>
+<script src="/ui/stall.js?v={{asset}}"></script>
+<script src="/ui/override.js?v={{asset}}"></script>
 <script>
 'use strict';
 const { $, esc, icon, pill, STATUS_ICON, store, setHtml } = RcnUi;
@@ -598,44 +591,26 @@ $('view-basic').onclick = () => setView('basic');
 $('view-advanced').onclick = () => setView('advanced');
 setView(store.get('rcn-status-view', 'basic'));
 
-// Safety override: this page and the driving lab pages (/ui/override.js)
-// keep it alive once a second; it ends 2 s after the last one stops asking.
+// Safety override: the banner and the keepalive are /ui/override.js, shared
+// with the driving lab pages; this page adds the tile and the messages.
 let overrideOn = false;
-let overrideEpoch = 0;  // Replies to requests sent before the last start or stop are ignored.
-function renderOverride(o) {
-  const on = !!(o && o.on);
-  $('override-banner').hidden = !on;
+RcnOverride.onChange = (o) => {
+  const on = !!o.on;
   $('override').setAttribute('aria-pressed', on);
-  $('override-text').textContent = on && !o.confirmed
-    ? 'Safety override starting...'
-    : 'Safety switch override is on. The car may move without warning. Do not leave it unattended.';
   if (overrideOn && !on && o.ended) $('msg').textContent = `Safety override off. ${o.ended}`;
   overrideOn = on;
-}
-async function sendOverride(action) {
-  const epoch = action === 'keep' ? overrideEpoch : ++overrideEpoch;
-  try {
-    const r = await post('/api/override', { action });
-    const o = await r.json();
-    if (epoch === overrideEpoch) renderOverride(o);
-  } catch (err) { if (action !== 'keep') $('msg').textContent = LOST; }
-}
+};
+RcnOverride.onLost = () => { $('msg').textContent = LOST; };
 function startOverride() {
   if (!confirm('The car may start moving without warning. Do not leave it unattended.')) return;
   $('msg').textContent = '';
-  sendOverride('start');
+  RcnOverride.send('start');
 }
-$('override').onclick = () => (overrideOn ? sendOverride('stop') : startOverride());
-$('override-off').onclick = () => sendOverride('stop');
-setInterval(() => sendOverride('keep'), 1000);
-sendOverride('keep');
+$('override').onclick = () => (overrideOn ? RcnOverride.send('stop') : startOverride());
 
-// Battery: header pills, banner, cancel, and Turn Off. The countdown runs on
-// this page from shutdown_in, so it does not depend on the 3 s poll or on the
-// car's clock.
-const FINAL_TEXT = 'Turning the car off now. Turn off the power switch.';
+// Battery: header pills, cancel, and Turn Off. The banner and its countdown
+// are /ui/battery.js, fed from this page's status poll.
 let battery = null;
-let shutdownDeadline = null;
 let turningOff = false;
 function minutesText(m) {
   const r = Math.round(m);
@@ -675,30 +650,9 @@ function renderBattery(b) {
   const power = $('batt-power');
   power.hidden = !(e && e.power_w !== null);
   if (!power.hidden) power.innerHTML = icon('bolt') + esc(`${e.power_w.toFixed(1)} W avg`);
-  if (e && level === 'countdown' && e.shutdown_in !== null) {
-    const at = performance.now() + e.shutdown_in * 1000;
-    // Keep the running count unless the car's figure differs by more than a tick.
-    if (shutdownDeadline === null || Math.abs(at - shutdownDeadline) > 1500) shutdownDeadline = at;
-  } else shutdownDeadline = null;
-  $('battery-cancel').hidden = !(e && e.can_cancel);
-  renderBatteryBanner();
+  RcnBattery.update(e);
 }
-function renderBatteryBanner() {
-  const e = battery;
-  let text = '';
-  if (turningOff || (e && e.level === 'off')) text = FINAL_TEXT;
-  else if (e && e.level === 'countdown' && shutdownDeadline !== null) {
-    text = `Shutting down in ${Math.max(0, Math.ceil((shutdownDeadline - performance.now()) / 1000))} s.`;
-  } else if (e && e.level === 'warn') {
-    text = e.minutes_left !== null
-      ? `Low battery: ${Math.round(e.minutes_left)} min left. Charge or swap the battery.`
-      : 'Low battery: Charge or swap the battery.';
-  }
-  $('battery-text').textContent = text;
-  $('battery-banner').hidden = !text;
-}
-setInterval(renderBatteryBanner, 250);
-$('battery-cancel').onclick = async () => {
+RcnBattery.onCancel = async () => {
   try {
     const r = await (await post('/api/battery/cancel')).json();
     $('msg').textContent = r.message;
@@ -714,7 +668,7 @@ $('poweroff').onclick = async () => {
   } catch (err) { $('msg').textContent = LOST; return; }
   turningOff = true;
   clearInterval(statusTimer);
-  renderBatteryBanner();
+  RcnBattery.final();
   setOverall('err', 'Shutting down');
 };
 

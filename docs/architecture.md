@@ -166,7 +166,8 @@ is slow and revoking immediate: one bad frame hands the gate back.
 ### Safety-controller override
 
 The 8080 dashboard can hold the gate with no controller. Its toggle starts a
-session; the 8080 page and the three driving lab pages (`scripts/web/override.js`)
+session; the 8080 page and the three driving lab pages (`scripts/web/override.js`,
+which also draws the banner; 8080 adds its tile through `RcnOverride.onChange`)
 each post a keepalive to `/api/override` every second, which never starts one.
 The lab pages call 8080 from their own ports, so the reply carries a CORS
 header for those origins only (`override_origin`). `OverrideSession` in
@@ -745,7 +746,10 @@ without stall protection (no `fw.stall_protect=1`) sends zeros. A change is
 latched on `/pit/stall` from the reader thread, seconds left in 0.1 s steps,
 and trips, lockouts and the return to normal are logged. The 8080 Stall chip
 and the `racecar status` `stall protection` row read it through
-`sysinfo.read_stall_status`.
+`sysinfo.read_stall_status`. The dashboard keeps the last `/diagnostics`
+report and serves it as `/api/stall` (`stall_banner`: tripped, cooldown or
+lockout with seconds left, CORS for the app ports); `scripts/web/stall.js`
+draws the banner on every page from it.
 
 `shake` and `poke` run `health_watch.Watch`: four threads (EXT5V as fast as
 vcgencmd answers; a 1 s loop for throttle bits and a data-root write; a
@@ -784,7 +788,7 @@ apart from teleop, so a teleop restart never stops it. Modules:
 | `scripts/battery_curve.py` | Offline analysis of guard logs: charge, capacity, drop per amp (20 s window fits), curve check, and the `Guard` replayed with the estimate shutdown off, scored at 15 and 5 minutes |
 
 ```
-  /battery/state ─▶ battery_guard ─┬─▶ /battery/estimate ─▶ dashboard ─▶ 8080 pills, banner; /api/battery ─▶ /ui/battery.js
+  /battery/state ─▶ battery_guard ─┬─▶ /battery/estimate ─▶ dashboard ─▶ 8080 pills; /api/battery ─▶ /ui/battery.js banner
        (1 Hz)                      ├─▶ terminals, tmux status bar
                                    ├─▶ /dotmatrix/alert, /led/alert ─▶ pit_node
                                    ├─▶ <data root>/health/battery/<start>_guard.csv

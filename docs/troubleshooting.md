@@ -22,6 +22,7 @@ comment in the source can point here instead of carrying the full account.
 - [Depth view gaps](#depth-view-gaps)
 - [raspi-config on Ubuntu](#raspi-config-on-ubuntu)
 - [Gamepad hid_nintendo blacklist](#gamepad-hid_nintendo-blacklist)
+- [Gamepad /joy rate](#gamepad-joy-rate)
 - [Lidar /scan stalls](#lidar-scan-stalls)
 - [Map quality](#map-quality)
 - [Localization state](#localization-state)
@@ -401,6 +402,22 @@ because hid_nintendo re-grabs the device immediately and the controller never
 sees the rejection long enough to fall back to Xbox 360 mode (`2f24:016d`,
 bound by `xpad`). A module-wide blacklist does, at the cost of genuine Switch
 Pro controllers.
+
+## Gamepad /joy rate
+
+`launch/teleop.launch.py` (`joy_node`, `joy_autorepeat_rate` 20),
+`config/mux.yaml` (`joystick_timeout_sec`).
+
+A `ros2 topic hz /joy` or `ros2 topic echo /joy` started in a fresh
+terminal can show no messages for the first few seconds. A new node needs
+about 2.6 s to discover the publisher, so a short read may end empty while
+the gamepad works. Read for 10 s or more before calling `/joy` silent.
+
+With the sticks and buttons untouched, `joy_node` 3.3.0 repeats the last
+state at about 15 Hz, not the 20 Hz set: gaps are 50 ms or 100 ms, about
+one tick in three skipped. The mux stops the car only after 0.5 s without
+`/joy`, so this is normal. A real loss shows as gaps over 0.5 s and a
+warning in the teleop log: "Controller disconnected; publishing zero".
 
 ## Lidar /scan stalls
 

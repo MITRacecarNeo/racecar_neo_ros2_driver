@@ -162,6 +162,7 @@ code, pre, .rcn-mono { font-family: var(--rcn-font-mono); }
 .rcn-override .rcn-icon { width: 24px; height: 24px; flex: none; }
 .rcn-override span { flex: 1; min-width: 180px; }
 .rcn-override .rcn-btn { background: var(--rcn-paper); border-color: var(--rcn-paper); color: var(--rcn-crimson-deep); }
+.rcn-override.warn { background: var(--rcn-gold); color: var(--rcn-ink); }
 .rcn-status.info, .rcn-status.off { background: var(--rcn-steel); color: var(--rcn-paper); }
 
 /* Badge: parallelogram, text upright. */

@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+### Added
+
+- A stall banner on every page the car serves (`scripts/web/stall.js`,
+  8080 `/api/stall`): yellow while the throttle is held after a stall or
+  during the cooldown, red during a lockout, with the seconds left.
+
+### Changed
+
+- The 8080 home page draws the battery and safety-override banners with the
+  shared `battery.js` and `override.js`, adding its pills, Cancel shutdown,
+  Turn Off and the override tile through their hooks.
+
 ## [0.9.2] - 2026-11-07
 
 ### Added

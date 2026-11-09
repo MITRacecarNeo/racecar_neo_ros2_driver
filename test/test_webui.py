@@ -71,6 +71,7 @@ SHARED = (
     'lost.js',
     'override.js',
     'battery.js',
+    'stall.js',
     'ui.js',
     'api.js',
     'tune.js',
@@ -123,20 +124,42 @@ def test_driving_lab_pages_keep_the_override_alive():
         assert '/ui/override.js?v=' in (dashboards / page).read_text(), page
 
 
+PAGES = (
+    'dashboard.html',
+    'dashboard_launch.html',
+    'mapview.html',
+    'dashboards/teleop_dashboard/teleop.html',
+    'dashboards/linefollow_dashboard/linefollow.html',
+    'dashboards/wallfollow_dashboard/wallfollow.html',
+    'dashboards/camlabel_dashboard/camlabel.html',
+    'terminal.html',
+)
+
+
 def test_app_pages_show_the_low_battery_banner():
-    # The 8080 home page draws its own banner with the cancel button.
+    # 8080 included: it feeds the shared banner from its own status poll.
     scripts = Path(__file__).resolve().parent.parent / 'scripts'
-    for page in (
-        'dashboard_launch.html',
-        'mapview.html',
+    for page in PAGES:
+        assert '/ui/battery.js?v=' in (scripts / page).read_text(), page
+
+
+def test_every_page_shows_the_stall_banner():
+    scripts = Path(__file__).resolve().parent.parent / 'scripts'
+    for page in (*PAGES, 'terminal_login.html'):
+        assert '/ui/stall.js?v=' in (scripts / page).read_text(), page
+
+
+def test_override_banner_only_on_8080_and_driving_pages():
+    # Every page that loads override.js keeps the override alive.
+    scripts = Path(__file__).resolve().parent.parent / 'scripts'
+    driving = {
+        'dashboard.html',
         'dashboards/teleop_dashboard/teleop.html',
         'dashboards/linefollow_dashboard/linefollow.html',
         'dashboards/wallfollow_dashboard/wallfollow.html',
-        'dashboards/camlabel_dashboard/camlabel.html',
-        'terminal.html',
-    ):
-        assert '/ui/battery.js?v=' in (scripts / page).read_text(), page
-    assert '/ui/battery.js' not in (scripts / 'dashboard.html').read_text()
+    }
+    for page in (*PAGES, 'terminal_login.html'):
+        assert ('/ui/override.js?v=' in (scripts / page).read_text()) == (page in driving), page
 
 
 class TestFill:
@@ -184,7 +207,7 @@ class TestFill:
         assert f'Driver {webui.driver_version()}' in text
         assert 'racecar OS' in text and 'Copyright' not in text
 
-    @pytest.mark.parametrize('name', ['battery.js', 'override.js', 'lost.js'])
+    @pytest.mark.parametrize('name', ['battery.js', 'override.js', 'lost.js', 'stall.js'])
     def test_shared_scripts_reach_the_home_page(self, webui, name):
         raw = (webui.WEB_DIR / name).read_text()
         assert ':{{home}}/' in raw and ':8080/' not in raw

@@ -1,27 +1,43 @@
-/* Safety-override banner for the driving lab pages. Served at /ui/override.js.
+/* Safety-override banner for 8080 and the driving lab pages. Served at /ui/override.js.
 
    The override is turned on from the apps page on 8080 and lapses 2 s after
    the last keepalive. Every page that loads this file sends one each second,
    so the override stays on while any of them is open, and shows the banner
-   with Turn off while it is on. A keepalive never turns the override on. */
+   with Turn off while it is on. A keepalive never turns the override on.
+
+   RcnOverride.send('start' | 'stop' | 'keep') posts an action;
+   RcnOverride.onChange(o) is called with each reply, and RcnOverride.onLost
+   when a start or stop cannot reach 8080 (the 8080 tile and messages). */
 (function () {
   'use strict';
   const PERIOD_MS = 1000;
   const url = `${location.protocol}//${location.hostname}:{{home}}/api/override`;
-  let epoch = 0;
+  const ON = 'Safety switch override is on. The car may move without warning. Do not leave it unattended.';
+  let epoch = 0;  // Replies to requests sent before the last start or stop are ignored.
   let banner = null;
+
+  const api = { onChange: null, onLost: null, send };
+  window.RcnOverride = api;
 
   function build() {
     banner = document.createElement('div');
     banner.className = 'rcn-override';
+    banner.id = 'override-banner';
     banner.setAttribute('role', 'alert');
     banner.hidden = true;
     banner.innerHTML = `<svg class="rcn-icon"><use href="/ui/icons.svg#alert"/></svg>
-      <span>Safety switch override is on. The car may move without warning. Do not leave it unattended.</span>
+      <span>${ON}</span>
       <button class="rcn-btn small" type="button">Turn off</button>`;
     banner.querySelector('button').onclick = () => send('stop');
     const main = document.querySelector('main');
     if (main) main.prepend(banner); else document.body.prepend(banner);
+  }
+
+  function render(o) {
+    const on = !!(o && o.on);
+    banner.querySelector('span').textContent = on && o.confirmed === false ? 'Safety override starting...' : ON;
+    banner.hidden = !on;
+    if (api.onChange) api.onChange(o || { on: false });
   }
 
   async function send(action) {
@@ -29,10 +45,11 @@
     try {
       const r = await fetch(url, { method: 'POST', body: JSON.stringify({ action }) });
       const o = await r.json();
-      if (mine === epoch) banner.hidden = !o.on;
+      if (mine === epoch) render(o);
     } catch (err) {
       // 8080 unreachable: the override lapses on the car, so hide the banner.
-      if (mine === epoch) banner.hidden = true;
+      if (mine === epoch) render(null);
+      if (action !== 'keep' && api.onLost) api.onLost();
     }
   }
 

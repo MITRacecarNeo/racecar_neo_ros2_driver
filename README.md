@@ -720,7 +720,9 @@ The firmware stops the motor when it stalls under load: throttle to neutral
 until the throttle returns to neutral, then a 2 s cooldown; 3 trips within 60
 s lock the motor out for 30 s. The 8080 Stall chip and the `racecar status`
 `stall protection` row show the state: yellow when tripped or cooling down,
-red during a lockout. `/pit/stall` carries each change. They turn yellow
+red during a lockout. While the throttle is held, a banner on every page the
+car serves says so and counts down the cooldown or lockout. `/pit/stall`
+carries each change. They turn yellow
 for a test build (open-loop PWM or ESC calibration), a build with
 uncommitted changes, or firmware too old to answer (before 0.9.0). The full
 reply is on `/pit/firmware`.
