@@ -35,6 +35,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import features  # noqa: E402, I100  sibling script, after the path insert
+from racecar_neo_ros2_driver.term import paint, use_color  # noqa: E402, F401  used by health
 import sysinfo  # noqa: E402
 
 OK, WARN, FAIL, SKIP = 'OK', 'WARN', 'FAIL', 'SKIP'
@@ -1159,7 +1160,6 @@ def autonomy_checks(unit_state: str, ros: RosResult, sampled: bool) -> list[Chec
 # ---------------------------------------------------------------------------
 
 MARK = {OK: '[ OK ]', WARN: '[WARN]', FAIL: '[FAIL]', SKIP: '[SKIP]'}
-ANSI = {OK: '32', WARN: '33', FAIL: '31'}
 
 
 def overall(checks: list[Check]) -> str:
@@ -1180,22 +1180,6 @@ def exit_code_for(checks: list[Check], strict: bool = False) -> int:
     if strict:
         return 0 if all(c.status == OK for c in checks) else 1
     return 1 if any(c.status == FAIL for c in checks) else 0
-
-
-def use_color() -> bool:
-    """Color only an interactive terminal; NO_COLOR (no-color.org) opts out."""
-    return (
-        sys.stdout.isatty()
-        and 'NO_COLOR' not in os.environ
-        and os.environ.get('TERM', '') != 'dumb'
-    )
-
-
-def paint(text: str, status: str, color: bool, bold: bool = False) -> str:
-    code = ANSI.get(status)
-    if not color or code is None:
-        return text
-    return f'\033[{"1;" if bold else ""}{code}m{text}\033[0m'
 
 
 def render(

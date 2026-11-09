@@ -23,6 +23,7 @@ from typing import Any
 
 import numpy as np
 from racecar_neo_ros2_driver import car_profile
+from racecar_neo_ros2_driver.term import paint, use_color  # noqa: F401  calibrate.py imports both
 import rclpy
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
@@ -155,26 +156,6 @@ def overall(criteria: list[Criterion]) -> str:
     """Return the worst status among the criteria (INFO lines do not count)."""
     judged = [c.status for c in criteria if c.status != 'INFO']
     return max(judged, key=STATUS_ORDER.index) if judged else 'PASS'
-
-
-# Same colors and opt-outs as `racecar status` (scripts/diagnose.py).
-ANSI = {'PASS': '32', 'WARN': '33', 'FAIL': '31'}
-
-
-def use_color() -> bool:
-    """Color only an interactive terminal; NO_COLOR (no-color.org) opts out."""
-    return (
-        sys.stdout.isatty()
-        and 'NO_COLOR' not in os.environ
-        and os.environ.get('TERM', '') != 'dumb'
-    )
-
-
-def paint(text: str, status: str, color: bool, bold: bool = False) -> str:
-    code = ANSI.get(status)
-    if not color or code is None:
-        return text
-    return f'\033[{"1;" if bold else ""}{code}m{text}\033[0m'
 
 
 def criteria_lines(
