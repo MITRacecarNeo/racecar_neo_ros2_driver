@@ -48,7 +48,7 @@ import time
 from typing import Any
 
 import numpy as np
-from racecar_neo_ros2_driver import car_profile, fileio
+from racecar_neo_ros2_driver import car_profile, fileio, units
 import yaml
 
 HERE = Path(__file__).resolve().parent
@@ -60,7 +60,7 @@ import scan_fit  # noqa: E402, I100
 import slam_eval  # noqa: E402
 
 SESSIONS = slam_eval.EVAL_DIR / 'sessions'
-TELEOP_UNIT = 'racecar-teleop'
+TELEOP_UNIT = units.TELEOP
 FOXGLOVE_PARAMS = HERE / 'foxglove_validation.yaml'
 FOXGLOVE_PORT = 8765
 BAG_TOPICS = ('/scan', '/tf', '/tf_static', '/odom/integrated', '/pose', '/amcl_pose', '/map')

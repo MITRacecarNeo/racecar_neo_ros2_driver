@@ -35,6 +35,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import features  # noqa: E402, I100  sibling script, after the path insert
+from racecar_neo_ros2_driver import units  # noqa: E402
 from racecar_neo_ros2_driver.geometry import yaw_of  # noqa: E402
 from racecar_neo_ros2_driver.term import paint, use_color  # noqa: E402, F401  used by health
 import sysinfo  # noqa: E402
@@ -140,20 +141,13 @@ USB_DEVICES = [
     ('10c4:ea60', 'CP2102 (lidar)'),
 ]
 
-SERVICE_UNITS = (
-    'racecar-teleop',
-    'racecar-watchdog',
-    'racecar-dashboard',
-    'racecar-jupyter',
-    'racecar-mapview',
-    'racecar-battery-guard',
-)
+SERVICE_UNITS = units.CORE
 # Started from the 8080 Terminal tile, not at boot, so stopped is fine.
-TERMINAL_UNIT = 'racecar-terminal'
+TERMINAL_UNIT = units.TERMINAL
 
 # Started by `racecar map` or the map viewer, never at boot, so it is not a
 # service row; the autonomy section samples these while it runs.
-AUTONOMY_UNIT = 'racecar-autonomy'
+AUTONOMY_UNIT = units.AUTONOMY
 AUTONOMY_TOPICS = [
     TopicSpec('/autonomy/pose', 'pose rate', 20.0),
     TopicSpec('/autonomy/status', 'status rate', 1.0, 0.5),

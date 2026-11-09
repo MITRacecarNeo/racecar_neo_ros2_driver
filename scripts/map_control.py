@@ -26,17 +26,16 @@ from datetime import datetime
 import math
 import os
 from pathlib import Path
-import shlex
 import subprocess
 import time
 from typing import Any
 
-from racecar_neo_ros2_driver import apps, autonomy as au, data_root, fileio, ros_cli
+from racecar_neo_ros2_driver import apps, autonomy as au, data_root, fileio, ros_cli, units
 from racecar_neo_ros2_driver.geometry import yaw_of
 from racecar_neo_ros2_driver.maps import map_root, parse_pose, ROOT_ENV, valid_name
 
-UNIT = 'racecar-autonomy.service'
-TELEOP_UNIT = 'racecar-teleop.service'
+UNIT = units.service(units.AUTONOMY)
+TELEOP_UNIT = units.service(units.TELEOP)
 MODE_FILE = Path.home() / '.config' / 'racecar' / 'autonomy.conf'
 MODE_FILE_ENV = 'RACECAR_AUTONOMY_CONF'
 KEYS = (
@@ -330,8 +329,9 @@ def systemctl(*args: str) -> subprocess.CompletedProcess[str]:
 
     RACECAR_SYSTEMCTL replaces the systemctl command (tests).
     """
-    argv = shlex.split(os.environ.get('RACECAR_SYSTEMCTL') or 'systemctl')
-    return subprocess.run([*argv, *args], capture_output=True, text=True, check=False)
+    return subprocess.run(
+        [*units.systemctl_argv(), *args], capture_output=True, text=True, check=False
+    )
 
 
 def unit_state(unit: str = UNIT) -> str:

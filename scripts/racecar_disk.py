@@ -31,7 +31,7 @@ import subprocess
 import sys
 from typing import Any
 
-from racecar_neo_ros2_driver import data_root
+from racecar_neo_ros2_driver import apps, data_root, units
 
 DEVICE = '/dev/nvme0n1'
 LABEL = 'racecar-data'
@@ -43,13 +43,13 @@ FSTAB = Path('/etc/fstab')
 DEVICE_TIMEOUT_SEC = 45
 MOUNT_OPTIONS = f'defaults,noatime,nofail,x-systemd.device-timeout={DEVICE_TIMEOUT_SEC}'
 # Units that write to the data root; stopped before the drive is unmounted.
-WRITERS = (
-    'racecar-autonomy.service',
-    'racecar-mapview.service',
-    'racecar-webteleop.service',
-    'racecar-linefollow.service',
-    'racecar-wallfollow.service',
-    'racecar-camlabel.service',
+WRITERS = tuple(
+    units.service(u)
+    for u in (
+        units.AUTONOMY,
+        apps.app('mapview')['unit'],
+        *(a['unit'] for a in apps.all_apps() if a['group'] == 'utilities'),
+    )
 )
 # ~/data folders whose place under the data root differs.
 COPY_RENAMES = {'camlabel': 'datasets/camlabel'}
@@ -206,7 +206,7 @@ def recording_now() -> bool:
 
 
 def refuse_while_busy(run: Run = run_command) -> None:
-    if unit_active('racecar-autonomy.service', run) and mapping_now():
+    if unit_active(units.service(units.AUTONOMY), run) and mapping_now():
         raise DiskError('mapping is running. Save and stop it in the map viewer first.')
     if recording_now():
         raise DiskError('a recording is running. Stop it first: racecar log stop')
@@ -286,7 +286,7 @@ class Steps:
         return uuid
 
     def refresh_data_root(self) -> None:
-        self.sudo('systemctl', 'restart', 'racecar-data.service')
+        self.sudo('systemctl', 'restart', units.service(units.DATA))
 
     def link_jupyter(self, root: Path, ws: Path | None = None) -> None:
         """Point ~/jupyter_ws/data and maps at the new root; a real folder there is left alone."""

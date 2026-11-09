@@ -19,7 +19,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
-from racecar_neo_ros2_driver import apps, fileio
+from racecar_neo_ros2_driver import apps, fileio, units
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
@@ -87,8 +87,8 @@ FEATURES: list[dict[str, Any]] = [
     },
     {'id': 'autonomy', 'name': 'Autonomy', 'icon': 'radar', 'desc': 'Mapping or localization'},
 ]
-TELEOP_UNIT = 'racecar-teleop.service'
-AUTONOMY_UNIT = 'racecar-autonomy.service'
+TELEOP_UNIT = units.service(units.TELEOP)
+AUTONOMY_UNIT = units.service(units.AUTONOMY)
 MAP_TOOL = [sys.executable, str(Path(__file__).resolve().parent / 'racecar_map.py')]
 MAP_TOOL_TIMEOUT_SEC = 180.0
 # Time for the sensors to come up after a teleop restart before autonomy resumes.

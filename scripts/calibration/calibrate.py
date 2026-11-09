@@ -27,7 +27,7 @@ import sys
 import tempfile
 from typing import Any
 
-from racecar_neo_ros2_driver import car_profile
+from racecar_neo_ros2_driver import car_profile, units
 import yaml
 
 HERE = Path(__file__).resolve().parent
@@ -43,7 +43,7 @@ from calibrate_common import (  # noqa: E402, I100
     use_color,
 )
 
-TELEOP_UNIT = 'racecar-teleop'
+TELEOP_UNIT = units.TELEOP
 RUN_PROMPT = 'Press Enter to run, s to skip, and q to stop: '
 RUN_PROMPT_BACK = 'Press Enter to run, s to skip, b to go back a step, and q to stop: '
 LIDAR_SETUP = (
@@ -257,7 +257,7 @@ def fmt(value: Any, digits: int = 4) -> str:
 
 
 def systemctl() -> list[str]:
-    return shlex.split(os.environ.get('RACECAR_SYSTEMCTL', 'systemctl'))
+    return units.systemctl_argv()
 
 
 def teleop_active() -> bool:
