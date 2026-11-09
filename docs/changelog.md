@@ -12,6 +12,13 @@ All notable changes to this project will be documented in this file. The format 
 - `setup_all.sh --from N` resumes at phase N and `--skip N,M` leaves phases
   out; a failed phase prints the command that resumes there.
 - `racecar setup services` runs `setup_services.sh` (the core units).
+- Setup installs the student library at the tag in
+  `config/student_library.yaml`, read-only in
+  `/opt/racecar-neo/library-<tag>/` and linked at
+  `~/jupyter_ws/racecar-neo/library`, and clones the labs from `main` into
+  `~/jupyter_ws/racecar-neo/labs`. `racecar library install` reinstalls
+  both, moving existing labs to `~/backups` first; `racecar library
+  --status` lists pinned and installed versions.
 
 ### Fixed
 

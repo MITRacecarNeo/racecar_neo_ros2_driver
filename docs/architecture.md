@@ -21,6 +21,7 @@ and what supervises them. Companion to the operational instructions in
 - [Terminal app](#terminal-app)
 - [Configuration](#configuration)
 - [Data root](#data-root)
+- [Student library](#student-library)
 - [Calibration data flow](#calibration-data-flow)
 - [Repository layout](#repository-layout)
 - [Known structural issues](#known-structural-issues)
@@ -936,6 +937,19 @@ session across two folders. `scripts/racecar_disk.py` backs `racecar data`
 and `racecar disk` (status, setup, format, check); privileged steps run
 through sudo. `diagnose.check_data_root` gives the `racecar status` row, and
 `dashboard.data_root_health` the 8080 Data indicator.
+
+## Student library
+
+`config/student_library.yaml` pins the library tag and the labs branch.
+`scripts/student_library.py` (`racecar library install`, run by
+`setup_jupyter.sh` with `--labs-if-missing`) clones the library as root into
+`/opt/racecar-neo/library-<tag>/`, precompiles it, and points the
+`~/jupyter_ws/racecar-neo/library` link at its `library/` folder; the labs
+are a user-owned clone in `~/jupyter_ws/racecar-neo/labs`. Folders it
+replaces move to `~/backups/<time>_racecar-neo-<labs|library>-<tag>`.
+Python finds the selected library through `racecar_student.pth` in user
+site-packages (`racecar library --select`); driver code finds the pinned
+one with `paths.student_library()`.
 
 ## Calibration data flow
 

@@ -81,3 +81,12 @@ for link in data maps; do
         echo "Linked $JUPYTER_WS/$link -> $target"
     fi
 done
+
+# The student library and labs (config/student_library.yaml): the library at
+# its pinned tag in /opt/racecar-neo, linked into ~/jupyter_ws/racecar-neo;
+# the labs cloned when there is no labs folder yet. Without network, setup
+# goes on and names the command to run later.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if ! sudo -u "$USER_NAME" python3 "$SCRIPT_DIR/student_library.py" install --labs-if-missing; then
+    echo "  student library and labs not installed; run later: racecar library install"
+fi

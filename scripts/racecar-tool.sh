@@ -845,6 +845,13 @@ __RC_DESKTOP_HELP__
 
             local action=""
             local select_target=""
+            if [[ "${1:-}" == "install" ]]; then
+                # The pinned library in /opt/racecar-neo and the labs
+                # (scripts/student_library.py); flags pass through.
+                shift
+                python3 "$pkg_dir/scripts/student_library.py" install "$@"
+                return
+            fi
             while [[ $# -gt 0 ]]; do
                 local arg="$1"; shift
                 case "$arg" in
@@ -869,7 +876,7 @@ __RC_DESKTOP_HELP__
             done
 
             if [[ -z "$action" ]]; then
-                echo "usage: racecar library [--select <folder> | --list | --reset | --status]" >&2
+                echo "usage: racecar library [install | --select <folder> | --list | --reset | --status]" >&2
                 return 2
             fi
 
@@ -880,6 +887,12 @@ Manages the racecar_student.pth file in user site-packages so Python scripts
 (e.g. labs/demo.py) can `import racecar_core` without sys.path hacks.
 
 Actions:
+  install [--tag T] [--no-labs]
+                     Install the pinned library (config/student_library.yaml)
+                     read-only in /opt/racecar-neo/library-<tag>/, link it at
+                     ~/jupyter_ws/racecar-neo/library, and clone the labs from
+                     main into ~/jupyter_ws/racecar-neo/labs. A labs folder
+                     already there moves to ~/backups first. Needs internet.
   --select <folder>  Point the .pth at ~/jupyter_ws/<folder>/library/.
                      <folder> must contain library/racecar_core.py.
   --list             List all ~/jupyter_ws/ folders that look like valid
@@ -976,6 +989,9 @@ __RC_LIB_HELP__
                         echo "No racecar library is currently selected."
                         echo "  Run: racecar library --select <folder>"
                         echo "  (or: racecar library --list)"
+                    fi
+                    if [[ -f "$pkg_dir/scripts/student_library.py" ]]; then
+                        python3 "$pkg_dir/scripts/student_library.py" status
                     fi
                     ;;
             esac
@@ -1398,8 +1414,10 @@ _racecar_complete() {
                 else
                     COMPREPLY=( $(compgen -W "$candidates" -- "$cur") )
                 fi
+            elif [[ "${COMP_WORDS[2]}" == "install" && $COMP_CWORD -gt 2 ]]; then
+                COMPREPLY=( $(compgen -W "--tag --no-labs --help" -- "$cur") )
             else
-                COMPREPLY=( $(compgen -W "--select --select= --list --reset --status --help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "install --select --select= --list --reset --status --help" -- "$cur") )
             fi
             ;;
         desktop)

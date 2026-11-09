@@ -25,6 +25,7 @@ This package is the v2 successor to [`racecar-neo-ros2-backend`](https://github.
 - [Bag recording](#bag-recording)
 - [Maps](#maps)
 - [Jupyter notebooks](#jupyter-notebooks)
+  - [Student library and labs](#student-library-and-labs)
 - [Manual build](#manual-build)
 - [Launch](#launch)
 - [Sensor calibration](#sensor-calibration)
@@ -183,7 +184,7 @@ Twelve phases, all under `scripts/`:
 7. **`setup_coral.sh`**: installs `libedgetpu1-std`, `tflite_runtime`, `pycoral` from vendored `depend/` artifacts; on a Pi 5, also the M.2 card's gasket DKMS driver and the `coral-msi` overlay, so a card fitted after setup works (reboot required)
 8. **`setup_realsense.sh`**: installs `realsense2_camera` (apt) + the Pi 5 IMU IIO permission fix (script, udev rule, boot service)
 9. **`setup_workspace.sh`**: clones `sllidar_ros2` at a pinned commit and runs `colcon build --symlink-install`; `setup_all.sh` then runs `racecar profile migrate` (see [Car profile](#car-profile))
-10. **`setup_jupyter.sh`**: `pip install --user jupyterlab` and the library's notebook packages (pinned), creates `~/jupyter_ws/`, links `~/jupyter_ws/data` and `~/jupyter_ws/maps` to the [data root](#car-data)
+10. **`setup_jupyter.sh`**: `pip install --user jupyterlab` and the library's notebook packages (pinned), creates `~/jupyter_ws/`, links `~/jupyter_ws/data` and `~/jupyter_ws/maps` to the [data root](#car-data), and installs the [student library and labs](#student-library-and-labs)
 11. **`setup_services.sh`**: installs and enables the core systemd units (`racecar-{data,teleop,watchdog,dashboard,jupyter,mapview}.service`), installs `racecar-autonomy.service` disabled, and installs `/etc/profile.d/racecar-data.sh`
 12. **`setup_dashboards.sh`**: installs a stopped, disabled `racecar-*` unit for each lab dashboard listed in `config/apps.yaml` (web teleop, line follow, wall follow, camera label) and removes units left by retired dashboards (`RACECAR_DASHBOARDS=0` skips it)
 
@@ -241,6 +242,7 @@ racecar map load room_1             # localize on a saved map
 racecar profile                     # this car's settings in ~/.config/racecar
 racecar data                        # where the car's data goes, free space
 racecar disk                        # the NVMe data drive; setup, format, check
+racecar library install             # pinned student library and the labs from main
 racecar library --list              # student library folders under ~/jupyter_ws
 racecar help                        # full usage
 ```
@@ -932,6 +934,23 @@ start or load; see [docs/advanced-settings.md](docs/advanced-settings.md),
 ## Jupyter notebooks
 
 `http://<robot>:8888/lab`: JupyterLab with `import rclpy` working out of the box. Notebooks land in `~/jupyter_ws/`. No token / password by default (the systemd unit assumes the robot's network is trusted).
+
+### Student library and labs
+
+Setup installs the student library and labs named in `config/student_library.yaml`:
+
+- The library repo at its pinned tag, read-only in `/opt/racecar-neo/library-<tag>/`. Its `library/` folder is linked at `~/jupyter_ws/racecar-neo/library`.
+- The labs repo at the tip of `main`, in `~/jupyter_ws/racecar-neo/labs`. Setup clones them only when that folder does not exist.
+
+```bash
+racecar library install             # pinned library, and fresh labs from main
+racecar library install --no-labs   # library only; labs stay as they are
+racecar library --status            # selected library, pinned and installed versions
+```
+
+`racecar library install` moves an existing labs folder to `~/backups/YYYYMMDD_HHMMSS_racecar-neo-labs-<tag>` before it clones, so a student's work is kept. A library folder that is not the link moves to `~/backups` the same way. Older library tags stay in `/opt/racecar-neo` for rollback. Both need internet.
+
+`racecar library --select <folder>` chooses which library Python imports: `racecar-neo`, or another `~/jupyter_ws` folder with a `library/` and `labs/` pair copied from a computer. The first install selects `racecar-neo` when nothing is selected.
 
 ## Manual build
 
