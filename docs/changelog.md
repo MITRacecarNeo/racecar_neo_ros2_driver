@@ -34,6 +34,9 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Changed
 
+- The validation tools (`scan_fit`, `slam_session`) read bags in either
+  storage, mcap or sqlite3, from the bag's metadata.
+- The watchdog no longer logs a traceback when it is stopped.
 - `racecar service restart` runs without sudo. A polkit rule
   (`49-racecar-restart.rules`, installed by `setup_user_env.sh`) lets the
   racecar user restart the dashboard, map viewer and battery guard; teleop

@@ -20,6 +20,7 @@ from typing import Any, IO
 
 from racecar_neo_ros2_driver.qos import SENSOR_LATEST
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -632,7 +633,8 @@ def main() -> None:
     def _spin() -> None:
         try:
             rclpy.spin(intro_node)
-        except (KeyboardInterrupt, SystemExit):
+        except (KeyboardInterrupt, SystemExit, ExternalShutdownException):
+            # A stop signal shuts rclpy down; that ends the spin normally.
             pass
         except Exception:  # noqa: BLE001
             log.exception('rclpy.spin terminated')

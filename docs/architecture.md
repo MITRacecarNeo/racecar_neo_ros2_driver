@@ -551,6 +551,11 @@ when teleop stops, so the supervisor never outlives the thing it supervises.
 `racecar-data.service` writes the data root to `/run/racecar/`; teleop,
 dashboard, jupyter, mapview and autonomy order after it and load
 `RACECAR_DATA_DIR` from `/run/racecar/environment` (`EnvironmentFile=`).
+The Python units start through `scripts/ros_exec.sh`, which sources ROS and
+the workspace and keeps the unit's `ROS_AUTOMATIC_DISCOVERY_RANGE`
+(`LOCALHOST` when unset; the ROS hook alone would set `SUBNET`). The setup
+scripts that install units, polkit rules, PAM and sudoers files share
+`scripts/setup_lib.sh` (`install_if_changed`, the target user).
 
 `racecar-autonomy.service` runs SLAM on top of teleop, installed but not
 enabled (mapping at boot would build an unsaved map and take CPU from every

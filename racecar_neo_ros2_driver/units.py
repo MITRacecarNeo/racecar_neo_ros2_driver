@@ -37,3 +37,12 @@ def service(unit: str) -> str:
 def systemctl_argv() -> list[str]:
     """Return the systemctl command; RACECAR_SYSTEMCTL replaces it (tests)."""
     return shlex.split(os.environ.get('RACECAR_SYSTEMCTL') or 'systemctl')
+
+
+if __name__ == '__main__':
+    # `units.py core`: the core units, one per line (racecar-tool.sh).
+    import sys
+
+    if sys.argv[1:] != ['core']:
+        sys.exit('usage: units.py core')
+    print('\n'.join(CORE))

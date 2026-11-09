@@ -21,6 +21,7 @@
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/setup_lib.sh"
 
 SERVICES=(
     racecar-data.service
@@ -46,13 +47,8 @@ for svc in "${SERVICES[@]}" "${INSTALL_ONLY[@]}"; do
         echo "Missing $src; skipping" >&2
         continue
     fi
-    if cmp -s "$src" "$dst" 2>/dev/null; then
-        echo "  $svc: already up to date"
-    else
-        sudo install -m 0644 "$src" "$dst"
-        echo "  $svc: installed/updated"
-        changed=1
-    fi
+    install_if_changed "$src" "$dst" 0644
+    if [[ $INSTALLED -eq 1 ]]; then changed=1; fi
 done
 
 if [[ $changed -eq 1 ]]; then
@@ -73,12 +69,7 @@ done
 # RACECAR_DATA_DIR for login shells (SSH) from the path racecar-data.service writes.
 PROFILE_SRC="${SCRIPT_DIR}/profile.d-racecar-data.sh"
 PROFILE_DST="/etc/profile.d/racecar-data.sh"
-if cmp -s "$PROFILE_SRC" "$PROFILE_DST" 2>/dev/null; then
-    echo "  $PROFILE_DST: already up to date"
-else
-    sudo install -m 0644 "$PROFILE_SRC" "$PROFILE_DST"
-    echo "  $PROFILE_DST: installed/updated"
-fi
+install_if_changed "$PROFILE_SRC" "$PROFILE_DST" 0644
 
 echo
 echo "Services installed and enabled. To start now:"

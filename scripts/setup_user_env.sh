@@ -4,8 +4,9 @@
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-USER_NAME="${SUDO_USER:-$USER}"
-USER_HOME="$(getent passwd "$USER_NAME" | cut -d: -f6)"
+source "$SCRIPT_DIR/setup_lib.sh"
+USER_NAME="$TARGET_USER"
+USER_HOME="$TARGET_HOME"
 
 # Groups: dialout (ttyUSB/ttyACM), i2c (LSM9DS1), spi (MAX7219), gpio (RPi pins),
 # video (vcgencmd / /dev/vcio for the RTC battery probe).
@@ -54,11 +55,8 @@ for rule in 49-racecar-network.rules 49-racecar-autonomy.rules 49-racecar-dashbo
         # polkit < 0.106 reads .pkla files and has no rules.d.
         echo "  WARNING: /etc/polkit-1/rules.d does not exist; skipping ${rule}." >&2
         echo "           'racecar wifi connect' and 'racecar map' will need sudo." >&2
-    elif sudo cmp -s "$POLKIT_SRC" "$POLKIT_DST" 2>/dev/null; then
-        echo "  $POLKIT_DST already up to date"
     else
-        sudo install -m 0644 -o root -g root "$POLKIT_SRC" "$POLKIT_DST"
-        echo "  installed $POLKIT_DST"
+        install_if_changed "$POLKIT_SRC" "$POLKIT_DST" 0644 root
     fi
 done
 
@@ -66,22 +64,14 @@ done
 # password through common-auth, with a 3 s delay after a failure.
 PAM_SRC="${SCRIPT_DIR}/pam.d-racecar-terminal"
 PAM_DST="/etc/pam.d/racecar-terminal"
-if sudo cmp -s "$PAM_SRC" "$PAM_DST" 2>/dev/null; then
-    echo "  $PAM_DST already up to date"
-else
-    sudo install -m 0644 -o root -g root "$PAM_SRC" "$PAM_DST"
-    echo "  installed $PAM_DST"
-fi
+install_if_changed "$PAM_SRC" "$PAM_DST" 0644 root
 
 # sudoers rule: the NVMe SMART log without a password, read-only
 # (racecar status, racecar health, racecar disk). Checked with visudo first.
 SUDOERS_SRC="${SCRIPT_DIR}/sudoers.d-racecar-nvme"
 SUDOERS_DST="/etc/sudoers.d/racecar-nvme"
-if sudo cmp -s "$SUDOERS_SRC" "$SUDOERS_DST" 2>/dev/null; then
-    echo "  $SUDOERS_DST already up to date"
-elif sudo visudo -cf "$SUDOERS_SRC" >/dev/null; then
-    sudo install -m 0440 -o root -g root "$SUDOERS_SRC" "$SUDOERS_DST"
-    echo "  installed $SUDOERS_DST"
+if sudo visudo -cf "$SUDOERS_SRC" >/dev/null; then
+    install_if_changed "$SUDOERS_SRC" "$SUDOERS_DST" 0440 root
 else
     echo "  WARNING: $SUDOERS_SRC failed visudo; not installed." >&2
 fi

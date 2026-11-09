@@ -97,8 +97,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     lst = sub.add_parser('list', help='one app per line, fields tab-separated')
     lst.add_argument('--where', action='append', default=[], metavar='KEY[=VALUE]')
     lst.add_argument('--fields', default='id', help='comma-separated keys (default id)')
+    sub.add_parser('home', help='the home page unit and port, tab-separated')
     args = parser.parse_args(argv)
 
+    if args.cmd == 'home':
+        home = registry()['home']
+        print(f"{home['unit']}\t{home['port']}")
+        return 0
     keys = args.fields.split(',')
     for a in all_apps():
         if matches(a, args.where):

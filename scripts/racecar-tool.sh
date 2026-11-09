@@ -14,6 +14,25 @@ if [ -z "${RACECAR_DATA_DIR:-}" ]; then
     export RACECAR_DATA_DIR
 fi
 
+# One `racecar service status` row for UNIT: active, enabled and the page link
+# on PORT (may be empty). A unit with no file in /etc/systemd/system reads "not
+# installed"; --active-only leaves out the enabled column.
+_racecar_unit_row() {
+    local unit="$1" port="$2" mode="${3:-}" state enabled
+    if [[ ! -f "/etc/systemd/system/$unit.service" ]]; then
+        printf "  %-22s  not installed\n" "$unit"
+        return 0
+    fi
+    state=$(systemctl is-active "$unit" 2>&1 || true)
+    if [[ "$mode" == "--active-only" ]]; then
+        printf "  %-22s  active=%s\n" "$unit" "$state"
+        return 0
+    fi
+    enabled=$(systemctl is-enabled "$unit" 2>&1 || true)
+    printf "  %-22s  active=%-12s enabled=%-10s %s\n" \
+        "$unit" "$state" "$enabled" "${port:+http://$(hostname).local:$port}"
+}
+
 racecar() {
     local pkg="racecar_neo_ros2_driver"
     local ws="$HOME/ros2_ws"
@@ -108,9 +127,9 @@ racecar() {
         service)
             local action="${1:-status}"
             shift || true
-            local -a core_units=("racecar-teleop" "racecar-watchdog"
-                                 "racecar-dashboard" "racecar-jupyter"
-                                 "racecar-mapview" "racecar-battery-guard")
+            # racecar_neo_ros2_driver/units.py: started at boot.
+            local -a core_units
+            mapfile -t core_units < <(python3 "$pkg_dir/racecar_neo_ros2_driver/units.py" core)
             # From config/apps.yaml. Apps that publish /drive: a second
             # publisher fights the mux, so starting one stops the others.
             local apps_py="$pkg_dir/racecar_neo_ros2_driver/apps.py"
@@ -172,38 +191,21 @@ racecar() {
                     sudo journalctl -u "racecar-$unit" -f
                     ;;
                 status|"")
-                    local u state enabled port
+                    # Page ports from config/apps.yaml (apps, then the home page).
+                    local u p
+                    local -A port_of=()
+                    while IFS=$'\t' read -r u p; do
+                        [[ -n "$u" ]] && port_of[$u]="$p"
+                    done < <(python3 "$apps_py" list --fields unit,port; python3 "$apps_py" home)
                     echo "core:"
                     for u in "${core_units[@]}"; do
-                        state=$(systemctl is-active "$u" 2>&1 || true)
-                        enabled=$(systemctl is-enabled "$u" 2>&1 || true)
-                        port=$(sed -n 's/.*(port \([0-9]*\)).*/\1/p' \
-                            "/etc/systemd/system/$u.service" 2>/dev/null | head -1)
-                        printf "  %-22s  active=%-12s enabled=%-10s %s\n" \
-                            "$u" "$state" "$enabled" \
-                            "${port:+http://$(hostname).local:$port}"
+                        _racecar_unit_row "$u" "${port_of[$u]:-}"
                     done
                     echo "autonomy (started by racecar map):"
-                    u=racecar-autonomy
-                    if [[ ! -f "/etc/systemd/system/$u.service" ]]; then
-                        printf "  %-22s  not installed\n" "$u"
-                    else
-                        state=$(systemctl is-active "$u" 2>&1 || true)
-                        printf "  %-22s  active=%s\n" "$u" "$state"
-                    fi
+                    _racecar_unit_row racecar-autonomy "" --active-only
                     echo "dashboards:"
                     for u in "${dash_units[@]}" "${app_units[@]}"; do
-                        if [[ ! -f "/etc/systemd/system/$u.service" ]]; then
-                            printf "  %-22s  not installed\n" "$u"
-                            continue
-                        fi
-                        state=$(systemctl is-active "$u" 2>&1 || true)
-                        enabled=$(systemctl is-enabled "$u" 2>&1 || true)
-                        port=$(sed -n 's/.*(port \([0-9]*\)).*/\1/p' \
-                            "/etc/systemd/system/$u.service" 2>/dev/null | head -1)
-                        printf "  %-22s  active=%-12s enabled=%-10s %s\n" \
-                            "$u" "$state" "$enabled" \
-                            "${port:+http://$(hostname).local:$port}"
+                        _racecar_unit_row "$u" "${port_of[$u]:-}"
                     done
                     ;;
                 -h|--help|help)

@@ -19,11 +19,7 @@ EnvironmentFile=-/run/racecar/environment
 EnvironmentFile=-/home/racecar/.config/racecar/autonomy.conf
 ExecStart=/home/racecar/ros2_ws/src/racecar_neo_ros2_driver/scripts/launch_autonomy.sh
 # Autosave while slam_toolbox is still alive, before the stop signal.
-ExecStop=/bin/bash -c '\
-    source /opt/ros/jazzy/setup.bash && \
-    source /home/racecar/ros2_ws/install/setup.bash && \
-    ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST \
-    python3 /home/racecar/ros2_ws/src/racecar_neo_ros2_driver/scripts/autonomy_stop.py $MAINPID'
+ExecStop=/home/racecar/ros2_ws/src/racecar_neo_ros2_driver/scripts/ros_exec.sh python3 /home/racecar/ros2_ws/src/racecar_neo_ros2_driver/scripts/autonomy_stop.py $MAINPID
 # ros2 launch exits 0 when slam_toolbox dies, so on-failure would never
 # restart it; systemd does not restart after a requested stop.
 Restart=always

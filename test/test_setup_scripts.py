@@ -622,7 +622,7 @@ class TestDashboardScript:
 
     def test_one_template_for_every_dashboard(self):
         body = (SCRIPTS_DIR / 'dashboards' / 'racecar-app.service.in').read_text()
-        assert '/opt/ros/jazzy' in body and '/opt/ros/humble' not in body
+        assert 'scripts/ros_exec.sh python3 @DIR@/@SCRIPT@' in body
         assert '(port @PORT@)' in body
         assert body.count('@DIR@') == 2
         # Like the 8080, 8084 and 8086 units: the data root is known at start.
@@ -649,8 +649,9 @@ class TestDashboardScript:
     def test_a_failed_install_is_not_reported_as_success(self, text):
         # install_unit runs under `|| true`, which suppresses errexit for its
         # whole body, so the install has to be tested explicitly.
-        assert 'elif $SUDO install -m 0644' in text
-        assert 'install failed' in text
+        assert 'if ! install_if_changed "$rendered" "$SYSTEMD_DIR/$unit" 0644; then' in text
+        lib = (SCRIPTS_DIR / 'setup_lib.sh').read_text()
+        assert 'install failed' in lib
 
     def test_a_failed_daemon_reload_still_reaches_the_summary(self, text):
         assert 'if $SYSTEMCTL daemon-reload; then' in text
@@ -993,7 +994,7 @@ class TestNvmeSudoers:
     def test_setup_checks_with_visudo_and_installs_0440(self):
         setup = (SCRIPTS_DIR / 'setup_user_env.sh').read_text()
         assert 'sudo visudo -cf "$SUDOERS_SRC"' in setup
-        assert 'install -m 0440 -o root -g root "$SUDOERS_SRC" "$SUDOERS_DST"' in setup
+        assert 'install_if_changed "$SUDOERS_SRC" "$SUDOERS_DST" 0440 root' in setup
         assert 'SUDOERS_DST="/etc/sudoers.d/racecar-nvme"' in setup
 
 
@@ -1129,3 +1130,76 @@ class TestRerunOnASetUpCar:
         # Under pipefail, grep -q exiting at the first match can SIGPIPE the
         # writer and fail the test even though it matched.
         assert '| grep -q' not in (SCRIPTS_DIR / script).read_text()
+
+
+class TestSetupLib:
+    """setup_lib.sh: install a file only when it changed; the target user."""
+
+    def _run(self, body, **env):
+        lib = SCRIPTS_DIR / 'setup_lib.sh'
+        script = f'set -eo pipefail\nSUDO=\nsource "{lib}"\n{body}\n'
+        return subprocess.run(
+            ['bash', '-c', script], capture_output=True, text=True, env=env or None
+        )
+
+    def test_installs_then_reports_up_to_date(self, tmp_path):
+        src, dst = tmp_path / 'src', tmp_path / 'dst'
+        src.write_text('a\n')
+        body = f'install_if_changed {src} {dst} 0640; echo "INSTALLED=$INSTALLED"'
+        first = self._run(body)
+        assert first.returncode == 0 and 'INSTALLED=1' in first.stdout
+        assert dst.read_text() == 'a\n' and oct(dst.stat().st_mode & 0o777) == '0o640'
+        again = self._run(body)
+        assert 'already up to date' in again.stdout and 'INSTALLED=0' in again.stdout
+
+    def test_failed_install_returns_1(self, tmp_path):
+        src = tmp_path / 'src'
+        src.write_text('a\n')
+        r = self._run(
+            f'if install_if_changed {src} {tmp_path}/no/such/dir/dst 0644; then echo ok;'
+            ' else echo failed; fi'
+        )
+        assert 'failed' in r.stdout and 'install failed' in r.stderr
+
+    def test_target_user_is_the_sudo_caller(self):
+        import getpass
+
+        r = self._run(
+            'echo "$TARGET_USER $TARGET_HOME"', SUDO_USER=getpass.getuser(), PATH='/usr/bin:/bin'
+        )
+        user, home = r.stdout.split()
+        assert user == getpass.getuser() and home.startswith('/')
+
+
+class TestRosExec:
+    """ros_exec.sh: the units' ROS launcher."""
+
+    SCRIPT = SCRIPTS_DIR / 'ros_exec.sh'
+
+    def test_units_start_through_it(self):
+        for unit in (
+            'racecar-battery-guard.service',
+            'racecar-dashboard.service',
+            'racecar-mapview.service',
+            'racecar-watchdog.service',
+            'racecar-terminal.service',
+        ):
+            text = (SCRIPTS_DIR / unit).read_text()
+            assert 'scripts/ros_exec.sh python3 ' in text and 'source /opt/ros' not in text, unit
+        autonomy = (SCRIPTS_DIR / 'racecar-autonomy.service').read_text()
+        assert 'ros_exec.sh python3 ' in autonomy and 'autonomy_stop.py $MAINPID' in autonomy
+
+    @pytest.mark.skipif(not Path('/opt/ros/jazzy/setup.bash').exists(), reason='no ROS install')
+    @pytest.mark.parametrize('given, want', [(None, 'LOCALHOST'), ('SUBNET', 'SUBNET')])
+    def test_discovery_range_kept_or_localhost(self, given, want):
+        env = {'HOME': str(Path.home()), 'PATH': '/usr/bin:/bin'}
+        if given:
+            env['ROS_AUTOMATIC_DISCOVERY_RANGE'] = given
+        r = subprocess.run(
+            [str(self.SCRIPT), 'printenv', 'ROS_AUTOMATIC_DISCOVERY_RANGE', 'ROS_DISTRO'],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.split() == [want, 'jazzy']
