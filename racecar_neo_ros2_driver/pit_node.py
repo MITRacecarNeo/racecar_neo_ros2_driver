@@ -30,15 +30,11 @@ from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from geometry_msgs.msg import TransformStamped
 from nav_msgs.msg import Odometry
 import numpy as np
-import rclpy
-from rclpy.executors import ExternalShutdownException
+from racecar_neo_ros2_driver.params import declare_params
+from racecar_neo_ros2_driver.qos import LATCHED, SENSOR_LATEST
+from racecar_neo_ros2_driver.spin import run_node
 from rclpy.node import Node
-from rclpy.qos import (
-    QoSDurabilityPolicy,
-    QoSHistoryPolicy,
-    QoSProfile,
-    QoSReliabilityPolicy,
-)
+from rclpy.qos import QoSProfile
 from rclpy.time import Time
 from sensor_msgs.msg import BatteryState, Imu, Joy, MagneticField
 import serial
@@ -52,7 +48,6 @@ from . import pit_stall
 from .limits import clamp
 from .mux_node import MuxMode, select_mode, shown_mode
 from .odometry import OdomIntegrator, OdomState, yaw_quaternion
-from .spin import spin
 from .teensy_clock import TeensyClock
 
 # RxPacket.SystemState bit layout; mirror of the firmware cfg::SYS_STATE.
@@ -233,97 +228,98 @@ def build_integrated_odom(
     return tf, odom
 
 
+# Parameters and their defaults; values come from the launch YAML.
+DEFAULTS: dict[str, Any] = {
+    'serial_port': '/dev/neo-pit-pcb',
+    'baud': 921600,
+    'command_rate_hz': 60.0,
+    'command_timeout_sec': 0.5,
+    'reconnect_period_sec': 2.0,
+    'steering_sign': 1,
+    'speed_sign': 1,
+    'require_crc': True,
+    # Power telemetry republish (INA226 bus voltage V, battery current A) and
+    # the eight FlySky RC channels normalized to [-1, 1].
+    'voltage_topic': '/battery/voltage',
+    'current_topic': '/battery/current',
+    # 1 Hz means of the two above, for dashboards and logs.
+    'battery_state_topic': '/battery/state',
+    'rc_topic': '/rc/channels',
+    # Link state from raw pulse widths; see Telemetry.rc_link_up.
+    'rc_link_topic': '/rc/link',
+    # Encoder speed republish + display/LED command forwarding to the Teensy.
+    'encoder_topic': '/encoder/speed',
+    # Odometry wrapper over the same encoder reading. Forward twist only;
+    # see build_odom for why pose is left unestimated.
+    'publish_odom': True,
+    'odom_topic': '/odom',
+    'odom_frame_id': 'odom',
+    'odom_child_frame_id': 'base_link',
+    'dotmatrix_topic': '/dotmatrix/frame',
+    'led_topic': '/led/pixels',
+    # Low-battery alert frames (scripts/battery_guard.py) win over the
+    # frames above and the override flash while they are fresh.
+    'dotmatrix_alert_topic': '/dotmatrix/alert',
+    'led_alert_topic': '/led/alert',
+    # Latched firmware info payload (key=value lines); empty when unknown.
+    'firmware_info_topic': '/pit/firmware',
+    # Latched stall protection state (pit_stall.py), published on change.
+    'stall_topic': '/pit/stall',
+    # A display command counts as "active" (sets the SystemState flag the
+    # Teensy watches) only while received within this window.
+    'display_timeout_sec': 0.5,
+    # Hold the driver_starting flag this long after launch so the Teensy
+    # plays its LED loading sweep on a genuine driver start.
+    'led_startup_sec': 10.0,
+    # Mirror the mux buttons so the Teensy dot-matrix glyph tracks the mode.
+    'gamepad_enable_button': 4,
+    'autonomy_enable_button': 5,
+    # Integrated odometry (odometry.py): TF odom -> base_link and
+    # odometry.topic, from each frame's encoder speed and gyro. Values in
+    # config/odom.yaml; per-car scales in odom.local.yaml.
+    'odometry.enable': True,
+    'odometry.topic': '/odom/integrated',
+    'odometry.yaw_rate_axis': 2,
+    'odometry.yaw_rate_sign': 1.0,
+    'odometry.speed_scale': 1.0,
+    'odometry.yaw_rate_scale': 1.0,
+    'odometry.publish_rate_hz': 50.0,
+    'odometry.stale_input_sec': 0.25,
+    'odometry.zero_hold_sec': 1.0,
+    'odometry.zero_max_rate_dps': 2.0,
+    'odometry.bias_tau_sec': 30.0,
+    'odometry.turn_gain': 0.0,
+    'odometry.wheelbase_m': 0.230,
+    'odometry.max_steer_deg': 30.0,
+    # Stamp telemetry with the Teensy's sample time (teensy_clock.py) in
+    # place of the Pi's bursty receive time; false falls back to receive time.
+    'use_teensy_stamps': True,
+    'frame_id': 'imu_link',
+    'publish_mag': True,
+    'imu_topic': '/imu/lsm9ds1',
+    'mag_topic': '/mag',
+    # Axis remap + unit scales; the verified values live in config/pit.yaml.
+    'imu.accel_gyro_axis_order': [0, 1, 2],
+    'imu.accel_gyro_axis_sign': [1.0, 1.0, 1.0],
+    'imu.mag_axis_order': [0, 1, 2],
+    'imu.mag_axis_sign': [1.0, 1.0, 1.0],
+    'imu.accel_scale': 1.0,
+    'imu.gyro_scale': 1.0,  # deg/s -> rad/s = 0.01745329
+    'imu.mag_scale': 1.0e-6,  # firmware uT -> Tesla
+    # Keys match config/lsm9ds1_cal.yaml and config/lsm9ds1_mag_cal.yaml.
+    'accelerometer.bias': [0.0, 0.0, 0.0],
+    'accelerometer.scale': [1.0, 1.0, 1.0],
+    'gyroscope.bias': [0.0, 0.0, 0.0],
+    'magnetometer.hard_iron_bias': [0.0, 0.0, 0.0],
+    'magnetometer.soft_iron_matrix.data': np.identity(3).flatten().tolist(),
+}
+
+
 class PitNode(Node):
     def __init__(self) -> None:
         super().__init__('pit_node')
 
-        self.declare_parameter('serial_port', '/dev/neo-pit-pcb')
-        self.declare_parameter('baud', 921600)
-        self.declare_parameter('command_rate_hz', 60.0)
-        self.declare_parameter('command_timeout_sec', 0.5)
-        self.declare_parameter('reconnect_period_sec', 2.0)
-        self.declare_parameter('steering_sign', 1)
-        self.declare_parameter('speed_sign', 1)
-        self.declare_parameter('require_crc', True)
-
-        # Power telemetry republish (INA226 bus voltage V, battery current A) and
-        # the eight FlySky RC channels normalized to [-1, 1].
-        self.declare_parameter('voltage_topic', '/battery/voltage')
-        self.declare_parameter('current_topic', '/battery/current')
-        # 1 Hz means of the two above, for dashboards and logs.
-        self.declare_parameter('battery_state_topic', '/battery/state')
-        self.declare_parameter('rc_topic', '/rc/channels')
-        # Link state from raw pulse widths; see Telemetry.rc_link_up.
-        self.declare_parameter('rc_link_topic', '/rc/link')
-
-        # Encoder speed republish + display/LED command forwarding to the Teensy.
-        self.declare_parameter('encoder_topic', '/encoder/speed')
-        # Odometry wrapper over the same encoder reading. Forward twist only;
-        # see build_odom for why pose is left unestimated.
-        self.declare_parameter('publish_odom', True)
-        self.declare_parameter('odom_topic', '/odom')
-        self.declare_parameter('odom_frame_id', 'odom')
-        self.declare_parameter('odom_child_frame_id', 'base_link')
-        self.declare_parameter('dotmatrix_topic', '/dotmatrix/frame')
-        self.declare_parameter('led_topic', '/led/pixels')
-        # Low-battery alert frames (scripts/battery_guard.py) win over the
-        # frames above and the override flash while they are fresh.
-        self.declare_parameter('dotmatrix_alert_topic', '/dotmatrix/alert')
-        self.declare_parameter('led_alert_topic', '/led/alert')
-        # Latched firmware info payload (key=value lines); empty when unknown.
-        self.declare_parameter('firmware_info_topic', '/pit/firmware')
-        # Latched stall protection state (pit_stall.py), published on change.
-        self.declare_parameter('stall_topic', '/pit/stall')
-        # A display command counts as "active" (sets the SystemState flag the
-        # Teensy watches) only while received within this window.
-        self.declare_parameter('display_timeout_sec', 0.5)
-        # Hold the driver_starting flag this long after launch so the Teensy
-        # plays its LED loading sweep on a genuine driver start.
-        self.declare_parameter('led_startup_sec', 10.0)
-        # Mirror the mux buttons so the Teensy dot-matrix glyph tracks the mode.
-        self.declare_parameter('gamepad_enable_button', 4)
-        self.declare_parameter('autonomy_enable_button', 5)
-
-        # Integrated odometry (odometry.py): TF odom -> base_link and
-        # odometry.topic, from each frame's encoder speed and gyro. Values in
-        # config/odom.yaml; per-car scales in odom.local.yaml.
-        self.declare_parameter('odometry.enable', True)
-        self.declare_parameter('odometry.topic', '/odom/integrated')
-        self.declare_parameter('odometry.yaw_rate_axis', 2)
-        self.declare_parameter('odometry.yaw_rate_sign', 1.0)
-        self.declare_parameter('odometry.speed_scale', 1.0)
-        self.declare_parameter('odometry.yaw_rate_scale', 1.0)
-        self.declare_parameter('odometry.publish_rate_hz', 50.0)
-        self.declare_parameter('odometry.stale_input_sec', 0.25)
-        self.declare_parameter('odometry.zero_hold_sec', 1.0)
-        self.declare_parameter('odometry.zero_max_rate_dps', 2.0)
-        self.declare_parameter('odometry.bias_tau_sec', 30.0)
-        self.declare_parameter('odometry.turn_gain', 0.0)
-        self.declare_parameter('odometry.wheelbase_m', 0.230)
-        self.declare_parameter('odometry.max_steer_deg', 30.0)
-        # Stamp telemetry with the Teensy's sample time (teensy_clock.py) in
-        # place of the Pi's bursty receive time; false falls back to receive time.
-        self.declare_parameter('use_teensy_stamps', True)
-        self.declare_parameter('frame_id', 'imu_link')
-        self.declare_parameter('publish_mag', True)
-        self.declare_parameter('imu_topic', '/imu/lsm9ds1')
-        self.declare_parameter('mag_topic', '/mag')
-        # Axis remap + unit scales; the verified values live in config/pit.yaml.
-        self.declare_parameter('imu.accel_gyro_axis_order', [0, 1, 2])
-        self.declare_parameter('imu.accel_gyro_axis_sign', [1.0, 1.0, 1.0])
-        self.declare_parameter('imu.mag_axis_order', [0, 1, 2])
-        self.declare_parameter('imu.mag_axis_sign', [1.0, 1.0, 1.0])
-        self.declare_parameter('imu.accel_scale', 1.0)
-        self.declare_parameter('imu.gyro_scale', 1.0)  # deg/s -> rad/s = 0.01745329
-        self.declare_parameter('imu.mag_scale', 1.0e-6)  # firmware uT -> Tesla
-        # Keys match config/lsm9ds1_cal.yaml and config/lsm9ds1_mag_cal.yaml.
-        self.declare_parameter('accelerometer.bias', [0.0, 0.0, 0.0])
-        self.declare_parameter('accelerometer.scale', [1.0, 1.0, 1.0])
-        self.declare_parameter('gyroscope.bias', [0.0, 0.0, 0.0])
-        self.declare_parameter('magnetometer.hard_iron_bias', [0.0, 0.0, 0.0])
-        self.declare_parameter(
-            'magnetometer.soft_iron_matrix.data', np.identity(3).flatten().tolist()
-        )
+        declare_params(self, DEFAULTS)
 
         self._port = self.get_parameter('serial_port').value
         self._baud = int(self.get_parameter('baud').value)
@@ -373,12 +369,7 @@ class PitNode(Node):
             self.get_parameter('magnetometer.soft_iron_matrix.data').value, float
         ).reshape(3, 3)
 
-        qos = QoSProfile(
-            depth=1,
-            history=QoSHistoryPolicy.KEEP_LAST,
-            reliability=QoSReliabilityPolicy.BEST_EFFORT,
-            durability=QoSDurabilityPolicy.VOLATILE,
-        )
+        qos = SENSOR_LATEST
         self._pub_imu = self.create_publisher(Imu, self._imu_topic, qos)
         self._pub_mag = self.create_publisher(MagneticField, self._mag_topic, qos)
         self._pub_imu_raw = self.create_publisher(Imu, f'{self._imu_topic}/raw', qos)
@@ -403,11 +394,7 @@ class PitNode(Node):
             Bool,
             '/mux/override_active',
             self._override_cb,
-            QoSProfile(
-                depth=1,
-                reliability=QoSReliabilityPolicy.RELIABLE,
-                durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
-            ),
+            LATCHED,
         )
         self._setup_odometry(qos)
         self._listened: dict[int, bool] = {}
@@ -439,21 +426,13 @@ class PitNode(Node):
         self._pub_stall = self.create_publisher(
             DiagnosticStatus,
             str(self.get_parameter('stall_topic').value),
-            QoSProfile(
-                depth=1,
-                reliability=QoSReliabilityPolicy.RELIABLE,
-                durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
-            ),
+            LATCHED,
         )
         self._fw_logged: str | None = None  # summary last logged since a restart
         self._pub_fw_info = self.create_publisher(
             String,
             str(self.get_parameter('firmware_info_topic').value),
-            QoSProfile(
-                depth=1,
-                reliability=QoSReliabilityPolicy.RELIABLE,
-                durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
-            ),
+            LATCHED,
         )
         self._pub_diagnostics = self.create_publisher(DiagnosticArray, '/diagnostics', 10)
         self._running = True
@@ -907,16 +886,7 @@ class PitNode(Node):
 
 
 def main(args: list[str] | None = None) -> None:
-    rclpy.init(args=args)
-    node = PitNode()
-    try:
-        spin(node)
-    except (KeyboardInterrupt, ExternalShutdownException):
-        pass
-    finally:
-        node.shutdown()
-        node.destroy_node()
-        rclpy.try_shutdown()
+    run_node(PitNode, args, before_destroy=PitNode.shutdown)
 
 
 if __name__ == '__main__':

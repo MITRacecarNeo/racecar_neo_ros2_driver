@@ -342,20 +342,12 @@ class Viewer:
         from diagnostic_msgs.msg import DiagnosticStatus
         from geometry_msgs.msg import PoseWithCovarianceStamped
         from nav_msgs.msg import OccupancyGrid
-        from rclpy.qos import (
-            qos_profile_sensor_data,
-            QoSDurabilityPolicy,
-            QoSProfile,
-            QoSReliabilityPolicy,
-        )
+        from racecar_neo_ros2_driver.qos import LATCHED
+        from rclpy.qos import qos_profile_sensor_data
         from sensor_msgs.msg import LaserScan
         from std_srvs.srv import Trigger
 
-        latched = QoSProfile(
-            depth=1,
-            reliability=QoSReliabilityPolicy.RELIABLE,
-            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
-        )
+        latched = LATCHED
         n = self.node
         self._handles = [
             n.create_subscription(DiagnosticStatus, '/autonomy/status', self._on_status, latched),

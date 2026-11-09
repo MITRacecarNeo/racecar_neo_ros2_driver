@@ -18,21 +18,15 @@ decoded and calibrated, at the publish rate.
 
 from collections.abc import Callable, Mapping, Sequence
 import time
+from typing import Any
 
 import numpy as np
-import rclpy
-from rclpy.executors import ExternalShutdownException
+from racecar_neo_ros2_driver.params import declare_params
+from racecar_neo_ros2_driver.qos import sensor
+from racecar_neo_ros2_driver.spin import run_node
 from rclpy.node import Node
-from rclpy.qos import (
-    QoSDurabilityPolicy,
-    QoSHistoryPolicy,
-    QoSProfile,
-    QoSReliabilityPolicy,
-)
 from rclpy.serialization import deserialize_message
 from sensor_msgs.msg import Imu
-
-from .spin import spin
 
 Vec3 = tuple[float, float, float]
 
@@ -67,22 +61,27 @@ def fuse(samples: Sequence[tuple[Vec3, Vec3]]) -> tuple[Vec3, Vec3]:
     return mean([a for a, _ in samples]), mean([g for _, g in samples])
 
 
+# Parameters and their defaults; values come from the launch YAML.
+DEFAULTS: dict[str, Any] = {
+    'sources': ['/imu/realsense', '/imu/lsm9ds1'],
+    'output_topic': '/imu/fused',
+    'publish_rate_hz': 100.0,
+    'source_timeout_sec': 0.25,
+    'frame_id': 'imu_link',
+    'realsense_topic': '/imu/realsense',
+    'realsense_accel_bias': [0.0, 0.0, 0.0],
+    'realsense_gyro_bias': [0.0, 0.0, 0.0],
+    'realsense_accel_scale': [1.0, 1.0, 1.0],
+    'realsense_axis_order': [0, 1, 2],
+    'realsense_axis_sign': [1.0, 1.0, 1.0],
+}
+
+
 class ImuFusionNode(Node):
     def __init__(self) -> None:
         super().__init__('imu_fusion_node')
 
-        self.declare_parameter('sources', ['/imu/realsense', '/imu/lsm9ds1'])
-        self.declare_parameter('output_topic', '/imu/fused')
-        self.declare_parameter('publish_rate_hz', 100.0)
-        self.declare_parameter('source_timeout_sec', 0.25)
-        self.declare_parameter('frame_id', 'imu_link')
-
-        self.declare_parameter('realsense_topic', '/imu/realsense')
-        self.declare_parameter('realsense_accel_bias', [0.0, 0.0, 0.0])
-        self.declare_parameter('realsense_gyro_bias', [0.0, 0.0, 0.0])
-        self.declare_parameter('realsense_accel_scale', [1.0, 1.0, 1.0])
-        self.declare_parameter('realsense_axis_order', [0, 1, 2])
-        self.declare_parameter('realsense_axis_sign', [1.0, 1.0, 1.0])
+        declare_params(self, DEFAULTS)
         self._rs_order = [int(i) for i in self.get_parameter('realsense_axis_order').value]
         self._rs_sign = [float(s) for s in self.get_parameter('realsense_axis_sign').value]
         self._rs_accel_bias = np.array(self.get_parameter('realsense_accel_bias').value, float)
@@ -96,12 +95,7 @@ class ImuFusionNode(Node):
         self._frame = self.get_parameter('frame_id').value
         rate = float(self.get_parameter('publish_rate_hz').value)
 
-        qos = QoSProfile(
-            depth=10,
-            history=QoSHistoryPolicy.KEEP_LAST,
-            reliability=QoSReliabilityPolicy.BEST_EFFORT,
-            durability=QoSDurabilityPolicy.VOLATILE,
-        )
+        qos = sensor(10)
         self._latest: dict[str, tuple[bytes, float]] = {}
         for topic in self._sources:
             self.create_subscription(Imu, topic, self._make_cb(topic), qos, raw=True)
@@ -167,15 +161,7 @@ class ImuFusionNode(Node):
 
 
 def main(args: list[str] | None = None) -> None:
-    rclpy.init(args=args)
-    node = ImuFusionNode()
-    try:
-        spin(node)
-    except (KeyboardInterrupt, ExternalShutdownException):
-        pass
-    finally:
-        node.destroy_node()
-        rclpy.try_shutdown()
+    run_node(ImuFusionNode, args)
 
 
 if __name__ == '__main__':

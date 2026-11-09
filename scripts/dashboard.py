@@ -20,9 +20,9 @@ from urllib.parse import parse_qs, urlparse
 
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
 from racecar_neo_ros2_driver import apps, fileio, units
+from racecar_neo_ros2_driver.qos import LATCHED, SENSOR_LATEST
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import BatteryState
 from std_msgs.msg import Bool, Empty, UInt32
 
@@ -453,12 +453,7 @@ class _RateSampler(Node):
         self._lock = threading.Lock()
         # Subscriptions need a concrete message type, so attach_subscriptions()
         # creates each one once the topic and its type appear on the graph.
-        self._qos = QoSProfile(
-            depth=1,
-            history=QoSHistoryPolicy.KEEP_LAST,
-            reliability=QoSReliabilityPolicy.BEST_EFFORT,
-            durability=QoSDurabilityPolicy.VOLATILE,
-        )
+        self._qos = SENSOR_LATEST
         self._topics = list(topics)
         self._subs: dict[str, Any] = {}
         self.attached_at: float | None = None
@@ -477,11 +472,7 @@ class _RateSampler(Node):
         self._firmware: tuple[dict[str, Any], float] | None = None
         self._stall: tuple[dict[str, Any], float] | None = None
         self._estimate: tuple[dict[str, str], float] | None = None
-        latched = QoSProfile(
-            depth=1,
-            reliability=QoSReliabilityPolicy.RELIABLE,
-            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
-        )
+        latched = LATCHED
         self._autonomy_sub = self.create_subscription(
             DiagnosticStatus, '/autonomy/status', self._record_autonomy, latched
         )

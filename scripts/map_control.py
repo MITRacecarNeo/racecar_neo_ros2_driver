@@ -408,7 +408,7 @@ def wait_status(
     """
     import rclpy
     from diagnostic_msgs.msg import DiagnosticStatus
-    from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
+    from racecar_neo_ros2_driver.qos import LATCHED
 
     seen: dict[str, Any] = {'last': None, 'hit': None}
 
@@ -418,11 +418,7 @@ def wait_status(
         if seen['hit'] is None and accept(values):
             seen['hit'] = values
 
-    latched = QoSProfile(
-        depth=1,
-        reliability=QoSReliabilityPolicy.RELIABLE,
-        durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
-    )
+    latched = LATCHED
     sub = node.create_subscription(DiagnosticStatus, '/autonomy/status', on_status, latched)
     end = time.monotonic() + timeout
     next_check = time.monotonic() + 1.0

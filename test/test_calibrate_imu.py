@@ -59,9 +59,10 @@ class TestTargets:
         }
 
     def test_nodes_declare_the_scale_key(self, target):
-        node_file = {'pit_node': 'pit_node.py', 'imu_fusion_node': 'imu_fusion_node.py'}
-        src = (ROOT / 'racecar_neo_ros2_driver' / node_file[target.node]).read_text()
-        assert f"declare_parameter('{target.scale_key}'" in src
+        import importlib
+
+        module = importlib.import_module(f'racecar_neo_ros2_driver.{target.node}')
+        assert target.scale_key in module.DEFAULTS
 
     def test_realsense_writes_for_the_fusion_node(self):
         tgt = _load('calibrate_realsense_imu').TARGET

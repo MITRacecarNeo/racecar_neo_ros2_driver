@@ -11,15 +11,16 @@ speed_cap clips speed for every source at all times (1.0, off, by default);
 the lowest active cap wins.
 """
 
+from typing import Any
+
 from ackermann_msgs.msg import AckermannDriveStamped
 from diagnostic_msgs.msg import DiagnosticStatus
-import rclpy
-from rclpy.executors import ExternalShutdownException
+from racecar_neo_ros2_driver.params import declare_params
+from racecar_neo_ros2_driver.qos import LATCHED, SENSOR_LATEST
+from racecar_neo_ros2_driver.spin import run_node
 from rclpy.node import Node
-from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 
 from .limits import clamp
-from .spin import spin
 
 
 def scale_speed(speed: float, max_fwd: float, max_back: float) -> float:
@@ -41,18 +42,24 @@ def scale_steering(angle: float, max_steer: float, trim: float = 0.0, cap: float
     return clamp(max(-cap, min(cap, steer)) + trim)
 
 
+# Parameters and their defaults; values come from the launch YAML.
+DEFAULTS: dict[str, Any] = {
+    'max_speed_forward': 0.17,
+    'max_speed_backward': 0.24,
+    'max_steering': 0.625,
+    'steering_trim': 0.0,
+    'mapping_speed_cap': 0.02,
+    'mapping_steering_cap': 1.0,
+    'speed_cap': 1.0,
+}
+
+
 class ThrottleNode(Node):
     def __init__(self) -> None:
         super().__init__('throttle_node')
 
         # Conservative fallbacks for a missing YAML; throttle.yaml ships 1.0.
-        self.declare_parameter('max_speed_forward', 0.17)
-        self.declare_parameter('max_speed_backward', 0.24)
-        self.declare_parameter('max_steering', 0.625)
-        self.declare_parameter('steering_trim', 0.0)
-        self.declare_parameter('mapping_speed_cap', 0.02)
-        self.declare_parameter('mapping_steering_cap', 1.0)
-        self.declare_parameter('speed_cap', 1.0)
+        declare_params(self, DEFAULTS)
 
         self._max_fwd = self.get_parameter('max_speed_forward').value
         self._max_back = self.get_parameter('max_speed_backward').value
@@ -63,19 +70,10 @@ class ThrottleNode(Node):
         self._speed_cap = float(self.get_parameter('speed_cap').value)
         self._mapping = False
 
-        qos = QoSProfile(
-            depth=1,
-            history=QoSHistoryPolicy.KEEP_LAST,
-            reliability=QoSReliabilityPolicy.BEST_EFFORT,
-            durability=QoSDurabilityPolicy.VOLATILE,
-        )
+        qos = SENSOR_LATEST
         self._pub = self.create_publisher(AckermannDriveStamped, '/motor', qos)
         self.create_subscription(AckermannDriveStamped, '/mux_out', self._drive_cb, qos)
-        latched = QoSProfile(
-            depth=1,
-            reliability=QoSReliabilityPolicy.RELIABLE,
-            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
-        )
+        latched = LATCHED
         self.create_subscription(DiagnosticStatus, '/autonomy/status', self._status_cb, latched)
 
         self.get_logger().info(
@@ -111,15 +109,7 @@ class ThrottleNode(Node):
 
 
 def main(args: list[str] | None = None) -> None:
-    rclpy.init(args=args)
-    node = ThrottleNode()
-    try:
-        spin(node)
-    except (KeyboardInterrupt, ExternalShutdownException):
-        pass
-    finally:
-        node.destroy_node()
-        rclpy.try_shutdown()
+    run_node(ThrottleNode, args)
 
 
 if __name__ == '__main__':

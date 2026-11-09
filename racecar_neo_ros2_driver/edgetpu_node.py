@@ -27,14 +27,13 @@ from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 import numpy as np
 from PIL import Image as PILImage
 from pycoral.utils.edgetpu import list_edge_tpus, make_interpreter
+from racecar_neo_ros2_driver.params import declare_params
+from racecar_neo_ros2_driver.qos import LATCHED
+from racecar_neo_ros2_driver.spin import run_node
 import rclpy
-from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import (
     qos_profile_sensor_data,
-    QoSDurabilityPolicy,
-    QoSProfile,
-    QoSReliabilityPolicy,
 )
 from rclpy.time import Time
 from sensor_msgs.msg import Image
@@ -165,19 +164,25 @@ def map_output_tensors(
     return idx_boxes, idx_scores, idx_classes, idx_count
 
 
+# Parameters and their defaults; values come from the launch YAML.
+DEFAULTS: dict[str, Any] = {
+    'model_path': '',
+    'labels_path': '',
+    'score_threshold': 0.4,
+    'max_detections': 0,
+    'image_topic': '/camera/color',
+    'inference_rate_hz': 15.0,
+    'diagnostics_period_sec': 1.0,
+    'image_timeout_sec': 5.0,
+    'pause_while_mapping': True,
+}
+
+
 class EdgeTPUNode(Node):
     def __init__(self) -> None:
         super().__init__('edgetpu_node')
 
-        self.declare_parameter('model_path', '')
-        self.declare_parameter('labels_path', '')
-        self.declare_parameter('score_threshold', 0.4)
-        self.declare_parameter('max_detections', 0)
-        self.declare_parameter('image_topic', '/camera/color')
-        self.declare_parameter('inference_rate_hz', 15.0)
-        self.declare_parameter('diagnostics_period_sec', 1.0)
-        self.declare_parameter('image_timeout_sec', 5.0)
-        self.declare_parameter('pause_while_mapping', True)
+        declare_params(self, DEFAULTS)
 
         model_path = self.get_parameter('model_path').value
         labels_path = self.get_parameter('labels_path').value
@@ -250,11 +255,7 @@ class EdgeTPUNode(Node):
         self._image_sub: Any = None
         self._paused = False
         self._subscribe_images()
-        latched = QoSProfile(
-            depth=1,
-            reliability=QoSReliabilityPolicy.RELIABLE,
-            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
-        )
+        latched = LATCHED
         self.create_subscription(DiagnosticStatus, '/autonomy/status', self._status_cb, latched)
         self.create_timer(diag_period, self._publish_diagnostics)
 
@@ -464,15 +465,7 @@ class EdgeTPUNode(Node):
 
 
 def main(args: list[str] | None = None) -> None:
-    rclpy.init(args=args)
-    node = EdgeTPUNode()
-    try:
-        rclpy.spin(node)
-    except (KeyboardInterrupt, ExternalShutdownException):
-        pass
-    finally:
-        node.destroy_node()
-        rclpy.try_shutdown()
+    run_node(EdgeTPUNode, args, spinner=rclpy.spin)
 
 
 if __name__ == '__main__':

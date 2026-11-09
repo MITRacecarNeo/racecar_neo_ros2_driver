@@ -15,10 +15,11 @@ from luma.core.legacy import text
 from luma.core.legacy.font import proportional, TINY_FONT as _LUMA_TINY_FONT
 from PIL import Image, ImageDraw
 from racecar_neo_ros2_driver.mux_node import MuxMode, select_mode, shown_mode
+from racecar_neo_ros2_driver.params import declare_params
+from racecar_neo_ros2_driver.qos import LATCHED, SENSOR_LATEST
+from racecar_neo_ros2_driver.spin import run_node
 import rclpy
-from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
-from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import Joy
 from std_msgs.msg import Bool, String, UInt8MultiArray
 
@@ -148,20 +149,26 @@ def scroll_offset(
     return int(phase * travel) - viewport_width
 
 
+# Parameters and their defaults; values come from the launch YAML.
+DEFAULTS: dict[str, Any] = {
+    'cascaded': 3,  # 8-px modules -> width
+    'refresh_rate_hz': 15.0,
+    'scroll_period_sec': 4.0,
+    'pixels_timeout_sec': 5.0,
+    'text_timeout_sec': 6.0,
+    'splash_message': '>>> Welcome to RACECAR Neo! >>>',
+    'splash_period_sec': 8.0,
+    'gamepad_enable_button': 4,
+    'autonomy_enable_button': 5,
+    'frame_topic': '/dotmatrix/frame',
+}
+
+
 class DotMatrixNode(Node):
     def __init__(self) -> None:
         super().__init__('dotmatrix_node')
 
-        self.declare_parameter('cascaded', 3)  # 8-px modules -> width
-        self.declare_parameter('refresh_rate_hz', 15.0)
-        self.declare_parameter('scroll_period_sec', 4.0)
-        self.declare_parameter('pixels_timeout_sec', 5.0)
-        self.declare_parameter('text_timeout_sec', 6.0)
-        self.declare_parameter('splash_message', '>>> Welcome to RACECAR Neo! >>>')
-        self.declare_parameter('splash_period_sec', 8.0)
-        self.declare_parameter('gamepad_enable_button', 4)
-        self.declare_parameter('autonomy_enable_button', 5)
-        self.declare_parameter('frame_topic', '/dotmatrix/frame')
+        declare_params(self, DEFAULTS)
 
         self._height = 8
         self._width = int(self.get_parameter('cascaded').value) * 8
@@ -195,23 +202,14 @@ class DotMatrixNode(Node):
         self._splash_start = time.monotonic()
         self._splash_done = not self._splash_message
 
-        qos = QoSProfile(
-            depth=1,
-            history=QoSHistoryPolicy.KEEP_LAST,
-            reliability=QoSReliabilityPolicy.BEST_EFFORT,
-            durability=QoSDurabilityPolicy.VOLATILE,
-        )
+        qos = SENSOR_LATEST
         self._pub = self.create_publisher(
             UInt8MultiArray, self.get_parameter('frame_topic').value, qos
         )
         self.create_subscription(String, '/dotmatrix/text', self._text_cb, qos)
         self.create_subscription(UInt8MultiArray, '/dotmatrix/pixels', self._pixels_cb, qos)
         self.create_subscription(Joy, '/joy', self._joy_cb, qos)
-        latched = QoSProfile(
-            depth=1,
-            reliability=QoSReliabilityPolicy.RELIABLE,
-            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
-        )
+        latched = LATCHED
         self.create_subscription(Bool, '/mux/override_active', self._override_cb, latched)
         self.create_timer(1.0 / refresh_rate, self._render)
 
@@ -302,15 +300,7 @@ class DotMatrixNode(Node):
 
 
 def main(args: list[str] | None = None) -> None:
-    rclpy.init(args=args)
-    node = DotMatrixNode()
-    try:
-        rclpy.spin(node)
-    except (KeyboardInterrupt, ExternalShutdownException):
-        pass
-    finally:
-        node.destroy_node()
-        rclpy.try_shutdown()
+    run_node(DotMatrixNode, args, spinner=rclpy.spin)
 
 
 if __name__ == '__main__':
