@@ -44,13 +44,14 @@ if [ -f "$CONFIG_FILE" ]; then
     done < "$CONFIG_FILE"
 fi
 
-STATIC_ADDR="${RACECAR_ETH_STATIC:-192.168.52.200/24}"
+source "$(dirname "${BASH_SOURCE[0]}")/setup_lib.sh"
+STATIC_ADDR="${RACECAR_ETH_STATIC:-$(eth_static_default "${RACECAR_AP_ID:-}")}"
 
 usage() {
     cat <<'USAGE'
 usage: setup_eth.sh <static|dynamic|status> [--addr=CIDR] [--force]
 
-  static    one fixed address (default 192.168.52.200/24), no gateway,
+  static    one fixed address (default 192.168.52.(200 + car ID)/24), no gateway,
             no IPv6 default route. The shipped default.
   dynamic   address and default route from DHCP.
   status    configured mode, live addresses, routes, and conflict checks.

@@ -32,6 +32,8 @@
   .app { display: flex; flex-direction: column; align-items: center; gap: var(--rcn-space-2); background: none; border: 0; padding: 0; color: var(--rcn-text); cursor: pointer; font: inherit; }
   .app .glyph { position: relative; width: 76px; height: 76px; border-radius: 20px; background: var(--rcn-surface); display: grid; place-items: center; color: var(--rcn-orange); border: 3px solid var(--rcn-steel); transition: border-color 0.12s, background-color 0.12s; }
   .app .glyph > .rcn-icon { width: 36px; height: 36px; }
+  .app.locked { opacity: 0.4; cursor: not-allowed; }
+  .setup-note { color: var(--rcn-gold); margin: 0 0 var(--rcn-space-4); }
   .app .name { font: 600 15px/20px var(--rcn-font-sans); text-align: center; }
   .app.on .glyph { border-color: var(--rcn-paper); }
   .app.starting .glyph { border-color: var(--rcn-gold); }
@@ -118,6 +120,7 @@
 
 <main>
   <h2 class="apps-title">Apps</h2>
+  <p class="setup-note" id="setup-note" hidden></p>
   <div class="bar-row group-row"><div class="rcn-eyebrow">Core</div></div>
   <div class="apps">
     <!-- display: contents keeps the override and Turn Off tiles in the same grid as the core apps. -->
@@ -247,6 +250,14 @@ const WORD = { healthy: 'OK', stale: 'Check', dead: 'Down', unsupervised: 'Off' 
 
 // -- apps --
 let apps = [];
+let setup = { complete: true, open: [] };
+const lockedApp = (a) => !setup.complete && a.group !== 'core';
+function renderSetup(view) {
+  setup = view || { complete: true, open: [] };
+  const note = $('setup-note');
+  note.hidden = setup.complete;
+  note.textContent = setup.complete ? '' : `Finish setting up this car to open the utilities. Run: racecar setup car (${setup.open.length} steps open)`;
+}
 const APP_STATE = {
   active: ['on', '', 'Running'],
   activating: ['starting', 'alert', 'Starting'],
@@ -256,7 +267,8 @@ const APP_STATE = {
 function renderApps() {
   for (const group of ['core', 'utilities']) setHtml(`apps-${group}`, apps.filter((a) => a.group === group).map((a) => {
     const [cls, badge, word] = APP_STATE[a.state] || ['', '', 'Stopped'];
-    return `<button class="app ${cls}" data-id="${a.id}" data-tip="${esc(a.desc)}"
+    const tip = lockedApp(a) ? 'Finish setting up this car first' : a.desc;
+    return `<button class="app ${cls}${lockedApp(a) ? ' locked' : ''}" data-id="${a.id}" data-tip="${esc(tip)}"
         aria-label="${esc(`${a.name}, ${word.toLowerCase()}. ${a.desc}`)}">
       <span class="glyph">${icon(a.icon)}${badge ? `<span class="badge">${icon(badge)}</span>` : ''}</span>
       <span class="name">${esc(a.name)}</span></button>`;
@@ -268,6 +280,7 @@ document.querySelector('main').addEventListener('click', (e) => {
   if (!el || !el.dataset.id) return;
   const app = apps.find((a) => a.id === el.dataset.id);
   if (!app || app.state === 'unavailable') return;
+  if (lockedApp(app)) { $('msg').textContent = 'Finish setting up this car first: racecar setup car'; return; }
   const other = apps.find((a) => a.exclusive && a.id !== app.id && live(a));
   if (app.exclusive && other && !live(app)
       && !confirm(`${other.name} is open. Close it and open ${app.name}?`)) return;
@@ -726,6 +739,7 @@ function update(refresh) {
     .then((data) => {
       apps = data.apps || [];
       $('host').textContent = data.host || '';
+      renderSetup(data.setup);
       renderApps();
       renderFeatures(data.features);
       renderBasic(data);

@@ -156,20 +156,43 @@ After reboot, `racecar-teleop.service` auto-starts and pulls the watchdog via `W
 
 ```sh
 racecar status              # full diagnostic; exits non-zero only on a FAIL
-racecar service status      # the 6 core racecar-* units should be active+enabled
+racecar service status      # the 7 core racecar-* units should be active+enabled
 ```
 
 Browse to `http://racecar-neo.local:8080` for the live dashboard.
 
-### 7. AP networking (optional)
+### 7. Car setup
 
-To add the robot's own isolated access point:
+`racecar setup car` takes the car the rest of the way. Run it in a terminal on the car, from the console or over `wlan0`: the access point step reconfigures the AP, and the eth0 step can drop an SSH session arriving over eth0.
 
 ```sh
-racecar setup networking --ssid=racecar-neo-1 --psk='your-password'
+racecar setup car             # the checklist, then the next open step
+racecar setup car status      # the checklist only
+racecar setup car STEP        # run one step again
+racecar setup car done STEP   # mark a step done by hand
 ```
 
-This brings up an isolated AP on the ALFA dongle (`wlan1`) and puts eth0 in one addressing mode, static by default. See [Networking (optional)](#networking-optional). **Run it from the console or over `wlan0`**; the AP is reconfigured, and the eth0 step can drop an SSH session arriving over eth0.
+The steps, in order:
+
+| Step | What it does |
+|---|---|
+| `identity` | Asks the car's name and number (0 to 54); sets the hostname `racecar-neo-<number>` |
+| `hardware` | Checks every device answers and names what to plug in |
+| `nvme` | Runs `racecar disk setup` when an NVMe drive is fitted |
+| `access_point` | Runs `racecar setup networking --id=<number>`: SSID `racecar-neo-<number>`, eth0 `192.168.52.(200 + number)` |
+| `reboot` | Asks for one reboot when the hostname or the drive waits for it |
+| `firmware` | Checks the Teensy firmware against `config/firmware.yaml` |
+| `esc` | The ESC program settings and throttle calibration (see the handbook calibration page); records them |
+| `extras` | Installs the student library and labs if missing; flashes the camera firmware when it differs |
+| `measurements` | Keeps the stock geometry, or takes your measurements into `params/frames.yaml` |
+| `calibration` | Runs `racecar calibrate`, then `racecar calibrate check` |
+| `health` | Runs `racecar health` |
+| `record` | The car record (parts and labels), with the stock build as defaults |
+| `finish` | Backs up the profile to the data root and prints `racecar status` |
+
+Each step checks the car first, so a step already done shows as done and the tool can stop and start again at any point. The state and the car record are kept in the profile's `car.yaml`. Until every step is done, the 8080 home page keeps the Utilities apps closed; the Core apps stay open. After the `identity` step, open the car at `http://racecar-neo-<number>.local:8080`.
+
+The access point alone: `racecar setup networking --id=N`. See [Networking (optional)](#networking-optional).
 
 ### `setup_all.sh` phases
 
@@ -185,7 +208,7 @@ Twelve phases, all under `scripts/`:
 8. **`setup_realsense.sh`**: installs `realsense2_camera` (apt) + the Pi 5 IMU IIO permission fix (script, udev rule, boot service)
 9. **`setup_workspace.sh`**: clones `sllidar_ros2` at a pinned commit and runs `colcon build --symlink-install`; `setup_all.sh` then runs `racecar profile migrate` (see [Car profile](#car-profile))
 10. **`setup_jupyter.sh`**: `pip install --user jupyterlab` and the library's notebook packages (pinned), creates `~/jupyter_ws/`, links `~/jupyter_ws/data` and `~/jupyter_ws/maps` to the [data root](#car-data), and installs the [student library and labs](#student-library-and-labs)
-11. **`setup_services.sh`**: installs and enables the core systemd units (`racecar-{data,teleop,watchdog,dashboard,jupyter,mapview}.service`), installs `racecar-autonomy.service` disabled, and installs `/etc/profile.d/racecar-data.sh`
+11. **`setup_services.sh`**: installs and enables the core systemd units (`racecar-{data,teleop,watchdog,dashboard,jupyter,mapview,battery-guard}.service`), installs `racecar-autonomy.service` disabled, and installs `/etc/profile.d/racecar-data.sh`
 12. **`setup_dashboards.sh`**: installs a stopped, disabled `racecar-*` unit for each lab dashboard listed in `config/apps.yaml` (web teleop, line follow, wall follow, camera label) and removes units left by retired dashboards (`RACECAR_DASHBOARDS=0` skips it)
 
 A failed phase stops the run and prints the command that resumes there:
@@ -223,7 +246,7 @@ racecar setup all                       # run the 12-phase orchestrator (--from 
 racecar setup services                  # install and enable the core units
 racecar setup networking --ssid=racecar-neo-2   # configure eth0 addressing + ALFA-dongle AP
 racecar setup networking --show         # print persisted overrides
-racecar setup dashboards                # clone the lab dashboards + install units
+racecar setup dashboards                # install the lab dashboards' units
 racecar setup realsense                 # offline D435i firmware flash
 
 racecar udev                        # re-install the udev rules
@@ -284,7 +307,7 @@ With no `--ssid` or saved car ID, it prompts for this car's ID and sets the SSID
 
 What it does:
 
-1. **eth0 addressing** via `setup_eth.sh`; eth0 is put in exactly one IPv4 mode, static by default at `192.168.52.200/24`, so the robot is reachable at a known IP on a bare switch. The eth0-SSH check in `setup_eth.sh` applies here too: a mode switch asks first when the session arrives over eth0. See [Ethernet addressing](#ethernet-addressing).
+1. **eth0 addressing** via `setup_eth.sh`; eth0 is put in exactly one IPv4 mode, static by default at `192.168.52.(200 + car number)/24` (`.200` without a number), so the robot is reachable at a known IP on a bare switch and cars on one switch do not collide. The eth0-SSH check in `setup_eth.sh` applies here too: a mode switch asks first when the session arrives over eth0. See [Ethernet addressing](#ethernet-addressing).
 2. **ALFA-dongle isolated AP** via NetworkManager; the AP runs on the ALFA MT7612U dongle (pinned to `wlan1` by the udev rule), hosting its own 2.4 GHz WiFi network. Clients can SSH / browse the dashboard / use jupyter, but a NetworkManager dispatcher installs `iptables FORWARD REJECT` rules so AP clients **cannot** route through the Pi to the internet. The Pi's built-in `wlan0` is left in default client mode.
 
 Tunables (persisted to `~/.config/racecar/networking.env` and replayed on every re-run):
@@ -296,7 +319,8 @@ Tunables (persisted to `~/.config/racecar/networking.env` and replayed on every 
 | `--channel=N` | `6` |
 | `--ap-addr=CIDR` | `10.42.0.1/24` |
 | `--ap-iface=NAME` | `wlan1` (the ALFA dongle) |
-| `--eth-static=CIDR` | `192.168.52.200/24` |
+| `--id=N` | the car number (`racecar setup car` passes it); asked when no ID or SSID is saved |
+| `--eth-static=CIDR` | `192.168.52.(200 + N)/24`, N from 0 to 54 |
 | `--eth-mode=MODE` | `static` (or `dynamic`) |
 
 Inspect / clear the saved overrides:
@@ -325,7 +349,7 @@ eth0 holds exactly one IPv4 addressing mode. Carrying a static address and a DHC
 
 ```sh
 racecar eth                 # or: racecar eth status
-racecar eth static          # 192.168.52.200/24, no gateway (the default)
+racecar eth static          # 192.168.52.(200 + car number)/24, no gateway (the default)
 racecar eth dynamic         # address and default route from DHCP
 racecar eth static --addr=10.0.0.50/24
 ```
@@ -1015,11 +1039,12 @@ if any check failed. One line per prompt on stdin scripts the whole run.
 | `realsense` | Still and level, 3 s | the stored calibration applied to `/imu/realsense` gives gravity within 1%, gyro under 0.01 rad/s |
 | `lidar` | Driven forward and back about 1.3 m, parked 2 s before, between, and after | the lidar yaw from the direction of travel within 0.5 deg of `laser_yaw_deg` (warn to 1); each scan match under 30 mm RMS with at least 30% of points matched |
 | `odom` | Driven 2 circles and stopped anywhere near the start, then driven straight toward a wall and stopped anywhere short of it; parked 2 s before and after each run | `/odom/integrated` heading within 1% of the lidar's (warn to 3%); distance within 2% of the lidar's (warn to 5%); each scan match under 30 mm RMS with at least 30% of points matched; the scales `pit_node` runs with match `params/odom.yaml` |
-| `steering` | Driven straight at steering 0 about 2 m, parked 2 s before and after | heading drift within 1 deg/m (warn to 5, naming servo and linkage play); the trim `throttle_node` runs with matches `params/throttle.yaml` |
+| `camera` | On its wheels on a flat floor, 2 m clear ahead; camera on | pitch and roll within 0.5 deg and the case height within 5 mm of `params/frames.yaml` |
+| `steering` | Forward/reverse pairs at steering 0 and +/-0.5 from one placement | heading drift at 0 within 1 deg/m (warn to 5, naming servo and linkage play); the +/-0.5 legs within 10% of `params/steering_table.yaml`; the trim `throttle_node` runs with matches `params/throttle.yaml` |
 
 `racecar calibrate` runs the tools in `scripts/calibration/` in this order:
-the hand-held steps first (`imu`, `mag`, `realsense`), then `lidar`, `odom`
-and `steering` with the car on the floor. `dynamics` measures the car for the
+the hand-held steps first (`imu`, `mag`, `realsense`), then `lidar`, `camera`,
+`odom` and `steering` with the car on the floor. `dynamics` measures the car for the
 simulator and runs only when named (`racecar calibrate dynamics`); it has no
 check.
 Each step can be run, skipped (`s`), or gone back from (`b`, to run the previous
@@ -1203,7 +1228,7 @@ driver update, re-clone, or delete leaves them in place. It lives in
 
 | File | Holds |
 |---|---|
-| `car.yaml` | car name, profile version |
+| `car.yaml` | car name and number, profile version, the car record and the setup checklist (`racecar setup car`) |
 | `params/<name>.yaml` | ROS parameter overrides for `config/<name>.yaml`; calibration writes here |
 | `dashboards/<name>.yaml` | lab dashboard tuning |
 | `autonomy.conf`, `features.conf`, `networking.env` | autonomy mode, camera and detections choice, network settings |

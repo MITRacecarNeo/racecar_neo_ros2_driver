@@ -358,9 +358,8 @@ def run_steps(steps: list[Step]) -> int:
             print(f'    {key}: {old} -> {fmt(after.get(key, "?"))}')
 
     if any(outcome == 'done' for _, outcome, *_ in results):
-        restart = [*shlex.split(os.environ.get('RACECAR_SUDO', 'sudo')), *systemctl()]
-        restart += ['restart', TELEOP_UNIT]
-        print('Restarting teleop uses sudo, which may ask for your password.')
+        # A polkit rule lets the racecar user restart teleop without a password.
+        restart = [*systemctl(), 'restart', TELEOP_UNIT]
         if ask('Restart teleop now so the nodes load the new values? [y/N] ') == 'y':
             subprocess.run(restart, check=False)
         else:

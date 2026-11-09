@@ -19,6 +19,13 @@ All notable changes to this project will be documented in this file. The format 
   `racecar_neo_ros2_driver/steering.py` reads it.
 - `racecar calibrate camera` (`calibrate_camera.py`): RealSense mount pitch,
   roll and height from the floor plane in the depth image.
+- `racecar setup car` (`scripts/car_setup.py`): the guided setup of a new car
+  after `setup_all.sh` and its reboot (identity and hostname, hardware, NVMe,
+  access point, firmware, ESC, extras, geometry, calibration, health, car
+  record, backup). Each step checks the car first and can be marked done;
+  the state and the car record are kept in `car.yaml`. The 8080 home page
+  keeps the Utilities apps closed until every step is done.
+- `racecar setup networking --id=N` sets the car number without the prompt.
 - Setup installs the student library at the tag in
   `config/student_library.yaml`, read-only in
   `/opt/racecar-neo/library-<tag>/` and linked at
@@ -41,6 +48,9 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Changed
 
+- eth0's fixed address is `192.168.52.(200 + car number)` (numbers 0 to 54),
+  so cars on one switch do not collide; `.200` without a number.
+- `racecar calibrate` restarts teleop without sudo.
 - The validation tools (`scan_fit`, `slam_session`) read bags in either
   storage, mcap or sqlite3, from the bag's metadata.
 - The watchdog no longer logs a traceback when it is stopped.

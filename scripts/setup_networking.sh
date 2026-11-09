@@ -10,7 +10,7 @@
 #      (WPA2 / 2.4 GHz / channel 6 / 10.42.0.1/24). The AP interface is the ALFA
 #      MT7612U dongle, pinned to wlan1 by the 99-racecar.rules udev rule.
 #   3. Puts eth0 in a single IPv4 addressing mode by calling setup_eth.sh
-#      (static by default, at 192.168.52.200/24), which is the only writer of
+#      (static by default, at 192.168.52.(200 + car ID)/24), which is the only writer of
 #      the netplan file. See docs/troubleshooting.md, "eth0 addressing".
 #   4. Resets the Pi's built-in wlan0 to default (client) mode, removing any AP
 #      connection bound to it (images older than v0.7.0 put the AP there).
@@ -32,7 +32,7 @@
 #   RACECAR_AP_PSK        (default: racecar@mit)
 #   RACECAR_AP_CHANNEL    (default: 6)
 #   RACECAR_AP_ADDR       (default: 10.42.0.1/24)
-#   RACECAR_ETH_STATIC    (default: 192.168.52.200/24)
+#   RACECAR_ETH_STATIC    (default: 192.168.52.(200 + RACECAR_AP_ID)/24, .200 without an ID)
 #   RACECAR_ETH_MODE      (default: static; or dynamic)
 #
 # All steps are idempotent.
@@ -71,7 +71,8 @@ AP_BAND="bg"
 AP_CHANNEL="${RACECAR_AP_CHANNEL:-6}"
 AP_ADDR="${RACECAR_AP_ADDR:-10.42.0.1/24}"
 
-ETH_STATIC_ADDR="${RACECAR_ETH_STATIC:-192.168.52.200/24}"
+source "$(dirname "${BASH_SOURCE[0]}")/setup_lib.sh"
+ETH_STATIC_ADDR="${RACECAR_ETH_STATIC:-$(eth_static_default "${RACECAR_AP_ID:-}")}"
 
 DISPATCHER_PATH="/etc/NetworkManager/dispatcher.d/99-racecar-ap-isolate"
 

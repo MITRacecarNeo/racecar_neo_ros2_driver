@@ -243,11 +243,15 @@ __RC_SVC_HELP__
             case "$phase" in
                 "")
                     echo "usage: racecar setup <phase>" >&2
-                    echo "  phases: all, services, networking, realsense, dashboards" >&2
+                    echo "  phases: all, car, services, networking, realsense, dashboards" >&2
                     return 2
                     ;;
                 all)
                     bash "$pkg_dir/scripts/setup_all.sh" "$@"
+                    ;;
+                car)
+                    # Guided first setup of this car (scripts/car_setup.py).
+                    python3 "$pkg_dir/scripts/car_setup.py" "$@"
                     ;;
                 services)
                     # The core units (phase 11 of setup_all.sh), e.g. after an upgrade.
@@ -296,6 +300,7 @@ __RC_SVC_HELP__
                         fi
                         case "$key" in
                             --ssid)        vals[RACECAR_AP_SSID]="$val";    vals_changed=1 ;;
+                            --id)          vals[RACECAR_AP_ID]="$val";      vals_changed=1 ;;
                             --psk)         vals[RACECAR_AP_PSK]="$val";     vals_changed=1 ;;
                             --channel)     vals[RACECAR_AP_CHANNEL]="$val"; vals_changed=1 ;;
                             --ap-addr)     vals[RACECAR_AP_ADDR]="$val";    vals_changed=1 ;;
@@ -314,7 +319,7 @@ __RC_SVC_HELP__
 
                     if [[ "$action" == "help" ]]; then
                         cat <<'__RC_NET_HELP__'
-usage: racecar setup networking [--ssid=NAME] [--psk=PASS]
+usage: racecar setup networking [--id=N] [--ssid=NAME] [--psk=PASS]
                                 [--channel=N] [--ap-addr=CIDR]
                                 [--ap-iface=NAME] [--eth-static=CIDR]
                                 [--eth-mode=static|dynamic]
@@ -391,7 +396,7 @@ __RC_NET_HELP__
                     ;;
                 *)
                     echo "racecar setup: unknown phase '$phase'" >&2
-                    echo "  phases: all, services, networking, realsense, dashboards" >&2
+                    echo "  phases: all, car, services, networking, realsense, dashboards" >&2
                     return 2
                     ;;
             esac
@@ -417,7 +422,7 @@ __RC_NET_HELP__
 usage: racecar eth [action] [flags]
 actions:
   status    configured mode, live addresses, routes, conflict checks (default)
-  static    one fixed address (default 192.168.52.200/24), no gateway and no
+  static    one fixed address (default 192.168.52.(200 + car ID)/24), no gateway and no
             IPv6 default route; the shipped default
   dynamic   address and default route from DHCP
   monitor   log eth0 addressing and link state until interrupted. Flags:
@@ -1173,7 +1178,7 @@ Commands:
     eth [action]        eth0 addressing mode; static or DHCP, never both.
                           status    configured mode, live addresses, routes,
                                     and conflict checks (default)
-                          static    fixed 192.168.52.200/24, no gateway and no
+                          static    fixed 192.168.52.(200 + car ID)/24, no gateway and no
                                     IPv6 default route; the shipped default
                           dynamic   address + default route from DHCP
                           monitor   log addressing + link state until interrupted
@@ -1196,6 +1201,9 @@ Commands:
     setup <phase>       Run a setup script. Phases:
                           all          setup_all.sh (the 12-phase orchestrator);
                                          --from N resumes at phase N, --skip N,M
+                          car          guided first setup after setup_all and its reboot:
+                                         identity, drive, access point, firmware, ESC,
+                                         calibration, health, car record (status, done STEP)
                           services     setup_services.sh: install and enable the core units
                           networking   eth0 addressing + ALFA-dongle isolated AP.
                                          Prompts for this car's ID (SSID
@@ -1204,7 +1212,8 @@ Commands:
                                            --ssid=NAME   --psk=PASS   --channel=N
                                            --ap-addr=CIDR (default 10.42.0.1/24)
                                            --ap-iface=NAME (default wlan1, the ALFA dongle)
-                                           --eth-static=CIDR (default 192.168.52.200/24)
+                                           --id=N (car number: SSID racecar-neo-N, eth0 .200+N)
+                                           --eth-static=CIDR (default 192.168.52.(200 + N)/24)
                                            --eth-mode=static|dynamic
                                            --show
                                            --reset (disable the wlan1 AP + clear saved ID)
@@ -1525,9 +1534,9 @@ _racecar_complete() {
             ;;
         setup)
             if [[ $COMP_CWORD -eq 2 ]]; then
-                COMPREPLY=( $(compgen -W "all services networking realsense dashboards" -- "$cur") )
+                COMPREPLY=( $(compgen -W "all car services networking realsense dashboards" -- "$cur") )
             elif [[ "${COMP_WORDS[2]}" == "networking" ]]; then
-                COMPREPLY=( $(compgen -W "--ssid= --psk= --channel= --ap-addr= --ap-iface= --eth-static= --eth-mode= --show --reset --help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "--ssid= --id= --psk= --channel= --ap-addr= --ap-iface= --eth-static= --eth-mode= --show --reset --help" -- "$cur") )
             elif [[ "${COMP_WORDS[2]}" == "dashboards" ]]; then
                 COMPREPLY=( $(compgen -W "--help" -- "$cur") )
             elif [[ "${COMP_WORDS[2]}" == "realsense" ]]; then

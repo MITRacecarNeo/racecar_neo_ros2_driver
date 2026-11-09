@@ -312,7 +312,7 @@ class TestSetup:
         assert 'services' in _run('setup').stderr
         text = TOOL.read_text()
         assert 'bash "$pkg_dir/scripts/setup_services.sh" "$@"' in text
-        assert 'compgen -W "all services networking realsense dashboards"' in text
+        assert 'compgen -W "all car services networking realsense dashboards"' in text
 
     def test_networking_help(self):
         result = _run('setup', 'networking', '--help')

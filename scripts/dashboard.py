@@ -19,7 +19,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
-from racecar_neo_ros2_driver import apps, fileio, units
+from racecar_neo_ros2_driver import apps, car_profile, fileio, units
 from racecar_neo_ros2_driver.qos import LATCHED, SENSOR_LATEST
 import rclpy
 from rclpy.node import Node
@@ -31,6 +31,7 @@ from std_msgs.msg import Bool, Empty, UInt32
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from battery_alert import Announcer, final_message  # noqa: E402, I100  sibling scripts
+import car_setup  # noqa: E402
 import features  # noqa: E402
 from safe_shutdown import shutdown_sequence  # noqa: E402
 from sysinfo import (  # noqa: E402
@@ -1052,6 +1053,15 @@ def _app_units() -> list[str]:
     return [a['unit'] for a in APPS if a['unit']]
 
 
+SETUP_NEEDED = 'Finish setting up this car first: racecar setup car'
+
+
+def setup_view() -> dict[str, Any]:
+    """Return whether `racecar setup car` is complete and its open steps (car.yaml)."""
+    info = car_profile.car_info()
+    return {'complete': car_setup.setup_complete(info), 'open': car_setup.open_steps(info)}
+
+
 def open_app(target: str, run: Callable[..., Any] = subprocess.run) -> tuple[bool, str]:
     """
     Start `target` if it is not running.
@@ -1065,6 +1075,8 @@ def open_app(target: str, run: Callable[..., Any] = subprocess.run) -> tuple[boo
         return False, f'Unknown app: {target}'
     if app['unit'] is None:
         return False, f'{app["name"]} is not available.'
+    if app['group'] != 'core' and not setup_view()['complete']:
+        return False, SETUP_NEEDED
     if app['exclusive']:
         live = ('active', 'activating')
         if (
@@ -1487,6 +1499,7 @@ class DashboardHandler(webui.AppHandler):
                     'clock': clock_view(time.time()),
                     'override': _override.view(time.monotonic()),
                     'features': features_view(),
+                    'setup': setup_view(),
                 },
             )
         elif url.path == '/api/battery':

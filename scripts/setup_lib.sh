@@ -6,6 +6,18 @@
 TARGET_USER="${SUDO_USER:-$USER}"
 TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
 
+# eth_static_default [CAR_ID]: the car's fixed eth0 address, 192.168.52.(200 +
+# car number) for numbers 0 to 54 so cars on one switch do not collide;
+# 192.168.52.200 without a number or past 54.
+eth_static_default() {
+    local id="${1:-}"
+    if [[ "$id" =~ ^[0-9]+$ ]] && (( 10#$id <= 54 )); then
+        echo "192.168.52.$((200 + 10#$id))/24"
+    else
+        echo "192.168.52.200/24"
+    fi
+}
+
 # install_if_changed SRC DST MODE [OWNER]
 # Install SRC as DST with MODE (and OWNER:OWNER) unless DST already matches.
 # Sets INSTALLED=1 when it wrote DST, else 0. Returns 1 only when the install

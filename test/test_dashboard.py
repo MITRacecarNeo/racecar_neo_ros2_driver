@@ -13,6 +13,18 @@ from conftest import completed, load_script
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def set_up_car(car_profile_dir):
+    """Give each test a car that finished `racecar setup car`, so apps open."""
+    import yaml
+
+    car_setup = load_script('car_setup')
+    car_profile_dir.mkdir(parents=True, exist_ok=True)
+    setup = {key: {'done': '2026-11-09 12:00', 'by': 'user'} for key in car_setup.STEP_KEYS}
+    (car_profile_dir / 'car.yaml').write_text(yaml.safe_dump({'name': 'test', 'setup': setup}))
+    return car_profile_dir
+
+
 @pytest.fixture(scope='module')
 def dashboard():
     return load_script('dashboard')
@@ -1311,3 +1323,26 @@ class TestBatteryPillsFresh:
         assert "document.addEventListener('visibilitychange'" in dashboard.webui.read_page(
             dashboard._HTML_PATH
         )
+
+
+class TestSetupGate:
+    def _unfinish(self, path):
+        (path / 'car.yaml').write_text('name: test\n')
+
+    def test_utilities_closed_until_setup_is_done(self, dashboard, set_up_car):
+        self._unfinish(set_up_car)
+        view = dashboard.setup_view()
+        assert view['complete'] is False and 'Access point' in view['open']
+        ok, message = dashboard.open_app('wallfollow', run=FakeRun({}))
+        assert not ok and message == dashboard.SETUP_NEEDED
+
+    def test_core_apps_still_open(self, dashboard, set_up_car):
+        self._unfinish(set_up_car)
+        run = FakeRun(states={'racecar-terminal': 'inactive'})
+        ok, _ = dashboard.open_app('terminal', run=run)
+        assert ok
+
+    def test_page_grays_out_locked_tiles(self, dashboard):
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
+        assert 'id="setup-note"' in html and "a.group !== 'core'" in html
+        assert 'Finish setting up this car first' in html
