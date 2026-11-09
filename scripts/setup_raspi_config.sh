@@ -21,14 +21,37 @@ SUDO="${RACECAR_SUDO-sudo}"
 
 if [ -f /boot/firmware/config.txt ]; then
     CONFIG_TXT=/boot/firmware/config.txt
-    CMDLINE_TXT=/boot/firmware/cmdline.txt
 elif [ -f /boot/config.txt ]; then
     CONFIG_TXT=/boot/config.txt
-    CMDLINE_TXT=/boot/cmdline.txt
 else
     echo "No config.txt; skipping (not a Raspberry Pi image)."
     exit 0
 fi
+
+# The kernel command line file the firmware reads: cmdline= and os_prefix=
+# from config.txt (last value wins), next to config.txt.
+resolve_cmdline() {
+    local name prefix
+    name="$(awk -F= '/^[[:space:]]*cmdline=/ { v = $2 } END { gsub(/[[:space:]]/, "", v); print v }' "$CONFIG_TXT")"
+    prefix="$(awk -F= '/^[[:space:]]*os_prefix=/ { v = $2 } END { gsub(/[[:space:]]/, "", v); print v }' "$CONFIG_TXT")"
+    echo "$(dirname "$CONFIG_TXT")/${prefix}${name:-cmdline.txt}"
+}
+
+# Drop the serial console from the kernel command line; it would hold the
+# UART the Teensy uses. A boot partition without the file (an NVMe-booted
+# image) is reported, not an error.
+remove_serial_console() {
+    local cmdline
+    cmdline="$(resolve_cmdline)"
+    if [ ! -f "$cmdline" ]; then
+        echo "  no $cmdline; serial console left as is"
+        if grep -qE 'console=(serial0|ttyAMA0|ttyS0)' /proc/cmdline 2>/dev/null; then
+            echo "  WARNING: the running kernel has a serial console; remove console=serial0 from the boot command line"
+        fi
+        return 0
+    fi
+    $SUDO sed -i -E 's/console=(serial0|ttyAMA0|ttyS0),[0-9]+ ?//g' "$cmdline"
+}
 
 # Leave exactly one KEY=VALUE in the [all] scope of config.txt (lines before
 # the first section header count as [all]). raspi-config variants may write
@@ -113,8 +136,7 @@ else
     ensure_all_setting dtparam=i2c_arm on
     ensure_all_setting dtparam=spi on
 fi
-# The serial console would hold the UART the Teensy uses.
-sudo sed -i -E 's/console=(serial0|ttyAMA0|ttyS0),[0-9]+ ?//g' "$CMDLINE_TXT"
+remove_serial_console
 ensure_enable_uart
 
 # Full USB current for the RealSense, lidar and Teensy; the EEPROM's

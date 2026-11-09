@@ -9,9 +9,15 @@ All notable changes to this project will be documented in this file. The format 
 - A stall banner on every page the car serves (`scripts/web/stall.js`,
   8080 `/api/stall`): yellow while the throttle is held after a stall or
   during the cooldown, red during a lockout, with the seconds left.
+- `setup_all.sh --from N` resumes at phase N and `--skip N,M` leaves phases
+  out; a failed phase prints the command that resumes there.
+- `racecar setup services` runs `setup_services.sh` (the core units).
 
 ### Fixed
 
+- `setup_raspi_config.sh` finds the kernel command line file from
+  `config.txt` (`cmdline=`, `os_prefix=`) and reports a missing one instead
+  of stopping the setup, so a car booted from the NVMe gets past phase 4.
 - `racecar status` gamepad row passes for any joystick (`/dev/input/js*`)
   and names it; it no longer needs the 045e:028e USB ID, so Xbox 360 clones
   pass.

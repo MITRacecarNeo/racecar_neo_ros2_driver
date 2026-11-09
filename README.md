@@ -177,7 +177,7 @@ Twelve phases, all under `scripts/`:
 1. **`setup_ros2.sh`**: ROS2 Jazzy apt repo + message/driver packages (`xacro` and `robot_state_publisher` for the frame tree, slam_toolbox, Nav2 AMCL and map server), `nvme-cli` and `gdisk` for `racecar disk`
 2. **`setup_dev_tools.sh`**: build tools, Python hardware libs (`smbus` / `serial` / `spidev`), Pi tools and services the car relies on (`raspi-config`, `rpi-eeprom`, `vcgencmd`, NetworkManager, avahi, polkit, matplotlib), and the pinned linters (`ruff`, `black`, `mypy`) per-user
 3. **`setup_user_env.sh`**: joins `dialout` / `i2c` / `spi` / `gpio` / `video` groups; installs the polkit rules in `scripts/polkit/` (NetworkManager for `racecar wifi`, the autonomy unit for `racecar map`, the lab dashboards for the apps page, the teleop restart for Features); sources ROS2 + the `racecar` shell tool in `.bashrc` and puts `~/.local/bin` on `PATH`
-4. **`setup_raspi_config.sh`**: boot-level configuration: enable I2C, enable SPI, disable serial console (frees the GPIO UART / `ttyAMA0` for the NEO-PIT link), `usb_max_power_enable=1`, enable RTC backup-cell trickle charging (`RTC_VCHG_UV=0` turns it off; see [RTC backup cell](#rtc-backup-cell)), and reconcile the bootloader EEPROM (`RACECAR_EEPROM=0` skips it; see [Bootloader EEPROM](#bootloader-eeprom))
+4. **`setup_raspi_config.sh`**: boot-level configuration: enable I2C, enable SPI, disable serial console (frees the GPIO UART / `ttyAMA0` for the NEO-PIT link; edits the kernel command line file named by `cmdline=` and `os_prefix=` in `config.txt`, and only reports it when that file is absent, as on a car booted from the NVMe), `usb_max_power_enable=1`, enable RTC backup-cell trickle charging (`RTC_VCHG_UV=0` turns it off; see [RTC backup cell](#rtc-backup-cell)), and reconcile the bootloader EEPROM (`RACECAR_EEPROM=0` skips it; see [Bootloader EEPROM](#bootloader-eeprom))
 5. **`setup_udev.sh`**: installs `/etc/udev/rules.d/99-racecar.rules` (stable `/dev/neo-pit-pcb`, `/dev/lidar`)
 6. **`setup_dotmatrix.sh`**: `pip install --user luma.led_matrix` (pinned), the font source for the `dotmatrix_node` rasterizer
 7. **`setup_coral.sh`**: installs `libedgetpu1-std`, `tflite_runtime`, `pycoral` from vendored `depend/` artifacts; on a Pi 5, also the M.2 card's gasket DKMS driver and the `coral-msi` overlay, so a card fitted after setup works (reboot required)
@@ -187,7 +187,14 @@ Twelve phases, all under `scripts/`:
 11. **`setup_services.sh`**: installs and enables the core systemd units (`racecar-{data,teleop,watchdog,dashboard,jupyter,mapview}.service`), installs `racecar-autonomy.service` disabled, and installs `/etc/profile.d/racecar-data.sh`
 12. **`setup_dashboards.sh`**: installs a stopped, disabled `racecar-*` unit for each lab dashboard listed in `config/apps.yaml` (web teleop, line follow, wall follow, camera label) and removes units left by retired dashboards (`RACECAR_DASHBOARDS=0` skips it)
 
-Individual phase scripts can be run on their own to re-do or skip steps (e.g. `racecar setup networking` for just the networking phase, or `bash scripts/setup_udev.sh` to reinstall the udev rules after a hardware swap).
+A failed phase stops the run and prints the command that resumes there:
+
+```bash
+bash scripts/setup_all.sh --from 5      # start at phase 5
+bash scripts/setup_all.sh --skip 7,8    # leave out phases 7 and 8
+```
+
+Individual phase scripts can be run on their own to re-do or skip steps (e.g. `racecar setup networking` for just the networking phase, `racecar setup services` to reinstall the core units, or `bash scripts/setup_udev.sh` to reinstall the udev rules after a hardware swap).
 
 ## The `racecar` shell tool
 
@@ -211,7 +218,8 @@ racecar service logs teleop # journalctl -u racecar-teleop -f
 racecar service start wallfollow  # a lab dashboard; stops the other /drive publishers
 racecar service enable wallfollow # enable one unit; bare `enable` covers the core six
 
-racecar setup all                       # run the 12-phase orchestrator
+racecar setup all                       # run the 12-phase orchestrator (--from N, --skip N,M)
+racecar setup services                  # install and enable the core units
 racecar setup networking --ssid=racecar-neo-2   # configure eth0 addressing + ALFA-dongle AP
 racecar setup networking --show         # print persisted overrides
 racecar setup dashboards                # clone the lab dashboards + install units

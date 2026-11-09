@@ -308,6 +308,12 @@ class TestSetup:
         assert result.returncode == 2
         assert 'unknown phase' in result.stderr
 
+    def test_services_is_a_phase(self):
+        assert 'services' in _run('setup').stderr
+        text = TOOL.read_text()
+        assert 'bash "$pkg_dir/scripts/setup_services.sh" "$@"' in text
+        assert 'compgen -W "all services networking realsense dashboards"' in text
+
     def test_networking_help(self):
         result = _run('setup', 'networking', '--help')
         assert result.returncode == 0

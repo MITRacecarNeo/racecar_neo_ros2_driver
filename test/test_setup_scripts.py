@@ -852,6 +852,85 @@ otg_mode=1
         )
         assert out.endswith('dtparam=rtc_bbat_vchg=3000000\n')
 
+    def _cmdline(self, tmp_path, config, func, files=()):
+        """Run resolve_cmdline or remove_serial_console against a temp boot folder."""
+        boot = tmp_path / 'boot'
+        boot.mkdir(exist_ok=True)
+        (boot / 'config.txt').write_text(config)
+        for name, text in files:
+            (boot / name).parent.mkdir(parents=True, exist_ok=True)
+            (boot / name).write_text(text)
+        text = self.SCRIPT.read_text()
+        bodies = ''
+        for name in ('resolve_cmdline', 'remove_serial_console'):
+            body = text.split(f'{name}() {{', 1)[1].split('\n}\n', 1)[0]
+            bodies += f'{name}() {{{body}\n}}\n'
+        script = f'set -eo pipefail\nCONFIG_TXT={boot}/config.txt\nSUDO=\n{bodies}{func}\n'
+        result = subprocess.run(['bash', '-c', script], capture_output=True, text=True)
+        return result, boot
+
+    def test_cmdline_defaults_next_to_config(self, tmp_path):
+        result, boot = self._cmdline(tmp_path, '[all]\nkernel=vmlinuz\n', 'resolve_cmdline')
+        assert result.stdout.strip() == f'{boot}/cmdline.txt'
+
+    def test_cmdline_follows_cmdline_and_os_prefix(self, tmp_path):
+        config = '[all]\nos_prefix=current/\ncmdline=nvme.txt\n'
+        result, boot = self._cmdline(tmp_path, config, 'resolve_cmdline')
+        assert result.stdout.strip() == f'{boot}/current/nvme.txt'
+
+    def test_missing_cmdline_is_reported_not_fatal(self, tmp_path):
+        result, _ = self._cmdline(tmp_path, '[all]\n', 'remove_serial_console')
+        assert result.returncode == 0, result.stderr
+        assert 'serial console left as is' in result.stdout
+
+    def test_serial_console_removed_from_the_resolved_file(self, tmp_path):
+        line = 'console=serial0,115200 console=tty1 root=LABEL=writable\n'
+        result, boot = self._cmdline(
+            tmp_path, '[all]\ncmdline=cmd.txt\n', 'remove_serial_console', [('cmd.txt', line)]
+        )
+        assert result.returncode == 0, result.stderr
+        assert (boot / 'cmd.txt').read_text() == 'console=tty1 root=LABEL=writable\n'
+
+    def test_no_unguarded_cmdline_edit(self):
+        assert 'CMDLINE_TXT' not in self.SCRIPT.read_text()
+
+
+class TestSetupAllPhases:
+    """setup_all.sh --from / --skip and the resume hint on a failed phase."""
+
+    def _run(self, *args, body='for n in 3 4 7; do echo "$n:"; phase $n true; done'):
+        text = (SCRIPTS_DIR / ORCHESTRATOR).read_text()
+        start, end = text.index('PHASES='), text.index('SCRIPT_DIR=')
+        head = text[start:end]
+        script = f'set -eo pipefail\n{head}\n{body}\n'
+        return subprocess.run(
+            ['bash', '-c', script, 'setup_all', *args], capture_output=True, text=True
+        )
+
+    def test_every_phase_but_the_dashboards_runs_through_phase(self):
+        text = (SCRIPTS_DIR / ORCHESTRATOR).read_text()
+        for n in range(1, 12):
+            assert f'\nphase {n} ' in text, n
+
+    def test_from_skips_earlier_phases(self):
+        out = self._run('--from', '4').stdout
+        assert out.split('4:')[0].count('skipped') == 1 and 'skipped' not in out.split('4:')[1]
+
+    def test_skip_list(self):
+        out = self._run('--skip', '4,7').stdout
+        assert out.count('skipped') == 2 and out.index('3:') < out.index('skipped')
+
+    @pytest.mark.parametrize(
+        'args', [('--from',), ('--from', '13'), ('--skip', 'x'), ('--bogus',)]
+    )
+    def test_bad_options_exit_2(self, args):
+        assert self._run(*args).returncode == 2
+
+    def test_failed_phase_names_the_resume_command(self):
+        result = self._run(body='phase 5 false; echo after')
+        assert result.returncode == 1 and 'after' not in result.stdout
+        assert 'bash scripts/setup_all.sh --from 5' in result.stderr
+
 
 def test_terminal_app_packages_are_installed_by_setup():
     # A fresh car must get what scripts/terminal.py runs: ttyd, PAM for Python, tmux.

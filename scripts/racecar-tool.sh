@@ -241,11 +241,15 @@ __RC_SVC_HELP__
             case "$phase" in
                 "")
                     echo "usage: racecar setup <phase>" >&2
-                    echo "  phases: all, networking, realsense, dashboards" >&2
+                    echo "  phases: all, services, networking, realsense, dashboards" >&2
                     return 2
                     ;;
                 all)
                     bash "$pkg_dir/scripts/setup_all.sh" "$@"
+                    ;;
+                services)
+                    # The core units (phase 11 of setup_all.sh), e.g. after an upgrade.
+                    bash "$pkg_dir/scripts/setup_services.sh" "$@"
                     ;;
                 dashboards)
                     # Installs the four lab dashboards' units, stopped and
@@ -385,7 +389,7 @@ __RC_NET_HELP__
                     ;;
                 *)
                     echo "racecar setup: unknown phase '$phase'" >&2
-                    echo "  phases: all, networking, realsense, dashboards" >&2
+                    echo "  phases: all, services, networking, realsense, dashboards" >&2
                     return 2
                     ;;
             esac
@@ -1172,7 +1176,9 @@ Commands:
                           disable   boot headless
                         Applies on the next boot; never ends a running session.
     setup <phase>       Run a setup script. Phases:
-                          all          setup_all.sh (the 12-phase orchestrator)
+                          all          setup_all.sh (the 12-phase orchestrator);
+                                         --from N resumes at phase N, --skip N,M
+                          services     setup_services.sh: install and enable the core units
                           networking   eth0 addressing + ALFA-dongle isolated AP.
                                          Prompts for this car's ID (SSID
                                          racecar-neo-<id>) when none is set.
@@ -1499,7 +1505,7 @@ _racecar_complete() {
             ;;
         setup)
             if [[ $COMP_CWORD -eq 2 ]]; then
-                COMPREPLY=( $(compgen -W "all networking realsense dashboards" -- "$cur") )
+                COMPREPLY=( $(compgen -W "all services networking realsense dashboards" -- "$cur") )
             elif [[ "${COMP_WORDS[2]}" == "networking" ]]; then
                 COMPREPLY=( $(compgen -W "--ssid= --psk= --channel= --ap-addr= --ap-iface= --eth-static= --eth-mode= --show --reset --help" -- "$cur") )
             elif [[ "${COMP_WORDS[2]}" == "dashboards" ]]; then
