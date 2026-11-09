@@ -34,7 +34,8 @@ from typing import Any
 
 from nav_msgs.msg import Odometry
 import numpy as np
-from racecar_neo_ros2_driver.frames import load_frames
+from racecar_neo_ros2_driver.frames import laser_mount, load_frames
+from racecar_neo_ros2_driver.geometry import stamp_sec, yaw_of
 from rcl_interfaces.msg import ParameterType
 from rcl_interfaces.srv import GetParameters
 import rclpy
@@ -266,12 +267,7 @@ class OdomCalibrator(CalibratorNode):
         self.sign = float(params.get('odometry.yaw_rate_sign', 1.0))
         self.yaw_scale = float(params.get('odometry.yaw_rate_scale', 1.0))
         self.speed_scale = float(params.get('odometry.speed_scale', 1.0))
-        frames = load_frames(stack_config_dir())
-        self.laser: Pose = (
-            frames['laser_x_mm'] * 1e-3,
-            frames['laser_y_mm'] * 1e-3,
-            math.radians(frames['laser_yaw_deg']),
-        )
+        self.laser: Pose = laser_mount(load_frames(stack_config_dir()))
         self._gyro: list[tuple[float, float]] = []
         self._gyro_on = False
         self._last_rate = 0.0
@@ -285,12 +281,12 @@ class OdomCalibrator(CalibratorNode):
 
     def extract(self, msg: Any) -> list[float]:
         q = msg.pose.pose.orientation
-        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        stamp = stamp_sec(msg.header.stamp)
         return [
             stamp,
             msg.pose.pose.position.x,
             msg.pose.pose.position.y,
-            2 * math.atan2(q.z, q.w),
+            yaw_of(q),
             msg.twist.twist.linear.x,
         ]
 
@@ -302,7 +298,7 @@ class OdomCalibrator(CalibratorNode):
         rate = self.sign * float(getattr(msg.angular_velocity, 'xyz'[self.axis]))
         self._last_rate = rate
         if self._gyro_on:
-            stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+            stamp = stamp_sec(msg.header.stamp)
             with self._aux_lock:
                 self._gyro.append((stamp, rate))
 

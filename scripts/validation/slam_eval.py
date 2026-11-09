@@ -32,6 +32,7 @@ import time
 from typing import Any
 
 from racecar_neo_ros2_driver import data_root
+from racecar_neo_ros2_driver.geometry import yaw_of  # noqa: F401  slam_session uses it
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
@@ -282,10 +283,6 @@ def mean_pose(poses: list[tuple[float, float, float]]) -> tuple[float, float, fl
     y = sum(p[1] for p in poses) / n
     yaw = math.atan2(sum(math.sin(p[2]) for p in poses), sum(math.cos(p[2]) for p in poses))
     return x, y, yaw
-
-
-def yaw_of(q: Any) -> float:
-    return math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
 
 
 def sample_map_pose(buffer: Any, spin: Any = None) -> list[tuple[float, float, float]]:

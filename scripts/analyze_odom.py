@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / 'calibration'))
 
 from calibrate_common import criteria_lines, Criterion, overall, use_color  # noqa: E402, I100
 from racecar_log import load_config, resolve_log_root  # noqa: E402
+from racecar_neo_ros2_driver.geometry import stamp_sec, yaw_of  # noqa: E402
 
 # Acceptance limits.
 CIRCLE_YAW_TOLERANCE_DEG = 5.0
@@ -128,13 +129,13 @@ def read_bag(bag: Path) -> Run:
     while reader.has_next():
         topic, data, _ = reader.read_next()
         msg = deserialize_message(data, classes[topic])
-        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        stamp = stamp_sec(msg.header.stamp)
         if topic == '/odom/integrated':
             q = msg.pose.pose.orientation
             cols['t'].append(stamp)
             cols['x'].append(msg.pose.pose.position.x)
             cols['y'].append(msg.pose.pose.position.y)
-            cols['yaw'].append(2.0 * math.atan2(q.z, q.w))
+            cols['yaw'].append(yaw_of(q))
             cols['v'].append(msg.twist.twist.linear.x)
             cols['w'].append(msg.twist.twist.angular.z)
         else:

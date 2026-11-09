@@ -47,6 +47,7 @@ from typing import Any
 
 import numpy as np
 from racecar_neo_ros2_driver.car_profile import param_path
+from racecar_neo_ros2_driver.geometry import stamp_sec, yaw_of
 import yaml
 
 HERE = Path(__file__).resolve().parent
@@ -315,23 +316,23 @@ def read_bag(path: Path, axis: int = 2, sign: float = 1.0) -> Bag:
         msg = deserialize_message(data, classes[topic])
         if topic == '/odom/integrated':
             q = msg.pose.pose.orientation
-            st = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+            st = stamp_sec(msg.header.stamp)
             odom.append(
                 (
                     st,
                     msg.pose.pose.position.x,
                     msg.pose.pose.position.y,
-                    2 * math.atan2(q.z, q.w),
+                    yaw_of(q),
                     msg.twist.twist.linear.x,
                 )
             )
         elif topic == '/imu/lsm9ds1':
-            st = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+            st = stamp_sec(msg.header.stamp)
             gyro.append((st, sign * getattr(msg.angular_velocity, 'xyz'[axis])))
         elif topic == '/motor':
             motor.append((t_ns * 1e-9, msg.drive.speed, msg.drive.steering_angle))
         elif topic == '/scan':
-            st = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+            st = stamp_sec(msg.header.stamp)
             ranges = np.asarray(msg.ranges, float)
             angles = msg.angle_min + msg.angle_increment * np.arange(ranges.size)
             ok = np.isfinite(ranges) & (ranges >= msg.range_min) & (ranges <= msg.range_max)
@@ -374,10 +375,9 @@ def command_edges(bag: Bag) -> list[tuple[float, float, float]]:
 
 
 def laser_pose() -> Pose:
-    from racecar_neo_ros2_driver.frames import load_frames
+    from racecar_neo_ros2_driver.frames import laser_mount, load_frames
 
-    f = load_frames(stack_config_dir())
-    return f['laser_x_mm'] * 1e-3, f['laser_y_mm'] * 1e-3, math.radians(f['laser_yaw_deg'])
+    return laser_mount(load_frames(stack_config_dir()))
 
 
 # Scans stacked per rest: a few fill gaps between beams; more only slow the match.

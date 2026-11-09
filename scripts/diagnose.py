@@ -35,6 +35,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import features  # noqa: E402, I100  sibling script, after the path insert
+from racecar_neo_ros2_driver.geometry import yaw_of  # noqa: E402
 from racecar_neo_ros2_driver.term import paint, use_color  # noqa: E402, F401  used by health
 import sysinfo  # noqa: E402
 
@@ -619,7 +620,7 @@ def read_mag(msg: Any) -> tuple[str, str]:
 
 def read_fused(msg: Any) -> tuple[str, str]:
     q = msg.orientation
-    yaw = math.degrees(math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y**2 + q.z**2)))
+    yaw = math.degrees(yaw_of(q))
     return OK, f'yaw {yaw:+.1f} deg, gyro z {msg.angular_velocity.z:+.2f} rad/s'
 
 
@@ -703,7 +704,7 @@ def read_drive(msg: Any) -> tuple[str, str]:
 
 def read_autonomy_pose(msg: Any) -> tuple[str, str]:
     p, q = msg.pose.pose.position, msg.pose.pose.orientation
-    yaw = math.degrees(math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z)))
+    yaw = math.degrees(yaw_of(q))
     return OK, f'x {p.x:+.2f} m, y {p.y:+.2f} m, heading {yaw:+.0f} deg'
 
 

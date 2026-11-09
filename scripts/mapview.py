@@ -35,6 +35,7 @@ from urllib.parse import parse_qs, urlparse
 import map_control as mc
 import numpy as np
 from racecar_neo_ros2_driver import apps, autonomy as au, frames
+from racecar_neo_ros2_driver.geometry import yaw_of
 from racecar_neo_ros2_driver.maps import map_root, valid_name
 import sysinfo
 import webui
@@ -404,7 +405,7 @@ class Viewer:
 
     def _on_pose(self, msg: Any) -> None:
         p, q = msg.pose.pose.position, msg.pose.pose.orientation
-        yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+        yaw = yaw_of(q)
         with self._lock:
             self.pose = (p.x, p.y, yaw)
             self.trail.add(p.x, p.y)

@@ -16,7 +16,6 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 import math
-from pathlib import Path
 import sys
 import time
 
@@ -68,11 +67,10 @@ def best_nearby(
 
 def laser_offset() -> sf.Pose:
     """base_link -> laser from frames.yaml with the car's override."""
-    from ament_index_python.packages import get_package_share_directory
-    from racecar_neo_ros2_driver.frames import load_frames
+    from racecar_neo_ros2_driver.frames import laser_mount, load_frames
+    from racecar_neo_ros2_driver.paths import config_dir
 
-    f = load_frames(Path(get_package_share_directory('racecar_neo_ros2_driver')) / 'config')
-    return f['laser_x_mm'] / 1e3, f['laser_y_mm'] / 1e3, math.radians(f['laser_yaw_deg'])
+    return laser_mount(load_frames(config_dir()))
 
 
 def read_live(timeout: float = 5.0) -> tuple[np.ndarray, sf.Pose, int]:
@@ -100,7 +98,9 @@ def read_live(timeout: float = 5.0) -> tuple[np.ndarray, sf.Pose, int]:
         raise SystemExit('live_fit: no /scan or /autonomy/pose; is autonomy running?')
     p = poses[-1].pose.pose
     q = p.orientation
-    yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+    from racecar_neo_ros2_driver.geometry import yaw_of
+
+    yaw = yaw_of(q)
     points = np.vstack(
         [
             sf.scan_points(np.asarray(m.ranges, float), m.angle_min, m.angle_increment)

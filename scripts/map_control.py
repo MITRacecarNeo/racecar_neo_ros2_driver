@@ -32,6 +32,7 @@ import time
 from typing import Any
 
 from racecar_neo_ros2_driver import apps, autonomy as au, data_root, fileio
+from racecar_neo_ros2_driver.geometry import yaw_of
 from racecar_neo_ros2_driver.maps import map_root, parse_pose, ROOT_ENV, valid_name
 
 UNIT = 'racecar-autonomy.service'
@@ -454,7 +455,7 @@ def latest_pose(node: Any, timeout: float = 1.0) -> tuple[float, float, float] |
 
     def on_pose(msg: Any) -> None:
         p, q = msg.pose.pose.position, msg.pose.pose.orientation
-        yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+        yaw = yaw_of(q)
         got.append((p.x, p.y, yaw))
 
     sub = node.create_subscription(PoseWithCovarianceStamped, '/autonomy/pose', on_pose, 10)

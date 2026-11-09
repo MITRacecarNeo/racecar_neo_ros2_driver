@@ -220,10 +220,8 @@ def read_bag(bag: Path, every: int = 3) -> dict[str, Any]:
     import rosbag2_py
     from rclpy.serialization import deserialize_message
     from sensor_msgs.msg import LaserScan
+    from racecar_neo_ros2_driver.geometry import yaw_of as yaw
     from tf2_msgs.msg import TFMessage
-
-    def yaw(q: Any) -> float:
-        return math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
 
     reader = rosbag2_py.SequentialReader()
     reader.open(
