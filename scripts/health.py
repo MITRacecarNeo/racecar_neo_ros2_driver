@@ -286,16 +286,13 @@ def collect_link(seconds: float) -> list[dict[str, float]]:
         if report is not None:
             reports.append(report)
 
-    rclpy.init()
-    node = rclpy.create_node('racecar_health_link')
-    node.create_subscription(DiagnosticArray, '/diagnostics', record, 10)
-    end = time.monotonic() + seconds
-    try:
+    from racecar_neo_ros2_driver.ros_cli import ros_node
+
+    with ros_node('racecar_health_link') as node:
+        node.create_subscription(DiagnosticArray, '/diagnostics', record, 10)
+        end = time.monotonic() + seconds
         while time.monotonic() < end:
             rclpy.spin_once(node, timeout_sec=0.2)
-    finally:
-        node.destroy_node()
-        rclpy.shutdown()
     return reports
 
 

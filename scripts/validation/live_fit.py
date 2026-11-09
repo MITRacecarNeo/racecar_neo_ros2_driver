@@ -80,20 +80,17 @@ def read_live(timeout: float = 5.0) -> tuple[np.ndarray, sf.Pose, int]:
     from rclpy.qos import QoSProfile, QoSReliabilityPolicy
     from sensor_msgs.msg import LaserScan
 
-    rclpy.init()
-    node = rclpy.create_node('live_fit')
+    from racecar_neo_ros2_driver.ros_cli import ros_node
+
     scans: list = []
     poses: list = []
     sensor = QoSProfile(depth=5, reliability=QoSReliabilityPolicy.BEST_EFFORT)
-    node.create_subscription(LaserScan, '/scan', scans.append, sensor)
-    node.create_subscription(PoseWithCovarianceStamped, '/autonomy/pose', poses.append, 10)
-    end = time.monotonic() + timeout
-    try:
+    with ros_node('live_fit') as node:
+        node.create_subscription(LaserScan, '/scan', scans.append, sensor)
+        node.create_subscription(PoseWithCovarianceStamped, '/autonomy/pose', poses.append, 10)
+        end = time.monotonic() + timeout
         while time.monotonic() < end and (len(scans) < SCANS or not poses):
             rclpy.spin_once(node, timeout_sec=0.1)
-    finally:
-        node.destroy_node()
-        rclpy.try_shutdown()
     if not scans or not poses:
         raise SystemExit('live_fit: no /scan or /autonomy/pose; is autonomy running?')
     p = poses[-1].pose.pose

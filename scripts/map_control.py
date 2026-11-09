@@ -19,8 +19,8 @@ Failures raise MapError carrying the exit code: 1 failed, 2 usage.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from datetime import datetime
 import math
@@ -31,7 +31,7 @@ import subprocess
 import time
 from typing import Any
 
-from racecar_neo_ros2_driver import apps, autonomy as au, data_root, fileio
+from racecar_neo_ros2_driver import apps, autonomy as au, data_root, fileio, ros_cli
 from racecar_neo_ros2_driver.geometry import yaw_of
 from racecar_neo_ros2_driver.maps import map_root, parse_pose, ROOT_ENV, valid_name
 
@@ -383,17 +383,8 @@ def require_teleop() -> None:
 # -- ROS --
 
 
-@contextmanager
-def ros_node() -> Iterator[Any]:
-    import rclpy
-
-    rclpy.init()
-    node = rclpy.create_node('racecar_map')
-    try:
-        yield node
-    finally:
-        node.destroy_node()
-        rclpy.try_shutdown()
+def ros_node() -> AbstractContextManager[Any]:
+    return ros_cli.ros_node('racecar_map')
 
 
 def status_dict(msg: Any) -> dict[str, str]:
@@ -644,20 +635,21 @@ def save(out: Out = print, timeout: float = SAVE_TIMEOUT_SEC) -> int:
         raise MapError(
             f'not mapping (localizing on {values.get("AUTONOMY_MAP", "?")}); nothing to save.'
         )
-    import rclpy
     from std_srvs.srv import Trigger
 
+    out(f'Saving {values.get("AUTONOMY_MAP", "")}...')
     with ros_node() as node:
-        client = node.create_client(Trigger, '/autonomy/save_map')
-        if not client.wait_for_service(timeout_sec=10.0):
-            raise MapError(f'/autonomy/save_map is not available; see {LOG_HINT}')
-        out(f'Saving {values.get("AUTONOMY_MAP", "")}...')
-        future = client.call_async(Trigger.Request())
-        end = time.monotonic() + timeout
-        while not future.done() and time.monotonic() < end:
-            rclpy.spin_once(node, timeout_sec=0.1)
-        result = future.result() if future.done() else None
-    if result is None:
+        status, result = ros_cli.call_service(
+            node,
+            Trigger,
+            '/autonomy/save_map',
+            Trigger.Request(),
+            wait_sec=10.0,
+            timeout_sec=timeout,
+        )
+    if status == 'unavailable':
+        raise MapError(f'/autonomy/save_map is not available; see {LOG_HINT}')
+    if status == 'timeout':
         raise MapError(f'no answer from /autonomy/save_map within {timeout:.0f} s')
     if not result.success:
         raise MapError(f'save failed: {result.message}')
