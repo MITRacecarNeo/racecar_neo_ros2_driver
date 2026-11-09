@@ -136,7 +136,6 @@ USB_DEVICES = [
     ('8086:0b3a', 'RealSense D435i'),
     ('0e8d:7612', 'ALFA AP dongle'),
     ('10c4:ea60', 'CP2102 (lidar)'),
-    ('045e:028e', 'Gamepad'),
 ]
 
 SERVICE_UNITS = (
@@ -207,6 +206,7 @@ def check_devices() -> list[Check]:
     else:
         for _ident, label in USB_DEVICES:
             out.append(Check(g, label, SKIP, 'lsusb unavailable'))
+    out.append(gamepad_check(sorted(glob.glob('/dev/input/js*'))))
 
     for pattern, label in (
         ('/dev/gpiochip*', 'gpiochip'),
@@ -451,27 +451,37 @@ def check_profile() -> Check:
     return Check('system', 'car profile', OK, detail)
 
 
+def gamepad_check(nodes: list[str]) -> Check:
+    """Report the first joystick device and its name; any USB ID counts."""
+    if not nodes:
+        return Check('devices', 'Gamepad', FAIL, 'no /dev/input/js* (plug in the receiver)')
+    name = ''
+    try:
+        dev = Path(nodes[0]).name
+        name = (Path('/sys/class/input') / dev / 'device' / 'name').read_text().strip()
+    except OSError:
+        pass
+    return Check('devices', 'Gamepad', OK, f'{nodes[0]} {name}'.strip())
+
+
+def service_check(unit: str, state: dict[str, str] | None) -> Check:
+    """One services row from `sysinfo.unit_state`: active and enabled, or what differs."""
+    if state is None:
+        return Check('services', unit, SKIP, 'systemctl unavailable')
+    if state['load'] == 'not-found':
+        return Check('services', unit, SKIP, 'unit not installed')
+    active, enabled = state.get('active', ''), state.get('enabled', '')
+    if active == 'active' and enabled == 'enabled':
+        return Check('services', unit, OK, 'active, enabled')
+    return Check('services', unit, WARN, f'active={active or "?"} enabled={enabled or "?"}')
+
+
 def check_services() -> list[Check]:
     """Report the systemd units that make up the running car."""
-    out: list[Check] = []
-    for unit in SERVICE_UNITS:
-        active = _run(['systemctl', 'is-active', unit]).strip()
-        enabled = _run(['systemctl', 'is-enabled', unit]).strip()
-        if not active and not enabled:
-            out.append(Check('services', unit, SKIP, 'unit not installed'))
-            continue
-        if active == 'active' and enabled == 'enabled':
-            out.append(Check('services', unit, OK, 'active, enabled'))
-        else:
-            out.append(
-                Check('services', unit, WARN, f'active={active or "?"} enabled={enabled or "?"}')
-            )
-    out.append(
-        terminal_check(
-            _run(['systemctl', 'is-active', TERMINAL_UNIT]).strip(),
-            _run(['tmux', '-L', 'racecar-terminal', 'ls', '-F', '#S']),
-        )
-    )
+    out = [service_check(unit, sysinfo.unit_state(unit)) for unit in SERVICE_UNITS]
+    terminal = sysinfo.unit_state(TERMINAL_UNIT)
+    active = terminal.get('active', '') if terminal and terminal['load'] != 'not-found' else ''
+    out.append(terminal_check(active, _run(['tmux', '-L', 'racecar-terminal', 'ls', '-F', '#S'])))
     out.append(watchdog_check(sysinfo.read_watchdog_state()))
     return out
 

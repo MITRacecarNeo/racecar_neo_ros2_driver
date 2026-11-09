@@ -10,6 +10,15 @@ All notable changes to this project will be documented in this file. The format 
   8080 `/api/stall`): yellow while the throttle is held after a stall or
   during the cooldown, red during a lockout, with the seconds left.
 
+### Fixed
+
+- `racecar status` gamepad row passes for any joystick (`/dev/input/js*`)
+  and names it; it no longer needs the 045e:028e USB ID, so Xbox 360 clones
+  pass.
+- `racecar status` services rows read installed units through `systemctl
+  show`: a stopped or disabled unit (the terminal app between uses) no
+  longer reads as "unit not installed".
+
 ### Changed
 
 - The 8080 home page draws the battery and safety-override banners with the

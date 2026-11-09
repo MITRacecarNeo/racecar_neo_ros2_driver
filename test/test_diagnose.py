@@ -753,6 +753,24 @@ class TestTerminalCheck:
         check = diag.terminal_check('active', 'rcn-main\nrcn-t1\nother\n')
         assert check.status == diag.OK and check.detail == 'active, 2 terminal(s)'
 
+    def test_installed_but_stopped_terminal_reads_inactive(self, diag, monkeypatch):
+        states = {
+            'racecar-terminal': {'load': 'loaded', 'active': 'inactive', 'enabled': 'disabled'},
+        }
+        monkeypatch.setattr(diag.sysinfo, 'unit_state', lambda u: states.get(u))
+        monkeypatch.setattr(diag, '_run', lambda argv, *a, **k: '')
+        monkeypatch.setattr(diag.sysinfo, 'read_watchdog_state', lambda: None)
+        row = [c for c in diag.check_services() if c.name == diag.TERMINAL_UNIT][0]
+        assert row.status == diag.OK and row.detail.startswith('inactive')
+
+    def test_missing_terminal_unit_is_skipped(self, diag, monkeypatch):
+        not_found = {'load': 'not-found', 'active': 'inactive', 'enabled': ''}
+        monkeypatch.setattr(diag.sysinfo, 'unit_state', lambda u: not_found)
+        monkeypatch.setattr(diag, '_run', lambda argv, *a, **k: '')
+        monkeypatch.setattr(diag.sysinfo, 'read_watchdog_state', lambda: None)
+        row = [c for c in diag.check_services() if c.name == diag.TERMINAL_UNIT][0]
+        assert row.status == diag.SKIP and row.detail == 'unit not installed'
+
     def test_battery_guard_is_a_service_row(self, diag):
         assert 'racecar-battery-guard' in diag.SERVICE_UNITS
 
@@ -868,3 +886,54 @@ class TestFirmwareCheck:
 
     def test_no_graph_skips(self, diag):
         assert diag.firmware_check(diag.RosResult()).status == 'SKIP'
+
+
+class TestServiceRows:
+    def test_active_and_enabled(self, diag):
+        check = diag.service_check(
+            'u', {'load': 'loaded', 'active': 'active', 'enabled': 'enabled'}
+        )
+        assert check.status == diag.OK
+
+    def test_stopped_and_disabled_is_a_warning_not_missing(self, diag):
+        state = {'load': 'loaded', 'active': 'inactive', 'enabled': 'disabled'}
+        check = diag.service_check('u', state)
+        assert check.status == diag.WARN
+        assert check.detail == 'active=inactive enabled=disabled'
+
+    def test_not_installed(self, diag):
+        state = {'load': 'not-found', 'active': 'inactive', 'enabled': ''}
+        assert diag.service_check('u', state).detail == 'unit not installed'
+
+    def test_no_systemctl(self, diag):
+        assert diag.service_check('u', None).status == diag.SKIP
+
+
+class TestUnitState:
+    def test_parses_systemctl_show(self, diag):
+        text = 'LoadState=loaded\nActiveState=inactive\nUnitFileState=disabled\n'
+        assert diag.sysinfo.parse_unit_state(text) == {
+            'load': 'loaded',
+            'active': 'inactive',
+            'enabled': 'disabled',
+        }
+
+    def test_missing_unit(self, diag):
+        text = 'LoadState=not-found\nActiveState=inactive\nUnitFileState=\n'
+        assert diag.sysinfo.parse_unit_state(text)['load'] == 'not-found'
+
+    def test_empty_output(self, diag):
+        assert diag.sysinfo.parse_unit_state('') is None
+
+
+class TestGamepadCheck:
+    def test_any_joystick_passes(self, diag, monkeypatch, tmp_path):
+        check = diag.gamepad_check(['/dev/input/js0'])
+        assert check.status == diag.OK and check.detail.startswith('/dev/input/js0')
+
+    def test_no_joystick_fails(self, diag):
+        check = diag.gamepad_check([])
+        assert check.status == diag.FAIL and '/dev/input/js*' in check.detail
+
+    def test_gamepad_not_matched_by_usb_id(self, diag):
+        assert all(label != 'Gamepad' for _ident, label in diag.USB_DEVICES)
