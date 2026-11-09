@@ -347,7 +347,8 @@ class TestNetworkPolkitRule:
         text = self.INSTALLER.read_text()
         rules = (
             '49-racecar-network.rules 49-racecar-autonomy.rules '
-            '49-racecar-dashboards.rules 49-racecar-teleop.rules 49-racecar-power.rules'
+            '49-racecar-dashboards.rules 49-racecar-teleop.rules 49-racecar-power.rules '
+            '49-racecar-restart.rules'
         )
         assert f'for rule in {rules}; do' in text
         assert 'POLKIT_SRC="${SCRIPT_DIR}/polkit/${rule}"' in text

@@ -250,7 +250,7 @@ applies.
 | | |
 |---|---|
 | Default | `config/battery.yaml`: 4700 mAh usable, floor 3.55 V per cell (7.1 V on 2S), warning at 15 min left, shutdown at 5 min left, 30 mOhm load correction above 2.3 A |
-| Change | `params/battery.yaml` in the car profile, under `battery_guard: ros__parameters:`; then `sudo systemctl restart racecar-battery-guard` |
+| Change | `params/battery.yaml` in the car profile, under `battery_guard: ros__parameters:`; then `racecar service restart battery-guard` |
 | Revert | remove the key, restart the guard |
 | Safe path | any |
 

@@ -504,6 +504,23 @@ class TestHome:
             assert other not in body
         assert '49-racecar-teleop.rules' in (scripts / 'setup_user_env.sh').read_text()
 
+    def test_restart_rule_covers_the_core_web_and_guard_units_only(self):
+        scripts = Path(__file__).resolve().parent.parent / 'scripts'
+        rule = (scripts / 'polkit' / '49-racecar-restart.rules').read_text()
+        body = rule.split('polkit.addRule')[1]
+        for unit in ('racecar-dashboard', 'racecar-mapview', 'racecar-battery-guard'):
+            assert f'"{unit}.service"' in body
+        assert 'action.lookup("verb") === "restart"' in body
+        assert 'subject.user === "racecar"' in body
+        for other in ('"start"', '"stop"', 'enable', 'racecar-autonomy', 'racecar-teleop'):
+            assert other not in body
+
+    def test_service_restart_runs_without_sudo(self):
+        tool = (Path(__file__).resolve().parent.parent / 'scripts' / 'racecar-tool.sh').read_text()
+        block = tool.split('                restart)\n', 1)[1].split(';;', 1)[0]
+        assert 'systemctl restart "racecar-${1:-teleop}"' in block
+        assert 'sudo systemctl' not in block
+
     def test_page_uses_the_shared_assets(self, dashboard):
         html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert '/ui/rcn.css' in html and '/ui/brand/' in html and '/launch?app=' in html

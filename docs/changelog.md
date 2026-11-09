@@ -27,6 +27,10 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Changed
 
+- `racecar service restart` runs without sudo. A polkit rule
+  (`49-racecar-restart.rules`, installed by `setup_user_env.sh`) lets the
+  racecar user restart the dashboard, map viewer and battery guard; teleop
+  already had one. Other units ask for the password.
 - The 8080 home page draws the battery and safety-override banners with the
   shared `battery.js` and `override.js`, adding its pills, Cancel shutdown,
   Turn Off and the override tile through their hooks.

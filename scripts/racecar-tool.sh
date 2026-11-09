@@ -150,11 +150,10 @@ racecar() {
                     fi
                     ;;
                 restart)
-                    if [[ -n "$1" ]]; then
-                        sudo systemctl restart "racecar-$1"
-                    else
-                        sudo systemctl restart racecar-teleop
-                    fi
+                    # Without sudo: polkit lets the racecar user restart
+                    # teleop, the dashboard, the map viewer and the battery
+                    # guard, and asks for the password for any other unit.
+                    systemctl restart "racecar-${1:-teleop}"
                     ;;
                 enable|disable)
                     if [[ -n "$1" ]]; then
@@ -216,7 +215,8 @@ actions:
   start [name]    Start racecar-<name>; default = teleop (watchdog follows via BindsTo).
                   Starting a lab dashboard stops the other /drive publishers first.
   stop [name]     Stop racecar-<name>; default = teleop
-  restart [name]  Restart racecar-<name>; default = teleop
+  restart [name]  Restart racecar-<name>; default = teleop. No sudo for teleop, dashboard,
+                  mapview, battery-guard; other units ask for the password
   enable [name]   Enable one unit, or with no name the six core units
   disable [name]  Disable one unit, or with no name the six core units
   logs [name]     journalctl -u racecar-<name> -f; default = teleop

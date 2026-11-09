@@ -41,7 +41,9 @@ done
 # for the Features tiles on the home page.
 # 49-racecar-power: stop of racecar-teleop.service and power off by the
 # racecar user, for the battery guard's low-battery shutdown.
-for rule in 49-racecar-network.rules 49-racecar-autonomy.rules 49-racecar-dashboards.rules 49-racecar-teleop.rules 49-racecar-power.rules; do
+# 49-racecar-restart: restart of the dashboard, map viewer and battery guard
+# by the racecar user, so a driver update needs no sudo to load.
+for rule in 49-racecar-network.rules 49-racecar-autonomy.rules 49-racecar-dashboards.rules 49-racecar-teleop.rules 49-racecar-power.rules 49-racecar-restart.rules; do
     POLKIT_SRC="${SCRIPT_DIR}/polkit/${rule}"
     POLKIT_DST="/etc/polkit-1/rules.d/${rule}"
     if [ ! -f "$POLKIT_SRC" ]; then
