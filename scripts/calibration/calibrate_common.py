@@ -353,6 +353,12 @@ def spin_until_done(node: CalibratorNode) -> int:
     return result[0]
 
 
+def run_calibrator(factory: Callable[[], CalibratorNode]) -> int:
+    """Start rclpy, build the tool's node, and run it to the end (spin_until_done)."""
+    rclpy.init()
+    return spin_until_done(factory())
+
+
 # ---------------------------------------------------------------------------
 # Accelerometer bias and scale, gyroscope bias (calibrate_imu.py,
 # calibrate_realsense_imu.py)
@@ -516,8 +522,7 @@ class ImuBiasCalibrator(CalibratorNode):
 
 
 def run_imu_calibration(target: ImuTarget) -> int:
-    rclpy.init()
-    return spin_until_done(ImuBiasCalibrator(target))
+    return run_calibrator(lambda: ImuBiasCalibrator(target))
 
 
 # ---------------------------------------------------------------------------
@@ -628,8 +633,7 @@ class ImuRestChecker(CalibratorNode):
 
 
 def run_imu_check(target: ImuTarget, report: str | None = None) -> int:
-    rclpy.init()
-    return spin_until_done(ImuRestChecker(target, report))
+    return run_calibrator(lambda: ImuRestChecker(target, report))
 
 
 def imu_main(target: ImuTarget, argv: list[str] | None = None) -> int:

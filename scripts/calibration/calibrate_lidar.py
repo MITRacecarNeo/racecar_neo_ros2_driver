@@ -35,7 +35,6 @@ from typing import Any
 
 import numpy as np
 from racecar_neo_ros2_driver.frames import load_frames
-import rclpy
 from rclpy.utilities import remove_ros_args
 from sensor_msgs.msg import LaserScan
 
@@ -47,7 +46,7 @@ from calibrate_common import (  # noqa: E402, I100
     Criterion,
     finish_check,
     read_line,
-    spin_until_done,
+    run_calibrator,
     stack_config_dir,
     update_local_values,
 )
@@ -489,16 +488,14 @@ def analyze_bags(names: list[str]) -> int:
     import logging
 
     from calibrate_dynamics import laser_pose, read_bag
-    from racecar_log import load_config, resolve_log_root
+    from racecar_log import find_bag
 
     logging.basicConfig(format='%(message)s', level=logging.INFO)
     log = logging.getLogger(TOOL)
     laser = laser_pose()
     estimates = []
     for name in names:
-        bag = Path(name).expanduser()
-        if not bag.exists():
-            bag = Path(resolve_log_root(load_config().get('DIR'))) / name
+        bag = find_bag(name)
         for leg in measure_legs(read_bag(bag), laser):
             state = leg.problem or ('counted' if leg.counted else 'not counted')
             log.info(f'{bag.name} {leg.direction}: {leg.yaw_deg:.3f} deg ({state})')
@@ -547,8 +544,9 @@ def main() -> int:
         return analyze_bags(args.analyze)
     if not args.wall:
         return DriveYawCalibrator(args.check, args.report).run()
-    rclpy.init()
-    return spin_until_done(LidarYawCalibrator(args.check, args.wall_distance_mm, args.report))
+    return run_calibrator(
+        lambda: LidarYawCalibrator(args.check, args.wall_distance_mm, args.report)
+    )
 
 
 if __name__ == '__main__':

@@ -36,7 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'calibration'))
 
 from calibrate_common import criteria_lines, Criterion, overall, use_color  # noqa: E402, I100
-from racecar_log import load_config, resolve_log_root  # noqa: E402
+from racecar_log import find_bag  # noqa: E402
 from racecar_neo_ros2_driver.geometry import stamp_sec, yaw_of  # noqa: E402
 
 # Acceptance limits.
@@ -277,14 +277,7 @@ def cpu_criteria(percent: float, baseline: float | None) -> list[Criterion]:
 
 
 def resolve_bag(arg: str | None) -> Path:
-    root = resolve_log_root(load_config().get('DIR'))
-    if arg:
-        bag = Path(arg).expanduser()
-        return bag if bag.exists() else root / arg
-    bags = [p for p in root.iterdir() if p.is_dir()] if root.is_dir() else []
-    if not bags:
-        raise FileNotFoundError(f'no bags in {root}')
-    return max(bags, key=lambda p: p.stat().st_mtime)
+    return find_bag(arg)
 
 
 def report(title: str, criteria: list[Criterion]) -> int:

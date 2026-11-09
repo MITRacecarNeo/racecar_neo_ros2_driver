@@ -38,7 +38,6 @@ from racecar_neo_ros2_driver.frames import laser_mount, load_frames
 from racecar_neo_ros2_driver.geometry import stamp_sec, yaw_of
 from rcl_interfaces.msg import ParameterType
 from rcl_interfaces.srv import GetParameters
-import rclpy
 from rclpy.qos import qos_profile_sensor_data
 from rclpy.utilities import remove_ros_args
 from sensor_msgs.msg import Imu, LaserScan
@@ -52,8 +51,8 @@ from calibrate_common import (  # noqa: E402, I100
     finish_check,
     node_params,
     read_line,
+    run_calibrator,
     run_sequence,
-    spin_until_done,
     stack_config_dir,
     write_local_yaml,
 )
@@ -554,8 +553,7 @@ def main() -> int:
     parser.add_argument('--check', action='store_true', help='check the scales in use')
     parser.add_argument('--report', help='with --check: write the result as JSON to this file')
     args = parser.parse_args(remove_ros_args(sys.argv)[1:])
-    rclpy.init()
-    return spin_until_done(OdomCalibrator(args.check, args.report))
+    return run_calibrator(lambda: OdomCalibrator(args.check, args.report))
 
 
 if __name__ == '__main__':

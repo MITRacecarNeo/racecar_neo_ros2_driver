@@ -62,7 +62,7 @@ from calibrate_common import (  # noqa: E402, I100
     update_local_values,
 )
 from racecar_log import build_bag_name, build_record_argv, load_config  # noqa: E402, I100
-from racecar_log import resolve_log_root  # noqa: E402
+from racecar_log import find_bag, resolve_log_root  # noqa: E402
 from scan_match import (  # noqa: E402
     base_motion,
     compose,
@@ -646,9 +646,7 @@ def main(argv: list[str] | None = None) -> int:
     log = logging.getLogger(TOOL)
     values: dict[str, float] = {}
     for name in args.analyze:
-        bag = Path(name).expanduser()
-        if not bag.exists():
-            bag = Path(resolve_log_root(load_config().get('DIR'))) / name
+        bag = find_bag(name)
         log.info(bag.name)
         got, lines = analyze(bag)
         for line in lines:

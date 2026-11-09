@@ -84,6 +84,24 @@ def resolve_log_root(
     return data_dir('bags')
 
 
+def find_bag(name: str | None = None, root: Path | None = None) -> Path:
+    """
+    Return the bag a tool was asked for: a path, a name under the bag root, or the newest.
+
+    A name that is not a path to an existing bag is looked up under the bag
+    root. With no name, the most recently changed bag there; FileNotFoundError
+    when there is none.
+    """
+    root = resolve_log_root(load_config().get('DIR')) if root is None else root
+    if name:
+        bag = Path(name).expanduser()
+        return bag if bag.exists() or bag.is_absolute() else root / name
+    bags = [p for p in root.iterdir() if p.is_dir()] if root.is_dir() else []
+    if not bags:
+        raise FileNotFoundError(f'no bags in {root}')
+    return max(bags, key=lambda p: p.stat().st_mtime)
+
+
 def build_record_argv(
     bag_dir: str | Path,
     topics: Sequence[str] | None = None,
@@ -517,17 +535,11 @@ def _read_metadata(bag: Path) -> Any:
 
 def cmd_analyze(args: argparse.Namespace) -> int:
     """Summarize a bag: duration, size, and per-topic counts and rates."""
-    if args.bag:
-        bag = Path(args.bag).expanduser()
-        if not bag.is_absolute() and not bag.exists():
-            bag = resolve_log_root(load_config().get('DIR')) / args.bag
-    else:
-        root = resolve_log_root(load_config().get('DIR'))
-        bags = [p for p in root.iterdir() if p.is_dir()] if root.is_dir() else []
-        if not bags:
-            print(f'no bags in {root}', file=sys.stderr)
-            return 1
-        bag = max(bags, key=lambda p: p.stat().st_mtime)
+    try:
+        bag = find_bag(args.bag)
+    except FileNotFoundError as exc:
+        print(exc, file=sys.stderr)
+        return 1
 
     if not bag.is_dir():
         print(f'no such bag: {bag}', file=sys.stderr)
