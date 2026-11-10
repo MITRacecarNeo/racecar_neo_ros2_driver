@@ -28,7 +28,10 @@ PACKAGE_ROOT = HERE.parent
 def show() -> int:
     root = car_profile.profile_dir()
     print(f'Car profile: {root}')
-    print(f'Car name: {car_profile.car_info()["name"]}')
+    info = car_profile.car_info()
+    print(f'Car name: {info["name"]}' + (f' ({info["nickname"]})' if info.get('nickname') else ''))
+    if isinstance(info.get('id'), int):
+        print(f'Car number: {info["id"]}')
     if not root.is_dir():
         print('No profile yet. Calibrating the car, or racecar profile migrate, creates it.')
         return 0

@@ -176,7 +176,7 @@ The steps, in order:
 
 | Step | What it does |
 |---|---|
-| `identity` | Asks the car's name and number (0 to 54); sets the hostname `racecar-neo-<number>` |
+| `identity` | Asks the car's name, an optional nickname or codename, and its number (0 to 54); sets the hostname `racecar-neo-<number>` |
 | `hardware` | Checks every device answers and names what to plug in |
 | `nvme` | Runs `racecar disk setup` when an NVMe drive is fitted |
 | `access_point` | Runs `racecar setup networking --id=<number>`: SSID `racecar-neo-<number>`, eth0 `192.168.52.(200 + number)` |
@@ -1228,7 +1228,7 @@ driver update, re-clone, or delete leaves them in place. It lives in
 
 | File | Holds |
 |---|---|
-| `car.yaml` | car name and number, profile version, the car record and the setup checklist (`racecar setup car`) |
+| `car.yaml` | car name, nickname and number, profile version, the car record and the setup checklist (`racecar setup car`) |
 | `params/<name>.yaml` | ROS parameter overrides for `config/<name>.yaml`; calibration writes here |
 | `dashboards/<name>.yaml` | lab dashboard tuning |
 | `autonomy.conf`, `features.conf`, `networking.env` | autonomy mode, camera and detections choice, network settings |

@@ -43,6 +43,7 @@ sys.path.insert(0, str(HERE))
 
 from racecar_neo_ros2_driver import car_profile, fileio  # noqa: E402, I100
 from racecar_neo_ros2_driver.paths import config_dir, student_library  # noqa: E402
+from racecar_neo_ros2_driver.term import paint, use_color  # noqa: E402
 import sysinfo  # noqa: E402
 
 HOSTNAME_BASE = 'racecar-neo'
@@ -50,6 +51,8 @@ NETWORKING_FILE = 'networking' + '.env'  # racecar setup networking writes it
 MAX_CAR_ID = 54  # eth0 is 192.168.52.(200 + id)
 STAMP = '%Y-%m-%d %H:%M'
 HOME_PORT = 8080
+# The step prompt, in racecar calibrate's option form.
+STEP_PROMPT = 'Press Enter to run or confirm a step, d to mark done, s to skip, and q to stop'
 
 # The fleet build (handbook calibration page, car record); defaults for the
 # record prompts.
@@ -68,8 +71,10 @@ RECORD_FIELDS: tuple[tuple[str, str, str], ...] = (
     ('boost_converter', 'Boost converter (board label)', 'Pololu U3V70F9 (9 V, 7 A)'),
     ('pi_regulator', 'Pi regulator (board label)', 'Pololu D24V90F5 (5 V, 9 A)'),
     ('battery', 'Battery (label)', 'Gens ace 5000 mAh 2S 7.4 V 60C short-size'),
-    ('idle_current', 'Idle battery current (8080 Current chip, car on a stand)', ''),
+    ('idle_current', 'Idle battery current (optional; 8080 Current chip, car on a stand)', ''),
 )
+# Fields the record may leave empty.
+OPTIONAL_FIELDS = ('idle_current',)
 # Fields the ESC step fills; the record step asks the rest.
 ESC_FIELDS = ('esc_model', 'esc_program', 'esc_calibration_date')
 
@@ -88,6 +93,9 @@ MEASURED_FRAMES: tuple[tuple[str, str], ...] = (
 class Result:
     done: bool
     detail: str
+    # The check could not read the car (a service restarting, say): a step
+    # already done stays done.
+    unknown: bool = False
 
 
 @dataclass(frozen=True)
@@ -201,11 +209,12 @@ def shell(*argv: str) -> int:
 def check_identity(car: Car) -> Result:
     info, car_id = car.info(), car.car_id()
     if not info.get('name') or car_id is None:
-        return Result(False, 'no car name and number yet')
+        return Result(False, 'not set')
     want = f'{HOSTNAME_BASE}-{car_id}'
     if car.static_hostname() != want:
-        return Result(False, f'hostname is {car.static_hostname() or "?"}, not {want}')
-    return Result(True, f'{info["name"]}, number {car_id}, {want}')
+        return Result(False, f'hostname {car.static_hostname() or "?"}, needs {want}')
+    nickname = f' ({info["nickname"]})' if info.get('nickname') else ''
+    return Result(True, f'{info["name"]}{nickname}, number {car_id}, {want}')
 
 
 def check_hardware(car: Car) -> Result:
@@ -214,27 +223,27 @@ def check_hardware(car: Car) -> Result:
     bad = [c for c in diagnose.check_devices() if c.status == diagnose.FAIL]
     if bad:
         return Result(False, 'missing: ' + ', '.join(f'{c.name} ({c.detail})' for c in bad))
-    return Result(True, 'every device answers')
+    return Result(True, '')
 
 
 def check_nvme(car: Car) -> Result:
     if not Path('/dev/nvme0n1').exists():
-        return Result(False, 'no NVMe drive found; data stays on the SD card')
+        return Result(False, 'no drive found')
     root = car.data_root()
     if root.startswith('/mnt/nvme'):
-        return Result(True, f'data root {root}')
-    return Result(False, f'the drive is not set up (data root {root or "?"})')
+        return Result(True, root)
+    return Result(False, 'not set up')
 
 
 def check_access_point(car: Car) -> Result:
     car_id, net = car.car_id(), car.networking()
     if car_id is None:
-        return Result(False, 'needs the car number (identity step)')
+        return Result(False, 'needs the car number')
     if net.get('RACECAR_AP_ID') != str(car_id):
-        return Result(False, f'networking is set for car {net.get("RACECAR_AP_ID") or "none"}')
+        return Result(False, f'set for car {net.get("RACECAR_AP_ID") or "none"}')
     if 'racecar-neo-ap' not in car.active_connections():
-        return Result(False, 'the access point is not up')
-    return Result(True, f'SSID racecar-neo-{car_id}')
+        return Result(False, 'not running')
+    return Result(True, f'racecar-neo-{car_id}')
 
 
 def reboot_reasons(car: Car) -> list[str]:
@@ -250,27 +259,27 @@ def reboot_reasons(car: Car) -> list[str]:
 def check_reboot(car: Car) -> Result:
     reasons = reboot_reasons(car)
     if reasons:
-        return Result(False, 'waiting for a reboot: ' + ', '.join(reasons))
-    return Result(True, 'nothing waits for a reboot')
+        return Result(False, 'needed for ' + ', '.join(reasons))
+    return Result(True, '')
 
 
 def check_firmware(car: Car) -> Result:
     want = str(pinned().get('teensy', {}).get('version', ''))
     if not want:
-        return Result(False, 'no firmware pin in config/firmware.yaml (racecar build)')
+        return Result(False, 'no version pin. Run: racecar build')
     have = car.about().get('firmware')
     if not have:
-        return Result(False, 'no firmware version from the board (is teleop running?)')
+        return Result(False, 'no version read. Is teleop running?', unknown=True)
     if have != want:
-        return Result(False, f'firmware {have}; this driver wants {want}')
-    return Result(True, f'firmware {have}')
+        return Result(False, f'{have} installed, {want} needed')
+    return Result(True, have)
 
 
 def check_esc(car: Car) -> Result:
     record = car.info().get('record') or {}
     missing = [f for f in ESC_FIELDS if not record.get(f)]
     if missing:
-        return Result(False, 'not recorded: ' + ', '.join(missing))
+        return Result(False, 'not recorded')
     return Result(
         True, f'program {record["esc_program"]}, calibrated {record["esc_calibration_date"]}'
     )
@@ -286,18 +295,18 @@ def realsense_firmware() -> str:
 def check_extras(car: Car) -> Result:
     problems = []
     if student_library() is None:
-        problems.append('student library not installed')
+        problems.append('library not installed')
     want = str(pinned().get('realsense', {}).get('version', ''))
     have = realsense_firmware()
     if have and have != want:
-        problems.append(f'RealSense firmware {have}, wants {want}')
+        problems.append(f'camera firmware {have} installed, {want} needed')
     if problems:
-        return Result(False, '; '.join(problems))
-    return Result(True, f'library installed; RealSense firmware {have or "not read"}')
+        return Result(False, ', '.join(problems))
+    return Result(True, '')
 
 
 def check_measurements(car: Car) -> Result:
-    return Result(False, 'stock geometry not confirmed yet')
+    return Result(False, 'not confirmed')
 
 
 def check_calibration(car: Car) -> Result:
@@ -313,7 +322,7 @@ def check_calibration(car: Car) -> Result:
     ]
     if open_steps:
         return Result(False, 'not calibrated: ' + ', '.join(open_steps))
-    return Result(True, 'every calibration step done')
+    return Result(True, '')
 
 
 def newest_health(root: Path) -> dict[str, Any] | None:
@@ -330,30 +339,32 @@ def check_health(car: Car) -> Result:
 
     report = newest_health(data_dir('health'))
     if report is None:
-        return Result(False, 'no health report yet')
+        return Result(False, 'no report')
     groups = {c.get('group') for c in report.get('checks', [])}
-    stamp = f'last report {report.get("time", "")}'
+    stamp = f'last report ({report.get("time", "")})'
     if report.get('result') == 'FAIL':
-        return Result(False, f'{stamp}: FAIL')
+        return Result(False, f'{stamp} failed')
     missing = sorted({'power', 'link'} - groups)
     if missing:
-        return Result(False, f'{stamp} has no {" or ".join(missing)} check: racecar health')
-    return Result(True, f'last report {report.get("time", "")}: {report.get("result")}')
+        return Result(False, f'no {" or ".join(missing)} check in the {stamp}')
+    return Result(True, str(report.get('time', '')))
 
 
 def check_record(car: Car) -> Result:
     record = car.info().get('record') or {}
-    missing = [label for key, label, _ in RECORD_FIELDS if not record.get(key)]
+    missing = [
+        key for key, _, _ in RECORD_FIELDS if key not in OPTIONAL_FIELDS and not record.get(key)
+    ]
     if missing:
-        return Result(False, f'{len(missing)} fields open')
-    return Result(True, f'{len(RECORD_FIELDS)} fields')
+        return Result(False, f'{len(missing)} field{"" if len(missing) == 1 else "s"} empty')
+    return Result(True, '')
 
 
 def check_finish(car: Car) -> Result:
     backup = (car.info().get('setup') or {}).get('finish', {}).get('backup')
     if not backup:
-        return Result(False, 'no profile backup yet')
-    return Result(True, f'backup {backup}')
+        return Result(False, 'not made')
+    return Result(True, str(backup))
 
 
 # -- runs ------------------------------------------------------------------------
@@ -362,16 +373,17 @@ def check_finish(car: Car) -> Result:
 def run_identity(car: Car) -> int:
     info = car.info()
     name = ask('Car name', str(info.get('name') or ''))
+    nickname = ask('Nickname (optional)', str(info.get('nickname') or ''))
     while True:
-        raw = ask(f'Car number (0 to {MAX_CAR_ID}; the access point is racecar-neo-N)',
+        raw = ask(f'Car number (0 to {MAX_CAR_ID})',
                   '' if car.car_id() is None else str(car.car_id()))  # fmt: skip
         if raw.isdigit() and int(raw) <= MAX_CAR_ID:
             car_id = int(raw)
             break
-        print(f'Type a whole number from 0 to {MAX_CAR_ID}.')
-    update_car({'name': name, 'id': car_id})
+        print(f'Type a number from 0 to {MAX_CAR_ID}.')
+    update_car({'name': name, 'nickname': nickname, 'id': car_id})
     host = f'{HOSTNAME_BASE}-{car_id}'
-    print(f'Setting the hostname to {host}; it asks for your password.')
+    print(f'Hostname: {host}')
     code = subprocess.run(['sudo', 'hostnamectl', 'set-hostname', host], check=False).returncode
     if code == 0:
         hosts = read_text(Path('/etc/hosts'))
@@ -382,13 +394,13 @@ def run_identity(car: Car) -> int:
         if new != hosts:
             subprocess.run(['sudo', 'tee', '/etc/hosts'], input=new, text=True,
                            stdout=subprocess.DEVNULL, check=False)  # fmt: skip
-        print(f'Open the car at http://{host}.local:{HOME_PORT} from now on.')
+        print(f'Car address: http://{host}.local:{HOME_PORT}')
     return code
 
 
 def run_hardware(car: Car) -> int:
-    print('Turn the car off before you fit any part.')
-    print('Plug the gamepad receiver out and in once if the gamepad row fails.')
+    print('Turn the car off before you fit a part.')
+    print('If the gamepad fails, unplug its receiver and plug it back in.')
     return shell('status', '--quick', '--section', 'devices')
 
 
@@ -404,22 +416,21 @@ def run_access_point(car: Car) -> int:
 
 
 def run_reboot(car: Car) -> int:
-    print('Reboot to apply: ' + (', '.join(reboot_reasons(car)) or 'nothing waits'))
     print('Run: sudo reboot')
-    print('After the reboot, run racecar setup car again.')
+    print('Then run: racecar setup car')
     return 0
 
 
 def run_firmware(car: Car) -> int:
     want = pinned().get('teensy', {})
-    print(f'This driver runs with Teensy firmware {want.get("version")} ({want.get("tag")}).')
-    print('Flash it as the handbook calibration page describes, then run this step again.')
+    print(f'Teensy firmware {want.get("version")} is needed.')
+    print('Flash it as the handbook calibration page shows.')
     return 0
 
 
 def run_esc(car: Car) -> int:
-    print('Set up the ESC as the handbook calibration page describes:')
-    print('  ESC program settings, then ESC throttle calibration.')
+    print('Set up the ESC as the handbook calibration page shows.')
+    print('Then enter its values.')
     record = car.info().get('record') or {}
     values = {
         key: ask(label, str(record.get(key) or default))
@@ -447,7 +458,7 @@ def run_measurements(car: Car) -> int:
     from racecar_neo_ros2_driver.frames import load_frames
 
     stock = load_frames(config_dir())
-    print('Stock geometry (the reference build):')
+    print('Stock geometry:')
     for key, label in MEASURED_FRAMES:
         print(f'  {label}: {stock.get(key)}')
     keep = ask('Keep the stock geometry? (y/n)', 'y').lower().startswith('y')
@@ -458,7 +469,7 @@ def run_measurements(car: Car) -> int:
             try:
                 value = float(raw)
             except ValueError:
-                print(f'Not a number; {key} keeps {stock.get(key)}.')
+                print(f'Not a number. {label} stays {stock.get(key)}.')
                 continue
             if value != stock.get(key):
                 changed[key] = value
@@ -466,7 +477,7 @@ def run_measurements(car: Car) -> int:
             car_profile.write_values(
                 'frames', changed, '# Per-car values; written by racecar setup car.\n'
             )
-            print('Apply them: racecar service restart teleop')
+            print('Apply it: racecar service restart teleop')
     mark(car, 'measurements', 'user', note='stock' if keep else 'measured')
     return 0
 
@@ -504,19 +515,19 @@ def run_finish(car: Car) -> int:
 
 
 STEPS: tuple[Step, ...] = (
-    Step('identity', 'Car name, number and hostname', check_identity, run_identity),
-    Step('hardware', 'Hardware connected', check_hardware, run_hardware),
+    Step('identity', 'Car identity', check_identity, run_identity),
+    Step('hardware', 'Hardware connection check', check_hardware, run_hardware),
     Step('nvme', 'NVMe data drive', check_nvme, run_nvme),
     Step('access_point', 'Access point', check_access_point, run_access_point),
     Step('reboot', 'Reboot', check_reboot, run_reboot),
     Step('firmware', 'Teensy firmware', check_firmware, run_firmware),
-    Step('esc', 'ESC program and throttle calibration', check_esc, run_esc),
+    Step('esc', 'ESC setup', check_esc, run_esc),
     Step('extras', 'Student library and camera firmware', check_extras, run_extras),
-    Step('measurements', 'Geometry', check_measurements, run_measurements),
+    Step('measurements', 'Car geometry', check_measurements, run_measurements),
     Step('calibration', 'Sensor calibration', check_calibration, run_calibration),
-    Step('health', 'Hardware health', check_health, run_health),
+    Step('health', 'Hardware health check', check_health, run_health),
     Step('record', 'Car record', check_record, run_record),
-    Step('finish', 'Backup and final status', check_finish, run_finish),
+    Step('finish', 'Profile backup', check_finish, run_finish),
 )
 STEP_KEYS = [s.key for s in STEPS]
 
@@ -562,8 +573,8 @@ def evaluate(car: Car, step: Step) -> tuple[bool, str, str]:
             mark(car, step.key, 'check')
         return True, recorded.get('by', 'check'), result.detail
     if recorded.get('by') == 'user':
-        return True, 'user', f'marked done {recorded.get("done")}; check: {result.detail}'
-    if recorded.get('by') == 'check' and step.key != 'finish':
+        return True, 'user', recorded.get('note') or 'marked done'
+    if recorded.get('by') == 'check' and step.key != 'finish' and not result.unknown:
         unmark(car, step.key)
     return False, '', result.detail
 
@@ -582,24 +593,28 @@ def open_steps(info: dict[str, Any]) -> list[str]:
 # -- command line ------------------------------------------------------------------
 
 
+MARK = {True: '[DONE]', False: '[OPEN]'}
+
+
 def checklist(car: Car) -> list[tuple[Step, bool, str]]:
+    """Print one row per step, as `racecar status` does; return (step, done, detail)."""
+    color = use_color()
+    width = max(len(s.title) for s in STEPS)
     rows = []
-    for i, step in enumerate(STEPS):
-        done, by, detail = evaluate(car, step)
-        mark_text = 'done' if done else 'open'
-        if by == 'user':
-            mark_text = 'done (marked)'
-        print(f'{i + 1:2}. [{mark_text:13}] {step.title}: {detail}')
+    for step in STEPS:
+        done, _, detail = evaluate(car, step)
+        mark = paint(MARK[done], 'OK' if done else 'FAIL', color)
+        print(f'  {mark}  {step.title:<{width}}  {detail}'.rstrip())
         rows.append((step, done, detail))
     return rows
 
 
 def run_step(car: Car, step: Step) -> int:
-    print(f'\n== {step.title} ==')
+    print(f'\n=== {STEPS.index(step) + 1}/{len(STEPS)} {step.title} ===')
     code = step.run(car)
     fresh = Car(car.run)
     done, _, detail = evaluate(fresh, step)
-    print(f'{step.title}: {"done" if done else "still open"} ({detail})')
+    print(f'{step.title}: ' + ('done' if done else 'open') + (f' ({detail})' if detail else ''))
     return code
 
 
@@ -608,10 +623,8 @@ def guided(car: Car) -> int:
     for step, done, _ in rows:
         if done:
             continue
-        answer = ask(
-            f'\nNext: {step.title}. Enter runs it, d marks it done, s skips it for now, q quits',
-            '',
-        ).lower()
+        print(f'\nNext: {step.title}')
+        answer = ask(STEP_PROMPT).lower()
         if answer == 'q':
             return 0
         if answer == 's':
@@ -623,7 +636,7 @@ def guided(car: Car) -> int:
         if step.key == 'reboot' and reboot_reasons(Car()):
             return 0
     left = open_steps(Car().info())
-    print('\nSetup complete.' if not left else f'\nStill open: {", ".join(left)}')
+    print('\nSetup complete.' if not left else f'\nOpen: {", ".join(left)}')
     return 0
 
 
@@ -647,7 +660,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f'Steps: {", ".join(STEP_KEYS)}', file=sys.stderr)
             return 2
         mark(car, args.step, 'user')
-        print(f'{by_key[args.step].title}: marked done.')
+        print(f'{by_key[args.step].title}: marked done')
         return 0
     if args.action in by_key:
         return run_step(car, by_key[args.action])

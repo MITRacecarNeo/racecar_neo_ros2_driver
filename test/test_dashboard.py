@@ -1345,4 +1345,7 @@ class TestSetupGate:
     def test_page_grays_out_locked_tiles(self, dashboard):
         html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert 'id="setup-note"' in html and "a.group !== 'core'" in html
-        assert 'Finish setting up this car first' in html
+        note = 'Finish setting up this car to unlock the utility apps. Run: racecar setup car'
+        assert note in html
+        assert f"const SETUP_NEEDED = '{dashboard.SETUP_NEEDED}';" in html
+        assert 'Finish setting up this car to unlock this app' in html

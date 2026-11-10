@@ -529,8 +529,23 @@ class TestCheckNetwork:
         assert check.status == diag.WARN
         assert check.detail == '192.168.52.200/24, 10.0.0.7/24 (dual mode)'
 
-    def test_no_address_warns(self, network, diag):
-        assert network()['eth0 address'].status == diag.WARN
+    def test_no_cable_is_ok(self, network, diag, monkeypatch):
+        monkeypatch.setattr(diag, 'eth_cable', lambda: False)
+        check = network()['eth0 address']
+        assert (check.status, check.detail) == (diag.OK, 'no cable')
+
+    def test_cable_without_address_warns(self, network, diag, monkeypatch):
+        monkeypatch.setattr(diag, 'eth_cable', lambda: True)
+        check = network()['eth0 address']
+        assert (check.status, check.detail) == (diag.WARN, 'cable in, no address')
+
+    def test_cable_state_from_sysfs(self, diag, tmp_path):
+        carrier = tmp_path / 'carrier'
+        carrier.write_text('1\n')
+        assert diag.eth_cable(carrier)
+        carrier.write_text('0\n')
+        assert not diag.eth_cable(carrier)
+        assert not diag.eth_cable(tmp_path / 'missing')
 
     def test_v6_default_warns_in_static_mode(self, network, diag):
         # No persisted config under HOME, so the mode reads as static.

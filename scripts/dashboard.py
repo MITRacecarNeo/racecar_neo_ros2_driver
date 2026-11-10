@@ -1053,7 +1053,7 @@ def _app_units() -> list[str]:
     return [a['unit'] for a in APPS if a['unit']]
 
 
-SETUP_NEEDED = 'Finish setting up this car first: racecar setup car'
+SETUP_NEEDED = 'Finish setting up this car to unlock this app: racecar setup car'
 
 
 def setup_view() -> dict[str, Any]:

@@ -528,6 +528,14 @@ def _iface_v4(iface: str) -> list[str]:
     return [ln.split()[3] for ln in out.splitlines() if len(ln.split()) > 3]
 
 
+def eth_cable(path: Path = Path('/sys/class/net/eth0/carrier')) -> bool:
+    """Return True when a cable with a live link is plugged into eth0."""
+    try:
+        return path.read_text().strip() == '1'
+    except OSError:
+        return False
+
+
 def check_network() -> list[Check]:
     """eth0 addressing, the client radio, the AP, and the desktop target."""
     out: list[Check] = []
@@ -536,8 +544,11 @@ def check_network() -> list[Check]:
     # Static plus DHCP on eth0 is what `racecar eth static` clears, but a
     # dual-mode eth0 can be deliberate, so it warns rather than fails.
     eth = _iface_v4('eth0')
-    if not eth:
-        out.append(Check(g, 'eth0 address', WARN, 'no global IPv4 (cable out?)'))
+    if not eth and not eth_cable():
+        # Cars run without a cable; that is the normal state.
+        out.append(Check(g, 'eth0 address', OK, 'no cable'))
+    elif not eth:
+        out.append(Check(g, 'eth0 address', WARN, 'cable in, no address'))
     elif len(eth) > 1:
         out.append(Check(g, 'eth0 address', WARN, f'{", ".join(eth)} (dual mode)'))
     else:

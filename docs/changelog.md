@@ -24,7 +24,9 @@ All notable changes to this project will be documented in this file. The format 
   access point, firmware, ESC, extras, geometry, calibration, health, car
   record, backup). Each step checks the car first and can be marked done;
   the state and the car record are kept in `car.yaml`. The 8080 home page
-  keeps the Utilities apps closed until every step is done.
+  keeps the Utilities apps closed until every step is done. The identity
+  step also takes an optional nickname or codename (`car.yaml` `nickname`),
+  shown by `racecar profile`.
 - `racecar setup networking --id=N` sets the car number without the prompt.
 - Setup installs the student library at the tag in
   `config/student_library.yaml`, read-only in
@@ -51,6 +53,8 @@ All notable changes to this project will be documented in this file. The format 
 - eth0's fixed address is `192.168.52.(200 + car number)` (numbers 0 to 54),
   so cars on one switch do not collide; `.200` without a number.
 - `racecar calibrate` restarts teleop without sudo.
+- `racecar status` reads eth0 with no cable as OK (`no cable`); it warns only
+  when a cable is in and eth0 has no address.
 - The validation tools (`scan_fit`, `slam_session`) read bags in either
   storage, mcap or sqlite3, from the bag's metadata.
 - The watchdog no longer logs a traceback when it is stopped.

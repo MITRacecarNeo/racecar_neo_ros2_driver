@@ -312,7 +312,7 @@ echo
 echo "Join the AP from a client:"
 echo "  SSID: $AP_SSID"
 echo "  Password: $AP_PSK"
-echo "  Pi reachable at $AP_ADDR (or http://racecar-neo.local)"
+echo "  Pi reachable at $AP_ADDR (or http://$(hostname).local)"
 if [ "$CHANGES_MADE" = "false" ]; then
     echo
     echo "(No configuration changes were necessary; system already matched.)"

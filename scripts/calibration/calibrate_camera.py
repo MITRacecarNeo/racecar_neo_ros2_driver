@@ -306,7 +306,7 @@ class CameraMountCalibrator(CalibratorNode):
         if tilt is not None and tilt > GRAVITY_DEG:
             log.warning(
                 f'The camera accelerometer and the floor differ by {tilt:.1f} deg. '
-                'Check the floor is level, or run racecar calibrate realsense_imu.'
+                'Check the floor is level, or run racecar calibrate realsense.'
             )
         file = load_frames(stack_config_dir())
         if self.check:
