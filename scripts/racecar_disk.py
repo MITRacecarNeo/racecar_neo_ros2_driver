@@ -365,7 +365,7 @@ def status(run: Run = run_command, out: Callable[[str], None] = print, fstab: Pa
             entry = ''
         out(f'fstab: {entry or "no line for this drive"}')
         if str(OLD_MOUNT) in part.mounts or f' {OLD_MOUNT} ' in f' {entry} ':
-            out(f'Set up at {OLD_MOUNT}; run racecar disk setup to move it to {MOUNT}.')
+            out(f'Set up at {OLD_MOUNT}. Run racecar disk setup to move it to {MOUNT}.')
     for line in health_lines(drive.path, run):
         out(line)
     data_command([], out)
@@ -474,7 +474,7 @@ def setup(
     root = data_root.resolve()[0]
     copy_home_data(steps, data_root.fallback(), root, ask_fn)
     steps.link_jupyter(root)
-    out('Done. Reboot so every service writes to the new data root: sudo reboot')
+    out('Done. Reboot: sudo reboot')
     return 0
 
 
@@ -516,7 +516,7 @@ def format_drive(
     steps.mount_and_own()
     steps.refresh_data_root()
     steps.link_jupyter(MOUNT / 'data')
-    out(f'Formatted and mounted at {MOUNT}. Reboot so every service writes there: sudo reboot')
+    out(f'Formatted and mounted at {MOUNT}. Reboot: sudo reboot')
     return 0
 
 

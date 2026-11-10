@@ -125,9 +125,9 @@ FINAL_MESSAGE = 'Turning the car off now. Turn off the power switch.'
 # supervised: the watchdog restarts this node. An unsupervised card that loses
 # its topic shows gray instead of red.
 MONITORED = {
-    'pit': {'topic': '/imu/lsm9ds1', 'label': 'PIT board (drive + IMU)', 'supervised': True},
-    'throttle': {'topic': '/motor', 'label': 'Throttle (clamping)', 'supervised': True},
-    'mux': {'topic': '/mux_out', 'label': 'Mux (arbitrator)', 'supervised': True},
+    'pit': {'topic': '/imu/lsm9ds1', 'label': 'PIT board', 'supervised': True},
+    'throttle': {'topic': '/motor', 'label': 'Throttle', 'supervised': True},
+    'mux': {'topic': '/mux_out', 'label': 'Mux', 'supervised': True},
     'gamepad': {'topic': '/gamepad_drive', 'label': 'Gamepad', 'supervised': True},
     'imu_fusion': {'topic': '/imu/fused', 'label': 'IMU fusion', 'supervised': True},
     'lidar': {'topic': '/scan', 'label': 'RPLIDAR', 'supervised': True},
@@ -862,7 +862,7 @@ def link_view(
 
 # fw.speed_control values of the firmware test builds, as the chip names them.
 FIRMWARE_TEST_BUILDS = {
-    'raw_pwm': 'Open-loop PWM test build. Drive commands set raw PWM, not speed',
+    'raw_pwm': 'Open-loop PWM test build. Not for driving',
     'esc_cal': 'ESC calibration build. Not for driving',
 }
 
@@ -973,7 +973,7 @@ def _ext5v_loop() -> None:
 # Watchdog states that change a card; healthy and starting leave the
 # topic-based status alone.
 WATCHDOG_VIEW = {
-    'gave_up': ('dead', 'watchdog gave up; replug the device or restart teleop'),
+    'gave_up': ('dead', 'Watchdog gave up. Replug the device or restart teleop'),
     'no_device': ('stale', 'device not connected'),
     'restarting': ('stale', 'watchdog restarting'),
     'disabled': ('unsupervised', 'turned off'),

@@ -26,9 +26,9 @@
 </header>
 <main>
   <div class="glyph" id="glyph"></div>
-  <h2 id="title">Opening...</h2>
+  <h2 id="title"></h2>
   <div class="bar" role="progressbar" aria-label="Loading"><div id="fill"></div></div>
-  <div class="rcn-small rcn-muted" id="note"></div>
+  <div class="rcn-small rcn-muted" id="note">Opening...</div>
   <div class="acts">
     <a class="rcn-btn quiet small" id="cancel" href="/">Cancel</a>
   </div>
@@ -47,7 +47,7 @@ function fillTo(pct) {
 }
 let cancelled = false;
 function fail(text) {
-  $('title').textContent = 'Could not open';
+  $('title').textContent = 'App not opened';
   $('note').textContent = text;
 }
 // Close this tab; the apps page is still open in the tab that opened it. A
@@ -60,7 +60,7 @@ $('cancel').onclick = (e) => {
 };
 
 async function launch() {
-  $('note').textContent = '';
+  $('note').textContent = 'Opening...';
   $('fill').style.width = '0';
   let app = null;
   try {
@@ -69,7 +69,7 @@ async function launch() {
   if (!app) { fail('Unknown app.'); return; }
   document.title = `${app.name} - RACECAR Neo`;
   $('glyph').innerHTML = `<svg class="rcn-icon"><use href="/ui/icons.svg#${app.icon}"/></svg>`;
-  $('title').textContent = `Opening ${app.name}...`;
+  $('title').textContent = app.name;
   try {
     const r = await (await RcnApi.post('/api/open', { app: id })).json();
     if (!r.ok) { fail(r.message); return; }

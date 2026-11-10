@@ -478,7 +478,7 @@ def analyze_circle(bag: Bag) -> tuple[dict[str, float], list[str]]:
     values[f'servo_center_to_lock_s_{side}'] = round(total, 3)
     lines.append(
         f'Center to full {side} lock from the yaw rate: 10-90% in {rise:.3f} s, 95% '
-        f'{total:.3f} s after the command (an upper bound for the servo).'
+        f'{total:.3f} s after the command.'
     )
     return values, lines
 

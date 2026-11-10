@@ -131,7 +131,7 @@ def check_criteria(fit: WallFit, yaw_deg: float) -> list[Criterion]:
         status, advice = 'PASS', ''
     elif angle <= WARN_ANGLE_DEG:
         status = 'WARN'
-        advice = 'within hand-squaring precision (1 mm at the wheel centers is 0.32 deg)'
+        advice = 'within hand-squaring precision'
     else:
         status = 'FAIL'
         advice = 'beyond hand-squaring error: check the lidar mount, re-square, recalibrate'
@@ -178,7 +178,7 @@ class LidarYawCalibrator(CalibratorNode):
         lx, ly = frames['laser_x_mm'] * 1e-3, frames['laser_y_mm'] * 1e-3
         yaw_deg = frames['laser_yaw_deg']
         if max(abs(frames['laser_roll_deg']), abs(frames['laser_pitch_deg'])) > MAX_TILT_DEG:
-            log.error(f'Lidar roll or pitch over {MAX_TILT_DEG:.0f} deg; this tool assumes level.')
+            log.error(f'Lidar roll or pitch is over {MAX_TILT_DEG:.0f} deg. Level the lidar.')
             return 1
 
         log.info('Lidar yaw calibration')
@@ -403,7 +403,7 @@ class DriveYawCalibrator:
             if leg.problem:
                 self.log.error(f'{leg.direction.capitalize()}: {leg.problem}')
                 continue
-            note = '' if leg.counted else ' Not counted: the reverse leg returns the car.'
+            note = '' if leg.counted else ' Not counted.'
             self.log.info(
                 f'{leg.direction.capitalize()}: {leg.chord_m:.2f} m, turned '
                 f'{leg.heading_deg:+.1f} deg: lidar yaw {leg.yaw_deg:.2f} deg '
@@ -412,10 +412,7 @@ class DriveYawCalibrator:
             if leg.counted:
                 good.append(leg)
         if any('reverse' in leg.problem for leg in legs):
-            self.log.error(
-                'The car did not reverse from rest. The ESC may need a brake before '
-                'reverse; check its reverse mode.'
-            )
+            self.log.error('The car did not reverse from rest. Check the ESC reverse mode.')
         if not good:
             self.log.error('The forward leg gave no estimate. Run it again.')
             return None
@@ -450,7 +447,7 @@ class DriveYawCalibrator:
                 f'needs {MAX_YAW_SE_DEG}). One more placement is needed.'
             )
             self._show(count, count + 1)
-            if read_line('Press Enter to run it, or s to stop: ').strip().lower() == 's':
+            if read_line('Press Enter to run, and q to stop: ').strip().lower() == 'q':
                 break
             legs = self.placement()
             if legs:

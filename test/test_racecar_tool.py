@@ -262,7 +262,7 @@ class TestService:
     def test_starting_a_drive_dashboard_stops_the_others(self):
         block = TOOL.read_text().split('                start)')[1].split(';;')[0]
         assert 'dash_units' in block
-        assert 'only one /drive publisher' in block
+        assert 'echo "  stopping $u"' in block
 
     def test_unit_lists_come_from_the_app_registry(self):
         # One list, config/apps.yaml, serves the status view and the
@@ -284,10 +284,10 @@ class TestService:
         assert "install the lab dashboards' units" in out
         assert 'seven' not in out
 
-    def test_top_level_help_counts_the_setup_phases(self):
-        orchestrator = (TOOL.parent / 'setup_all.sh').read_text()
-        phases = orchestrator.count('==> [')
-        assert f'the {phases}-phase orchestrator' in _run('help').stdout
+    def test_top_level_help_names_the_orchestrator(self):
+        out = _run('help').stdout
+        assert 'all          setup_all.sh;' in out
+        assert '-phase orchestrator' not in out
 
     def test_rejects_unknown_action(self):
         result = _run('service', 'flambé')
@@ -349,7 +349,7 @@ class TestSetup:
 
     def test_networking_show_with_no_persisted_file(self, tmp_path, monkeypatch):
         # --show with no $HOME/.config/racecar/networking.env should report
-        # "No persisted networking config" and not invoke the script.
+        # "No saved networking overrides" and not invoke the script.
         monkeypatch.setenv('HOME', str(tmp_path))
         result = subprocess.run(
             ['bash', '-c', f'set +u; source "{TOOL}"; racecar setup networking --show'],
@@ -358,7 +358,7 @@ class TestSetup:
             timeout=5,
         )
         assert result.returncode == 0
-        assert 'No persisted networking config' in result.stdout
+        assert 'No saved networking overrides. Defaults apply.' in result.stdout
 
     def test_networking_reset_removes_persisted_file(self, tmp_path, monkeypatch):
         # Stub the (destructive, sudo-using) networking script so the test only
@@ -938,8 +938,7 @@ esac
         result, _ = self._wifi(
             tmp_path, 'status', STUB_ACTIVE_CON='HomeNet', STUB_PROF_AUTO='yes', STUB_DEV_AUTO='no'
         )
-        assert 'will NOT rejoin' in result.stdout
-        assert 'blocked' in result.stdout
+        assert 'will NOT rejoin. Run racecar wifi connect to clear' in result.stdout
 
     def test_status_after_a_deliberate_disconnect(self, tmp_path):
         result, _ = self._wifi(tmp_path, 'status', STUB_ACTIVE_CON='', STUB_DEV_AUTO='no')

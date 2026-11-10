@@ -110,7 +110,7 @@ if [ ! -d "/sys/class/net/$AP_IFACE/wireless" ]; then
         drv="$(basename "$(readlink -f "/sys/class/net/$i/device/driver" 2>/dev/null)" 2>/dev/null)"
         if [ "$drv" = "mt76x2u" ]; then
             echo "  AP interface '$AP_IFACE' not present; using detected ALFA interface '$i'."
-            echo "  (Reboot after setup_udev.sh so the udev rule renames it to wlan1.)"
+            echo "  Reboot so it becomes wlan1."
             AP_IFACE="$i"
             break
         fi
@@ -118,7 +118,7 @@ if [ ! -d "/sys/class/net/$AP_IFACE/wireless" ]; then
 fi
 if [ ! -d "/sys/class/net/$AP_IFACE/wireless" ]; then
     echo "ERROR: no AP wireless interface found (looked for '$AP_IFACE' and an mt76x2u adapter)." >&2
-    echo "       Plug in the ALFA dongle; run scripts/setup_udev.sh and reboot so it becomes wlan1." >&2
+    echo "       Plug in the ALFA dongle. Run scripts/setup_udev.sh, then reboot." >&2
     exit 1
 fi
 echo "AP interface: $AP_IFACE"
@@ -315,5 +315,5 @@ echo "  Password: $AP_PSK"
 echo "  Pi reachable at $AP_ADDR (or http://$(hostname).local)"
 if [ "$CHANGES_MADE" = "false" ]; then
     echo
-    echo "(No configuration changes were necessary; system already matched.)"
+    echo "No changes needed."
 fi

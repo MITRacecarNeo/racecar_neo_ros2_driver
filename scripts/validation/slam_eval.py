@@ -251,7 +251,7 @@ def record_load(seconds: float | None, out_dir: Path) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f'{datetime.now():%Y%m%d-%H%M%S}-load.csv'
     recorder = LoadRecorder()
-    print(f'Recording to {path}; nodes started later are added. Ctrl-C ends.')
+    print(f'Recording to {path}. Press Ctrl-C to stop.')
     try:
         while seconds is None or not recorder.samples or recorder.samples[-1].t < seconds:
             time.sleep(1.0)

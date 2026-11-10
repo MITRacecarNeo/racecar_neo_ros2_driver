@@ -201,9 +201,9 @@ def plan_start(
     if source is not None:
         check_name(source, 'map to extend')
     if pose is not None and source is None:
-        raise MapError('--pose applies with --from (the car on the map being extended)', 2)
+        raise MapError('--pose needs --from', 2)
     if force and source == name:
-        raise MapError('--force replaces a map; it cannot also extend it', 2)
+        raise MapError('--force cannot be used with --from NAME', 2)
     exists = (root / name).exists()
     if exists and not force and source != name:
         raise MapError(
@@ -237,8 +237,8 @@ def plan_start(
         )
     elif src.unsaved:
         plan.notes.append(
-            f'{source} has an autosave from {src.autosave_time} with changes its saved map lacks; '
-            f'extending the saved map. To include them, run `racecar map recover {source}` first.'
+            f'{source} has unsaved changes. Extending the saved map. '
+            f'To include them, run `racecar map recover {source}` first.'
         )
     if pose is not None:
         start, how, text = given_pose(pose), 'pose', 'given with --pose'
@@ -246,9 +246,8 @@ def plan_start(
         found, how, text, trusted = saved_pose(src, now)
         if not trusted:
             raise MapError(
-                f'not extending from {text}. Load {source}, drive slowly until '
-                '`racecar map status` reports localized, then extend; or give the '
-                "car's pose with --pose."
+                f'Not extending from {text}. Load {source} and drive slowly until it is '
+                'localized. Then extend, or pass --pose.'
             )
         start = found or (0.0, 0.0, 0.0)
     plan.values['AUTONOMY_POSE'] = format_pose(start)
@@ -461,7 +460,7 @@ def not_ready_reason(status: dict[str, str] | None) -> str:
     if not status.get('scan_age_ms'):
         return 'no lidar scans (/scan); check `racecar status`'
     if status.get('mode') == 'mapping':
-        return 'slam_toolbox has not published map -> odom; check that teleop publishes odometry'
+        return 'no map -> odom yet. Check that teleop is running'
     return (
         f'not localized yet (pose spread {status.get("pose_sd_m") or "?"} m, '
         f'{status.get("pose_sd_deg") or "?"} deg)'
@@ -626,7 +625,7 @@ def stop(out: Out = print) -> int:
 def save(out: Out = print, timeout: float = SAVE_TIMEOUT_SEC) -> int:
     values = read_mode_file()
     if not unit_running():
-        raise MapError('autonomy is not running; start mapping with `racecar map start NAME`.')
+        raise MapError('autonomy is not running. Start mapping: racecar map start NAME')
     if values.get('AUTONOMY_MODE') != 'mapping':
         raise MapError(
             f'not mapping (localizing on {values.get("AUTONOMY_MAP", "?")}); nothing to save.'
@@ -682,8 +681,8 @@ def set_foxglove(on: bool, out: Out = print) -> int:
     values['AUTONOMY_FOXGLOVE'] = '1' if on else '0'
     write_mode_file({k: v for k, v in values.items() if k in KEYS})
     out(
-        f'Foxglove bridge {"on" if on else "off"} (port 8765); '
-        'applies at the next `racecar map start` or `racecar map load`.'
+        f'Foxglove bridge {"on" if on else "off"} (port 8765). '
+        'Applies at the next start or load.'
     )
     return 0
 

@@ -247,10 +247,11 @@ class TestChecks:
         out = capsys.readouterr().out
         start = out.index('=== Check summary ===')
         summary = out[start:]
-        assert 'imu        PASS' in summary and 'mag        FAIL' in summary
-        assert 'lidar      skipped' in summary
-        assert 'FAIL  center offset' in summary and '-> recalibrate' in summary
-        assert 'WARN  field strength' in summary
+        assert 'imu        [ OK ]' in summary and 'mag        [FAIL]' in summary
+        assert 'lidar      [SKIP]' in summary
+        assert '[FAIL] center offset' in summary
+        assert '\n           recalibrate\n' in summary
+        assert '[WARN] field strength' in summary
         assert 'RESULT FAIL  1 pass  0 warn  1 fail  1 skipped' in summary
         assert all('--check' in cmd for cmd in ran)
 
@@ -261,7 +262,7 @@ class TestChecks:
         monkeypatch.setattr(cal, 'ask', lambda _p='': '')
         steps = [s for s in cal.STEPS if s.key == 'imu']
         assert cal.run_checks(steps) == 1
-        assert 'imu        FAIL' in capsys.readouterr().out
+        assert 'imu        [FAIL]' in capsys.readouterr().out
 
     def test_check_routes_only_checkable_steps(self, cal, monkeypatch):
         seen = []
@@ -305,7 +306,7 @@ class TestNotRun:
         steps = [s for s in cal.STEPS if s.key in ('imu', 'mag')]
         assert cal.run_checks(steps) == 0
         out = capsys.readouterr().out
-        assert 'imu        not run' in out and 'mag        not run' in out
+        assert 'imu        [SKIP]' in out and 'mag        [SKIP]' in out
         assert '2 not run' in out
 
     def test_read_line_raises_at_end_of_input(self, cal, monkeypatch):
@@ -332,9 +333,10 @@ class TestColor:
 
     def test_colors_match_racecar_status(self, cal):
         text = '\n'.join(cal.summary_lines(self._results(cal), color=True))
-        assert '\033[32mPASS ' in text  # green criterion
-        assert '\033[33mWARN ' in text  # yellow criterion
-        assert '\033[1;33mWARN' in text  # bold verdict and result
+        assert '\033[32m[ OK ]\033[0m' in text  # green criterion
+        assert '\033[33m[WARN]\033[0m' in text  # yellow criterion
+        assert '\033[1;33m[WARN]' in text  # bold verdict
+        assert 'RESULT \033[1;33mWARN' in text  # bold result
         assert '\033[33m1 warn\033[0m' in text
         assert '0 fail' in text and '\033[31m0 fail' not in text  # zero counts stay plain
 
@@ -412,10 +414,27 @@ class TestRunSequence:
         got, ran = self._run(monkeypatch, ['s', '', '', ''], ['a', 'b', 'c'], allow_skip=False)
         assert ran == [0, 1, 2]
 
-    def test_back_is_offered_from_the_second_step(self):
+    def test_quit_returns_the_results_so_far(self, monkeypatch):
+        got, ran = self._run(monkeypatch, ['', 'q'], ['a'])
+        assert ran == [0]
+        assert got == {0: 'a'}
+
+    def test_quit_after_back_drops_the_discarded_step(self, monkeypatch):
+        got, ran = self._run(monkeypatch, ['', '', 'b', 'q'], ['a', 'b'])
+        assert ran == [0, 1]
+        assert got == {0: 'a'}
+
+    def test_quit_works_when_every_step_is_needed(self, monkeypatch):
+        got, ran = self._run(monkeypatch, ['q'], [], allow_skip=False)
+        assert ran == []
+        assert got == {}
+
+    def test_prompts_match_racecar_calibrate(self):
         common = load_script('calibrate_common')
-        assert 'b to redo' not in common.step_prompt(0)
-        assert 'b to redo the previous step' in common.step_prompt(1)
+        assert common.step_prompt(0) == 'Press Enter to run, s to skip, and q to stop: '
+        assert common.step_prompt(1) == (
+            'Press Enter to run, s to skip, b to go back a step, and q to stop: '
+        )
 
 
 class TestSessionBack:

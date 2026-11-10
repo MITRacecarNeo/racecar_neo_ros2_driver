@@ -100,13 +100,13 @@ DRIVE_PLACE = 'Place the car on the floor facing a wall or furniture 3 to 5 mete
 def spin_lines(turns: int) -> list[str]:
     return [
         f'Drive the car in a circle (fully right or fully left) {turns} times.',
-        'Stop the car close to where it started. The exact position does not matter.',
+        'Stop the car close to where it started.',
     ]
 
 
 DRIVE_LINES = [
     'Drive straight toward the wall at a steady speed.',
-    'Stop at least 0.5 meters before the wall. The exact position does not matter.',
+    'Stop at least 0.5 meters before the wall.',
 ]
 
 
@@ -405,7 +405,8 @@ class OdomCalibrator(CalibratorNode):
     def _match_ok(self, run: Run) -> bool:
         c = match_criterion('scan match', run.match)
         if c.status != 'PASS':
-            self.get_logger().error(f'Scan match too poor ({c.measured}); {c.advice}.')
+            advice = c.advice[:1].upper() + c.advice[1:]
+            self.get_logger().error(f'Scan match too poor ({c.measured}). {advice}.')
             return False
         return True
 
@@ -446,8 +447,8 @@ class OdomCalibrator(CalibratorNode):
         )
         if not scale_ok(scale):
             log.error(
-                f'Gyro scale {scale:.3f} is outside 0.8 to 1.25, so imu.gyro_scale in '
-                'config/pit.yaml is likely wrong (deg/s for rad/s).'
+                f'Gyro scale {scale:.3f} is outside 0.8 to 1.25. '
+                'Check imu.gyro_scale in config/pit.yaml.'
             )
             return None
         self._warn_odom_mismatch(run.odom[2], run.gyro_rad, 'heading')

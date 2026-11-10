@@ -119,7 +119,7 @@ def backup_reminder(paths: list[Path]) -> str:
     """
     lines = [f'Wrote {p}' for p in paths]
     if paths and not os.environ.get(SESSION_ENV):
-        lines.append('Apply it: racecar service restart teleop (no rebuild needed).')
+        lines.append('Apply it: racecar service restart teleop')
     return '\n'.join(lines)
 
 
@@ -139,6 +139,8 @@ def node_params(cal_name: str, node: str, config_dir: Path | None = None) -> dic
 # ---------------------------------------------------------------------------
 
 STATUS_ORDER = ('INFO', 'PASS', 'WARN', 'FAIL')
+# Printed marks, as in racecar status (scripts/diagnose.py MARK).
+MARK = {'PASS': '[ OK ]', 'WARN': '[WARN]', 'FAIL': '[FAIL]', 'INFO': '[INFO]'}
 
 
 @dataclass(frozen=True)
@@ -164,10 +166,10 @@ def criteria_lines(
     """Render criteria as aligned table lines, advice on its own line below a WARN or FAIL."""
     lines = []
     for c in criteria:
-        status = paint(f'{c.status:5s}', c.status, color)
-        lines.append(f'{indent}{status} {c.name:18s} {c.measured:28s} {c.limit}'.rstrip())
+        mark = paint(MARK.get(c.status, c.status), c.status, color)
+        lines.append(f'{indent}{mark} {c.name:18s} {c.measured:28s} {c.limit}'.rstrip())
         if c.advice and c.status in ('WARN', 'FAIL'):
-            lines.append(f'{indent}      -> {c.advice}')
+            lines.append(f'{indent}       {c.advice}')
     return lines
 
 
@@ -212,8 +214,8 @@ def read_line(prompt: str = '') -> str:
         line += ch
 
 
-STEP_PROMPT = 'Press Enter to run this step, or s to skip it: '
-STEP_PROMPT_BACK = 'Press Enter to run this step, s to skip it, or b to redo the previous step: '
+STEP_PROMPT = 'Press Enter to run, s to skip, and q to stop: '
+STEP_PROMPT_BACK = 'Press Enter to run, s to skip, b to go back a step, and q to stop: '
 
 
 def step_prompt(index: int) -> str:
@@ -231,15 +233,18 @@ def run_sequence(
     """
     Run steps 0..count-1 in order; return {index: result} for the steps that ran.
 
-    At each step's prompt Enter runs it, s skips it (when allowed), and b goes
-    back to the previous step and discards its result. A step whose run
-    returns None (stopped, or a failed measurement) is offered again.
+    At each step's prompt Enter runs it, s skips it (when allowed), b goes
+    back to the previous step and discards its result, and q ends the
+    sequence, returning the results so far. A step whose run returns None
+    (stopped, or a failed measurement) is offered again.
     """
     results: dict[int, Any] = {}
     i = 0
     while i < count:
         show(i)
         answer = read_line(prompt(i)).strip().lower()
+        if answer == 'q':
+            break
         if answer == 'b':
             if i > 0:
                 i -= 1
@@ -485,10 +490,7 @@ class ImuBiasCalibrator(CalibratorNode):
                     f'Press Enter, then keep your hands off the car for {GYRO_SECONDS:.0f} '
                     'seconds...'
                 )
-            return (
-                'Press Enter when the car is in place, then hold it still. '
-                'Type b to redo the previous step: '
-            )
+            return 'Hold the car still in place. Press Enter to record, and b to go back a step: '
 
         def run_step(i: int) -> list[list[float]] | None:
             if i == 0:
@@ -500,6 +502,9 @@ class ImuBiasCalibrator(CalibratorNode):
 
         count = len(self.target.positions)
         steps = run_sequence(count + 1, show, run_step, prompt, allow_skip=False)
+        if len(steps) < count + 1:
+            log.info('Nothing calibrated.')
+            return 0
         gyro = steps[0]
         positions = [steps[k] for k in range(1, count + 1)]
 

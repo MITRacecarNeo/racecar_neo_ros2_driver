@@ -63,7 +63,7 @@ RS_FW_UPDATE="$(command -v rs-fw-update || true)"
 RS_ENUM="$(command -v rs-enumerate-devices || true)"
 if [ -z "$RS_FW_UPDATE" ] || [ -z "$RS_ENUM" ]; then
     echo "ERROR: rs-fw-update / rs-enumerate-devices not found." >&2
-    echo "  Expected from ros-jazzy-librealsense2. Try: source /opt/ros/jazzy/setup.bash" >&2
+    echo "  Run: source /opt/ros/jazzy/setup.bash" >&2
     exit 1
 fi
 

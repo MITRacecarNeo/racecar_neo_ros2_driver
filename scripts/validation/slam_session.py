@@ -431,7 +431,7 @@ class Session:
     def stop_teleop_service(self) -> bool:
         if not self.teleop_service_active():
             return True
-        print('Stopping the teleop service. sudo may ask for your password.')
+        print('Stopping the teleop service.')
         r = subprocess.run(['sudo', 'systemctl', 'stop', TELEOP_UNIT], check=False)
         return r.returncode == 0
 
@@ -660,7 +660,7 @@ class Session:
 
     def in_background(self, fn: Any, *a: Any) -> None:
         if self.saving:
-            self.say(f'Busy ({self.saving}); try again when it finishes.')
+            self.say(f'Busy ({self.saving}). Try again when it finishes.')
             return
         threading.Thread(target=fn, args=a, daemon=True).start()
 
@@ -689,9 +689,9 @@ class Session:
         if dead:
             parts.append('STOPPED: ' + ','.join(dead))
         keys = (
-            'm mark, e event, s save, t timed save, q quit'
+            'm to mark, e to log an event, s to save, t for a timed save, q to stop'
             if self.mode == 'mapping'
-            else 'm mark, e event, g global search, q quit'
+            else 'm to mark, e to log an event, g for a global search, q to stop'
         )
         return '  '.join(parts) + f'  [{keys}]'
 
@@ -714,12 +714,14 @@ class Session:
                 return
             if k == 'm':
                 print()
-                label = term.line('Mark label (letters and digits, Enter cancels): ')
+                label = term.line(
+                    'Type the mark label (letters and digits), or press Enter to cancel: '
+                )
                 if re.fullmatch(r'[A-Za-z0-9_-]+', label):
                     self.in_background(self.mark, label)
             elif k == 'e':
                 print()
-                note = term.line('Event (Enter cancels): ').strip()
+                note = term.line('Type the event, or press Enter to cancel: ').strip()
                 if note:
                     self.event(note.replace(',', ';'))
             elif k == 'g' and self.mode == 'localization':
@@ -747,7 +749,7 @@ class Session:
         self.save_calibration()
         print(f'Session folder: {self.dir}')
         print('Place the car on the start mark (cross O), pointing along the same arm as before.')
-        if ask('Press Enter when the car is in place, or q to cancel: ') == 'q':
+        if ask('Press Enter when the car is in place, and q to stop: ') == 'q':
             return 1
         if not self.stop_teleop_service():
             print('Could not stop the teleop service.')
@@ -779,7 +781,7 @@ class Session:
                 return code
             print(f'Lichtblick: connect to ws://{hostname_ip()}:{FOXGLOVE_PORT}')
             if self.mode == 'localization':
-                print('Drive at least 0.5 m before the first mark so the localizer updates.')
+                print('Drive at least 0.5 m before the first mark.')
             if self.mode == 'mapping':
                 print('Speed is held at the slowest setting while mapping.')
             print('Drive with the gamepad. Keys are read without Enter.')
@@ -1406,7 +1408,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         '--autonomy',
         action='store_true',
-        help='also run autonomy_node (its requests change the localizer; off for tuning)',
+        help='also run autonomy_node',
     )
     args = parser.parse_args(argv)
 

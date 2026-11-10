@@ -209,7 +209,7 @@ def select_if_unset(lib_link: Path, pth: Path, say: Callable[[str], None]) -> No
         return
     pth.parent.mkdir(parents=True, exist_ok=True)
     pth.write_text(f'{lib_link}\n')
-    say(f'selected {lib_link} (racecar library --select changes it)')
+    say(f'selected {lib_link}')
 
 
 def cmd_install(args: argparse.Namespace, run: Run = subprocess.run) -> int:
@@ -235,7 +235,7 @@ def cmd_install(args: argparse.Namespace, run: Run = subprocess.run) -> int:
         if labs_wanted:
             install_labs(pin, jws, backups, now, run, print, home / LABS_CACHE)
         elif args.labs_if_missing:
-            print(f'labs kept in {jws / "labs"} (racecar library install replaces them)')
+            print(f'labs kept in {jws / "labs"}')
     except (RuntimeError, OSError) as exc:
         print(f'racecar library install: {exc}', file=sys.stderr)
         return 1

@@ -36,6 +36,7 @@ sys.path.insert(0, str(HERE))
 from calibrate_common import (  # noqa: E402, I100
     criteria_lines,
     Criterion,
+    MARK,
     paint,
     read_line,
     SESSION_ENV,
@@ -46,6 +47,7 @@ from calibrate_common import (  # noqa: E402, I100
 TELEOP_UNIT = units.TELEOP
 RUN_PROMPT = 'Press Enter to run, s to skip, and q to stop: '
 RUN_PROMPT_BACK = 'Press Enter to run, s to skip, b to go back a step, and q to stop: '
+SUMMARY_MARK = {**MARK, 'skipped': '[SKIP]', 'not run': '[SKIP]'}
 LIDAR_SETUP = (
     'Use a clear straight path of about 2 meters with walls or furniture nearby.\n'
     'Connect the controller. Hold RB to autonomously drive the car.'
@@ -113,8 +115,7 @@ STEPS = (
         'imu',
         'LSM9DS1 accel bias and scale, gyro bias',
         'calibrate_imu.py',
-        'Place the car on a table.\n'
-        'The instructions will direct you to hold the car in 6 poses.',
+        'Place the car on a table.',
         'lsm9ds1_cal',
         ('accelerometer.bias', 'accelerometer.scale', 'gyroscope.bias'),
         check='Place the car on a level surface.',
@@ -123,8 +124,7 @@ STEPS = (
         'mag',
         'LSM9DS1 magnetometer',
         'calibrate_mag.py',
-        'Hold the car in your hands, away from large metal structures.\n'
-        'The instructions will direct you to turn the car about 3 axes.',
+        'Hold the car in your hands, away from large metal structures.',
         'lsm9ds1_mag_cal',
         ('magnetometer.hard_iron_bias',),
         check='Place the car down flat on the floor and away from large metal structures.',
@@ -133,8 +133,7 @@ STEPS = (
         'realsense',
         'RealSense accel bias and scale, gyro bias',
         'calibrate_realsense_imu.py',
-        'Place the car on a table.\n'
-        'The instructions will direct you to hold the car in 6 poses.',
+        'Place the car on a table.',
         'realsense_cal',
         ('realsense_accel_bias', 'realsense_accel_scale', 'realsense_gyro_bias'),
         check='Place the car on a level surface.',
@@ -273,7 +272,7 @@ def status_rows(config_dir: Path) -> list[tuple[str, str, str]]:
             stamp = datetime.fromtimestamp(local.stat().st_mtime).strftime('%Y-%m-%d %H:%M')
             rows.append((step.key, 'calibrated', stamp))
         elif (config_dir / f'{step.local_name}.yaml').exists():
-            rows.append((step.key, 'default', 'committed defaults; not calibrated on this car'))
+            rows.append((step.key, 'default', 'not calibrated on this car'))
         else:
             rows.append((step.key, 'default', 'not measured on this car'))
     return rows
@@ -360,7 +359,7 @@ def run_steps(steps: list[Step]) -> int:
     if any(outcome == 'done' for _, outcome, *_ in results):
         # A polkit rule lets the racecar user restart teleop without a password.
         restart = [*systemctl(), 'restart', TELEOP_UNIT]
-        if ask('Restart teleop now so the nodes load the new values? [y/N] ') == 'y':
+        if ask('Restart teleop now? [y/N] ') == 'y':
             subprocess.run(restart, check=False)
         else:
             print(f'Apply later: {shlex.join(restart)}')
@@ -384,7 +383,7 @@ def summary_lines(
     """Render the end-of-run table: each step's verdict, then each criterion."""
     lines = ['', '=== Check summary ===']
     for step, verdict, criteria in results:
-        mark = paint(f'{verdict:7s}', verdict, color, bold=True)
+        mark = paint(SUMMARY_MARK.get(verdict, verdict), verdict, color, bold=True)
         lines.append(f'{step.key:10s} {mark} {step.label}')
         lines += criteria_lines(criteria, indent='    ', color=color)
     counts = {
@@ -472,8 +471,8 @@ def main(argv: list[str] | None = None) -> int:
             return 2
     if not teleop_active():
         print(
-            f'{TELEOP_UNIT} is not running. Start it with racecar service start teleop, '
-            'then run racecar calibrate again.'
+            f'{TELEOP_UNIT} is not running. Start it: racecar service start teleop. '
+            'Then run racecar calibrate again.'
         )
         return 1
     return run_checks(chosen) if checking else run_steps(chosen)

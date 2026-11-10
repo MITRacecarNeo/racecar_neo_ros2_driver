@@ -75,8 +75,10 @@ class TestCriteria:
     def test_drift(self, st, drift, status):
         assert st.drift_criterion(drift).status == status
 
-    def test_warning_names_hardware_play(self, st):
-        assert 'servo and linkage play' in st.drift_criterion(-2.7).advice
+    def test_warning_advice(self, st):
+        assert st.drift_criterion(-2.7).advice == (
+            'Run the check again. If the drift stays, run racecar calibrate steering'
+        )
         assert 'check the servo horn' in st.drift_criterion(6.0).advice
 
     def test_trim_not_loaded_fails(self, st):

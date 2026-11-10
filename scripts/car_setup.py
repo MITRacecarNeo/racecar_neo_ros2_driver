@@ -461,7 +461,7 @@ def run_measurements(car: Car) -> int:
     print('Stock geometry:')
     for key, label in MEASURED_FRAMES:
         print(f'  {label}: {stock.get(key)}')
-    keep = ask('Keep the stock geometry? (y/n)', 'y').lower().startswith('y')
+    keep = not ask('Keep the stock geometry? [Y/n]').lower().startswith('n')
     if not keep:
         changed = {}
         for key, label in MEASURED_FRAMES:

@@ -193,7 +193,7 @@ class TestCheckReport:
         lines = common.criteria_lines(
             [C('ok', '1', '2', 'PASS', 'hidden'), C('bad', '3', '4', 'FAIL', 'do this')]
         )
-        assert len(lines) == 3 and lines[-1].strip() == '-> do this'
+        assert len(lines) == 3 and lines[-1] == '         do this'
 
     def test_finish_check_writes_the_report_and_exit_code(self, common, tmp_path):
         class _Log:

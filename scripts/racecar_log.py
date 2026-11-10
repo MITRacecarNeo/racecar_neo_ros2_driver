@@ -489,8 +489,6 @@ def cmd_status(args: argparse.Namespace) -> int:
     print(f'  pid      {state["pid"]}')
     print(f'  elapsed  {format_duration(elapsed)}')
     print(f'  size     {format_size(size)}  ({format_size(rate)}/s)')
-    if size == 0 and elapsed > 2.0:
-        print('           (mcap flushes in chunks; a slow bag reads 0 until the first flush)')
     print(
         f'  free     {format_size(free)}'
         + (f'  (full in about {format_duration(remaining)})' if remaining else '')

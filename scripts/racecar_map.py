@@ -44,8 +44,7 @@ def join_pose(argv: list[str]) -> list[str]:
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog='racecar map',
-        description='Build, save, and load maps. Teleop must be running; the car is driven '
-        'with the gamepad as usual.',
+        description='Build, save, and load maps. Start teleop first. Drive with the gamepad.',
     )
     sub = p.add_subparsers(dest='action', required=True, metavar='ACTION')
 
@@ -57,7 +56,7 @@ def parser() -> argparse.ArgumentParser:
         '--force', action='store_true', help='replace an existing NAME (the old one is kept)'
     )
 
-    sub.add_parser('save', help='save the map being built; returns when the files are written')
+    sub.add_parser('save', help='save the map being built')
     sub.add_parser('stop', help='stop mapping or localization (a mapping run is autosaved)')
     sub.add_parser('resume', help='start the last mapping or localization run again')
 

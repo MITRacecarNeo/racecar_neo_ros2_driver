@@ -88,5 +88,5 @@ done
 # goes on and names the command to run later.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if ! sudo -u "$USER_NAME" python3 "$SCRIPT_DIR/student_library.py" install --labs-if-missing; then
-    echo "  student library and labs not installed; run later: racecar library install"
+    echo "  Student library and labs not installed. Run: racecar library install"
 fi

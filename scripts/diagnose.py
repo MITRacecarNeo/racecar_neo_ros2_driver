@@ -1022,7 +1022,7 @@ def firmware_check(ros: RosResult) -> Check:
         return Check(g, name, FAIL, f'no report on {DIAGNOSTICS_TOPIC} from pit_node')
     values = ros.firmware['values']
     if values.get('state') == 'pending':
-        return Check(g, name, WARN, 'still reading the firmware info; run again')
+        return Check(g, name, WARN, 'still reading the firmware info. Run again')
     build = ', '.join(v for v in (values.get('fw.label'), values.get('fw.git')) if v)
     detail = ros.firmware['message'] + (f' ({build})' if build else '')
     try:
@@ -1052,7 +1052,7 @@ def stall_check(ros: RosResult) -> Check:
     if values.get('supported') == '0':
         return Check(g, name, SKIP, 'not in this firmware')
     if values.get('supported') != '1':
-        return Check(g, name, WARN, 'still reading the firmware info; run again')
+        return Check(g, name, WARN, 'still reading the firmware info. Run again')
     status = {0: OK, 1: WARN, 2: FAIL}.get(int(ros.stall['level']), WARN)
     return Check(g, name, status, ros.stall['message'])
 
@@ -1069,7 +1069,7 @@ def actuator_checks(ros: RosResult) -> list[Check]:
 
     pit_running = bool(_run(['pgrep', '-f', 'pit_node']).strip())
     if pit_running:
-        out.append(Check('actuators', 'LED strip', OK, 'pit_node running (owns the strip)'))
+        out.append(Check('actuators', 'LED strip', OK, 'pit_node running'))
     else:
         out.append(Check('actuators', 'LED strip', WARN, 'pit_node not running'))
 
@@ -1119,7 +1119,7 @@ def autonomy_checks(unit_state: str, ros: RosResult, sampled: bool) -> list[Chec
     """
     g = 'autonomy'
     if unit_state == 'failed':
-        return [Check(g, 'unit', WARN, f'{AUTONOMY_UNIT} failed; journalctl -u {AUTONOMY_UNIT}')]
+        return [Check(g, 'unit', WARN, f'failed. See journalctl -u {AUTONOMY_UNIT}')]
     if unit_state != 'active':
         return [Check(g, 'unit', OK, 'stopped')]
     out = [Check(g, 'unit', OK, 'active')]

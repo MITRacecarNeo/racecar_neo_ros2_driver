@@ -89,7 +89,7 @@ main.maps-open #hint { left: calc(min(340px, 80%) + var(--rcn-space-3)); }
 
 
 <div class="sheet" id="startsheet"><div>
-  <h2 id="starttitle">Start mapping</h2>
+  <h2 id="starttitle">New map</h2>
   <div class="rcn-small rcn-muted" id="startnote">Teleop must be running. Drive with the gamepad.</div>
   <div class="row"><input type="text" class="rcn-input" id="newname" placeholder="map name (letters, digits, - and _)"
     autocomplete="off" autocapitalize="off" spellcheck="false"></div>
@@ -97,14 +97,15 @@ main.maps-open #hint { left: calc(min(340px, 80%) + var(--rcn-space-3)); }
 </div></div>
 
 <div class="sheet" id="stopsheet"><div>
-  <h2 id="stoptitle">Save before stopping?</h2>
+  <h2>Unsaved map</h2>
+  <div id="stopnote">Save the map before stopping?</div>
   <div class="row"><button class="rcn-btn primary" id="stopsave">Save and stop</button>
     <button class="rcn-btn danger" id="stopnosave">Stop without saving</button>
     <button class="rcn-btn quiet" id="stopcancel">Cancel</button></div>
 </div></div>
 
 <div class="sheet" id="loadsheet"><div>
-  <h2 id="loadtitle">Load map</h2>
+  <h2 id="loadtitle">Map to load</h2>
   <div class="row"><label><input type="radio" name="from" value="last" checked> Start from the last saved position</label></div>
   <div class="row"><label><input type="radio" name="from" value="global"> Search the whole map while driving</label></div>
   <div class="row"><button class="rcn-btn primary" id="loadgo">Load</button><button class="rcn-btn quiet" id="loadcancel">Cancel</button></div>
@@ -365,7 +366,7 @@ function showBanner() {
   else if (lostContact) msg = { text: RcnApi.LOST, kind: 'bad' };
   else if (sys.throttled_now && sys.throttled_now.length) msg = { text: `Pi throttled now: ${sys.throttled_now.join(', ')}. This run is not valid.`, kind: 'bad' };
   else if (sys.temp_c != null && sys.temp_c >= 78) msg = { text: `Pi is hot (${sys.temp_c.toFixed(0)} C).`, kind: 'warn' };
-  else if (s.mode === 'mapping') msg = { text: 'Speed limited for mapping. Turn gently to prevent map blur.', kind: 'warn' };
+  else if (s.mode === 'mapping') msg = { text: 'Speed limited for mapping. Turn gently.', kind: 'warn' };
   b.textContent = msg ? msg.text : '';
   b.className = msg ? `show ${msg.kind}` : '';
 }
@@ -402,7 +403,7 @@ function render() {
   if (mode === 'mapping') {
     f.append(button('Save', 'primary', () => action({ action: 'save' }), running, 'save'));
     f.append(button('Stop', 'danger', () => {
-      $('stoptitle').textContent = `Save ${s.map || 'the map'} before stopping?`;
+      $('stopnote').textContent = `Save ${s.map || 'the map'} before stopping?`;
       $('stopsheet').classList.add('show');
     }, running, 'stop'));
   } else if (mode === 'localization') {
@@ -419,7 +420,7 @@ function render() {
 }
 
 function openStart(source) {
-  $('starttitle').textContent = source ? `Extend "${source}"` : 'Start mapping';
+  $('starttitle').textContent = source ? `Extension of "${source}"` : 'New map';
   $('startnote').textContent = source
     ? 'Name for the extended map. Use the same name to extend it in place.'
     : 'Teleop must be running. Drive with the gamepad.';
@@ -492,7 +493,7 @@ $('mapsclose').onclick = closeMaps;
 
 function openLoad(name) {
   closeMaps();
-  $('loadtitle').textContent = `Load "${name}"`;
+  $('loadtitle').textContent = `"${name}"`;
   $('loadsheet').dataset.name = name;
   $('loadsheet').classList.add('show');
 }

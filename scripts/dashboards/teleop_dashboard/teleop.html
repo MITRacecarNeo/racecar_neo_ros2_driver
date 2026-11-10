@@ -130,7 +130,7 @@
   </div>
 
   <div class="rcn-section">
-    <h2>Tune</h2>
+    <h2>Settings</h2>
     <div id="tuneform"></div>
     <div class="rcn-tools">
       <button class="rcn-btn primary small" onclick="saveTune()">Save</button>
@@ -165,14 +165,14 @@
       <div>
         <div class="scroll"><div class="matrix" id="matrixEdit" title="Click or drag dots, then Send"></div></div>
         <div class="rcn-tools">
-          <button class="rcn-btn primary small" onclick="sendMatrix()">Send (set_matrix)</button>
+          <button class="rcn-btn primary small" onclick="sendMatrix()">Send</button>
           <button class="rcn-btn quiet small" onclick="editMatrix(() => 0)">Clear</button>
           <button class="rcn-btn quiet small" onclick="editMatrix((v) => 1 - v)">Invert</button>
           <button class="rcn-btn quiet small" onclick="editMatrix((v, i) => (Math.floor(i / 24) + i % 24) % 2)">Checkerboard</button>
         </div>
       </div>
       <div>
-        <label class="rcn-caption" for="matrixText">Text (show_text)</label>
+        <label class="rcn-caption" for="matrixText">Text</label>
         <input type="text" class="rcn-input" id="matrixText" maxlength="255" value="Hello, RACECAR!">
         <div class="rcn-tools"><button class="rcn-btn primary small" onclick="sendText()">Show text</button></div>
         <div class="rcn-caption" style="margin-top: var(--rcn-space-4)">Showing now</div>
@@ -187,7 +187,7 @@
     <div class="scroll" style="margin-top: var(--rcn-space-2)"><div class="ledbar" id="ledEdit"></div></div>
     <div class="rcn-tools">
       <input type="color" id="ledColor" value="#00a0ff" aria-label="LED color">
-      <button class="rcn-btn primary small" onclick="sendLeds()">Send (set_pixels)</button>
+      <button class="rcn-btn primary small" onclick="sendLeds()">Send</button>
       <button class="rcn-btn quiet small" onclick="editLeds(() => hexColor())">Fill</button>
       <button class="rcn-btn quiet small" onclick="editLeds((c, i) => hueColor(i))">Rainbow</button>
       <button class="rcn-btn quiet small" onclick="editLeds(() => [0, 0, 0])">Clear</button>

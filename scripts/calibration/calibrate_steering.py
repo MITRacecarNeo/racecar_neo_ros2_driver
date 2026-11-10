@@ -113,7 +113,6 @@ MAX_TRIM = 0.2
 # the reference car (servo and linkage play). Drift past DRIFT_PASS still
 # warns, naming that play; past DRIFT_WARN it is beyond play.
 DRIFT_PASS, DRIFT_WARN = 1.0, 5.0  # deg/m
-HARDWARE_PLAY_DEG_PER_M = 3.0
 PARAM_TIMEOUT = 3.0
 
 PLACE = 'Place the car in the middle of the clear area. Mark where it stands.'
@@ -451,8 +450,7 @@ def drift_criterion(drift: float) -> Criterion:
         f'within {DRIFT_PASS} deg/m (warn to {DRIFT_WARN})',
         status,
         (
-            f'servo and linkage play alone moves the drift by up to {HARDWARE_PLAY_DEG_PER_M:g} '
-            'deg/m between runs; recalibrate only if it stays: racecar calibrate steering'
+            'Run the check again. If the drift stays, run racecar calibrate steering'
             if status == 'WARN'
             else 'beyond servo and linkage play: check the servo horn and the steering '
             'linkage, then racecar calibrate steering'
@@ -700,7 +698,7 @@ class SteeringCalibrator:
         while failed:
             names = ', '.join(f'{c:+g} at {sp:g}' for c, sp in failed)
             log.info(f'{len(failed)} runs need to be driven again: steering {names}.')
-            answer = read_line('Press Enter to drive them, or type s to finish without them. ')
+            answer = read_line('Press Enter to drive them again, and s to skip them: ')
             if answer.strip().lower() == 's':
                 break
             again, failed = self.analyze(self.drive_pairs(failed))
@@ -812,11 +810,7 @@ class SteeringCalibrator:
             return 1
         missing = sorted(set(COMMANDS) - set(cmds))
         if missing:
-            log.warning(
-                'Steering table without '
-                + ', '.join(f'{c:+g}' for c in missing)
-                + '; the table interpolates across them.'
-            )
+            log.warning('Steering table without ' + ', '.join(f'{c:+g}' for c in missing) + '.')
 
         written = []
         if delta:

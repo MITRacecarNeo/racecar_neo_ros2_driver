@@ -33,7 +33,7 @@ def show() -> int:
     if isinstance(info.get('id'), int):
         print(f'Car number: {info["id"]}')
     if not root.is_dir():
-        print('No profile yet. Calibrating the car, or racecar profile migrate, creates it.')
+        print('No profile yet. Run racecar calibrate or racecar profile migrate.')
         return 0
     files = sorted(
         p for p in root.rglob('*') if p.is_file() and 'history' not in p.relative_to(root).parts
@@ -43,7 +43,7 @@ def show() -> int:
         print(f'  {stamp}  {path.relative_to(root)}')
     left = car_profile.unmigrated(PACKAGE_ROOT / 'config', HERE / 'dashboards')
     if left:
-        print('Not in the profile, so not used (run racecar profile migrate):')
+        print('Not used. Run racecar profile migrate:')
         for path in left:
             print(f'  {path}')
     return 0

@@ -54,6 +54,7 @@
   #autosheet { background: var(--rcn-surface); color: var(--rcn-text); border: 1px solid var(--rcn-steel); border-radius: var(--rcn-radius-md); padding: var(--rcn-space-4); max-width: 420px; }
   #autosheet::backdrop { background: rgba(0, 0, 0, 0.55); }
   #autosheet h2 { font-size: 18px; line-height: 24px; margin: 0 0 var(--rcn-space-2); }
+  #autosheet p { margin: 0; }
   #autosheet .row { display: flex; flex-wrap: wrap; gap: var(--rcn-space-2); margin-top: var(--rcn-space-4); }
   #msg { min-height: 20px; margin-top: var(--rcn-space-3); }
   details { margin-top: var(--rcn-space-8); border-top: 1px solid var(--rcn-border); padding-top: var(--rcn-space-4); }
@@ -145,7 +146,8 @@
   </details>
 
   <dialog id="autosheet">
-    <h2 id="autosheet-title">Save the map before stopping?</h2>
+    <h2>Unsaved map</h2>
+    <p id="autosheet-body">Save the map before stopping?</p>
     <div class="row">
       <button class="rcn-btn primary small" data-act="save-stop">Save and stop</button>
       <button class="rcn-btn quiet small" data-act="stop">Stop without saving</button>
@@ -302,7 +304,7 @@ document.querySelector('main').addEventListener('click', (e) => {
 });
 
 // -- features: camera and detections restart teleop; autonomy is its own service --
-const RESTART = 'Teleop restarts. The car stops for about 15 seconds.';
+const RESTART = 'The car stops for about 15 seconds.';
 let features = [];
 let featureMessage = '';
 function featureState(id) { return (features.find((f) => f.id === id) || {}).state; }
@@ -340,7 +342,7 @@ function autonomyClick(f) {
     return;
   }
   if (last.mode === 'mapping') {
-    $('autosheet-title').textContent = `Save ${last.map} before stopping?`;
+    $('autosheet-body').textContent = `Save ${last.map} before stopping?`;
     $('autosheet').showModal();
   } else if (confirm(`Stop localizing on ${last.map || 'the map'}?`)) {
     setFeature({ feature: 'autonomy', action: 'stop' });

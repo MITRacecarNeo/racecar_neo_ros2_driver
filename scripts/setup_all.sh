@@ -62,7 +62,7 @@ if [ "$EUID" -eq 0 ]; then
     exit 1
 fi
 if [ "$(id -un)" != "racecar" ]; then
-    echo "Run as the racecar user (this is $(id -un)). The services expect racecar." >&2
+    echo "Run as the racecar user (this is $(id -un))." >&2
     exit 1
 fi
 if [ "$SCRIPT_DIR" != "$EXPECTED_DIR" ]; then
@@ -104,7 +104,7 @@ echo "==> [5/12] udev rules (stable /dev/neo-pit-pcb, /dev/lidar)"
 phase 5 bash "$SCRIPT_DIR/setup_udev.sh"
 
 echo
-echo "==> [6/12] Dot matrix fonts (luma, for the dotmatrix_node rasterizer)"
+echo "==> [6/12] Dot matrix fonts"
 phase 6 bash "$SCRIPT_DIR/setup_dotmatrix.sh"
 
 echo
@@ -159,8 +159,6 @@ echo
 if [ "$DASHBOARDS_OK" = "1" ]; then
     echo "Setup complete."
 else
-    echo "Setup complete except the lab dashboards (see above); re-run: racecar setup dashboards"
+    echo "Setup complete except the lab dashboards. Re-run: racecar setup dashboards"
 fi
 echo "Reboot now: sudo reboot"
-echo "The reboot applies config.txt, the bootloader EEPROM, the Coral driver, and"
-echo "the new groups, and starts the services."

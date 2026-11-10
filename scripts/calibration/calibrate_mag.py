@@ -48,17 +48,15 @@ STEPS = [
     (
         'Yaw',
         'Hold the car with its wheels down and rotate it horizontally, parallel to the '
-        'floor. Turn it a full turn or more for best results.',
+        'floor. Turn it a full turn or more.',
     ),
     (
         'Roll',
-        'Roll the car over sideways (barrel roll). Rotate the car a full turn or more '
-        'for best results.',
+        'Roll the car over sideways a full turn or more.',
     ),
     (
         'Pitch',
-        'Rotate the car front to back (pitch down, pitch up). Rotate the car a full turn '
-        'or more for best results.',
+        'Pitch the car nose down and up, a full turn or more.',
     ),
 ]
 
@@ -143,7 +141,7 @@ class CircleCheck:
                 f'{self.offset:.1%} of radius',
                 f'under {CHECK_MAX_OFFSET:.0%}',
                 'PASS' if self.offset <= CHECK_MAX_OFFSET else 'FAIL',
-                'hard-iron offset has moved (battery or parts moved?); racecar calibrate mag',
+                'Recalibrate: racecar calibrate mag',
             ),
             Criterion(
                 'roundness',
@@ -159,14 +157,13 @@ class CircleCheck:
                 f'{self.field_ut:.1f} uT',
                 f'{lo:.0f} to {hi:.0f} uT (Earth about 50)',
                 'PASS' if lo <= self.field_ut <= hi else 'WARN',
-                'steel nearby, or a magnetometer gain mismatch (imu.mag_scale is '
-                'unverified; docs/troubleshooting.md); heading is unaffected',
+                'Move away from steel and check again',
             ),
         ]
         if raw is not None:
             out.append(
                 Criterion(
-                    'raw, for contrast',
+                    'raw',
                     f'{raw.offset:.1%} off center, {raw.roundness:.1%} out of round, '
                     f'{raw.field_ut:.1f} uT',
                     '',
@@ -273,7 +270,7 @@ class MagnetometerCalibrator(CalibratorNode):
         def prompt(i: int) -> str:
             if i == 0:
                 return 'Press Enter, then start...'
-            return 'Press Enter, then start. Type b to redo the previous step: '
+            return 'Press Enter to start, and b to go back a step: '
 
         steps = run_sequence(
             len(STEPS),
@@ -282,14 +279,15 @@ class MagnetometerCalibrator(CalibratorNode):
             prompt,
             allow_skip=False,
         )
+        if len(steps) < len(STEPS):
+            log.info('Nothing calibrated.')
+            return 0
         self.samples = [sample for i in range(len(STEPS)) for sample in steps[i]]
 
         result = fit_and_write(self.samples)
         if result is None:
             log.error(
-                f'Fit failed with {len(self.samples)} samples (need {MIN_SAMPLES}); nothing '
-                'written. The samples do not trace an ellipsoid: rotate through all three '
-                'steps, with real roll and pitch, and retry.'
+                'Fit failed. Nothing written. Rotate the car through all three steps, then retry.'
             )
             return 1
         self.fit, written = result
