@@ -203,6 +203,9 @@ def check_devices() -> list[Check]:
         for _ident, label in USB_DEVICES:
             out.append(Check(g, label, SKIP, 'lsusb unavailable'))
     out.append(gamepad_check(sorted(glob.glob('/dev/input/js*'))))
+    out.append(
+        realsense_library_check(_package_version(LIBREALSENSE), _package_version(REALSENSE_CAMERA))
+    )
 
     for pattern, label in (
         ('/dev/gpiochip*', 'gpiochip'),
@@ -445,6 +448,46 @@ def check_profile() -> Check:
             f'{detail}; {len(left)} file(s) not used: racecar profile migrate',
         )
     return Check('system', 'car profile', OK, detail)
+
+
+LIBREALSENSE = 'ros-jazzy-librealsense2'
+REALSENSE_CAMERA = 'ros-jazzy-realsense2-camera'
+REALSENSE_FIX = f'sudo apt install {LIBREALSENSE} {REALSENSE_CAMERA}'
+
+
+def _package_version(name: str) -> str:
+    return _run(['dpkg-query', '-W', '-f=${Version}', name]).strip()
+
+
+def upstream(version: str) -> tuple[int, ...]:
+    """Return the leading numbers of a Debian version ('2.58.1-1noble.x' -> (2, 58, 1))."""
+    head = version.split('-', 1)[0]
+    parts = []
+    for piece in head.split('.'):
+        if not piece.isdigit():
+            break
+        parts.append(int(piece))
+    return tuple(parts)
+
+
+def realsense_library_check(library: str, camera: str) -> Check:
+    """
+    Check the RealSense library against the camera package built for it.
+
+    The camera package 4.X.Y is built against library 2.X.Y; a different
+    library prints a version warning at every teleop start.
+    """
+    name = 'realsense library'
+    if not library or not camera:
+        return Check('devices', name, SKIP, 'not installed')
+    lib, cam = upstream(library), upstream(camera)
+    shown = '.'.join(map(str, lib))
+    if lib[1:3] != cam[1:3]:
+        built = '.'.join(map(str, (2, *cam[1:3])))
+        return Check(
+            'devices', name, WARN, f'{shown}, camera package needs {built}. Run: {REALSENSE_FIX}'
+        )
+    return Check('devices', name, OK, shown)
 
 
 def gamepad_check(nodes: list[str]) -> Check:

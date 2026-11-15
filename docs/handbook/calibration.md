@@ -7,6 +7,7 @@ throttle calibration. The Teensy firmware's speed control is tuned for them.
 
 - [ESC program settings](#esc-program-settings)
 - [ESC throttle calibration](#esc-throttle-calibration)
+- [Sensor calibration](#sensor-calibration)
 - [Dynamics after an ESC calibration](#dynamics-after-an-esc-calibration)
 - [Per-car speed constants](#per-car-speed-constants)
 - [Car record](#car-record)
@@ -111,6 +112,70 @@ version, with no warning for a test build.
 
 If the script prints "No reply", the calibration firmware is not on the
 Teensy. Flash it again (step 1).
+
+## Sensor calibration {#sensor-calibration}
+
+Each car needs its own sensor calibration. The values go to the car
+profile, so a driver update keeps them. Teleop must be running.
+
+```sh
+racecar calibrate status      # what is calibrated, and when
+racecar calibrate             # every step but dynamics, in order
+racecar calibrate imu lidar   # chosen steps only
+racecar calibrate check       # each calibration against the live sensors
+```
+
+At each step, press Enter to run it, s to skip it, b to go back a step, or
+q to stop. Each step prints its own instructions. At the end, accept the
+teleop restart so the car loads the new values. Then run
+`racecar calibrate check`.
+
+| Step | Car position | Space |
+| ---- | ------------ | ----- |
+| `imu` | In your hands, turned through six positions (each side up) | none |
+| `mag` | Flat on the floor, turned one full turn, away from large metal | room to turn the car |
+| `realsense` | In your hands, turned through six positions | none |
+| `lidar` | On the floor; it drives itself forward and back while you hold RB | 3 m straight |
+| `camera` | On its wheels on a flat floor, camera on | 2 m clear ahead |
+| `odom` | On the floor; you drive circles, then straight toward a wall | 3 by 3 m, a wall 3 to 5 m away |
+| `steering` | On the floor; it drives itself forward and back on arcs while you hold RB | 3 by 3 m |
+
+Drive with the gamepad. Hold RB while a step drives the car. Releasing RB
+stops the car.
+
+### Calibration check {#calibration-check}
+
+`racecar calibrate check` compares each stored calibration with the live
+sensors. It ends with a table of every value, its limit, and PASS, WARN or
+FAIL. Each WARN and FAIL row says what to do.
+
+| Check | Passes when |
+| ----- | ----------- |
+| `imu` | gravity within 1% of 9.807 m/s^2; gyro under 0.01 rad/s, car still |
+| `mag` | the field traces a round circle centered on the turn |
+| `realsense` | gravity within 1%; gyro under 0.01 rad/s, car still |
+| `lidar` | lidar yaw within 0.5 deg of the stored value |
+| `odom` | heading within 1% and distance within 2% of the lidar's |
+| `camera` | pitch and roll within 0.5 deg and height within 5 mm |
+| `steering` | drift at steering 0 under 1 deg/m; steering 0.5 within 10% of the stored table |
+
+### Expected spread {#expected-spread}
+
+Repeated calibrations of one car differ by about these amounts. A new value
+inside this spread of the old one needs no recalibration.
+
+| Value | Spread between runs |
+| ----- | ------------------- |
+| Camera pitch and roll | 0.2 deg |
+| Camera height | 1.6 mm |
+| Steering curvature from 0.25 outward | 3.5% |
+| Steering drift at 0 | 4 to 5 deg/m (servo and linkage play) |
+| Steering trim | 0.02 |
+| Lidar yaw | 0.15 deg |
+
+A steering drift up to 5 deg/m is a WARN. Recalibrate steering only when the
+warning stays over several checks. Beyond 5 deg/m, check the servo horn and
+the steering linkage.
 
 ## Dynamics after an ESC calibration
 

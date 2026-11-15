@@ -1037,6 +1037,9 @@ racecar_neo_ros2_driver/
 ├── resource/                  ament index marker
 ├── docs/                      this file, changelog, troubleshooting,
 │   │                          advanced settings
+│   ├── handbook/              operator handbook (index, installation, health,
+│   │                          calibration, upgrade); rendered by
+│   │                          scripts/handbook.py, built by racecar handbook
 │   ├── img/                   RACECAR Neo logo set
 │   └── specifics/             RealSense topics, Coral M.2 migration
 ├── package.xml, setup.py, setup.cfg

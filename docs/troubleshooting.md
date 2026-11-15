@@ -28,6 +28,8 @@ comment in the source can point here instead of carrying the full account.
 - [Localization state](#localization-state)
 - [Localizer choice](#localizer-choice)
 - [Data drive missing at boot](#data-drive-missing-at-boot)
+- [NVMe boot](#nvme-boot)
+- [RealSense library version](#realsense-library-version)
 - [Health report failures](#health-report-failures)
 - [Lab dashboards](#lab-dashboards)
 - [Reverse from a standstill](#reverse-from-a-standstill)
@@ -544,6 +546,55 @@ To check the drive:
 Data written to `~/data` during the fallback stays there. A drive that drops
 out after boot leaves the root on `/mnt/nvme/data`; new `racecar log` and
 `racecar map` sessions refuse until a reboot.
+
+## NVMe boot
+
+`scripts/setup_raspi_config.sh` (`resolve_cmdline`, `remove_serial_console`).
+
+A car can boot from the NVMe drive instead of the SD card. The bootloader
+then reads the boot partition on the drive, and the kernel command line file
+can be missing or have another name. The setup reads `cmdline=` and
+`os_prefix=` from `config.txt` (the last value of each wins) to find the
+file, and removes the serial console from it.
+
+When the file is absent, the setup prints `no <file>; serial console left
+as is` and continues. If the running kernel still has a serial console, it
+also prints a warning. The serial console holds the UART the Teensy uses, so
+the PIT link fails until it is removed:
+
+1. Run `cat /proc/cmdline`.
+2. If it shows `console=serial0`, find the command line file named in
+   `config.txt` on the boot partition.
+3. Remove `console=serial0,115200` from it.
+4. Reboot.
+
+`vcgencmd bootloader_config` shows the boot order, read from the right.
+`BOOT_ORDER=0xf461` tries the SD card (1), then the NVMe drive (6), then
+USB (4), then starts over (f). With no SD card fitted, the car boots from
+the NVMe drive.
+
+## RealSense library version
+
+`scripts/diagnose.py` (`realsense_library_check`), `scripts/setup_realsense.sh`,
+`config/firmware.yaml`.
+
+The camera package `ros-jazzy-realsense2-camera` 4.X.Y is built against the
+RealSense library `ros-jazzy-librealsense2` 2.X.Y. The camera package does
+not name a library version, so installing or upgrading it alone can leave
+an older library. Teleop then logs `running with a different librealsense
+version` at every start, and `racecar status` shows the `realsense library`
+row as WARN.
+
+Install both together:
+
+```sh
+sudo apt install ros-jazzy-librealsense2 ros-jazzy-realsense2-camera
+racecar service restart teleop
+```
+
+`setup_realsense.sh` installs them together. `config/firmware.yaml` records
+the library, camera package and camera firmware versions tested with this
+driver release.
 
 ## Health report failures
 

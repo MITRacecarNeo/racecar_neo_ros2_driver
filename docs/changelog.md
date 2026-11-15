@@ -28,6 +28,14 @@ All notable changes to this project will be documented in this file. The format 
   step also takes an optional nickname or codename (`car.yaml` `nickname`),
   shown by `racecar profile`.
 - `racecar setup networking --id=N` sets the car number without the prompt.
+- The operator handbook in `docs/handbook/`: an index with the setup order,
+  installation (operating system, driver, hardware, every `racecar setup
+  car` step), health checks, calibration (sensor calibration, checks, the
+  expected spread between runs), and upgrades. `racecar handbook build`
+  writes it as static HTML (`scripts/handbook.py`, no dependencies).
+- `racecar status` `realsense library` row: warns when the RealSense
+  library differs from the version the camera package was built against,
+  with the install command.
 - Setup installs the student library at the tag in
   `config/student_library.yaml`, read-only in
   `/opt/racecar-neo/library-<tag>/` and linked at
@@ -38,6 +46,9 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Fixed
 
+- `setup_realsense.sh` installs the RealSense library with the camera
+  package, so an upgrade no longer leaves the library older than the
+  package built against it.
 - `setup_raspi_config.sh` finds the kernel command line file from
   `config.txt` (`cmdline=`, `os_prefix=`) and reports a missing one instead
   of stopping the setup, so a car booted from the NVMe gets past phase 4.

@@ -15,7 +15,8 @@ set -eo pipefail
 echo "=== RealSense D435i Setup ==="
 
 echo "[1/4] Installing RealSense ROS2 packages..."
-sudo apt-get install -y ros-jazzy-realsense2-camera ros-jazzy-realsense2-camera-msgs ros-jazzy-realsense2-description
+# The library is named so it upgrades with the camera package built against it.
+sudo apt-get install -y ros-jazzy-librealsense2 ros-jazzy-realsense2-camera ros-jazzy-realsense2-camera-msgs ros-jazzy-realsense2-description
 
 echo "[2/4] Installing IMU permission fix script..."
 sudo tee /usr/local/bin/fix-realsense-imu.sh > /dev/null << 'FIXSCRIPT'

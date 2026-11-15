@@ -9,6 +9,7 @@ This package is the v2 successor to [`racecar-neo-ros2-backend`](https://github.
 - [Hardware](#hardware)
 - [Architecture](#architecture)
 - [Quickstart (fresh Ubuntu 24.04 install)](#quickstart-fresh-ubuntu-2404-install)
+- [Handbook](#handbook)
 - [The `racecar` shell tool](#the-racecar-shell-tool)
 - [Linters](#linters)
 - [Networking (optional)](#networking-optional)
@@ -88,6 +89,10 @@ arbitrary at the call site, are in
 [docs/troubleshooting.md](./docs/troubleshooting.md).
 
 ## Quickstart (fresh Ubuntu 24.04 install)
+
+The [handbook](docs/handbook/index.md) has every setup step in full, with
+what a pass looks like and the fix for a fail. This section lists the
+commands.
 
 Target: Raspberry Pi 5 running **Ubuntu Desktop 24.04 LTS for arm64** (Noble). ROS2 Jazzy is the only supported distro for this driver; older Ubuntu releases (22.04 Jammy) are **not** supported because Jazzy doesn't install there.
 
@@ -205,7 +210,7 @@ Twelve phases, all under `scripts/`:
 5. **`setup_udev.sh`**: installs `/etc/udev/rules.d/99-racecar.rules` (stable `/dev/neo-pit-pcb`, `/dev/lidar`)
 6. **`setup_dotmatrix.sh`**: `pip install --user luma.led_matrix` (pinned), the font source for the `dotmatrix_node` rasterizer
 7. **`setup_coral.sh`**: installs `libedgetpu1-std`, `tflite_runtime`, `pycoral` from vendored `depend/` artifacts; on a Pi 5, also the M.2 card's gasket DKMS driver and the `coral-msi` overlay, so a card fitted after setup works (reboot required)
-8. **`setup_realsense.sh`**: installs `realsense2_camera` (apt) + the Pi 5 IMU IIO permission fix (script, udev rule, boot service)
+8. **`setup_realsense.sh`**: installs `realsense2_camera` with the RealSense library it was built against (apt; `racecar status` warns on a mismatch) + the Pi 5 IMU IIO permission fix (script, udev rule, boot service)
 9. **`setup_workspace.sh`**: clones `sllidar_ros2` at a pinned commit and runs `colcon build --symlink-install`; `setup_all.sh` then runs `racecar profile migrate` (see [Car profile](#car-profile))
 10. **`setup_jupyter.sh`**: `pip install --user jupyterlab` and the library's notebook packages (pinned), creates `~/jupyter_ws/`, links `~/jupyter_ws/data` and `~/jupyter_ws/maps` to the [data root](#car-data), and installs the [student library and labs](#student-library-and-labs)
 11. **`setup_services.sh`**: installs and enables the core systemd units (`racecar-{data,teleop,watchdog,dashboard,jupyter,mapview,battery-guard}.service`), installs `racecar-autonomy.service` disabled, and installs `/etc/profile.d/racecar-data.sh`
@@ -219,6 +224,22 @@ bash scripts/setup_all.sh --skip 7,8    # leave out phases 7 and 8
 ```
 
 Individual phase scripts can be run on their own to re-do or skip steps (e.g. `racecar setup networking` for just the networking phase, `racecar setup services` to reinstall the core units, or `bash scripts/setup_udev.sh` to reinstall the udev rules after a hardware swap).
+
+## Handbook
+
+`docs/handbook/` is the operator handbook: installation, health checks,
+calibration, and upgrades, one step at a time. The pages are Markdown in a
+small subset that `scripts/handbook.py` renders with no dependencies.
+
+```sh
+racecar handbook build          # static HTML in handbook/ under the data root
+racecar handbook build DIR      # static HTML in DIR
+```
+
+The build refuses a page with Markdown outside the subset (raw HTML, block
+quotes, headings past `####`). A heading ending in `{#id}` keeps that anchor
+when its text changes; the installation steps use the `racecar setup car`
+step names.
 
 ## The `racecar` shell tool
 
@@ -242,7 +263,7 @@ racecar service logs teleop # journalctl -u racecar-teleop -f
 racecar service start wallfollow  # a lab dashboard; stops the other /drive publishers
 racecar service enable wallfollow # enable one unit; bare `enable` covers the core six
 
-racecar setup all                       # run the 12-phase orchestrator (--from N, --skip N,M)
+racecar setup all                       # run setup_all.sh, all 12 phases (--from N, --skip N,M)
 racecar setup services                  # install and enable the core units
 racecar setup networking --ssid=racecar-neo-2   # configure eth0 addressing + ALFA-dongle AP
 racecar setup networking --show         # print persisted overrides
@@ -1013,9 +1034,9 @@ committed `config/lsm9ds1_cal.yaml`, `config/lsm9ds1_mag_cal.yaml`,
 own values go in `params/<name>.yaml` in the [car profile](#car-profile),
 which the launch files load after the committed file.
 
-The ESC program settings, the ESC throttle calibration, the per-car speed
-constants and the car record are in the handbook:
-[docs/handbook/calibration.md](docs/handbook/calibration.md).
+The calibration steps for an operator, the ESC program settings, the ESC
+throttle calibration, the per-car speed constants and the car record are in
+the handbook: [docs/handbook/calibration.md](docs/handbook/calibration.md).
 
 ```sh
 racecar calibrate status      # profile path, what is calibrated, when, stored values
