@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RACECAR Neo setup</title>
+<link rel="stylesheet" href="/ui/rcn.css?v={{asset}}">
+<script src="/ui/ui.js?v={{asset}}"></script>
+<script src="/ui/profile_nav.js?v={{asset}}"></script>
+<script src="/ui/battery.js?v={{asset}}" defer></script>
+<script src="/ui/stall.js?v={{asset}}" defer></script>
+<link rel="icon" href="/ui/brand/app-icon-32.png">
+<link rel="apple-touch-icon" href="/ui/brand/app-icon-180.png">
+<style>
+main { max-width: 1100px; margin: 0 auto; padding: var(--rcn-space-4); }
+main > .rcn-override { margin: 0 0 var(--rcn-space-4); }
+.summary { margin-bottom: var(--rcn-space-4); }
+.group h2 { font-size: 18px; line-height: 26px; margin: var(--rcn-space-6) 0 var(--rcn-space-2); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: var(--rcn-space-3); }
+.tile { text-align: left; background: var(--rcn-surface); border: 2px solid var(--rcn-border); border-radius: var(--rcn-radius-md);
+        padding: var(--rcn-space-3); color: var(--rcn-text); cursor: pointer; font: inherit; display: flex; flex-direction: column; gap: var(--rcn-space-1); }
+.tile:hover { border-color: var(--rcn-accent); }
+.tile .top { display: flex; justify-content: space-between; align-items: center; gap: var(--rcn-space-2); }
+.tile .name { font-weight: 700; }
+.tile .detail { color: var(--rcn-text-muted); font-size: 14px; overflow-wrap: anywhere; }
+.mark { font: 700 13px/18px var(--rcn-font-mono); white-space: nowrap; }
+.mark.done { color: #6fd08c; } .mark.open { color: var(--rcn-led-red); } .mark.run { color: var(--rcn-gold); }
+.sheet { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); display: none; align-items: center; justify-content: center; z-index: 30; padding: var(--rcn-space-3); }
+.sheet.show { display: flex; }
+.sheet > div { width: 100%; max-width: 640px; max-height: 90vh; overflow: auto; background: var(--rcn-bg); border: 1px solid var(--rcn-border);
+               border-radius: var(--rcn-radius-lg); padding: var(--rcn-space-4); }
+.sheet h2 { font-size: 20px; line-height: 28px; margin: 0 0 var(--rcn-space-1); }
+.sheet .note { margin: var(--rcn-space-2) 0; }
+.sheet label { display: block; margin: var(--rcn-space-2) 0 var(--rcn-space-1); font-weight: 600; }
+.sheet .rcn-input { width: 100%; }
+.row { display: flex; gap: var(--rcn-space-2); flex-wrap: wrap; margin-top: var(--rcn-space-3); align-items: center; }
+#out { display: none; margin-top: var(--rcn-space-3); max-height: 40vh; overflow: auto; white-space: pre-wrap; }
+#out.show { display: block; }
+#promptrow { display: none; }
+#promptrow.show { display: flex; }
+#promptrow .rcn-input { flex: 1; min-width: 160px; }
+#status { margin-top: var(--rcn-space-2); font-weight: 600; }
+</style>
+</head>
+<body>
+<header class="rcn-header">
+  <img class="rcn-mark" src="/ui/brand/mark.png" alt="RACECAR Neo">
+  <span class="rcn-title">Setup</span>
+  <span class="rcn-spacer"></span>
+</header>
+<main>
+  <div class="summary rcn-muted" id="summary">Reading the car...</div>
+  <div id="groups"></div>
+  <p class="rcn-small rcn-muted">Sensor calibration runs from a terminal: <code>racecar calibrate</code></p>
+</main>
+<div class="sheet" id="sheet"><div>
+  <h2 id="stitle"></h2>
+  <div class="rcn-small rcn-muted" id="stime"></div>
+  <div class="note" id="snote"></div>
+  <form id="sform" autocomplete="off"></form>
+  <div class="row" id="actions">
+    <button class="rcn-btn primary" id="run">Run</button>
+    <button class="rcn-btn quiet" id="markdone">Mark done</button>
+    <a class="rcn-btn quiet" id="guide" target="_blank">Handbook</a>
+    <button class="rcn-btn quiet" id="close">Close</button>
+  </div>
+  <pre class="rcn-code" id="out"></pre>
+  <div class="row" id="promptrow">
+    <span id="ptext"></span>
+    <input class="rcn-input" id="pinput" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <button class="rcn-btn primary small" id="psend">Send</button>
+  </div>
+  <div class="row"><button class="rcn-btn danger small" id="stop" hidden>Stop</button></div>
+  <div id="status"></div>
+</div></div>
+<script>
+'use strict';
+RcnProfileNav.mount('setup');
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+// Steps that end the page's connection, and what to say first.
+const DROPS = {
+  access_point: "The car's WiFi restarts. Reconnect to the car's network, then this page reloads by itself.",
+  reboot: 'The car restarts. This page reloads when the car is back.',
+};
+// Steps whose popup only saves answers.
+const FORMS = new Set(['identity', 'esc', 'measurements', 'record']);
+const NOTES = {
+  hardware: 'Turn the car off before you fit a part. If the gamepad is missing, unplug its receiver and plug it back in.',
+  firmware: 'Connect the Teensy USB cable to the Pi.',
+  esc: 'Set up the ESC as the handbook shows. Then enter its values.',
+  measurements: 'Keep the stock geometry for a car built to the fleet design. Otherwise enter your measurements in millimeters.',
+  record: 'The fleet parts are filled in. Change any that differ on this car.',
+};
+const GUIDE = { esc: '/handbook/calibration#esc-program-settings' };
+
+let view = null, current = null, since = 0, timer = null, lost = false;
+
+function post(path, body) {
+  return fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) })
+    .then((r) => r.json().then((d) => ({ ok: r.ok, ...d })));
+}
+
+function render() {
+  const steps = view.groups.flatMap((g) => g.steps);
+  const open = steps.filter((s) => !s.done).length;
+  $('summary').textContent = open ? `${open} of ${steps.length} steps remaining.` : 'Every step is done.';
+  const running = view.job.running ? view.job.label : '';
+  $('groups').innerHTML = view.groups.map((g) => `<section class="group"><h2>${esc(g.title)}</h2><div class="tiles">`
+    + g.steps.map((s) => {
+      const [cls, word] = s.key === running ? ['run', '[RUN ]'] : s.done ? ['done', '[DONE]'] : ['open', '[OPEN]'];
+      return `<button class="tile" data-key="${s.key}"><span class="top"><span class="name">${esc(s.title)}</span>`
+        + `<span class="mark ${cls}">${word}</span></span><span class="detail">${esc(s.detail || '')}</span></button>`;
+    }).join('') + '</div></section>').join('');
+  for (const t of document.querySelectorAll('.tile')) t.addEventListener('click', () => openStep(t.dataset.key));
+}
+
+async function load() {
+  view = await fetch('/api/setup').then((r) => r.json());
+  render();
+  if (view.job.running && !current) openStep(view.job.label);
+}
+
+function step(key) { return view.groups.flatMap((g) => g.steps).find((s) => s.key === key); }
+
+function openStep(key) {
+  const s = step(key);
+  if (!s) return;
+  current = s;
+  $('stitle').textContent = s.title;
+  $('stime').textContent = s.time ? `Takes ${s.time}.` : '';
+  $('snote').textContent = [NOTES[key], DROPS[key]].filter(Boolean).join(' ');
+  $('guide').href = GUIDE[key] || `/handbook/installation#${key}`;
+  $('sform').innerHTML = s.fields.filter((f) => f.kind !== 'hidden').map((f) => {
+    const id = `f-${f.key}`;
+    if (f.kind === 'yes-no') {
+      return `<label><input type="checkbox" id="${id}" data-key="${f.key}" ${f.value === 'y' ? 'checked' : ''}> ${esc(f.label)}</label>`;
+    }
+    return `<label for="${id}">${esc(f.label)}</label><input class="rcn-input" id="${id}" data-key="${f.key}"
+      ${f.kind === 'number' ? 'inputmode="decimal"' : ''} value="${esc(f.value)}">`;
+  }).join('');
+  $('run').textContent = key === 'reboot' ? 'Reboot' : FORMS.has(key) ? 'Save' : 'Run';
+  $('out').textContent = '';
+  $('out').classList.remove('show');
+  $('status').textContent = s.done ? `Done${s.detail ? `: ${s.detail}` : ''}.` : '';
+  since = 0;
+  $('sheet').classList.add('show');
+  if (view.job.running && view.job.label === key) watch();
+}
+
+function values() {
+  const out = {};
+  for (const f of current.fields) {
+    if (f.kind === 'hidden') { out[f.key] = f.value; continue; }
+    const el = document.querySelector(`[data-key="${f.key}"]`);
+    out[f.key] = f.kind === 'yes-no' ? (el.checked ? 'y' : 'n') : el.value.trim();
+  }
+  return out;
+}
+
+async function run() {
+  if (DROPS[current.key] && !confirm(DROPS[current.key])) return;
+  const r = await post('/api/setup/run', { step: current.key, values: values() });
+  if (!r.ok) { $('status').textContent = r.message || 'Did not start.'; return; }
+  since = 0;
+  $('out').textContent = '';
+  watch();
+}
+
+function watch() {
+  $('out').classList.add('show');
+  $('stop').hidden = false;
+  $('run').disabled = true;
+  clearTimeout(timer);
+  poll();
+}
+
+async function poll() {
+  let job;
+  try {
+    job = await fetch(`/api/setup/job?since=${since}`).then((r) => r.json());
+  } catch (e) {
+    lost = true;
+    $('status').textContent = 'Waiting for the car...';
+    timer = setTimeout(poll, 3000);
+    return;
+  }
+  if (lost) { location.reload(); return; }
+  if (job.lines.length) {
+    $('out').textContent += job.lines.join('\n') + '\n';
+    $('out').scrollTop = $('out').scrollHeight;
+  }
+  since = job.next;
+  const p = job.prompt;
+  $('promptrow').classList.toggle('show', !!p);
+  if (p) {
+    $('ptext').textContent = p.text.trim();
+    $('pinput').type = p.secret ? 'password' : 'text';
+    if (document.activeElement !== $('pinput')) $('pinput').focus();
+  }
+  if (job.running) {
+    $('status').textContent = 'Running...';
+    timer = setTimeout(poll, 500);
+    return;
+  }
+  $('stop').hidden = true;
+  $('run').disabled = false;
+  $('promptrow').classList.remove('show');
+  await load();
+  const s = step(current.key);
+  $('status').textContent = job.code === 0 && s.done ? 'Done.'
+    : `${job.code === 0 ? 'Finished' : 'Stopped with an error'}. ${s.done ? '' : `Still open${s.detail ? `: ${s.detail}` : ''}.`}`;
+}
+
+function send() {
+  const text = $('pinput').value;
+  $('pinput').value = '';
+  $('promptrow').classList.remove('show');
+  post('/api/setup/input', { text });
+}
+
+$('run').addEventListener('click', (e) => { e.preventDefault(); run(); });
+$('markdone').addEventListener('click', async () => {
+  await post('/api/setup/done', { step: current.key });
+  await load();
+  $('status').textContent = 'Marked done.';
+});
+$('close').addEventListener('click', () => { $('sheet').classList.remove('show'); clearTimeout(timer); current = null; load(); });
+$('stop').addEventListener('click', () => post('/api/setup/stop'));
+$('psend').addEventListener('click', send);
+$('pinput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); send(); } });
+$('sform').addEventListener('submit', (e) => { e.preventDefault(); run(); });
+load();
+</script>
+</body>
+</html>

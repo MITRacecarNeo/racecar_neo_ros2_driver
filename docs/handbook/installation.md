@@ -102,6 +102,11 @@ Log in again over SSH.
 `racecar setup car` takes the car the rest of the way. It shows a checklist,
 then runs the next open step.
 
+The Setup page of the Car Profile app (`http://<car>.local:8088/setup`)
+runs the same steps from a browser. Tap a tile to run a step or fill in its
+answers. When a step asks for the password, type the racecar password in
+the box that opens.
+
 ```sh
 racecar setup car             # the checklist, then the next open step
 racecar setup car status      # the checklist only
@@ -184,22 +189,17 @@ Pass: the hostname matches the identity step.
 The step checks the firmware on the NEO-PIT PCB against the version this
 driver needs (`config/firmware.yaml`).
 
-To flash the firmware:
+1. Connect the car to the internet.
+2. Connect the Teensy USB cable to the Pi.
+3. Run the step. It downloads the firmware release, checks the file, and
+   flashes it. The first try often fails. The step tries up to three times.
 
-1. Install the flashing tool: `sudo apt install teensy-loader-cli`.
-2. Download the release file and its checksum list from the
-   [firmware releases](https://github.com/MITRacecarNeo/racecar-pit-firmware/releases).
-   For version 0.9.2 the file is `racecar-pit-firmware-v0.9.2-teensy41.hex`.
-3. Check the file: `sha256sum -c SHA256SUMS --ignore-missing`.
-4. Flash it:
-   `teensy_loader_cli --mcu=TEENSY41 -w -s -v racecar-pit-firmware-v0.9.2-teensy41.hex`.
-5. The first try often ends with `error writing to Teensy`. Run the same
-   command again.
-
-Pass: the checklist shows the installed version.
+Pass: the step prints `Firmware 0.9.2 is running.`, and the checklist shows
+the installed version.
 
 Fail: `no version read` means teleop is not running. Run
-`racecar service restart teleop` and wait 10 seconds.
+`racecar service restart teleop` and wait 10 seconds. A failed download
+needs the internet. A failed flash needs the Teensy USB cable.
 
 ### ESC setup {#esc}
 

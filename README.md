@@ -885,6 +885,13 @@ position from `frames.yaml`, and its car record entry; the deck buttons hide
 the top, middle or bottom deck. The menu leads to the
 [handbook](docs/handbook/index.md) pages. The 8080 Core group has its tile.
 
+The Setup page (`/setup`) runs the `racecar setup car` steps from a
+browser: one tile per step, grouped, done or open. A tile opens a popup
+that asks the step's questions, says about how long it takes, runs the
+step's command in a pseudo-terminal with its output shown, and passes the
+password to sudo when it asks. One step runs at a time, from the page or
+the CLI. Sensor calibration stays on the command line.
+
 The car model is read from `models/car/racecar_neo_v2_high.glb` under the
 data root and is not part of the driver. Without it, the page lists the parts
 without the 3D view. With no page open, the app holds no ROS subscriptions.

@@ -257,3 +257,81 @@ def test_failed_step_prints_its_handbook_link(cs, car_profile_dir, capsys, monke
     cs.run_step(cs.Car(), step)
     out = capsys.readouterr().out
     assert 'Handbook: http://racecar-neo-0.local:8088/handbook/installation#nvme' in out
+
+
+class TestPageSupport:
+    def test_set_answers_replace_prompts(self, cs, monkeypatch, capsys):
+        monkeypatch.setattr(cs, 'ANSWERS', {'name': 'bill'})
+        monkeypatch.setattr('builtins.input', lambda prompt='': pytest.fail('asked'))
+        assert cs.ask('Car name', 'x', 'name') == 'bill'
+        assert 'Car name: bill' in capsys.readouterr().out
+
+    def test_bad_preset_number_stops(self, cs, car_profile_dir, monkeypatch):
+        write_car(car_profile_dir, {'name': 'bill'})
+        monkeypatch.setattr(cs, 'ANSWERS', {'name': 'b', 'nickname': '', 'id': '99'})
+        assert cs.run_identity(cs.Car()) == 2
+
+    def test_main_parses_set(self, cs, car_profile_dir, monkeypatch):
+        write_car(car_profile_dir, {'name': 'bill'})
+        monkeypatch.setattr(cs, 'ANSWERS', {})
+        monkeypatch.setattr(cs, 'run_step', lambda car, step: 0)
+        assert cs.main(['record', '--set', 'motor=M', '--set', 'note=a=b']) == 0
+        assert cs.ANSWERS == {'motor': 'M', 'note': 'a=b'}
+
+    def test_step_lock(self, cs, tmp_path):
+        path = tmp_path / 'lock'
+        with cs.step_lock('nvme', path):
+            assert 'nvme' in path.read_text()
+            with pytest.raises(cs.Busy, match='nvme'):
+                with cs.step_lock('firmware', path):
+                    pass
+        with cs.step_lock('firmware', path):
+            pass
+
+    def test_firmware_release_and_checksum(self, cs):
+        name, hex_url, sums_url = cs.firmware_release('v0.9.2')
+        assert name == 'racecar-pit-firmware-v0.9.2-teensy41.hex'
+        assert hex_url.endswith('/releases/download/v0.9.2/' + name)
+        assert sums_url.endswith('/v0.9.2/SHA256SUMS')
+        import hashlib
+
+        data = b':10000000'
+        sums = f'{hashlib.sha256(data).hexdigest()}  {name}\n'
+        assert cs.checksum_ok(data, sums, name)
+        assert not cs.checksum_ok(data + b'x', sums, name)
+        assert not cs.checksum_ok(data, sums, 'other.hex')
+
+    def test_groups_cover_every_step_but_calibration(self, cs):
+        keys = [k for _, group in cs.STEP_GROUPS for k in group]
+        assert sorted(keys) == sorted(k for k in cs.STEP_KEYS if k != 'calibration')
+        assert all(k in cs.STEP_TIME for k in keys)
+
+    def test_fields(self, cs, car_profile_dir):
+        write_car(car_profile_dir, {'name': 'bill', 'id': 3, 'record': {'motor': 'M'}})
+        car = cs.Car()
+        assert [f['key'] for f in cs.step_fields(car, 'identity')] == ['name', 'nickname', 'id']
+        record = {f['key']: f['value'] for f in cs.step_fields(car, 'record')}
+        assert record['motor'] == 'M' and 'esc_model' not in record
+        assert [f['key'] for f in cs.step_fields(car, 'esc')] == list(cs.ESC_FIELDS)
+        assert cs.step_fields(car, 'measurements')[0]['kind'] == 'yes-no'
+        assert cs.step_fields(car, 'nvme') == []
+
+    def test_reboot_only_with_the_answer(self, cs, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            cs.subprocess,
+            'run',
+            lambda argv, **kw: calls.append(argv) or subprocess.CompletedProcess(argv, 0),
+        )
+        monkeypatch.setattr(cs, 'ANSWERS', {})
+        cs.run_reboot(cs.Car())
+        assert calls == []
+        monkeypatch.setattr(cs, 'ANSWERS', {'reboot': 'yes'})
+        cs.run_reboot(cs.Car())
+        assert calls == [['sudo', 'reboot']]
+
+
+def test_setup_installs_the_flashing_tool():
+    assert 'teensy-loader-cli' in (SCRIPTS / 'setup_dev_tools.sh').read_text()
+    assert '00-teensy.rules' in (SCRIPTS / 'setup_udev.sh').read_text()
+    assert (SCRIPTS / 'udev' / '00-teensy.rules').read_text().count('16c0') >= 4

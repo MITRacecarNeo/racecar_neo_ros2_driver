@@ -39,6 +39,17 @@ All notable changes to this project will be documented in this file. The format 
   three.js 0.170.0 is vendored in `scripts/web/vendor/three/`. The 8080
   setup note links to it.
 - `racecar setup car` prints the handbook link of a step left open.
+- Setup page in the Car Profile app (`/setup`, `scripts/profile_setup.html`,
+  `scripts/pty_job.py`): tiles for the `racecar setup car` steps; each popup
+  asks the step's questions, shows about how long it takes, and runs the
+  step's command with its output, passing the password to sudo from the
+  page. The 8080 setup note opens it.
+- `racecar setup car STEP --set KEY=VALUE` answers a step's questions;
+  one step runs at a time between the page and the CLI.
+- The firmware step downloads the pinned release, checks it against
+  `SHA256SUMS`, flashes it with `teensy_loader_cli` (up to three tries) and
+  waits for the new version. Setup installs `teensy-loader-cli` and PJRC's
+  udev rule.
 - `racecar status` `realsense library` row: warns when the RealSense
   library differs from the version the camera package was built against,
   with the install command.

@@ -36,6 +36,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import handbook  # noqa: E402, I100  sibling scripts, after the path insert
+import pty_job  # noqa: E402
 from racecar_neo_ros2_driver import apps, car_profile, frames  # noqa: E402
 from racecar_neo_ros2_driver.paths import config_dir  # noqa: E402
 import sysinfo  # noqa: E402
@@ -43,6 +44,8 @@ import webui  # noqa: E402
 
 PAGE = HERE / 'profile.html'
 HANDBOOK_PAGE = HERE / 'profile_handbook.html'
+SETUP_PAGE = HERE / 'profile_setup.html'
+CAR_SETUP = HERE / 'car_setup.py'
 MODEL_NAME = 'racecar_neo_v2_high.glb'
 IDLE_SEC = 10.0
 RATE_WINDOW_SEC = 2.0
@@ -509,8 +512,55 @@ def handbook_view(name: str) -> dict[str, Any] | None:
 # -- server --
 
 
+# -- setup page --
+
+
+def load_car_setup() -> Any:
+    import car_setup
+
+    return car_setup
+
+
+def setup_view() -> dict[str, Any]:
+    """Return the Setup page tiles: each step's state, detail, time and questions, by group."""
+    cs = load_car_setup()
+    car = cs.Car()
+    by_key = {step.key: step for step in cs.STEPS}
+    groups = []
+    for title, keys in cs.STEP_GROUPS:
+        steps = []
+        for key in keys:
+            step = by_key[key]
+            done, by, detail = cs.evaluate(car, step)
+            steps.append({
+                'key': key, 'title': step.title, 'done': done, 'by': by, 'detail': detail,
+                'time': cs.STEP_TIME.get(key, ''), 'fields': cs.step_fields(car, key),
+            })  # fmt: skip
+        groups.append({'title': title, 'steps': steps})
+    return {'groups': groups, 'complete': cs.setup_complete(car.info())}
+
+
+def setup_argv(step: str, values: dict[str, Any]) -> list[str]:
+    """Return the command that runs one step with the popup's answers."""
+    cs = load_car_setup()
+    keys = {k for _, group in cs.STEP_GROUPS for k in group}
+    if step not in keys:
+        raise ValueError(f'no step {step!r}')
+    argv = [sys.executable, str(CAR_SETUP), step]
+    allowed = {f['key'] for f in cs.step_fields(cs.Car(), step)}
+    for key, value in values.items():
+        if key not in allowed:
+            raise ValueError(f'{step} has no field {key!r}')
+        text = str(value)
+        if '\n' in text or len(text) > 200:
+            raise ValueError(f'{key}: one short line')
+        argv += ['--set', f'{key}={text}']
+    return argv
+
+
 class Handler(webui.AppHandler):
     live: Live | None = None
+    job = pty_job.PtyJob()
     cache = 'no-store'
 
     def do_GET(self) -> None:  # noqa: N802
@@ -532,6 +582,12 @@ class Handler(webui.AppHandler):
                             'aliases': ALIASES,
                             'structures': {k: v[0] for k, v in STRUCTURES.items()},
                             'extra': list(NOT_IN_MODEL)})  # fmt: skip
+        elif path == '/setup':
+            self.page(SETUP_PAGE)
+        elif path == '/api/setup':
+            self.send_json({**setup_view(), 'job': self.job.state(int(q.get('since', 0)))})
+        elif path == '/api/setup/job':
+            self.send_json(self.job.state(int(q.get('since', 0))))
         elif path == '/api/handbook':
             self.send_json({'pages': handbook_menu()})
         elif path == '/handbook' or path == '/handbook/':
@@ -551,6 +607,38 @@ class Handler(webui.AppHandler):
                 self.send(404, b'no such page', 'text/plain')
         else:
             self.send(404, b'not found', 'text/plain')
+
+    def do_POST(self) -> None:  # noqa: N802
+        path = urlparse(self.path).path
+        if not webui.same_origin(self.headers.get('Origin'), self.headers.get('Host')):
+            self.send_json({'ok': False, 'message': 'Not allowed from this page.'}, 403)
+            return
+        try:
+            body = self.read_json()
+            if path == '/api/setup/run':
+                step = str(body.get('step', ''))
+                argv = setup_argv(step, dict(body.get('values') or {}))
+                if not self.job.start(argv, step):
+                    self.send_json({'ok': False, 'message': 'Another step is running.'}, 409)
+                    return
+                self.send_json({'ok': True})
+            elif path == '/api/setup/input':
+                ok = self.job.send(str(body.get('text', '')))
+                self.send_json({'ok': ok}, 200 if ok else 409)
+            elif path == '/api/setup/stop':
+                self.job.stop()
+                self.send_json({'ok': True})
+            elif path == '/api/setup/done':
+                cs = load_car_setup()
+                step = str(body.get('step', ''))
+                if step not in cs.STEP_KEYS:
+                    raise ValueError(f'no step {step!r}')
+                cs.mark(cs.Car(), step, 'user')
+                self.send_json({'ok': True})
+            else:
+                self.send(404, b'not found', 'text/plain')
+        except (ValueError, TypeError) as exc:
+            self.send_json({'ok': False, 'message': str(exc)}, 400)
 
     def _redirect(self, to: str) -> None:
         self.send(302, b'', 'text/plain', headers={'Location': to})

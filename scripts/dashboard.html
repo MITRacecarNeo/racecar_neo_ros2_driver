@@ -264,8 +264,8 @@ function renderSetup(view) {
   const profile = apps.find((a) => a.id === 'profile');
   if (!setup.complete && profile) {
     const link = document.createElement('a');
-    link.href = `${location.protocol}//${location.hostname}:${profile.port}/`;
-    link.textContent = 'Open Car Profile';
+    link.href = `${location.protocol}//${location.hostname}:${profile.port}/setup`;
+    link.textContent = 'Open Setup';
     note.append(' ', link);
   }
 }

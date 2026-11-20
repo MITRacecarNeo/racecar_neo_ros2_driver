@@ -24,15 +24,21 @@ step is done (setup_complete).
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
+import fcntl
+import hashlib
 import json
+import os
 from pathlib import Path
 import re
+import shutil
 import socket
 import subprocess
 import sys
+import time
 from typing import Any
 import urllib.request
 
@@ -51,6 +57,12 @@ NETWORKING_FILE = 'networking' + '.env'  # racecar setup networking writes it
 MAX_CAR_ID = 54  # eth0 is 192.168.52.(200 + id)
 STAMP = '%Y-%m-%d %H:%M'
 HOME_PORT = 8080
+FIRMWARE_REPO = 'https://github.com/MITRacecarNeo/racecar-pit-firmware'
+FLASH_TOOL = 'teensy_loader_cli'
+FLASH_TRIES = 3  # the first write after the soft reboot often fails
+FLASH_RETRY_SEC = 2.0
+FLASH_READBACK_SEC = 30.0
+DOWNLOAD_TIMEOUT_SEC = 30.0
 # The step prompt, in racecar calibrate's option form.
 STEP_PROMPT = 'Press Enter to run or confirm a step, d to mark done, s to skip, and q to stop'
 
@@ -187,7 +199,15 @@ def update_car(values: dict[str, Any]) -> Path:
     )
 
 
-def ask(prompt: str, default: str = '') -> str:
+# Answers from the command line (--set KEY=VALUE), by field key; a step asks
+# only for what is not here.
+ANSWERS: dict[str, str] = {}
+
+
+def ask(prompt: str, default: str = '', key: str = '') -> str:
+    if key in ANSWERS:
+        print(f'{prompt}: {ANSWERS[key]}')
+        return ANSWERS[key]
     shown = f' [{default}]' if default else ''
     try:
         answer = input(f'{prompt}{shown}: ').strip()
@@ -372,15 +392,17 @@ def check_finish(car: Car) -> Result:
 
 def run_identity(car: Car) -> int:
     info = car.info()
-    name = ask('Car name', str(info.get('name') or ''))
-    nickname = ask('Nickname (optional)', str(info.get('nickname') or ''))
+    name = ask('Car name', str(info.get('name') or ''), 'name')
+    nickname = ask('Nickname (optional)', str(info.get('nickname') or ''), 'nickname')
     while True:
         raw = ask(f'Car number (0 to {MAX_CAR_ID})',
-                  '' if car.car_id() is None else str(car.car_id()))  # fmt: skip
+                  '' if car.car_id() is None else str(car.car_id()), 'id')  # fmt: skip
         if raw.isdigit() and int(raw) <= MAX_CAR_ID:
             car_id = int(raw)
             break
         print(f'Type a number from 0 to {MAX_CAR_ID}.')
+        if 'id' in ANSWERS:
+            return 2
     update_car({'name': name, 'nickname': nickname, 'id': car_id})
     host = f'{HOSTNAME_BASE}-{car_id}'
     print(f'Hostname: {host}')
@@ -416,16 +438,84 @@ def run_access_point(car: Car) -> int:
 
 
 def run_reboot(car: Car) -> int:
+    if ANSWERS.get('reboot') == 'yes':
+        print('Rebooting.')
+        return subprocess.run(['sudo', 'reboot'], check=False).returncode
     print('Run: sudo reboot')
     print('Then run: racecar setup car')
     return 0
 
 
+def firmware_release(tag: str) -> tuple[str, str, str]:
+    """Return the .hex name, its URL and the SHA256SUMS URL of a firmware release."""
+    name = f'racecar-pit-firmware-{tag}-teensy41.hex'
+    base = f'{FIRMWARE_REPO}/releases/download/{tag}'
+    return name, f'{base}/{name}', f'{base}/SHA256SUMS'
+
+
+def checksum_ok(data: bytes, sums: str, name: str) -> bool:
+    """Return True when SHA256SUMS lists `name` with the digest of `data`."""
+    digest = hashlib.sha256(data).hexdigest()
+    for line in sums.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[1].lstrip('*') == name:
+            return parts[0].lower() == digest
+    return False
+
+
+def download(url: str) -> bytes:
+    with urllib.request.urlopen(url, timeout=DOWNLOAD_TIMEOUT_SEC) as r:  # noqa: S310  pinned URL
+        return bytes(r.read())
+
+
 def run_firmware(car: Car) -> int:
+    from racecar_neo_ros2_driver.data_root import data_dir
+
     want = pinned().get('teensy', {})
-    print(f'Teensy firmware {want.get("version")} is needed.')
-    print('Flash it as the handbook calibration page shows.')
-    return 0
+    version, tag = str(want.get('version', '')), str(want.get('tag', ''))
+    if not tag:
+        print('No firmware release is pinned. Run: racecar build')
+        return 1
+    name, hex_url, sums_url = firmware_release(tag)
+    print('Connect the Teensy USB cable to the Pi.')
+    print(f'Downloading firmware {version}.')
+    try:
+        data, sums = download(hex_url), download(sums_url).decode()
+    except OSError as exc:
+        print(f'Download failed: {exc}. Connect the car to the internet.')
+        return 1
+    if not checksum_ok(data, sums, name):
+        print('The downloaded file does not match its checksum. Nothing was flashed.')
+        return 1
+    path = data_dir('firmware') / name
+    path.write_bytes(data)
+    if shutil.which(FLASH_TOOL) is None:
+        print('Installing the flashing tool.')
+        code = subprocess.run(
+            ['sudo', 'apt-get', 'install', '-y', 'teensy-loader-cli'], check=False
+        ).returncode
+        if code != 0:
+            return code
+    for attempt in range(1, FLASH_TRIES + 1):
+        print(f'Flashing, try {attempt} of {FLASH_TRIES}.')
+        code = subprocess.run(
+            [FLASH_TOOL, '--mcu=TEENSY41', '-w', '-s', '-v', str(path)], check=False
+        ).returncode
+        if code == 0:
+            break
+        time.sleep(FLASH_RETRY_SEC)
+    else:
+        print('Flashing failed. Check the Teensy USB cable.')
+        return 1
+    print('Waiting for the board to start.')
+    deadline = time.monotonic() + FLASH_READBACK_SEC
+    while time.monotonic() < deadline:
+        if fetch_json(f'http://127.0.0.1:{HOME_PORT}/api/about').get('firmware') == version:
+            print(f'Firmware {version} is running.')
+            return 0
+        time.sleep(1.0)
+    print('The board did not report the new version. Is teleop running?')
+    return 1
 
 
 def run_esc(car: Car) -> int:
@@ -433,7 +523,7 @@ def run_esc(car: Car) -> int:
     print('Then enter its values.')
     record = car.info().get('record') or {}
     values = {
-        key: ask(label, str(record.get(key) or default))
+        key: ask(label, str(record.get(key) or default), key)
         for key, label, default in RECORD_FIELDS
         if key in ESC_FIELDS
     }
@@ -461,11 +551,11 @@ def run_measurements(car: Car) -> int:
     print('Stock geometry:')
     for key, label in MEASURED_FRAMES:
         print(f'  {label}: {stock.get(key)}')
-    keep = not ask('Keep the stock geometry? [Y/n]').lower().startswith('n')
+    keep = not ask('Keep the stock geometry? [Y/n]', '', 'stock').lower().startswith('n')
     if not keep:
         changed = {}
         for key, label in MEASURED_FRAMES:
-            raw = ask(label, str(stock.get(key)))
+            raw = ask(label, str(stock.get(key)), key)
             try:
                 value = float(raw)
             except ValueError:
@@ -497,7 +587,7 @@ def run_record(car: Car) -> int:
     for key, label, default in RECORD_FIELDS:
         if key in ESC_FIELDS:
             continue
-        values[key] = ask(label, str(record.get(key) or default))
+        values[key] = ask(label, str(record.get(key) or default), key)
     update_car({'record': values})
     return 0
 
@@ -530,6 +620,62 @@ STEPS: tuple[Step, ...] = (
     Step('finish', 'Profile backup', check_finish, run_finish),
 )
 STEP_KEYS = [s.key for s in STEPS]
+# The Car Profile Setup page: tiles in these groups. Sensor calibration has
+# its own page.
+STEP_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ('Identity and network', ('identity', 'access_point', 'reboot')),
+    ('Hardware and storage', ('hardware', 'nvme')),
+    ('Firmware and software', ('firmware', 'extras')),
+    ('Drive train', ('esc',)),
+    ('Car details', ('measurements', 'record')),
+    ('Health and finish', ('health', 'finish')),
+)
+# About how long each step takes, shown before it runs.
+STEP_TIME = {
+    'identity': 'about 5 seconds',
+    'hardware': 'about 10 seconds',
+    'nvme': 'about 1 minute',
+    'access_point': 'about 30 seconds',
+    'reboot': 'about 1 minute',
+    'firmware': 'about 1 minute',
+    'extras': '2 to 5 minutes',
+    'esc': 'about 15 minutes at the car',
+    'measurements': 'about 10 minutes with a tape measure',
+    'record': 'about 5 minutes',
+    'health': 'about 2 minutes',
+    'finish': 'about 10 seconds',
+}
+
+
+def field(key: str, label: str, value: Any, kind: str = 'text') -> dict[str, str]:
+    return {'key': key, 'label': label, 'value': '' if value is None else str(value), 'kind': kind}
+
+
+def step_fields(car: Car, key: str) -> list[dict[str, str]]:
+    """Return the questions a step asks, with current values; kind: text, number, yes-no."""
+    info = car.info()
+    record = info.get('record') or {}
+    if key == 'identity':
+        return [
+            field('name', 'Car name', info.get('name')),
+            field('nickname', 'Nickname (optional)', info.get('nickname')),
+            field('id', f'Car number (0 to {MAX_CAR_ID})', car.car_id(), 'number'),
+        ]
+    if key in ('esc', 'record'):
+        return [
+            field(k, label, record.get(k) or default)
+            for k, label, default in RECORD_FIELDS
+            if (k in ESC_FIELDS) == (key == 'esc')
+        ]
+    if key == 'measurements':
+        from racecar_neo_ros2_driver.frames import load_frames
+
+        stock = load_frames(config_dir())
+        keep = field('stock', 'Keep the stock geometry', 'y', 'yes-no')
+        return [keep] + [field(k, label, stock.get(k), 'number') for k, label in MEASURED_FRAMES]
+    if key == 'reboot':
+        return [field('reboot', 'Reboot the car now', 'yes', 'hidden')]
+    return []
 
 
 # -- state ------------------------------------------------------------------------
@@ -616,9 +762,46 @@ def handbook_url(car: Car, key: str) -> str:
     return f'http://{car.hostname()}.local:{apps.port("profile")}/handbook/installation#{key}'
 
 
+def lock_path() -> Path:
+    runtime = os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}'
+    folder = Path(runtime) if Path(runtime).is_dir() else Path('/tmp')  # noqa: S108
+    return folder / 'racecar-setup.lock'
+
+
+class Busy(Exception):
+    """Another setup step holds the lock; the message names it."""
+
+
+@contextmanager
+def step_lock(key: str, path: Path | None = None) -> Iterator[None]:
+    """Hold the setup lock while a step runs; raise Busy when another step has it."""
+    path = path or lock_path()
+    with open(path, 'a+') as f:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            f.seek(0)
+            raise Busy(f.read().strip() or 'another step') from None
+        f.seek(0)
+        f.truncate()
+        f.write(f'{key} (started {datetime.now():%H:%M})')
+        f.flush()
+        try:
+            yield
+        finally:
+            f.seek(0)
+            f.truncate()
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+
 def run_step(car: Car, step: Step) -> int:
     print(f'\n=== {STEPS.index(step) + 1}/{len(STEPS)} {step.title} ===')
-    code = step.run(car)
+    try:
+        with step_lock(step.key):
+            code = step.run(car)
+    except Busy as exc:
+        print(f'Another setup step is running: {exc}')
+        return 1
     fresh = Car(car.run)
     done, _, detail = evaluate(fresh, step)
     print(f'{step.title}: ' + ('done' if done else 'open') + (f' ({detail})' if detail else ''))
@@ -655,7 +838,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument('action', nargs='?', default='', help='status, done, or a step name')
     parser.add_argument('step', nargs='?', default='', help='with done: the step to mark')
+    parser.add_argument(
+        '--set',
+        action='append',
+        default=[],
+        metavar='KEY=VALUE',
+        help="an answer to one of the step's questions, by field",
+    )
     args = parser.parse_args(argv)
+    for item in args.set:
+        key, sep, value = item.partition('=')
+        if not sep:
+            parser.error(f'--set needs KEY=VALUE: {item}')
+        ANSWERS[key] = value
     car_profile.ensure_profile()
     car = Car()
     by_key = {s.key: s for s in STEPS}

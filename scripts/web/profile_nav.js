@@ -16,7 +16,7 @@
   const PAGES = [
     { id: 'home', label: 'Car', href: '/', icon: 'car' },
     { id: 'handbook', label: 'Handbook', href: '/handbook/index', icon: 'book' },
-    { id: 'setup', label: 'Setup', icon: 'check' },
+    { id: 'setup', label: 'Setup', href: '/setup', icon: 'check' },
     { id: 'calibration', label: 'Calibration', icon: 'target' },
     { id: 'checks', label: 'Checks', icon: 'pulse' },
   ];

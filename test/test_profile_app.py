@@ -242,3 +242,82 @@ def test_registered_as_a_core_app():
     )
     unit = (ROOT / 'scripts' / 'racecar-profile.service').read_text()
     assert 'scripts/profile_app.py' in unit and 'WantedBy=multi-user.target' in unit
+
+
+def post(srv, path, body, origin=True):
+    conn = http.client.HTTPConnection('127.0.0.1', srv.server_address[1], timeout=5)
+    headers = {'Content-Type': 'application/json'}
+    if origin:
+        headers['Origin'] = f'http://127.0.0.1:{srv.server_address[1]}'
+        headers['Host'] = f'127.0.0.1:{srv.server_address[1]}'
+    conn.request('POST', path, body=json.dumps(body), headers=headers)
+    res = conn.getresponse()
+    data = res.read()
+    conn.close()
+    return res, json.loads(data or b'{}')
+
+
+class FakeJob:
+    def __init__(self):
+        self.started, self.sent, self.busy = [], [], False
+
+    def start(self, argv, label):
+        if self.busy:
+            return False
+        self.started.append((argv, label))
+        return True
+
+    def send(self, text):
+        self.sent.append(text)
+        return True
+
+    def stop(self):
+        self.busy = False
+
+    def state(self, since=0):
+        return {
+            'label': '',
+            'running': False,
+            'code': None,
+            'next': 0,
+            'lines': [],
+            'prompt': None,
+        }
+
+
+class TestSetup:
+    def test_argv_checks_step_and_fields(self, pa, car_profile_dir):
+        argv = pa.setup_argv('identity', {'name': 'bill', 'id': '3'})
+        assert argv[-5:] == ['identity', '--set', 'name=bill', '--set', 'id=3']
+        with pytest.raises(ValueError):
+            pa.setup_argv('calibration', {})
+        with pytest.raises(ValueError):
+            pa.setup_argv('identity', {'shell': 'x'})
+        with pytest.raises(ValueError):
+            pa.setup_argv('record', {'motor': 'a\nb'})
+
+    def test_view_groups(self, pa, car_profile_dir, monkeypatch):
+        cs = pa.load_car_setup()
+        monkeypatch.setattr(cs, 'evaluate', lambda car, step: (False, '', 'open'))
+        view = pa.setup_view()
+        assert [g['title'] for g in view['groups']] == [t for t, _ in cs.STEP_GROUPS]
+        first = view['groups'][0]['steps'][0]
+        assert first['key'] == 'identity' and first['time'] and first['fields']
+
+    def test_routes(self, pa, server, monkeypatch):
+        job = FakeJob()
+        monkeypatch.setattr(pa.Handler, 'job', job)
+        assert request(server, '/setup')[0].status == 200
+        res, data = post(server, '/api/setup/run', {'step': 'hardware', 'values': {}})
+        assert res.status == 200 and job.started[-1][1] == 'hardware'
+        job.busy = True
+        assert post(server, '/api/setup/run', {'step': 'hardware'})[0].status == 409
+        assert post(server, '/api/setup/input', {'text': 'y'})[0].status == 200
+        assert job.sent == ['y']
+        assert post(server, '/api/setup/run', {'step': 'nope'})[0].status == 400
+        assert post(server, '/api/setup/stop', {}, origin=False)[0].status == 403
+
+    def test_mark_done(self, pa, server, car_profile_dir):
+        assert post(server, '/api/setup/done', {'step': 'esc'})[0].status == 200
+        setup = yaml.safe_load((car_profile_dir / 'car.yaml').read_text())['setup']
+        assert setup['esc']['by'] == 'user'
