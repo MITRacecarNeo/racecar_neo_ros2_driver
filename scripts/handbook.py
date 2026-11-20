@@ -238,10 +238,15 @@ def render(
     return Renderer(link, image).render(text)
 
 
+# Page order in menus: the order a new car is set up in; other pages follow by name.
+PAGE_ORDER = ('index', 'installation', 'health', 'calibration', 'upgrade')
+
+
 def pages(src: Path = HANDBOOK_DIR) -> list[Path]:
-    """Return the handbook pages, index first."""
+    """Return the handbook pages in PAGE_ORDER, then the rest by name."""
     files = sorted(src.glob('*.md'))
-    return sorted(files, key=lambda p: p.name != 'index.md')
+    rank = {name: i for i, name in enumerate(PAGE_ORDER)}
+    return sorted(files, key=lambda p: rank.get(p.stem, len(PAGE_ORDER)))
 
 
 STATIC_PAGE = """<!doctype html>

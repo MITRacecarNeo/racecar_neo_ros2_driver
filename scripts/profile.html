@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RACECAR Neo car profile</title>
+<link rel="stylesheet" href="/ui/rcn.css?v={{asset}}">
+<script src="/ui/ui.js?v={{asset}}"></script>
+<script src="/ui/profile_nav.js?v={{asset}}"></script>
+<script src="/ui/battery.js?v={{asset}}" defer></script>
+<script src="/ui/stall.js?v={{asset}}" defer></script>
+<link rel="icon" href="/ui/brand/app-icon-32.png">
+<link rel="apple-touch-icon" href="/ui/brand/app-icon-180.png">
+<script type="importmap">
+{ "imports": {
+  "three": "/ui/vendor/three/three.module.min.js?v={{asset}}",
+  "three/addons/": "/ui/vendor/three/"
+} }
+</script>
+<style>
+html, body { height: 100%; }
+body { display: flex; flex-direction: column; overflow: hidden; }
+main { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--rcn-code-bg); }
+/* Warning banners from battery.js and stall.js, across the top under the header. */
+main > .rcn-override { margin: var(--rcn-space-3) var(--rcn-space-3) 0; flex: none; }
+#work { position: relative; flex: 1; min-height: 0; display: flex; }
+#stage { position: relative; flex: 1; min-width: 0; }
+#stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; display: block; }
+#loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--rcn-text-muted); }
+#layers { position: absolute; left: var(--rcn-space-3); top: var(--rcn-space-3); display: flex; gap: var(--rcn-space-2); flex-wrap: wrap; }
+#layers .rcn-btn.off { opacity: 0.5; }
+#panel { width: var(--panel-w, 420px); max-width: 70vw; overflow-y: auto; background: var(--rcn-surface);
+         padding: var(--rcn-space-4); flex: none; }
+#grip { width: 6px; flex: none; cursor: col-resize; background: var(--rcn-border); touch-action: none; }
+#grip:hover, #grip.drag { background: var(--rcn-accent); }
+body.panel-hidden #panel, body.panel-hidden #grip { display: none; }
+#panel h2 { font-size: 20px; line-height: 28px; margin: 0 0 var(--rcn-space-2); }
+#panel h3 { font: 600 15px/22px var(--rcn-font-sans); margin: var(--rcn-space-4) 0 var(--rcn-space-1); }
+#panel table { width: 100%; border-collapse: collapse; font-size: 14px; }
+#panel td { padding: 2px 0; vertical-align: top; }
+#panel td:first-child { padding-right: var(--rcn-space-3); }
+#panel td:last-child { text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+#panel td.ok, #panel td.bad { white-space: nowrap; }
+#panel .rcn-btn { margin-top: var(--rcn-space-3); }
+.parts { display: flex; flex-wrap: wrap; gap: var(--rcn-space-2); margin-top: var(--rcn-space-2); }
+.ok { color: #6fd08c; } .bad { color: var(--rcn-led-red); }
+@media (max-width: 760px) {
+  #work { flex-direction: column-reverse; }
+  #stage { flex: none; height: 55vh; }
+  #panel { width: auto; max-width: none; flex: 1; border-top: 1px solid var(--rcn-border); }
+  #grip { display: none; }
+}
+</style>
+</head>
+<body>
+<header class="rcn-header">
+  <img class="rcn-mark" src="/ui/brand/mark.png" alt="RACECAR Neo">
+  <span class="rcn-title" id="title">Car Profile</span>
+  <span class="rcn-spacer"></span>
+  <button class="rcn-btn quiet small" id="paneltoggle" aria-label="Show or hide the details" title="Details"><svg class="rcn-icon"><use href="/ui/icons.svg#info"/></svg></button>
+</header>
+<main>
+  <div id="work">
+    <aside id="panel"></aside>
+    <div id="grip" role="separator" aria-label="Resize the details"></div>
+    <div id="stage">
+      <div id="loading">Loading the car model...</div>
+      <div id="layers"></div>
+    </div>
+  </div>
+</main>
+<script>
+'use strict';
+RcnProfileNav.mount('home');
+(function () {
+  // Details panel: width, and shown or hidden, kept per browser.
+  const KEY = 'rcn-profile-panel';
+  const get = () => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) { return {}; } };
+  const put = (v) => { try { localStorage.setItem(KEY, JSON.stringify(v)); } catch (e) { /* private window */ } };
+  const state = get();
+  if (state.width) document.body.style.setProperty('--panel-w', `${state.width}px`);
+  document.body.classList.toggle('panel-hidden', !!state.hidden);
+  document.getElementById('paneltoggle').addEventListener('click', () => {
+    state.hidden = document.body.classList.toggle('panel-hidden');
+    put(state);
+    window.dispatchEvent(new Event('resize'));
+  });
+  const grip = document.getElementById('grip');
+  const panel = document.getElementById('panel');
+  grip.addEventListener('pointerdown', (e) => {
+    grip.setPointerCapture(e.pointerId);
+    grip.classList.add('drag');
+    const left = panel.getBoundingClientRect().left;
+    const move = (ev) => {
+      state.width = Math.round(Math.min(Math.max(ev.clientX - left, 260), window.innerWidth * 0.7));
+      document.body.style.setProperty('--panel-w', `${state.width}px`);
+      window.dispatchEvent(new Event('resize'));
+    };
+    const up = () => {
+      grip.classList.remove('drag');
+      grip.removeEventListener('pointermove', move);
+      put(state);
+    };
+    grip.addEventListener('pointermove', move);
+    grip.addEventListener('pointerup', up, { once: true });
+  });
+})();
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const DECKS = [['deck_top', 'Top'], ['deck_middle', 'Middle'], ['deck_bottom', 'Bottom']];
+const HIGHLIGHT = new THREE.Color(0xf49a4b);
+
+let car = {}, names = { parts: {}, aliases: {}, structures: {}, extra: [] };
+let selected = null, timer = null;
+const highlighted = [];
+
+function fmt(v) {
+  if (v === null || v === undefined || v === '') return '-';
+  if (Array.isArray(v)) return v.map(fmt).join(', ');
+  if (typeof v === 'number') return Math.abs(v) >= 100 ? v.toFixed(1) : v.toPrecision(4).replace(/\.?0+$/, '');
+  if (typeof v === 'object') return Object.entries(v).map(([k, x]) => `${k} ${fmt(x)}`).join(', ');
+  return String(v);
+}
+function rows(obj) {
+  return '<table>' + Object.entries(obj).map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(fmt(v))}</td></tr>`).join('') + '</table>';
+}
+
+function carPanel() {
+  const head = car.nickname ? `${car.hostname} (${car.nickname})` : car.hostname;
+  $('title').textContent = head || 'Car Profile';
+  const cal = car.calibration.map((r) =>
+    `<tr><td>${esc(r.label)}</td><td class="${r.state === 'calibrated' ? 'ok' : 'bad'}">${esc(r.state)}</td></tr>`).join('');
+  const parts = Object.entries(names.parts).map(([id, label]) =>
+    `<button class="rcn-btn quiet small" data-part="${id}">${esc(label)}</button>`).join('')
+    + names.extra.map((p) => `<button class="rcn-btn quiet small" data-part="${p.id}">${esc(p.label)}</button>`).join('');
+  $('panel').innerHTML = `<h2>${esc(car.name || 'This car')}</h2>
+    ${rows({ Hostname: car.hostname, Nickname: car.nickname, 'Car number': car.id,
+             'Access point': car.ap.ssid, 'Car address': car.ap.ip,
+             Driver: car.about.driver, Firmware: car.about.firmware })}
+    <h3>Calibration</h3><table>${cal}</table>
+    <h3>Parts</h3><div class="rcn-small rcn-muted">${car.model ? 'Tap a part on the car or in the list.' : 'Tap a part in the list.'}</div>
+    <div class="parts">${parts}</div>`;
+  for (const b of $('panel').querySelectorAll('[data-part]')) b.addEventListener('click', () => select(b.dataset.part));
+}
+
+function partPanel(p) {
+  let html = `<h2>${esc(p.label)}</h2><div>${esc(p.what)}</div>`;
+  if (p.deck) html += `<div class="rcn-small rcn-muted">${esc(p.deck[0].toUpperCase() + p.deck.slice(1))} deck</div>`;
+  if (p.topics.length) {
+    html += '<h3>Data</h3><table>' + p.topics.map((t) =>
+      `<tr><td>${esc(t.topic)}${t.type ? `<br><span class="rcn-muted">${esc(t.type)}</span>` : ''}</td>
+       <td class="${t.hz ? 'ok' : 'bad'}">${t.hz ? t.hz.toFixed(1) + ' Hz' : 'no data'}</td></tr>`).join('') + '</table>';
+  }
+  for (const c of p.calibration) {
+    html += `<h3>${esc(c.label)}</h3><div class="rcn-small ${c.state === 'calibrated' ? 'ok' : 'bad'}">${esc(c.state)} ${esc(c.detail)}</div>`;
+    if (Object.keys(c.values).length) html += rows(c.values);
+  }
+  if (Object.keys(p.frames).length) html += '<h3>Position on the car</h3>' + rows(p.frames);
+  if (Object.keys(p.record).length) html += '<h3>Car record</h3>' + rows(p.record);
+  if (p.firmware && Object.keys(p.firmware).length) html += '<h3>Firmware</h3>' + rows(p.firmware);
+  if (p.power && Object.keys(p.power).length) html += '<h3>Power</h3>' + rows(p.power);
+  else if (p.power) html += '<h3>Power</h3><div class="rcn-small rcn-muted">No battery reading. Is teleop running?</div>';
+  if (p.system) {
+    const s = p.system;
+    html += '<h3>System</h3>' + rows({ 'Chip temperature (C)': s.soc_temp_c, 'ARM clock (MHz)': s.arm_mhz,
+      'ARM maximum (MHz)': s.arm_max_mhz });
+  }
+  html += '<button class="rcn-btn quiet small" id="back">Back to the car</button>';
+  $('panel').innerHTML = html;
+  $('back').addEventListener('click', () => select(null));
+}
+
+async function poll() {
+  if (!selected) return;
+  try {
+    const r = await fetch(`/api/part?id=${encodeURIComponent(selected)}`);
+    if (r.ok) partPanel(await r.json());
+  } catch (e) { /* the next poll tries again */ }
+  if (selected) timer = setTimeout(poll, 1000);
+}
+
+function select(id) {
+  clearTimeout(timer);
+  selected = id;
+  highlight(id);
+  if (id) poll(); else carPanel();
+}
+
+// ---- 3D view ----
+const stage = $('stage');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(getComputedStyle(document.body).getPropertyValue('--rcn-code-bg').trim() || '#232228');
+const camera = new THREE.PerspectiveCamera(40, 1, 0.02, 5);
+camera.position.set(0.55, 0.45, 0.55);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.minDistance = 0.1;
+controls.maxDistance = 2.5;
+renderer.toneMapping = THREE.NeutralToneMapping;
+// Metal parts reflect their surroundings; with none they render near black.
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+scene.add(new THREE.HemisphereLight(0xffffff, 0x444455, 0.8));
+const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+sun.position.set(1, 2, 1.5);
+scene.add(sun);
+let root = null;
+
+function resize() {
+  const w = stage.clientWidth, h = stage.clientHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / Math.max(h, 1);
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+
+function partOf(obj) {
+  for (let o = obj; o; o = o.parent) {
+    const n = o.name;
+    if (names.aliases[n]) return names.aliases[n];
+    if (names.parts[n] || names.structures[n]) return n;
+  }
+  return null;
+}
+
+function nodesOf(id) {
+  if (!root || !id) return [];
+  const wanted = new Set([id, ...Object.entries(names.aliases).filter(([, v]) => v === id).map(([k]) => k)]);
+  const out = [];
+  root.traverse((o) => { if (wanted.has(o.name)) out.push(o); });
+  return out;
+}
+
+function highlight(id) {
+  for (const m of highlighted.splice(0)) m.emissive.setHex(0x000000);
+  for (const node of nodesOf(id)) {
+    node.traverse((o) => {
+      if (!o.isMesh) return;
+      if (!o.userData.own) { o.material = o.material.clone(); o.userData.own = true; }
+      o.material.emissive = HIGHLIGHT.clone().multiplyScalar(0.6);
+      highlighted.push(o.material);
+    });
+  }
+}
+
+const ray = new THREE.Raycaster(), pointer = new THREE.Vector2();
+let down = null;
+renderer.domElement.addEventListener('pointerdown', (e) => { down = [e.clientX, e.clientY]; });
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (!down || !root || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 6) return;
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+  ray.setFromCamera(pointer, camera);
+  const hit = ray.intersectObject(root, true).find((h) => h.object.visible && visibleChain(h.object));
+  select(hit ? partOf(hit.object) : null);
+});
+function visibleChain(o) { for (; o; o = o.parent) if (!o.visible) return false; return true; }
+
+function layerButtons() {
+  $('layers').innerHTML = DECKS.map(([id, label]) =>
+    `<button class="rcn-btn small" data-deck="${id}">${label}</button>`).join('');
+  for (const b of $('layers').querySelectorAll('[data-deck]')) {
+    b.addEventListener('click', () => {
+      const node = root.getObjectByName(b.dataset.deck);
+      if (!node) return;
+      node.visible = !node.visible;
+      b.classList.toggle('off', !node.visible);
+    });
+  }
+}
+
+function frame() {
+  controls.update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+
+async function start() {
+  [car, names] = await Promise.all([fetch('/api/car').then((r) => r.json()), fetch('/api/parts').then((r) => r.json())]);
+  carPanel();
+  if (!car.model) {
+    $('loading').textContent = 'No car model on this car.';
+    return;
+  }
+  stage.prepend(renderer.domElement);
+  resize();
+  new GLTFLoader().load('/model', (gltf) => {
+    root = gltf.scene;
+    root.rotation.x = -Math.PI / 2;  // the model is +Z up
+    scene.add(root);
+    const box = new THREE.Box3().setFromObject(root);
+    controls.target.copy(box.getCenter(new THREE.Vector3()));
+    $('loading').remove();
+    layerButtons();
+    frame();
+  }, (p) => {
+    if (p.total) $('loading').textContent = `Loading the car model... ${Math.round((100 * p.loaded) / p.total)}%`;
+  }, () => { $('loading').textContent = 'The car model did not load.'; });
+}
+start();
+</script>
+</body>
+</html>

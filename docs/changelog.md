@@ -33,6 +33,12 @@ All notable changes to this project will be documented in this file. The format 
   car` step), health checks, calibration (sensor calibration, checks, the
   expected spread between runs), and upgrades. `racecar handbook build`
   writes it as static HTML (`scripts/handbook.py`, no dependencies).
+- Car Profile app (`scripts/profile_app.py`, `racecar-profile.service`, port
+  8088, Core group): the car in 3D with each part's live rate, calibration,
+  position and record; the handbook pages; a menu for the car's pages.
+  three.js 0.170.0 is vendored in `scripts/web/vendor/three/`. The 8080
+  setup note links to it.
+- `racecar setup car` prints the handbook link of a step left open.
 - `racecar status` `realsense library` row: warns when the RealSense
   library differs from the version the camera package was built against,
   with the install command.

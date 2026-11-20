@@ -18,13 +18,15 @@ AUTONOMY = 'racecar-autonomy'
 TERMINAL = 'racecar-terminal'
 
 # Enabled at boot and expected running: teleop, its watchdog, the 8080 home,
-# JupyterLab and the map viewer (app units in config/apps.yaml), the battery guard.
+# JupyterLab, the map viewer and the Car Profile app (app units in
+# config/apps.yaml), the battery guard.
 CORE = (
     TELEOP,
     WATCHDOG,
     'racecar-dashboard',
     'racecar-jupyter',
     'racecar-mapview',
+    'racecar-profile',
     BATTERY_GUARD,
 )
 

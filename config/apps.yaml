@@ -57,6 +57,16 @@ apps:
     startable: false
     desc: Build and load maps
 
+  - id: profile
+    name: Car Profile
+    icon: car
+    port: 8088
+    group: core
+    unit: racecar-profile
+    exclusive: false
+    startable: false
+    desc: View details about the car
+
   - id: webteleop
     name: Web Teleop
     icon: gamepad

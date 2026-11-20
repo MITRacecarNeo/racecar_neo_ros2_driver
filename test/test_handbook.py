@@ -58,7 +58,13 @@ class TestRenderer:
 class TestPages:
     def test_every_page_in_the_subset(self, hb):
         names = [p.name for p in hb.pages()]
-        assert names[0] == 'index.md'
+        assert names[:5] == [
+            'index.md',
+            'installation.md',
+            'health.md',
+            'calibration.md',
+            'upgrade.md',
+        ]
         assert {'installation.md', 'health.md', 'calibration.md', 'upgrade.md'} <= set(names)
         for path in hb.pages():
             assert hb.render(path.read_text()).problems == [], path.name

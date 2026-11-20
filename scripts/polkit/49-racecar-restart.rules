@@ -1,8 +1,8 @@
 // RACECAR Neo - restart the core web and guard services without sudo.
 //
 // Installed to /etc/polkit-1/rules.d/ by scripts/setup_user_env.sh. After a
-// driver update, `racecar service restart dashboard`, `mapview` and
-// `battery-guard` load the new code. The grant covers those units, the racecar
+// driver update, `racecar service restart dashboard`, `mapview`, `profile`
+// and `battery-guard` load the new code. The grant covers those units, the racecar
 // user, and restart only; start, stop, enabling, and every other unit still
 // ask for authentication.
 
@@ -13,6 +13,7 @@ polkit.addRule(function (action, subject) {
     var units = [
         "racecar-dashboard.service",
         "racecar-mapview.service",
+        "racecar-profile.service",
         "racecar-battery-guard.service"
     ];
     if (units.indexOf(action.lookup("unit")) >= 0 &&

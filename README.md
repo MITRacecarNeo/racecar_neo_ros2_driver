@@ -24,6 +24,7 @@ This package is the v2 successor to [`racecar-neo-ros2-backend`](https://github.
 - [Hardware health](#hardware-health)
 - [Car data](#car-data)
 - [Bag recording](#bag-recording)
+- [Car Profile app](#car-profile-app)
 - [Maps](#maps)
 - [Jupyter notebooks](#jupyter-notebooks)
   - [Student library and labs](#student-library-and-labs)
@@ -874,6 +875,19 @@ Recording every topic pulls in `/camera/color` and `/camera/depth`, roughly
 unless you pass `--force`, because rosbag2 drops messages rather than blocking:
 the bag looks healthy until it is read. Name the topics you need, or
 `--exclude '/camera/.*'`.
+
+## Car Profile app
+
+`racecar-profile.service` serves the car's own page on port 8088 from boot:
+`http://<robot>:8088`. The home page shows the car in 3D. Tap a part to see
+what it is, its live data rate and message type, its calibration values, its
+position from `frames.yaml`, and its car record entry; the deck buttons hide
+the top, middle or bottom deck. The menu leads to the
+[handbook](docs/handbook/index.md) pages. The 8080 Core group has its tile.
+
+The car model is read from `models/car/racecar_neo_v2_high.glb` under the
+data root and is not part of the driver. Without it, the page lists the parts
+without the 3D view. With no page open, the app holds no ROS subscriptions.
 
 ## Maps
 

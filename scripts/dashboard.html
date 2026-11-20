@@ -261,6 +261,13 @@ function renderSetup(view) {
   note.hidden = setup.complete;
   const n = setup.open.length;
   note.textContent = setup.complete ? '' : `Finish setting up this car to unlock the utility apps. Run: racecar setup car (${n} remaining step${n === 1 ? '' : 's'})`;
+  const profile = apps.find((a) => a.id === 'profile');
+  if (!setup.complete && profile) {
+    const link = document.createElement('a');
+    link.href = `${location.protocol}//${location.hostname}:${profile.port}/`;
+    link.textContent = 'Open Car Profile';
+    note.append(' ', link);
+  }
 }
 const APP_STATE = {
   active: ['on', '', 'Running'],

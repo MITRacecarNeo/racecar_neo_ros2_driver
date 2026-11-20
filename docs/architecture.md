@@ -230,6 +230,27 @@ Every app's server is built on `scripts/webui.py`:
 | `same_origin`, `sibling_origin` | Origin checks for page-only calls and for CORS from the other app ports |
 | `scripts/web/` `ui.js`, `api.js`, `tune.js`, `logs.js` | The page side: helpers, POST and `/state` polling, tuning sliders, the Logs section (`docs/dashboards.md`) |
 
+### Car Profile app
+
+`scripts/profile_app.py` (`racecar-profile.service`, port 8088, core group)
+serves the car's own page. The home page (`scripts/profile.html`) draws the
+car model with three.js, vendored in `scripts/web/vendor/three/` (0.170.0,
+MIT; `VERSION` names the files), and the sidebar (`web/profile_nav.js`)
+leads to the other pages.
+
+```
+<data root>/models/car/*.glb ──▶ /model (ETag) ──▶ GLTFLoader ──▶ part click
+car.yaml, params/, frames ──▶ /api/car, /api/part ◀── PARTS (model node -> part)
+docs/handbook/*.md ──▶ handbook.render ──▶ /api/handbook/<page> ──▶ /handbook/<page>
+Live node: a part's topics subscribed while polled, IdleGate closes 10 s after
+```
+
+`PARTS` maps the model's node names (sim export: three decks, named parts) to
+topics, `racecar calibrate` steps, `frames.yaml` prefixes and car record keys.
+The RealSense rates come from `/diagnostics`, the board's firmware from
+`/pit/firmware`; the rest are counted from arrivals over 2 s. The model is
+not in the driver; a car without it shows the part list only.
+
 A new app is one entry, its unit, and for 8080 start and stop its unit in
 `scripts/polkit/49-racecar-dashboards.rules`; `test/test_apps.py` checks that
 the rule grants exactly the startable apps.
@@ -543,6 +564,7 @@ racecar-teleop.service ──── Wants= ───▶ racecar-watchdog.service
 racecar-dashboard.service   (independent, port 8080)
 racecar-jupyter.service     (independent, port 8888)
 racecar-mapview.service     (independent, port 8084)
+racecar-profile.service     (independent, port 8088)
 racecar-battery-guard.service (independent; Restart=always)
 ```
 

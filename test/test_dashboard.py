@@ -327,9 +327,10 @@ class FakeRun:
 
 class TestHome:
     def test_apps_cover_the_six_dashboards(self, dashboard):
-        assert [a['port'] for a in dashboard.APPS] == [8086, 8888, 8084, 8081, 8082, 8083, 8085]
+        ports = [a['port'] for a in dashboard.APPS]
+        assert ports == [8086, 8888, 8084, 8088, 8081, 8082, 8083, 8085]
         core = [a['id'] for a in dashboard.APPS if a['group'] == 'core']
-        assert core == ['terminal', 'jupyter', 'mapview']
+        assert core == ['terminal', 'jupyter', 'mapview', 'profile']
         exclusive = [a['id'] for a in dashboard.APPS if a['exclusive']]
         assert exclusive == ['webteleop', 'linefollow', 'wallfollow']
         startable = [a['id'] for a in dashboard.APPS if a['startable']]

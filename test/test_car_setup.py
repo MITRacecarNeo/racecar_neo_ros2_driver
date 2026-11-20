@@ -245,3 +245,15 @@ class TestUnknownAndOptional:
         record['motor'] = ''
         write_car(car_profile_dir, {'record': record})
         assert cs.check_record(cs.Car()).detail == '1 field empty'
+
+
+def test_failed_step_prints_its_handbook_link(cs, car_profile_dir, capsys, monkeypatch):
+    write_car(car_profile_dir, {'name': 'bill'})
+    step = cs.Step(
+        'nvme', 'NVMe data drive', lambda car: cs.Result(False, 'no drive found'), lambda car: 0
+    )
+    monkeypatch.setattr(cs.Car, 'hostname', lambda self: 'racecar-neo-0')
+    monkeypatch.setattr(cs, 'STEPS', (step,))
+    cs.run_step(cs.Car(), step)
+    out = capsys.readouterr().out
+    assert 'Handbook: http://racecar-neo-0.local:8088/handbook/installation#nvme' in out

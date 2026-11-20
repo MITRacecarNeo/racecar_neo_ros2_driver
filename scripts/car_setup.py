@@ -609,12 +609,21 @@ def checklist(car: Car) -> list[tuple[Step, bool, str]]:
     return rows
 
 
+def handbook_url(car: Car, key: str) -> str:
+    """Return the installation page link for a step, in the Car Profile app."""
+    from racecar_neo_ros2_driver import apps
+
+    return f'http://{car.hostname()}.local:{apps.port("profile")}/handbook/installation#{key}'
+
+
 def run_step(car: Car, step: Step) -> int:
     print(f'\n=== {STEPS.index(step) + 1}/{len(STEPS)} {step.title} ===')
     code = step.run(car)
     fresh = Car(car.run)
     done, _, detail = evaluate(fresh, step)
     print(f'{step.title}: ' + ('done' if done else 'open') + (f' ({detail})' if detail else ''))
+    if not done:
+        print(f'Handbook: {handbook_url(fresh, step.key)}')
     return code
 
 

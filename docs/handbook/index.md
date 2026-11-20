@@ -25,21 +25,23 @@ Problems not covered here are in the
 
 ## Setup order
 
-| Step | Page |
-| ---- | ---- |
-| Operating system on the SD card | [Installation](installation.md#os-image) |
-| needrestart, upgrade, driver clone | [Installation](installation.md#driver-install) |
-| Hardware fitting | [Installation](installation.md#hardware-fitting) |
-| Car identity | [Installation](installation.md#identity) |
-| Hardware connection check | [Installation](installation.md#hardware) |
-| NVMe data drive | [Installation](installation.md#nvme) |
-| Access point | [Installation](installation.md#access_point) |
-| Reboot | [Installation](installation.md#reboot) |
-| Teensy firmware | [Installation](installation.md#firmware) |
-| ESC setup | [Calibration](calibration.md#esc-program-settings), then [Installation](installation.md#esc) |
-| Student library and camera firmware | [Installation](installation.md#extras) |
-| Car geometry | [Installation](installation.md#measurements) |
-| Sensor calibration | [Calibration](calibration.md#sensor-calibration) |
-| Hardware health check | [Health checks](health.md#health-run) |
-| Car record | [Installation](installation.md#record) |
-| Profile backup | [Installation](installation.md#finish) |
+Follow the steps in order on a new car.
+
+| Step | Task | Page |
+| ---- | ---- | ---- |
+| 1 | Operating system on the SD card | [Installation](installation.md#os-image) |
+| 2 | needrestart, upgrade, driver clone | [Installation](installation.md#driver-install) |
+| 3 | Hardware fitting | [Installation](installation.md#hardware-fitting) |
+| 4 | Car identity | [Installation](installation.md#identity) |
+| 5 | Hardware connection check | [Installation](installation.md#hardware) |
+| 6 | NVMe data drive | [Installation](installation.md#nvme) |
+| 7 | Access point | [Installation](installation.md#access_point) |
+| 8 | Reboot | [Installation](installation.md#reboot) |
+| 9 | Teensy firmware | [Installation](installation.md#firmware) |
+| 10 | ESC setup | [Calibration](calibration.md#esc-program-settings), then [Installation](installation.md#esc) |
+| 11 | Student library and camera firmware | [Installation](installation.md#extras) |
+| 12 | Car geometry | [Installation](installation.md#measurements) |
+| 13 | Sensor calibration | [Calibration](calibration.md#sensor-calibration) |
+| 14 | Hardware health check | [Health checks](health.md#health-run) |
+| 15 | Car record | [Installation](installation.md#record) |
+| 16 | Profile backup | [Installation](installation.md#finish) |

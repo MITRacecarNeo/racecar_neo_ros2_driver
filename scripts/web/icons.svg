@@ -38,4 +38,7 @@
   <symbol id="power" viewBox="0 0 24 24"><path d="M12 3v8"/><path d="M7.5 6.5a7 7 0 1 0 9 0"/></symbol>
   <symbol id="wifi" viewBox="0 0 24 24"><path d="M2 9a15 15 0 0 1 20 0"/><path d="M5.5 12.5a10 10 0 0 1 13 0"/><path d="M9 16a5 5 0 0 1 6 0"/><path d="M12 19.5h.01"/></symbol>
   <symbol id="terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3"/><path d="M12 15h5"/></symbol>
+  <symbol id="menu" viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/></symbol>
+  <symbol id="book" viewBox="0 0 24 24"><path d="M5 4h10a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h10"/></symbol>
+  <symbol id="car" viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="5" rx="1"/><rect x="2" y="8" width="20" height="7" rx="1"/><circle cx="7" cy="19" r="2.5"/><circle cx="17" cy="19" r="2.5"/></symbol>
 </svg>
