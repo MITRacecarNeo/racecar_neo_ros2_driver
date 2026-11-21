@@ -710,6 +710,18 @@ tmux -L racecar-terminal attach -t rcn-main   # Ctrl+B, then D, to detach
 
 ## Hardware health
 
+`racecar check` (`scripts/racecar_check.py`, rules in
+`racecar_neo_ros2_driver/readiness.py`) runs the parked checks with the car
+still, in about 5 seconds: every required calibration done and no failed
+check, the IMU at rest (gyro mean under 0.01 rad/s, failing at the
+odometry's 2 deg/s stopped gate; gravity within 1%), the odometry holding
+still, the lidar's rate and valid share, the board and camera rates from
+`/diagnostics`, teleop, and the battery guard's level. `--all` adds
+`racecar health power`, `link` and `nvme`. Each row that is not OK names
+its repair. Results go to `checks/last.json` under the data root, merged
+with the checks not run; the Car Profile Checks page (`/checks`) shows them
+and runs the same, with shake and poke as guided buttons.
+
 `racecar health` (`scripts/health.py`) checks the power supply and the data
 drive over time and saves a report. `racecar status` takes one reading of
 each; `racecar health` samples and tests.

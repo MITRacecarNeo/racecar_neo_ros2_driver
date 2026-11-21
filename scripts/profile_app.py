@@ -48,6 +48,11 @@ HANDBOOK_PAGE = HERE / 'profile_handbook.html'
 SETUP_PAGE = HERE / 'profile_setup.html'
 CALIBRATION_PAGE = HERE / 'profile_calibration.html'
 CALIBRATE = HERE / 'calibration' / 'calibrate.py'
+CHECKS_PAGE = HERE / 'profile_checks.html'
+RACECAR_CHECK = HERE / 'racecar_check.py'
+HEALTH = HERE / 'health.py'
+# Health steps that need a person moving the car: their own buttons, not in Run all.
+GUIDED = ('shake', 'poke')
 CAR_SETUP = HERE / 'car_setup.py'
 MODEL_NAME = 'racecar_neo_v2_high.glb'
 IDLE_SEC = 10.0
@@ -643,6 +648,36 @@ def read_progress(since: int, path: Path | None = None) -> dict[str, Any]:
     return {'events': events, 'next': len(lines)}
 
 
+# -- checks page --
+
+
+def load_racecar_check() -> Any:
+    import racecar_check
+
+    return racecar_check
+
+
+def checks_view() -> dict[str, Any]:
+    rc = load_racecar_check()
+    return {'parked': list(rc.PARKED), 'health': list(rc.HEALTH), 'guided': list(GUIDED),
+            'last': rc.read_last()}  # fmt: skip
+
+
+def checks_argv(names: list[str], run_all: bool, guided: str) -> list[str]:
+    """Return the command for one check, a list of checks, Run all, or a guided step."""
+    if guided:
+        if guided not in GUIDED:
+            raise ValueError(f'no guided check {guided!r}')
+        return [sys.executable, str(HEALTH), guided]
+    rc = load_racecar_check()
+    unknown = [n for n in names if n not in rc.NAMES]
+    if unknown:
+        raise ValueError(f'no check {", ".join(unknown)}')
+    if run_all:
+        return [sys.executable, str(RACECAR_CHECK), '--all']
+    return [sys.executable, str(RACECAR_CHECK), *names]
+
+
 class Handler(webui.AppHandler):
     live: Live | None = None
     job = pty_job.PtyJob()
@@ -677,6 +712,10 @@ class Handler(webui.AppHandler):
             self.send_json({**calibration_view(), 'job': self.job.state(int(q.get('since', 0)))})
         elif path == '/api/calibration/progress':
             self.send_json(read_progress(int(q.get('since', 0))))
+        elif path == '/checks':
+            self.page(CHECKS_PAGE)
+        elif path == '/api/checks':
+            self.send_json({**checks_view(), 'job': self.job.state(int(q.get('since', 0)))})
         elif path == '/api/setup/job':
             self.send_json(self.job.state(int(q.get('since', 0))))
         elif path == '/api/handbook':
@@ -724,6 +763,16 @@ class Handler(webui.AppHandler):
                 if not self.job.start(
                     argv, f'{mode}:{step}', {'RACECAR_CAL_PROGRESS': str(progress)}
                 ):
+                    self.send_json({'ok': False, 'message': 'Another step is running.'}, 409)
+                    return
+                self.send_json({'ok': True})
+            elif path == '/api/checks/run':
+                names = [str(n) for n in body.get('names') or []]
+                guided = str(body.get('guided', ''))
+                argv = checks_argv(names, bool(body.get('all')), guided)
+                which = 'all' if body.get('all') else ','.join(names) or 'parked'
+                label = f'check:{guided or which}'
+                if not self.job.start(argv, label):
                     self.send_json({'ok': False, 'message': 'Another step is running.'}, 409)
                     return
                 self.send_json({'ok': True})

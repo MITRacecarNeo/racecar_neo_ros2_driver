@@ -44,6 +44,12 @@ All notable changes to this project will be documented in this file. The format 
   asks the step's questions, shows about how long it takes, and runs the
   step's command with its output, passing the password to sudo from the
   page. The 8080 setup note opens it.
+- `racecar check`: the parked checks before mapping or driving
+  (calibration, IMU at rest, odometry still, lidar, sensor rates, teleop,
+  battery; `--all` adds the power, link and drive checks), each failing row
+  with its repair; results in `checks/last.json`.
+- Checks page in the Car Profile app (`/checks`): Run all, each check
+  alone, and shake and poke as guided steps.
 - Calibration page in the Car Profile app (`/calibration`,
   `scripts/profile_calibration.html`): one step at a time; a central panel
   with the stage, time and samples left, a stillness meter for IMU poses,

@@ -6,6 +6,7 @@ after the installation, and whenever the car behaves oddly.
 ## Contents
 
 - [Status check](#status-check)
+- [Parked checks](#parked-checks)
 - [Health run](#health-run)
 - [Loose contact checks](#loose-contact-checks)
 - [Reports](#reports)
@@ -30,6 +31,30 @@ Pass: no `[FAIL]` row.
 
 Fail: follow the detail on the row. The
 [troubleshooting guide](../troubleshooting.md) covers most rows by name.
+
+## Parked checks {#parked-checks}
+
+`racecar check` tests that the car is fit to map and drive, with the car
+still. It takes about 5 seconds.
+
+1. Put the car on a stand or on a flat floor.
+2. Keep your hands off the car.
+3. Run `racecar check`.
+
+```sh
+racecar check              # calibration, IMU, odometry, lidar, rates, teleop, battery
+racecar check --all        # the same, then the power, link and drive checks
+racecar check imu lidar    # only the named checks
+```
+
+The Checks page of the Car Profile app runs the same checks, each alone or
+with Run all, and the shake and poke checks with their own buttons.
+
+Pass: `RESULT OK`, or `WARN` with something to look at.
+
+Fail: each row that is not OK names its repair. Most repairs are a
+calibration step on the [Calibration](calibration.md#sensor-calibration)
+page.
 
 ## Health run {#health-run}
 

@@ -1128,6 +1128,11 @@ __RC_CLEANUP_HELP__
             python3 "${RACECAR_HEALTH_SCRIPT:-$pkg_dir/scripts/health.py}" "$@"
             ;;
 
+        check)
+            # Parked checks before mapping and driving; see scripts/racecar_check.py.
+            python3 "$pkg_dir/scripts/racecar_check.py" "$@"
+            ;;
+
         handbook)
             # The handbook pages as static HTML; see scripts/handbook.py.
             python3 "$pkg_dir/scripts/handbook.py" "$@"
@@ -1266,6 +1271,11 @@ Commands:
                         PIT link, USB, the drive, data writes, and the sensor
                         rates, and name the step a fault happened in.
                         --seconds N sets the power and link time.
+    check [names] [--all]
+                        Parked checks with the car still: calibration, IMU
+                        at rest, odometry still, lidar, rates, teleop,
+                        battery. --all adds racecar health power, link and
+                        nvme. Exits 1 when a check fails.
     handbook build [DIR]
                         Write the handbook (docs/handbook/) as static HTML,
                         by default to handbook/ under the data root.
@@ -1375,7 +1385,7 @@ _racecar_complete() {
     local sub="${COMP_WORDS[1]:-}"
 
     if [[ $COMP_CWORD -eq 1 ]]; then
-        COMPREPLY=( $(compgen -W "build test source cd teleop launch lint udev watchdog service setup eth wifi desktop library log calibrate profile disk data cleanup map status health handbook help" -- "$cur") )
+        COMPREPLY=( $(compgen -W "build test source cd teleop launch lint udev watchdog service setup eth wifi desktop library log calibrate profile disk data cleanup map status health handbook check help" -- "$cur") )
         return
     fi
 
@@ -1433,6 +1443,9 @@ _racecar_complete() {
             ;;
         handbook)
             COMPREPLY=( $(compgen -W "build --help" -- "$cur") )
+            ;;
+        check)
+            COMPREPLY=( $(compgen -W "calibration imu odometry lidar rates teleop battery power link nvme --all --seconds --help" -- "$cur") )
             ;;
         data)
             COMPREPLY=( $(compgen -W "path" -- "$cur") )
