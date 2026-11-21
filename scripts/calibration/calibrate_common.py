@@ -21,7 +21,9 @@ import threading
 import time
 from typing import Any
 
+import expected
 import numpy as np
+import progress
 from racecar_neo_ros2_driver import car_profile
 from racecar_neo_ros2_driver.term import paint, use_color  # noqa: F401  calibrate.py imports both
 import rclpy
@@ -38,6 +40,10 @@ os.environ.setdefault('RCUTILS_CONSOLE_OUTPUT_FORMAT', '{message}')
 SESSION_ENV = 'RACECAR_CALIBRATE_SESSION'
 FIRST_MESSAGE_TIMEOUT = 15.0
 PROGRESS_INTERVAL = 5.0
+# Collection progress for the Calibration page: how often, and the window of
+# the stillness reading.
+LIVE_INTERVAL = 0.25
+STILL_WINDOW = 0.5
 
 
 def install_config_dir() -> Path | None:
@@ -93,6 +99,7 @@ def write_local_yaml(
     `params` sets them, so a tool that calibrates in steps can write each step.
     The file it replaces is kept under the profile's history/.
     """
+    progress.emit('result', values=expected.require(params))
     stamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     header = f'# Per-car calibration from {tool}, {stamp}.\n'
     return [car_profile.write_params(name, node, params, header, merge)]
@@ -105,6 +112,7 @@ def update_local_values(name: str, values: dict[str, float], tool: str) -> list[
     For plain key: value files such as frames.yaml, which several tools write
     into (not ROS parameter files).
     """
+    progress.emit('result', values=expected.require(values))
     stamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     header = f'# Per-car values; last written by {tool}, {stamp}.\n'
     return [car_profile.write_values(name, values, header)]
@@ -242,6 +250,7 @@ def run_sequence(
     i = 0
     while i < count:
         show(i)
+        progress.emit('stage', index=i, total=count)
         answer = read_line(prompt(i)).strip().lower()
         if answer == 'q':
             break
@@ -265,6 +274,13 @@ def run_sequence(
 def mean_vector(samples: list[list[float]]) -> list[float]:
     """Return the per-axis mean of a list of 3-vectors."""
     return [float(v) for v in np.asarray(samples, dtype=float).mean(axis=0)]
+
+
+def still_reading(recent: list[Any]) -> list[float]:
+    """Return the spread of recent samples when they are short vectors (IMU, odometry), else []."""
+    if not recent or not isinstance(recent[0], list | tuple) or len(recent[0]) > 9:
+        return []
+    return progress.spread([list(map(float, s)) for s in recent])
 
 
 class CalibratorNode(Node):
@@ -314,6 +330,8 @@ class CalibratorNode(Node):
         self._collecting = True
         start = time.monotonic()
         next_report = start + PROGRESS_INTERVAL
+        next_live = start
+        stamps: list[float] = []
         while (now := time.monotonic()) - start < duration:
             if now >= next_report:
                 with self._lock:
@@ -321,7 +339,18 @@ class CalibratorNode(Node):
                 remaining = duration - (now - start)
                 self.get_logger().info(f'{description}: {remaining:.0f} seconds left, {n} samples')
                 next_report += PROGRESS_INTERVAL
-            time.sleep(0.1)
+            if progress.enabled() and now >= next_live:
+                with self._lock:
+                    n = len(self._samples)
+                    stamps.append(now)
+                    window = max(1, int(n / max(now - start, 1e-3) * STILL_WINDOW))
+                    recent = self._samples[-window:]
+                progress.emit(
+                    'collect', label=description, elapsed=round(now - start, 2),
+                    duration=duration, samples=n, still=still_reading(recent),
+                )  # fmt: skip
+                next_live += LIVE_INTERVAL
+            time.sleep(0.05)
         self._collecting = False
         with self._lock:
             samples = list(self._samples)
@@ -507,6 +536,7 @@ class ImuBiasCalibrator(CalibratorNode):
             return 0
         gyro = steps[0]
         positions = [steps[k] for k in range(1, count + 1)]
+        imu_plots(self.target, gyro, positions)
 
         try:
             params = imu_bias_params(self.target, gyro, positions)
@@ -524,6 +554,29 @@ class ImuBiasCalibrator(CalibratorNode):
         log.info(f'Accelerometer scale: {params[self.target.scale_key]}')
         log.info(backup_reminder(written))
         return 0
+
+
+def imu_plots(
+    target: ImuTarget, gyro: list[list[float]], positions: list[list[list[float]]]
+) -> None:
+    """Emit the gyro at rest over time and each pose's mean accelerometer reading."""
+    if not progress.enabled():
+        return
+    rate = len(gyro) / GYRO_SECONDS if gyro else 1.0
+    progress.plot(
+        'Gyroscope at rest',
+        [{'name': axis, 'points': [[i / rate, s[k]] for i, s in enumerate(gyro)]}
+         for k, axis in enumerate('xyz')],
+        x='time (s)', y='rad/s',
+    )  # fmt: skip
+    means = [mean_vector(p) for p in positions]
+    progress.plot(
+        'Accelerometer per pose',
+        [{'name': axis, 'points': [[i + 1, m[k]] for i, m in enumerate(means)]}
+         for k, axis in enumerate('xyz')],
+        x='pose', y='m/s^2', kind='scatter',
+        labels=[axis for axis, _ in target.positions], reference=[GRAVITY, -GRAVITY, 0.0],
+    )  # fmt: skip
 
 
 def run_imu_calibration(target: ImuTarget) -> int:

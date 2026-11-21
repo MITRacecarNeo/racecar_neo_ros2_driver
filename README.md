@@ -1064,7 +1064,24 @@ racecar calibrate status      # profile path, what is calibrated, when, stored v
 racecar calibrate             # every step but dynamics, in order, one guided session
 racecar calibrate imu lidar   # chosen steps only
 racecar calibrate check       # verify each calibration against the live sensors
+racecar calibrate imu --verify  # one step: calibrate, restart teleop, check
 ```
+
+`--verify` runs one step, restarts teleop so the nodes load the new values,
+then runs the step's check. A failed check puts the previous file back (from
+the profile's `history/`) and restarts teleop again, so a calibration that
+does not check out is never kept. Each value is also compared with its
+expected range (`config/calibration_expected.yaml`, from the reference car
+and each sensor's physical limits): a value outside it is refused before
+anything is written, in every mode. The last check result of each step is
+kept in `car.yaml` under `calibration:`.
+
+The Calibration page of the Car Profile app (`/calibration`) runs the same:
+pick a step, follow the instructions in the central panel, and answer with
+its buttons. The panel shows the stage, the time and samples left, how still
+the car is while an IMU pose records, each value against its expected range,
+the check, and a plot of the run. A tile turns green once its calibration is
+checked.
 
 Car prep is three commands: `racecar calibrate`, a teleop restart (offered at
 the end), then `racecar calibrate check`. At each check's prompt, Enter runs

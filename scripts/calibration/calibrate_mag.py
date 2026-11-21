@@ -21,6 +21,7 @@ import sys
 from typing import Any
 
 import numpy as np
+import progress
 import rclpy
 from rclpy.qos import qos_profile_sensor_data
 from rclpy.utilities import remove_ros_args
@@ -221,7 +222,23 @@ def fit_and_write(samples: list[list[float]]) -> tuple[MagFit, list[Path]] | Non
     fit = fit_ellipsoid(samples)
     if fit is None:
         return None
+    emit_plots(samples, fit)
     return fit, write_local_yaml(CAL_NAME, NODE, mag_params(fit), TOOL)
+
+
+def emit_plots(samples: list[list[float]], fit: MagFit) -> None:
+    """Plot the raw and corrected field, x against y and x against z, in microtesla."""
+    if not progress.enabled():
+        return
+    raw = np.asarray(samples, dtype=float)
+    corrected = (fit.soft_iron @ (raw - fit.hard_iron).T).T
+    for a, b, name in ((0, 1, 'x and y'), (0, 2, 'x and z')):
+        progress.plot(
+            f'Magnetic field, {name}',
+            [{'name': 'raw', 'points': (raw[:, [a, b]] * 1e6).round(2).tolist()},
+             {'name': 'corrected', 'points': (corrected[:, [a, b]] * 1e6).round(2).tolist()}],
+            x=f'{"xyz"[a]} (uT)', y=f'{"xyz"[b]} (uT)', kind='scatter', equal_axes=True,
+        )  # fmt: skip
 
 
 def plot_results(samples: list[list[float]], fit: MagFit) -> None:

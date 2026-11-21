@@ -46,6 +46,7 @@ import sys
 from typing import Any
 
 import numpy as np
+import progress
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -239,6 +240,30 @@ def arc_curvature(heading_rad: float, chord_m: float) -> float:
     if chord_m <= 0.0:
         return math.nan
     return 2.0 * math.sin(heading_rad / 2.0) / chord_m
+
+
+def curvature_plot(done: dict[tuple[float, float], tuple[Arc, Arc]]) -> None:
+    """Plot curvature by steering command, forward and reverse, with the stored table."""
+    if not progress.enabled() or not done:
+        return
+    series = []
+    for leg, name in ((0, 'forward'), (1, 'reverse')):
+        for speed in sorted({sp for _, sp in done}):
+            pts = sorted(
+                [c, round(pair[leg].curvature, 4)] for (c, sp), pair in done.items() if sp == speed
+            )
+            series.append({'name': f'{name} at {speed:g}', 'points': pts})
+    stored = steering.load()
+    if stored is not None:
+        table = zip(stored.command, stored.curvature, strict=True)
+        series.append({'name': 'stored table', 'points': [[c, k] for c, k in table]})
+    progress.plot(
+        'Curvature by steering command',
+        series,
+        x='steering command',
+        y='curvature (1/m)',
+        kind='scatter',
+    )
 
 
 @dataclass(frozen=True)
@@ -663,6 +688,7 @@ class SteeringCalibrator:
                 + (f' (wheels slipped backing up: {1 - slip:.0%})' if slip < 0.85 else '')
             )
             done[key] = (fwd, rev)
+        curvature_plot(done)
         return done, failed
 
     def recorded_pairs(self) -> dict[tuple[float, float], tuple[Arc, Arc]]:

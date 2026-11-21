@@ -34,6 +34,7 @@ import sys
 from typing import Any
 
 import numpy as np
+import progress
 from racecar_neo_ros2_driver.frames import load_frames
 from rclpy.utilities import remove_ros_args
 from sensor_msgs.msg import LaserScan
@@ -476,6 +477,7 @@ class DriveYawCalibrator:
                     )
                 )
             mean, _ = yaw_summary([leg.yaw_deg for leg in legs])
+            yaw_plot([leg.yaw_deg for leg in legs], math.degrees(self.laser[2]))
             criteria.append(offset_criterion(mean, math.degrees(self.laser[2])))
         return finish_check(log, criteria, self.report)
 
@@ -501,12 +503,31 @@ def analyze_bags(names: list[str]) -> int:
     return write_yaw(estimates, math.degrees(laser[2]), log)
 
 
+def yaw_plot(estimates: list[float], configured: float) -> None:
+    """Plot each leg's yaw estimate, with their mean and the configured yaw."""
+    if not estimates:
+        return
+    mean = sum(estimates) / len(estimates)
+    progress.plot(
+        'Lidar yaw per leg',
+        [{'name': 'leg', 'points': [[i + 1, round(y, 3)] for i, y in enumerate(estimates)]}],
+        x='leg',
+        y='deg',
+        kind='scatter',
+        lines=[
+            {'name': 'mean', 'y': round(mean, 3)},
+            {'name': 'configured', 'y': round(configured, 3)},
+        ],
+    )
+
+
 def write_yaw(estimates: list[float], configured: float, log: Any) -> int:
     """Report the mean and write it as laser_yaw_deg when its standard error allows."""
     if not estimates:
         log.info('Nothing measured.')
         return 0
     mean, se = yaw_summary(estimates)
+    yaw_plot(estimates, configured)
     log.info(
         f'Lidar yaw {mean:.3f} deg from {len(estimates)} estimates (standard error '
         f'{se:.2f} deg, spread {min(estimates):.2f} to {max(estimates):.2f}); '

@@ -24,6 +24,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 import hashlib
 import json
+import os
 from pathlib import Path
 import sys
 import threading
@@ -45,6 +46,8 @@ import webui  # noqa: E402
 PAGE = HERE / 'profile.html'
 HANDBOOK_PAGE = HERE / 'profile_handbook.html'
 SETUP_PAGE = HERE / 'profile_setup.html'
+CALIBRATION_PAGE = HERE / 'profile_calibration.html'
+CALIBRATE = HERE / 'calibration' / 'calibrate.py'
 CAR_SETUP = HERE / 'car_setup.py'
 MODEL_NAME = 'racecar_neo_v2_high.glb'
 IDLE_SEC = 10.0
@@ -558,6 +561,88 @@ def setup_argv(step: str, values: dict[str, Any]) -> list[str]:
     return argv
 
 
+# -- calibration page --
+
+
+def load_calibrate() -> Any:
+    sys.path.insert(0, str(HERE / 'calibration'))
+    import calibrate
+
+    return calibrate
+
+
+def progress_path() -> Path:
+    runtime = Path(f'/run/user/{os.getuid()}')
+    folder = runtime if runtime.is_dir() else Path('/tmp')  # noqa: S108
+    return folder / 'racecar-cal-progress.jsonl'
+
+
+def tile_state(state: str, stamp: str, result: dict[str, Any] | None) -> str:
+    """
+    Return a calibration tile's state.
+
+    valid: calibrated and its check passed after the last write; failed: the
+    last check after it failed; unchecked: calibrated with no check since;
+    open: not calibrated on this car.
+    """
+    if state != 'calibrated':
+        return 'open'
+    if not result or str(result.get('time', '')) < stamp:
+        return 'unchecked'
+    return 'valid' if result.get('result') in ('PASS', 'WARN') else 'failed'
+
+
+def calibration_view() -> dict[str, Any]:
+    cal = load_calibrate()
+    results = (
+        car_profile.read_yaml(car_profile.profile_dir() / 'car.yaml').get('calibration') or {}
+    )
+    steps = []
+    for step, (key, state, detail) in zip(cal.STEPS, cal.status_rows(config_dir()), strict=True):
+        result = results.get(key)
+        # Long lists (the steering table) stay off the tile.
+        values = {
+            k: v
+            for k, v in cal.step_values(step).items()
+            if not isinstance(v, list) or len(v) <= 3
+        }
+        steps.append({
+            'key': key, 'label': step.label, 'state': tile_state(state, detail, result),
+            'detail': detail, 'result': result, 'check': bool(step.check),
+            'optional': step.optional, 'position': step.position, 'values': values,
+        })  # fmt: skip
+    return {'steps': steps}
+
+
+def calibration_argv(step: str, mode: str) -> list[str]:
+    cal = load_calibrate()
+    if step not in cal.STEP_KEYS:
+        raise ValueError(f'no step {step!r}')
+    if mode == 'check':
+        if not next(s for s in cal.STEPS if s.key == step).check:
+            raise ValueError(f'{step} has no check')
+        return [sys.executable, str(CALIBRATE), 'check', step]
+    if mode != 'calibrate':
+        raise ValueError(f'no mode {mode!r}')
+    return [sys.executable, str(CALIBRATE), step, '--verify']
+
+
+def read_progress(since: int, path: Path | None = None) -> dict[str, Any]:
+    """Return the progress events from line `since` on, and the next line number."""
+    path = path or progress_path()
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        lines = []
+    events = []
+    for line in lines[since:]:
+        try:
+            events.append(json.loads(line))
+        except ValueError:
+            continue
+    return {'events': events, 'next': len(lines)}
+
+
 class Handler(webui.AppHandler):
     live: Live | None = None
     job = pty_job.PtyJob()
@@ -586,6 +671,12 @@ class Handler(webui.AppHandler):
             self.page(SETUP_PAGE)
         elif path == '/api/setup':
             self.send_json({**setup_view(), 'job': self.job.state(int(q.get('since', 0)))})
+        elif path == '/calibration':
+            self.page(CALIBRATION_PAGE)
+        elif path == '/api/calibration':
+            self.send_json({**calibration_view(), 'job': self.job.state(int(q.get('since', 0)))})
+        elif path == '/api/calibration/progress':
+            self.send_json(read_progress(int(q.get('since', 0))))
         elif path == '/api/setup/job':
             self.send_json(self.job.state(int(q.get('since', 0))))
         elif path == '/api/handbook':
@@ -619,6 +710,20 @@ class Handler(webui.AppHandler):
                 step = str(body.get('step', ''))
                 argv = setup_argv(step, dict(body.get('values') or {}))
                 if not self.job.start(argv, step):
+                    self.send_json({'ok': False, 'message': 'Another step is running.'}, 409)
+                    return
+                self.send_json({'ok': True})
+            elif path == '/api/calibration/run':
+                step, mode = str(body.get('step', '')), str(body.get('mode', 'calibrate'))
+                argv = calibration_argv(step, mode)
+                progress = progress_path()
+                if self.job.running:
+                    self.send_json({'ok': False, 'message': 'Another step is running.'}, 409)
+                    return
+                progress.write_text('')
+                if not self.job.start(
+                    argv, f'{mode}:{step}', {'RACECAR_CAL_PROGRESS': str(progress)}
+                ):
                     self.send_json({'ok': False, 'message': 'Another step is running.'}, 409)
                     return
                 self.send_json({'ok': True})

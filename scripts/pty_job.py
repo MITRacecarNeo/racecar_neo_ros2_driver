@@ -50,13 +50,19 @@ class PtyJob:
     def running(self) -> bool:
         return self._proc is not None and self.code is None
 
-    def start(self, argv: Sequence[str], label: str) -> bool:
-        """Start `argv`; return False while another command runs."""
+    def start(self, argv: Sequence[str], label: str, extra: dict[str, str] | None = None) -> bool:
+        """Start `argv` with `extra` added to its environment; False while another runs."""
         with self._lock:
             if self.running:
                 return False
             master, slave = os.openpty()
-            env = {**os.environ, **(self._env or {}), 'TERM': 'dumb', 'NO_COLOR': '1'}
+            env = {
+                **os.environ,
+                **(self._env or {}),
+                **(extra or {}),
+                'TERM': 'dumb',
+                'NO_COLOR': '1',
+            }
 
             def child_setup() -> None:
                 os.setsid()

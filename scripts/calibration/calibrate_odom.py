@@ -34,6 +34,7 @@ from typing import Any
 
 from nav_msgs.msg import Odometry
 import numpy as np
+import progress
 from racecar_neo_ros2_driver.frames import laser_mount, load_frames
 from racecar_neo_ros2_driver.geometry import stamp_sec, yaw_of
 from rcl_interfaces.msg import ParameterType
@@ -205,6 +206,20 @@ def odom_motion(poses: list[list[float]]) -> Pose:
     heading = float(np.unwrap([p[3] for p in poses])[-1] - start[3])
     rel = compose(invert((start[1], start[2], start[3])), (end[1], end[2], end[3]))
     return rel[0], rel[1], heading
+
+
+def path_plot(poses: list[list[float]], lidar: Pose) -> None:
+    """Plot the odometry's path from the start, and where the lidar says the car ended."""
+    if not progress.enabled() or not poses:
+        return
+    start = invert((poses[0][1], poses[0][2], poses[0][3]))
+    path = [compose(start, (p[1], p[2], p[3])) for p in poses]
+    progress.plot(
+        'Path from the start',
+        [{'name': 'odometry', 'points': [[round(x, 3), round(y, 3)] for x, y, _ in path]},
+         {'name': 'lidar end', 'points': [[round(lidar[0], 3), round(lidar[1], 3)]]}],
+        x='ahead (m)', y='left (m)', equal_axes=True,
+    )  # fmt: skip
 
 
 @dataclass(frozen=True)
@@ -383,7 +398,9 @@ class OdomCalibrator(CalibratorNode):
             laser_motion((0.0, 0.0, gyro_rad), self.laser),
         ]
         match = best_match(start_scan, end_scan, guesses)
-        return Run(base_motion(match.pose, self.laser), match, odom, gyro_rad)
+        lidar = base_motion(match.pose, self.laser)
+        path_plot(poses, lidar)
+        return Run(lidar, match, odom, gyro_rad)
 
     def spin(self, turns: int) -> tuple[Run, float] | None:
         """Return the spin run and its true heading change (rad), or None."""

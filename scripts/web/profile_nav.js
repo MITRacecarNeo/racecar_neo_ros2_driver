@@ -17,7 +17,7 @@
     { id: 'home', label: 'Car', href: '/', icon: 'car' },
     { id: 'handbook', label: 'Handbook', href: '/handbook/index', icon: 'book' },
     { id: 'setup', label: 'Setup', href: '/setup', icon: 'check' },
-    { id: 'calibration', label: 'Calibration', icon: 'target' },
+    { id: 'calibration', label: 'Calibration', href: '/calibration', icon: 'target' },
     { id: 'checks', label: 'Checks', icon: 'pulse' },
   ];
 

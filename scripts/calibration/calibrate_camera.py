@@ -31,6 +31,7 @@ import sys
 from typing import Any
 
 import numpy as np
+import progress
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -162,6 +163,23 @@ def fit_plane(
     return Plane(normal, distance, int(best.sum()), float(best.mean()), rms)
 
 
+def floor_plot(points: np.ndarray) -> None:
+    """Plot the floor points ahead in base_link, side and front views, in millimeters."""
+    if not progress.enabled() or not len(points):
+        return
+    mm = points[:: max(1, len(points) // 2000)] * 1000.0
+    progress.plot(
+        'Floor ahead, side view',
+        [{'name': 'floor', 'points': mm[:, [0, 2]].round(1).tolist()}],
+        x='ahead (mm)', y='height (mm)', kind='scatter', lines=[{'name': 'floor', 'y': 0.0}],
+    )  # fmt: skip
+    progress.plot(
+        'Floor ahead, front view',
+        [{'name': 'floor', 'points': mm[:, [1, 2]].round(1).tolist()}],
+        x='left (mm)', y='height (mm)', kind='scatter', lines=[{'name': 'floor', 'y': 0.0}],
+    )  # fmt: skip
+
+
 def mount_from_plane(plane: Plane) -> Mount:
     """Return the mount at the tripod screw from the floor plane in the screw frame."""
     nx, ny, nz = plane.normal
@@ -272,6 +290,7 @@ class CameraMountCalibrator(CalibratorNode):
             & (in_base[:, 0] < CANDIDATE_X_M[1])
         )
         plane = fit_plane(transform(pts[ahead], screw_opt))
+        floor_plot(in_base[ahead])
         problem = plane_problem(plane)
         if problem or plane is None:
             log.error(f'Floor fit: {problem}. {FLOOR_HELP[1]}')

@@ -44,6 +44,17 @@ All notable changes to this project will be documented in this file. The format 
   asks the step's questions, shows about how long it takes, and runs the
   step's command with its output, passing the password to sudo from the
   page. The 8080 setup note opens it.
+- Calibration page in the Car Profile app (`/calibration`,
+  `scripts/profile_calibration.html`): one step at a time; a central panel
+  with the stage, time and samples left, a stillness meter for IMU poses,
+  each value against its expected range, the check, and a plot of the run
+  for every step; tiles turn green when calibrated and checked.
+- `racecar calibrate STEP --verify`: calibrate, restart teleop, run the
+  step's check; a failed check restores the previous values.
+- Calibration values outside their expected range
+  (`config/calibration_expected.yaml`) are refused before writing.
+- `RACECAR_CAL_PROGRESS` makes the calibration tools write progress events
+  (`scripts/calibration/progress.py`); the terminal output is unchanged.
 - `racecar setup car STEP --set KEY=VALUE` answers a step's questions;
   one step runs at a time between the page and the CLI.
 - The firmware step downloads the pinned release, checks it against

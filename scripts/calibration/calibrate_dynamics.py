@@ -46,6 +46,7 @@ import time
 from typing import Any
 
 import numpy as np
+import progress
 from racecar_neo_ros2_driver.car_profile import param_path
 from racecar_neo_ros2_driver.geometry import stamp_sec, yaw_of
 import yaml
@@ -392,6 +393,22 @@ def speed_tag(speed: float) -> str:
     return f'rev{tag}' if speed < 0 else tag
 
 
+def speed_plot(bag: Bag, t_on: float, command: float) -> None:
+    """Plot the speed over time from the command on, for one straight run."""
+    if not progress.enabled():
+        return
+    pts = [
+        [round(t - t_on, 3), round(float(v), 3)]
+        for t, v in zip(bag.odom_t, bag.speed, strict=True)
+    ]
+    progress.plot(
+        f'Speed at command {command:g}',
+        [{'name': 'speed', 'points': [p for p in pts if p[0] >= -0.5]}],
+        x='time from the command (s)',
+        y='m/s',
+    )
+
+
 def analyze_straight(bag: Bag) -> tuple[dict[str, float], list[str]]:
     """Return (values for params/dynamics.yaml, report lines) for a straight run."""
     edges = command_edges(bag)
@@ -399,6 +416,7 @@ def analyze_straight(bag: Bag) -> tuple[dict[str, float], list[str]]:
     off = next(e for e in edges if e[0] > on[0] and e[1] == 0.0)
     r = straight_metrics(bag.odom_t, bag.speed, bag.path_m, on[0], off[0])
     tag = speed_tag(on[1])
+    speed_plot(bag, on[0], on[1])
     values = {
         f'steady_speed_mps_{tag}': round(r.steady_mps, 3),
         f'rise_90_s_{tag}': round(r.rise_90_s, 2),

@@ -25,6 +25,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 from typing import Any
 
 from racecar_neo_ros2_driver import car_profile, steering, units
@@ -424,11 +425,107 @@ def run_checks(steps: list[Step]) -> int:
                 ]
                 return step, 'FAIL', criteria
             verdict, criteria = parsed
+            record_result(step.key, verdict, 'checked')
             return step, verdict, criteria
 
         results = [e if len(e) == 3 else (*e, []) for e in walk_steps(steps, header, run)]
     print('\n'.join(summary_lines(results, use_color())))
     return 1 if any(verdict == 'FAIL' for _, verdict, _ in results) else 0
+
+
+# Teleop is up again when active and its nodes have started.
+RESTART_TIMEOUT_SEC = 60.0
+RESTART_SETTLE_SEC = 10.0
+CAL_STATE_KEY = 'calibration'
+# Profile files a step writes besides its own (calibrate_steering.py writes the table).
+EXTRA_FILES = {'steering': ('steering_table',)}
+
+
+def restart_teleop() -> bool:
+    """Restart teleop so the nodes load the new values; wait until it runs again."""
+    print('Restarting teleop.')
+    subprocess.run([*systemctl(), 'restart', TELEOP_UNIT], check=False)
+    deadline = time.monotonic() + RESTART_TIMEOUT_SEC
+    while time.monotonic() < deadline:
+        if teleop_active():
+            time.sleep(RESTART_SETTLE_SEC)
+            return True
+        time.sleep(1.0)
+    print(f'{TELEOP_UNIT} did not start again.')
+    return False
+
+
+def record_result(key: str, result: str, detail: str) -> None:
+    """Keep the step's last verified result in car.yaml under `calibration:`."""
+    path = car_profile.profile_dir() / 'car.yaml'
+    data = car_profile.read_yaml(path)
+    state = dict(data.get(CAL_STATE_KEY) or {})
+    state[key] = {
+        'result': result,
+        'time': datetime.now().strftime('%Y-%m-%d %H:%M'),
+        'detail': detail,
+    }
+    data[CAL_STATE_KEY] = state
+    car_profile.write_text(path, yaml.safe_dump(data, sort_keys=False))
+
+
+def verify_step(step: Step) -> int:
+    """
+    Calibrate one step, restart teleop, then run its check.
+
+    A check that fails puts the previous file back and restarts teleop again,
+    so a failed calibration is never kept. A step without a check passes once
+    it is written.
+    """
+    import progress
+
+    targets = [
+        car_profile.param_path(n) for n in (step.local_name, *EXTRA_FILES.get(step.key, ()))
+    ]
+    before = {t: t.read_bytes() if t.exists() else None for t in targets}
+    print(f'=== {step.label} ===')
+    print(setup_text(step.position))
+    rc = subprocess.run(
+        [sys.executable, str(HERE / step.tool)], check=False, env={**os.environ, SESSION_ENV: '1'}
+    ).returncode
+    after = {t: t.read_bytes() if t.exists() else None for t in targets}
+    if rc != 0 or after == before:
+        reason = 'the calibration did not finish' if rc != 0 else 'nothing was written'
+        print(f'Calibration failed: {reason}.')
+        progress.emit('outcome', result='FAIL', reason=reason)
+        record_result(step.key, 'FAIL', reason)
+        return 1
+    if not restart_teleop():
+        progress.emit('outcome', result='FAIL', reason='teleop did not start again')
+        return 1
+    if not step.check:
+        progress.emit('outcome', result='PASS', reason='written')
+        record_result(step.key, 'PASS', 'written')
+        return 0
+    with tempfile.TemporaryDirectory() as tmp:
+        report = Path(tmp) / 'check.json'
+        print(f'\n=== Check: {step.label} ===')
+        print(setup_text(step.check))
+        cmd = [sys.executable, str(HERE / step.tool), '--check', '--report', str(report)]
+        subprocess.run(cmd, check=False)
+        parsed = read_report(report)
+    verdict, criteria = parsed if parsed is not None else ('FAIL', [])
+    rows = [c.__dict__ for c in criteria]
+    if verdict == 'FAIL':
+        for target, old in before.items():
+            if old is None:
+                target.unlink(missing_ok=True)
+            elif after[target] != old:
+                car_profile.write_text(target, old.decode())
+        print('The check failed. The previous values are back.')
+        restart_teleop()
+        progress.emit('outcome', result='FAIL', reason='the check failed', criteria=rows)
+        record_result(step.key, 'FAIL', 'the check failed')
+        return 1
+    print(f'Check {verdict}.')
+    progress.emit('outcome', result=verdict, reason='checked', criteria=rows)
+    record_result(step.key, verdict, 'checked')
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -444,6 +541,11 @@ def main(argv: list[str] | None = None) -> int:
         metavar='step',
         help=f'status; check [steps]; or steps to run in order ({", ".join(STEP_KEYS)}); '
         f'default: all but {", ".join(OPTIONAL_KEYS)}',
+    )
+    parser.add_argument(
+        '--verify',
+        action='store_true',
+        help='one step: calibrate, restart teleop, check; a failed check restores the old values',
     )
     args = parser.parse_args(argv)
 
@@ -475,6 +577,11 @@ def main(argv: list[str] | None = None) -> int:
             'Then run racecar calibrate again.'
         )
         return 1
+    if args.verify:
+        if checking or len(chosen) != 1:
+            print('--verify takes exactly one step.', file=sys.stderr)
+            return 2
+        return verify_step(chosen[0])
     return run_checks(chosen) if checking else run_steps(chosen)
 
 

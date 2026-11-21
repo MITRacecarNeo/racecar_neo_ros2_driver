@@ -125,6 +125,11 @@ racecar calibrate imu lidar   # chosen steps only
 racecar calibrate check       # each calibration against the live sensors
 ```
 
+The Calibration page of the Car Profile app runs one step at a time from a
+browser. Pick a step's tile, then follow the panel at the top of the page. A
+tile turns green when its calibration is done and its check passed. A result
+that fails its check is not saved, and the panel turns red.
+
 At each step, press Enter to run it, s to skip it, b to go back a step, or
 q to stop. Each step prints its own instructions. At the end, accept the
 teleop restart so the car loads the new values. Then run
