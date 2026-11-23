@@ -29,7 +29,7 @@
     banner.id = 'battery-banner';
     banner.setAttribute('role', 'alert');
     banner.hidden = true;
-    banner.innerHTML = '<svg class="rcn-icon"><use href="/ui/icons.svg#battery"/></svg><span></span>'
+    banner.innerHTML = '<svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#battery"/></svg><span></span>'
       + '<button class="rcn-btn small" type="button" hidden>Cancel shutdown</button>';
     cancel = banner.querySelector('button');
     cancel.onclick = () => { if (api.onCancel) api.onCancel(); };

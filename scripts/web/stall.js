@@ -18,7 +18,7 @@
     banner.id = 'stall-banner';
     banner.setAttribute('role', 'alert');
     banner.hidden = true;
-    banner.innerHTML = '<svg class="rcn-icon"><use href="/ui/icons.svg#alert"/></svg><span></span>';
+    banner.innerHTML = '<svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#alert"/></svg><span></span>';
     const main = document.querySelector('main');
     if (main) main.prepend(banner); else document.body.prepend(banner);
   }

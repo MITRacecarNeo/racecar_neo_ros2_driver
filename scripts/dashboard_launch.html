@@ -68,7 +68,7 @@ async function launch() {
   } catch (err) { /* reported below */ }
   if (!app) { fail('Unknown app.'); return; }
   document.title = `${app.name} - RACECAR Neo`;
-  $('glyph').innerHTML = `<svg class="rcn-icon"><use href="/ui/icons.svg#${app.icon}"/></svg>`;
+  $('glyph').innerHTML = `<svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#${app.icon}"/></svg>`;
   $('title').textContent = app.name;
   try {
     const r = await (await RcnApi.post('/api/open', { app: id })).json();

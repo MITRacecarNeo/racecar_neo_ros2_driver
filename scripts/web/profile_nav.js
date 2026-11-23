@@ -28,7 +28,7 @@
     try { localStorage.setItem(KEY, value); } catch (e) { /* private window */ }
   }
   function icon(name) {
-    return `<svg class="rcn-icon"><use href="/ui/icons.svg#${name}"/></svg>`;
+    return `<svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#${name}"/></svg>`;
   }
   function esc(s) {
     return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));

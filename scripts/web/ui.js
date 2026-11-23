@@ -12,7 +12,7 @@
   'use strict';
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const icon = (name, cls = 'rcn-icon') => `<svg class="${cls}"><use href="/ui/icons.svg#${name}"/></svg>`;
+  const icon = (name, cls = 'rcn-icon') => `<svg class="${cls}"><use href="/ui/icons.svg?v={{asset}}#${name}"/></svg>`;
   const STATUS_ICON = { ok: 'check', warn: 'alert', err: 'cross', off: 'info', info: 'info' };
   // kind: ok | warn | err | off, each with its icon and word.
   const pill = (kind, word) => `<span class="rcn-status ${kind}">${icon(STATUS_ICON[kind])}${esc(word)}</span>`;

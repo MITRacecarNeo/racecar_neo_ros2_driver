@@ -1373,7 +1373,7 @@ def test_footer_names_the_car(dashboard):
 
 def test_planned_apps_show_as_placeholders(dashboard):
     html = (Path(dashboard.__file__).parent / 'dashboard.html').read_text()
-    for name in ('Connections', 'Pages', 'Planner', 'Modules', 'Scripter'):
+    for name in ('Connections', 'Files', 'Browser', 'Planner', 'Modules', 'Scripter'):
         assert f"name: '{name}'" in html, name
     assert '.app.planned .glyph { border-style: dashed;' in html
-    assert "!apps.some((a) => a.name === p.name)" in html
+    assert '!apps.some((a) => a.name === p.name)' in html

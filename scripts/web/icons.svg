@@ -45,4 +45,6 @@
   <symbol id="rotate-right" viewBox="0 0 24 24"><path d="M20 5v5h-5"/><path d="M19 10a8 8 0 1 0-2 6"/></symbol>
   <symbol id="navigate" viewBox="0 0 24 24"><path d="M12 3l7 18-7-4-7 4z"/></symbol>
   <symbol id="code" viewBox="0 0 24 24"><path d="M8 7l-5 5 5 5"/><path d="M16 7l5 5-5 5"/><path d="M14 4l-4 16"/></symbol>
+  <symbol id="globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18z"/></symbol>
+  <symbol id="folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M3 10h18"/></symbol>
 </svg>

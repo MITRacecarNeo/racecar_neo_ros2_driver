@@ -254,6 +254,7 @@ def test_failed_step_prints_its_handbook_link(cs, car_profile_dir, capsys, monke
     )
     monkeypatch.setattr(cs.Car, 'hostname', lambda self: 'racecar-neo-0')
     monkeypatch.setattr(cs, 'STEPS', (step,))
+    monkeypatch.setattr(cs, 'lock_path', lambda: car_profile_dir / 'setup.lock')
     cs.run_step(cs.Car(), step)
     out = capsys.readouterr().out
     assert 'Handbook: http://racecar-neo-0.local:8088/handbook/installation#nvme' in out

@@ -540,3 +540,19 @@ def test_refuse_cross_site(webui):
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+def test_icon_links_carry_the_asset_version():
+    """A new icon shows right after an update: no page or script links icons.svg unversioned."""
+    from pathlib import Path
+
+    scripts = Path(__file__).resolve().parent.parent / 'scripts'
+    files = [
+        *scripts.glob('*.html'),
+        *scripts.glob('dashboards/*/*.html'),
+        *scripts.glob('web/*.js'),
+    ]
+    for path in files:
+        if path.parent.name in ('eps_dashboard', 'pursuit_dashboard', 'smartfollow_dashboard'):
+            continue
+        assert '/ui/icons.svg#' not in path.read_text(), path.name

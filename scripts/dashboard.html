@@ -118,7 +118,7 @@
   </span>
   <span class="rcn-status off batt" id="batt-time" role="button" tabindex="0" hidden></span>
   <span class="rcn-status off batt" id="batt-power" hidden></span>
-  <span class="rcn-status off" id="overall"><svg class="rcn-icon"><use href="/ui/icons.svg#info"/></svg>Loading</span>
+  <span class="rcn-status off" id="overall"><svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#info"/></svg>Loading</span>
 </header>
 
 <main>
@@ -129,15 +129,15 @@
     <!-- display: contents keeps the override and Shut Down tiles in the same grid as the core apps. -->
     <div id="apps-core" style="display: contents"></div>
     <button class="app" id="override" aria-pressed="false" data-tip="Drive without a controller. Press any controller button except LB to stop">
-      <span class="glyph"><svg class="rcn-icon"><use href="/ui/icons.svg#alert"/></svg></span>
+      <span class="glyph"><svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#alert"/></svg></span>
       <span class="name">Safety Override</span></button>
     <button class="app" id="poweroff" data-tip="Shut down the car safely">
-      <span class="glyph"><svg class="rcn-icon"><use href="/ui/icons.svg#power"/></svg></span>
+      <span class="glyph"><svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#power"/></svg></span>
       <span class="name">Shut Down</span></button>
   </div>
   <div class="bar-row group-row">
     <div class="rcn-eyebrow">Tools</div>
-    <button class="rcn-btn quiet small" id="clear-apps"><svg class="rcn-icon"><use href="/ui/icons.svg#stop"/></svg>Clear apps</button>
+    <button class="rcn-btn quiet small" id="clear-apps"><svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#stop"/></svg>Clear apps</button>
   </div>
   <div class="apps" id="apps-tools"></div>
   <div class="bar-row group-row"><div class="rcn-eyebrow">Autonomy</div></div>
@@ -145,7 +145,7 @@
   <div class="rcn-small rcn-muted" id="msg"></div>
 
   <details id="features-section">
-    <summary>Features <svg class="rcn-icon"><use href="/ui/icons.svg#chevron-down"/></svg></summary>
+    <summary>Features <svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#chevron-down"/></svg></summary>
     <div class="apps" id="features"></div>
   </details>
 
@@ -160,7 +160,7 @@
   </dialog>
 
   <details id="overview">
-    <summary>Overview <svg class="rcn-icon"><use href="/ui/icons.svg#chevron-down"/></svg></summary>
+    <summary>Overview <svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#chevron-down"/></svg></summary>
     <div class="tiles">
       <div class="tile">
         <div class="head"><span class="title">Color camera</span><button class="rcn-btn quiet small cam-toggle" aria-pressed="false">Show camera</button></div>
@@ -211,7 +211,7 @@
   </details>
 
   <details id="system">
-    <summary>System status <svg class="rcn-icon"><use href="/ui/icons.svg#chevron-down"/></svg></summary>
+    <summary>System status <svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#chevron-down"/></svg></summary>
     <div class="views" role="group" aria-label="View">
       <button class="rcn-btn quiet small" id="view-basic" aria-pressed="true">Basic</button>
       <button class="rcn-btn quiet small" id="view-advanced" aria-pressed="false">Advanced</button>
@@ -238,7 +238,7 @@
   </details>
 
   <div class="foot">
-    <button class="rcn-btn quiet small" id="refresh"><svg class="rcn-icon"><use href="/ui/icons.svg#refresh"/></svg>Refresh</button>
+    <button class="rcn-btn quiet small" id="refresh"><svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#refresh"/></svg>Refresh</button>
     <span class="rcn-small rcn-muted" id="timestamp"></span>
   </div>
 </main>
@@ -282,7 +282,8 @@ const APP_STATE = {
 // Apps not built yet: dashed, grayed tiles in their place, after the app named.
 const PLANNED = [
   { group: 'core', after: 'profile', name: 'Connections', icon: 'wifi' },
-  { group: 'core', after: 'jupyter', name: 'Pages', icon: 'layers' },
+  { group: 'core', after: 'jupyter', name: 'Files', icon: 'folder' },
+  { group: 'tools', after: 'terminal', name: 'Browser', icon: 'globe' },
   { group: 'autonomy', after: 'mapview', name: 'Planner', icon: 'navigate' },
   { group: 'autonomy', after: 'mapview', name: 'Modules', icon: 'grid' },
   { group: 'autonomy', after: 'mapview', name: 'Scripter', icon: 'code' },

@@ -25,7 +25,7 @@
     banner.id = 'override-banner';
     banner.setAttribute('role', 'alert');
     banner.hidden = true;
-    banner.innerHTML = `<svg class="rcn-icon"><use href="/ui/icons.svg#alert"/></svg>
+    banner.innerHTML = `<svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#alert"/></svg>
       <span>${ON}</span>
       <button class="rcn-btn small" type="button">Turn off</button>`;
     banner.querySelector('button').onclick = () => send('stop');
