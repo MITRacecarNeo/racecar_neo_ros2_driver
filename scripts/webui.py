@@ -41,7 +41,7 @@ PREFIX = '/ui/'
 CACHE_CONTROL = 'max-age=300'
 # Pages link the shared files as /ui/<file>?v={{asset}}; bump this when a file
 # in scripts/web/ changes, so browsers fetch the new copy at once.
-ASSET_VERSION = '30'
+ASSET_VERSION = '31'
 TYPES = {
     '.css': 'text/css; charset=utf-8',
     '.js': 'text/javascript; charset=utf-8',
@@ -203,6 +203,19 @@ class AppHandler(BaseHTTPRequestHandler):
 
     def page(self, path: Path) -> None:
         self.send(200, read_page(path).encode(), 'text/html; charset=utf-8')
+
+    def refuse_cross_site(self) -> bool:
+        """
+        Refuse a POST from another site's page with 403; return True when refused.
+
+        Pages on the car drive it and change its files, so a page elsewhere
+        must not post to them from a visitor's browser. A request with no
+        Origin (curl on the car, a script) is allowed.
+        """
+        if same_origin(self.headers.get('Origin'), self.headers.get('Host'), allow_missing=True):
+            return False
+        self.send(403, b'Not allowed from this page.', 'text/plain')
+        return True
 
     def serve_asset(self) -> bool:
         """Send a /ui/ file and return True, or return False for any other path."""

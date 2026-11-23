@@ -953,14 +953,24 @@ def dips_note(values: dict[str, str]) -> str:
     return note + (f', lowest {lowest / 1000:.2f} V' if lowest > 0 else '')
 
 
+def car_label(host: str, nickname: str) -> str:
+    """Return the car as the footer names it: `racecar-neo-0 (Bill)`, or the hostname alone."""
+    return f'{host} ({nickname})' if nickname else host
+
+
 def about_view(report: dict[str, Any] | None, age: float | None) -> dict[str, Any]:
-    """Return the page footer's versions: the driver, and the firmware pit_node read."""
+    """Return the page footer's car and versions: the driver, and the firmware pit_node read."""
     firmware = None
     if report is not None and age is not None and age <= LINK_STALE_SEC:
         values = report.get('values', {})
         if values.get('state') == 'known':
             firmware = values.get('fw.version')
-    return {'driver': webui.driver_version(), 'firmware': firmware}
+    nickname = str(car_profile.car_info().get('nickname') or '').strip()
+    return {
+        'driver': webui.driver_version(),
+        'firmware': firmware,
+        'car': car_label(socket.gethostname(), nickname),
+    }
 
 
 def _ext5v_loop() -> None:

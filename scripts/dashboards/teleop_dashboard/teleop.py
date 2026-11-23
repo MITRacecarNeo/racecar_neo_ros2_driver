@@ -517,10 +517,7 @@ class Handler(webui.AppHandler):
             self.send_error(404)
 
     def do_POST(self) -> None:
-        # The page drives the car: a request from another site's page is refused.
-        origin, host = self.headers.get('Origin'), self.headers.get('Host')
-        if not webui.same_origin(origin, host, allow_missing=True):
-            self.send(403, b'Not allowed from this page.', 'text/plain')
+        if self.refuse_cross_site():
             return
         if self.path == '/cmd':
             set_cmd(self.read_json())

@@ -489,3 +489,54 @@ class TestIdleGate:
         gate.touch()
         t[0] += 16.0
         assert not gate.check()
+
+
+def test_every_app_refuses_cross_site_posts():
+    """Pages that drive the car or change its files refuse another site's POST."""
+    from pathlib import Path
+
+    import yaml
+
+    root = Path(__file__).resolve().parent.parent
+    scripts = root / 'scripts'
+    registry = yaml.safe_load((root / 'config' / 'apps.yaml').read_text())
+    labs = [
+        scripts / 'dashboards' / a['dir'] / a['script'] for a in registry['apps'] if 'dir' in a
+    ]
+    assert labs
+    for path in [scripts / 'mapview.py', *labs]:
+        text = path.read_text()
+        if 'def do_POST' in text:
+            assert 'self.refuse_cross_site()' in text, path.name
+
+
+def test_refuse_cross_site(webui):
+    import http.client
+    from http.server import ThreadingHTTPServer
+    import threading
+
+    class Handler(webui.AppHandler):
+        def do_POST(self):  # noqa: N802
+            if self.refuse_cross_site():
+                return
+            self.send(200, b'ok', 'text/plain')
+
+    srv = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    port = srv.server_address[1]
+
+    def post(headers):
+        conn = http.client.HTTPConnection('127.0.0.1', port, timeout=5)
+        conn.request('POST', '/x', body=b'{}', headers=headers)
+        res = conn.getresponse()
+        res.read()
+        conn.close()
+        return res.status
+
+    try:
+        assert post({'Origin': 'http://evil.example'}) == 403
+        assert post({'Origin': f'http://127.0.0.1:{port}'}) == 200
+        assert post({}) == 200
+    finally:
+        srv.shutdown()
+        srv.server_close()

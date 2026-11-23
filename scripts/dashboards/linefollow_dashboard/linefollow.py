@@ -334,6 +334,8 @@ class Handler(webui.AppHandler):
             self.send_error(404)
 
     def do_POST(self) -> None:
+        if self.refuse_cross_site():
+            return
         if self.path == '/params':
             TUNING.update(self.read_json())
         elif LOG.post(self):

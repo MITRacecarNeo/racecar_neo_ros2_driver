@@ -1297,7 +1297,8 @@ class TestFirmware:
 
     def test_footer_versions(self, dashboard):
         about = dashboard.about_view(self._report(), 1.0)
-        assert about == {'driver': dashboard.webui.driver_version(), 'firmware': '0.9.1'}
+        assert about['driver'] == dashboard.webui.driver_version()
+        assert about['firmware'] == '0.9.1' and about['car']
         assert dashboard.about_view(None, None)['firmware'] is None
         pending = {'level': 0, 'message': '', 'values': {'state': 'pending'}}
         assert dashboard.about_view(pending, 1.0)['firmware'] is None
@@ -1350,3 +1351,10 @@ class TestSetupGate:
         assert note in html
         assert f"const SETUP_NEEDED = '{dashboard.SETUP_NEEDED}';" in html
         assert 'Finish setting up this car to unlock this app' in html
+
+
+def test_footer_names_the_car(dashboard):
+    assert dashboard.car_label('racecar-neo-0', 'Bill') == 'racecar-neo-0 (Bill)'
+    assert dashboard.car_label('racecar-neo-0', '') == 'racecar-neo-0'
+    footer = (Path(dashboard.__file__).parent / 'web' / 'footer.js').read_text()
+    assert 'class="rcn-car"' in footer and 'about.car' in footer

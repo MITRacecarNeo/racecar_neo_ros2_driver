@@ -614,10 +614,7 @@ class Handler(webui.AppHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
-        # The page drives the car: a request from another site's page is refused.
-        origin, host = self.headers.get('Origin'), self.headers.get('Host')
-        if not webui.same_origin(origin, host, allow_missing=True):
-            self.send_json({'ok': False, 'message': 'Not allowed from this page.'}, 403)
+        if self.refuse_cross_site():
             return
         try:
             body = self.read_json()

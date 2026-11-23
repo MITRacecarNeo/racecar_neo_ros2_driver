@@ -44,6 +44,8 @@ All notable changes to this project will be documented in this file. The format 
   asks the step's questions, shows about how long it takes, and runs the
   step's command with its output, passing the password to sudo from the
   page. The 8080 setup note opens it.
+- Every page's footer names the car: its hostname, and its nickname in
+  parentheses when it has one (`racecar-neo-0 (Bill)`).
 - Map viewer: Run checks (the parked checks), with Start mapping and Extend
   grayed until they pass; a Drive panel (joystick or pad, as web teleop)
   while mapping or localization runs. `racecar map start` runs the checks
@@ -87,8 +89,9 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Fixed
 
-- Web teleop and the map viewer refuse drive requests from another site's
-  page (Origin check).
+- Web teleop, line follow, wall follow, camera label and the map viewer
+  refuse POST requests from another site's page (Origin check,
+  `webui.AppHandler.refuse_cross_site`).
 - `setup_realsense.sh` installs the RealSense library with the camera
   package, so an upgrade no longer leaves the library older than the
   package built against it.
