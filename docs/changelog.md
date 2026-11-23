@@ -135,6 +135,12 @@ All notable changes to this project will be documented in this file. The format 
 ### Changed
 
 - The map viewer is named Mapper; the Turn Off tile is Shut Down.
+- 8080 wording: confirms ask only the question; no progress or success
+  text where the tiles show it (the tiles gray out while a change runs);
+  one line per failure ("Could not start Mapper.") with the cause in the
+  log; no shell commands on screen; "No reading" for any missing value;
+  "WiFi", "No contact", "Car stalled", "Safety override" used throughout;
+  the Refresh button removed (the page updates every 3 s).
 - `racecar setup networking` keeps the access point's password unless
   `RACECAR_AP_PSK` is set.
 - Pages link relative to their own address (`<base href>`), so they work

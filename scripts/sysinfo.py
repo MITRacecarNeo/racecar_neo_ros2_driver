@@ -287,12 +287,12 @@ def read_under_voltage_alarm() -> bool | None:
 def classify_rtc(volts: float | None) -> tuple[str, str]:
     """Map an RTC cell voltage to a (status, label) pair for display."""
     if volts is None:
-        return ('dead', 'NO READING')
+        return ('dead', 'No reading')
     if volts >= RTC_OK_VOLTS:
         return ('healthy', f'{volts:.2f} V')
     if volts >= RTC_LOW_VOLTS:
-        return ('stale', f'{volts:.2f} V, recharge soon')
-    return ('dead', f'{volts:.2f} V, RECHARGE NOW')
+        return ('stale', f'{volts:.2f} V. Recharge soon')
+    return ('dead', f'{volts:.2f} V. Recharge now')
 
 
 def read_soc_temp() -> float | None:

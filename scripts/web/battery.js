@@ -46,7 +46,7 @@
     } else if (e && e.level === 'warn') {
       text = e.minutes_left !== null
         ? `Low battery: ${Math.round(e.minutes_left)} min left. Charge or swap the battery.`
-        : 'Low battery: Charge or swap the battery.';
+        : 'Low battery. Charge or swap the battery.';
     }
     banner.querySelector('span').textContent = text;
     cancel.hidden = !(api.onCancel && e && e.can_cancel && !turningOff);

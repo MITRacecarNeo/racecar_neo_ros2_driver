@@ -172,7 +172,7 @@ class TestSystemHealth:
 
     @pytest.mark.parametrize(
         'temp,status,tail',
-        [(None, 'healthy', 'free'), (57.0, 'healthy', '57 C'), (72.0, 'stale', 'Drive hot')],
+        [(None, 'healthy', 'free'), (57.0, 'healthy', '57 \u00b0C'), (72.0, 'stale', 'Drive hot')],
     )
     def test_data_drive_temperature(self, dashboard, monkeypatch, tmp_path, temp, status, tail):
         from racecar_neo_ros2_driver import data_root
@@ -296,7 +296,11 @@ class TestAutonomyView:
     def test_mapping_shows_the_save(self, dashboard):
         values = {'mode': 'mapping', 'map': 'hall', 'localized': 'true'}
         view = dashboard.autonomy_view(values, 0.5)
-        assert view['headline'] == 'Mapping on hall' and view['lines'][-1] == 'Saved not yet'
+        assert view['headline'] == 'Mapping on hall' and view['lines'][-1] == 'Not saved'
+        no_map = dashboard.autonomy_view({'mode': 'mapping', 'localized': 'false'}, 0.5)
+        assert no_map['headline'] == 'Mapping. No map'
+        late = dashboard.autonomy_view(values, 60.0)
+        assert late['lines'] == ['No status for 60 s.']
 
     def test_old_status_is_red(self, dashboard):
         view = dashboard.autonomy_view({'mode': 'mapping', 'map': 'hall'}, 12.0)
@@ -379,10 +383,10 @@ class TestHome:
         assert run.states['racecar-webteleop'] == 'active'
         assert run.states['racecar-camlabel'] == 'active'
 
-    def test_open_stopped_core_app_names_the_command(self, dashboard):
+    def test_open_stopped_core_app_says_it_could_not(self, dashboard):
         run = FakeRun({'racecar-mapview': 'inactive'})
         ok, message = dashboard.open_app('mapview', run)
-        assert not ok and 'racecar service start mapview' in message
+        assert not ok and message == 'Could not start Mapper.'
         assert not [c for c in run.calls if c[1] == '--no-ask-password']
 
     def test_clear_apps_leaves_the_boot_apps(self, dashboard):
@@ -396,20 +400,19 @@ class TestHome:
                 'racecar-teleop': 'active',
             }
         )
-        assert dashboard.clear_apps(run) == (True, 'Apps stopped.')
+        assert dashboard.clear_apps(run) == (True, '')
         assert run.states['racecar-webteleop'] == 'inactive'
         assert run.states['racecar-camlabel'] == 'inactive'
         for unit in ('racecar-mapview', 'racecar-jupyter', 'racecar-dashboard', 'racecar-teleop'):
             assert run.states[unit] == 'active'
 
-    def test_clear_apps_names_the_unit_it_may_not_stop(self, dashboard):
+    def test_clear_apps_failure_is_one_line(self, dashboard):
         stderr = 'Failed to stop: Interactive authentication required.'
         run = FakeRun({'racecar-linefollow': 'active'}, fail='stop', stderr=stderr)
-        ok, message = dashboard.clear_apps(run)
-        assert not ok and 'racecar-linefollow' in message and 'setup_user_env.sh' in message
+        assert dashboard.clear_apps(run) == (False, 'Could not stop the apps.')
 
     def test_clear_apps_with_none_running(self, dashboard):
-        assert dashboard.clear_apps(FakeRun({})) == (True, 'No apps running.')
+        assert dashboard.clear_apps(FakeRun({})) == (True, '')
 
     def test_clear_log_hides_earlier_lines_and_keeps_the_file(
         self, dashboard, tmp_path, monkeypatch
@@ -429,7 +432,7 @@ class TestHome:
         assert dashboard._read_watchdog_tail() == ['fresh']
 
     def test_open_refuses_unknown(self, dashboard):
-        assert dashboard.open_app('../x', FakeRun({})) == (False, 'Unknown app: ../x')
+        assert dashboard.open_app('../x', FakeRun({})) == (False, 'Reload the page.')
 
     def test_app_ready_needs_an_answer(self, dashboard):
         server = ThreadingHTTPServer(('127.0.0.1', 0), BaseHTTPRequestHandler)
@@ -475,12 +478,12 @@ class TestHome:
         assert dashboard.activate('none', run) == (True, 'Lab dashboards stopped.')
         assert run.states['racecar-linefollow'] == 'inactive'
 
-    def test_activate_names_the_missing_permission(self, dashboard):
+    def test_activate_failure_names_the_app(self, dashboard):
         stderr = 'Failed to start: Interactive authentication required.'
         run = FakeRun({}, fail='start', stderr=stderr)
         ok, message = dashboard.activate('linefollow', run)
         assert not ok and message == (
-            'No permission to start racecar-linefollow. Run scripts/setup_user_env.sh.'
+            'Could not start Line Follow.'
         )
 
     def test_activate_refuses_unknown_and_core_units(self, dashboard):
@@ -732,7 +735,8 @@ class TestOverrideEndpoint:
     def test_page_has_the_toggle_and_warning(self, dashboard):
         html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert 'id="override"' in html and 'ui/override.js?v=' in html
-        assert 'The car may start moving without warning. Do not leave it unattended.' in html
+        assert "confirm('Turn on safety override?')" in html
+        assert "$('msg').textContent = 'Safety override off.';" in html
         assert 'RcnOverride.onChange' in html
 
 
@@ -840,7 +844,7 @@ class TestApplyFeatures:
         run = tool({TELEOP: 'active'})
         message = dashboard.apply_features({'camera': False, 'detections': False}, run)
         assert ['systemctl', '--no-ask-password', 'restart', TELEOP] in run.calls
-        assert run.tool == [] and message == 'Camera off. Detections off.'
+        assert run.tool == [] and message == ''
         assert dashboard.features.read() == {'camera': False, 'detections': False}
 
     def test_autonomy_is_stopped_first_and_resumed(self, dashboard, tool):
@@ -850,22 +854,25 @@ class TestApplyFeatures:
         )
         restart = run.calls.index(['systemctl', '--no-ask-password', 'restart', TELEOP])
         assert run.tool == ['stop', 'resume'] and restart > 0
-        assert message.endswith('resume done')
+        assert message == ''
 
     def test_a_failed_stop_leaves_teleop_alone(self, dashboard, tool):
         run = tool({TELEOP: 'active', AUTONOMY: 'active'}, codes={'stop': 1})
         message = dashboard.apply_features(dashboard.features.DEFAULTS, run)
-        assert message.startswith('Could not stop autonomy')
+        assert message == 'Could not stop autonomy.'
         assert not [c for c in run.calls if 'restart' in c]
 
     def test_autonomy_actions(self, dashboard, tool):
         run = tool({AUTONOMY: 'active'})
-        assert dashboard.autonomy_action('save-stop', run) == 'stop done'
+        assert dashboard.autonomy_action('save-stop', run) == ''
         assert run.tool == ['save', 'stop']
         run = tool({AUTONOMY: 'active'}, codes={'save': 1})
-        assert dashboard.autonomy_action('save-stop', run).startswith('Not stopped.')
+        assert dashboard.autonomy_action('save-stop', run) == 'Could not stop autonomy.'
         assert run.tool == ['save']
-        assert dashboard.autonomy_action('resume', tool({})) == 'resume done'
+        assert dashboard.autonomy_action('resume', tool({})) == ''
+        assert dashboard.autonomy_action('resume', tool({}, codes={'resume': 1})) == (
+            'Could not resume autonomy.'
+        )
         with pytest.raises(ValueError):
             dashboard.autonomy_action('rm', run)
 
@@ -874,9 +881,9 @@ class TestFeatureEndpoint:
     def test_rejects_unknown_and_busy(self, dashboard, monkeypatch):
         job = dashboard.FeatureJob()
         monkeypatch.setattr(dashboard, '_features_job', job)
-        assert dashboard.change_feature('lidar', False) == (False, "unknown feature 'lidar'")
-        assert dashboard.change_feature('autonomy', True, 'go')[0] is False
-        assert job.start('busy', lambda: 'x' if __import__('time').sleep(0.3) is None else '')
+        assert dashboard.change_feature('lidar', False) == (False, 'Reload the page.')
+        assert dashboard.change_feature('autonomy', True, 'go') == (False, 'Reload the page.')
+        assert job.start(lambda: 'x' if __import__('time').sleep(0.3) is None else '', 'x')
         assert dashboard.change_feature('autonomy', True, 'resume') == (
             False,
             'Another change is running.',
@@ -885,7 +892,8 @@ class TestFeatureEndpoint:
     def test_page_has_features(self, dashboard):
         html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert 'id="features"' in html and 'id="autosheet"' in html
-        assert 'needs the camera. Turn it on?' in html
+        assert '`Turn on the camera and open ${app.name}?`' in html
+        assert 'The car stops for about 15 seconds.' not in html
 
 
 class TestDrivingAppsAndAutonomy:
@@ -910,7 +918,7 @@ class TestDrivingAppsAndAutonomy:
         monkeypatch.setattr(dashboard, 'last_run', lambda: {'mode': 'mapping', 'map': 'hall'})
         run = tool({AUTONOMY: 'active'}, codes={'save': 1})
         ok, message = dashboard.open_app('wallfollow', run)
-        assert not ok and message.startswith('Autonomy is still running.')
+        assert not ok and message == 'Could not stop autonomy.'
         assert run.states.get('racecar-wallfollow', 'inactive') == 'inactive'
 
     def test_camera_label_leaves_autonomy_running(self, dashboard, tool):
@@ -919,7 +927,8 @@ class TestDrivingAppsAndAutonomy:
 
     def test_page_asks_before_stopping_autonomy(self, dashboard):
         html = dashboard.webui.read_page(dashboard._HTML_PATH)
-        assert 'Save it, stop it, and open' in html and 'will close.' in html
+        assert '`Save ${last.map}, stop mapping, and open ${app.name}?`' in html
+        assert 'continue mapping ${last.map}?' in html and 'will close.' not in html
 
 
 GUARD_VALUES = {
@@ -1145,7 +1154,7 @@ class TestNetwork:
             },
             {
                 'device': 'wlan0',
-                'kind': 'Wi-Fi',
+                'kind': 'WiFi',
                 'state': 'connected',
                 'network': 'Duck',
                 'address': '10.0.0.198/24',
@@ -1190,7 +1199,7 @@ class TestLink:
     def test_recent_problem_holds_yellow(self, dashboard):
         v = dashboard.link_view(self._report(dropped_frames=3, reconnects=1), 1.0, 20.0)
         assert v['status'] == 'stale'
-        assert v['detail'] == '200 Hz. Since teleop started: 3 lost frames, 1 reconnects'
+        assert v['detail'] == '200 Hz. Since teleop started: 3 lost frames, 1 reconnect'
 
     def test_old_problem_clears(self, dashboard):
         v = dashboard.link_view(self._report(dropped_frames=3), 1.0, 90.0)
@@ -1224,7 +1233,7 @@ class TestFirmware:
 
     def test_raw_pwm_build_is_yellow(self, dashboard):
         v = dashboard.firmware_view(self._report(**{'fw.speed_control': 'raw_pwm'}), 1.0)
-        assert v['status'] == 'stale' and 'Open-loop PWM test build' in v['detail']
+        assert v['status'] == 'stale' and v['detail'].endswith('Test build. Not for driving')
 
     def test_voltage_dips_are_listed(self, dashboard):
         v = dashboard.firmware_view(
@@ -1239,7 +1248,7 @@ class TestFirmware:
 
     def test_uncommitted_build_is_yellow(self, dashboard):
         v = dashboard.firmware_view(self._report(**{'fw.git_dirty': '1'}), 1.0)
-        assert v['status'] == 'stale' and v['detail'].endswith('Uncommitted build')
+        assert v['status'] == 'stale' and v['detail'].endswith('Development build')
 
     def test_no_reply_is_yellow(self, dashboard):
         v = dashboard.firmware_view(
@@ -1272,7 +1281,7 @@ class TestFirmware:
         }
         assert dashboard.stall_view(report, 1.0)['status'] == status
         assert dashboard.stall_view(None, None)['status'] == 'unsupervised'
-        assert dashboard.stall_view(report, 10.0)['detail'] == 'No report'
+        assert dashboard.stall_view(report, 10.0)['detail'] == 'No reading'
 
     @pytest.mark.parametrize(
         'state, left, age, want',
@@ -1356,13 +1365,8 @@ class TestSetupGate:
     def test_page_grays_out_locked_tiles(self, dashboard):
         html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert 'id="setup-note"' in html and "a.group !== 'core'" in html
-        note = (
-            'Finish setting up this car to unlock the Tools and Autonomy apps. '
-            'Run: racecar setup car'
-        )
-        assert note in html
-        assert f"const SETUP_NEEDED = '{dashboard.SETUP_NEEDED}';" in html
-        assert 'Finish setting up this car to unlock this app' in html
+        assert 'Finish setup to unlock Tools and Autonomy.' in html
+        assert "'Finish setup to unlock'" in html and 'racecar setup car' not in html
 
 
 def test_footer_names_the_car(dashboard):
@@ -1450,3 +1454,23 @@ def test_device_names_route_and_edit_button(dashboard):
     assert '>Edit devices</button>' in html and 'maxlength="32"' in html
     # Ping test is the last pane.
     assert html.index('<section id="ping">') > html.index('<section id="devices">')
+
+
+GONE_8080 = (
+    '>Loading<', 'Stopping apps...', 'Opening...', 'Safety override starting', 'camera paused',
+    'No watchdog events yet', 'Car Stalled', 'Safety switch override', 'Lost contact with the car',
+    'Open it again from the apps page', 'Run: racecar', "'Wi-Fi'", 'Turn on/off',
+    'The car stops for about', 'will have no camera', 'Do not leave it unattended',
+    "'unknown'", 'Low battery: Charge', '>Refresh<',
+)  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    'name',
+    ['dashboard.html', 'dashboard_launch.html', 'web/battery.js', 'web/stall.js',
+     'web/override.js', 'web/lost.js', 'web/footer.js', 'web/api.js'],
+)  # fmt: skip
+def test_removed_wordings_stay_out(dashboard, name):
+    text = (Path(dashboard.__file__).parent / name).read_text()
+    for gone in GONE_8080:
+        assert gone not in text, (name, gone)

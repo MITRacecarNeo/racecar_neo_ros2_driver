@@ -35,6 +35,7 @@
   .app .glyph > .rcn-icon { width: 36px; height: 36px; }
   a.app { text-decoration: none; }
   .app.locked { opacity: 0.4; cursor: not-allowed; }
+  .app.waiting, #features.busy .app { opacity: 0.5; pointer-events: none; }
   .app.planned { opacity: 0.45; cursor: default; pointer-events: none; }
   .app.planned .glyph { border-style: dashed; background: none; }
   .setup-note { color: var(--rcn-gold); margin: 0 0 var(--rcn-space-4); }
@@ -120,7 +121,7 @@
   </span>
   <span class="rcn-status off batt" id="batt-time" role="button" tabindex="0" hidden></span>
   <span class="rcn-status off batt" id="batt-power" hidden></span>
-  <span class="rcn-status off" id="overall"><svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#info"/></svg>Loading</span>
+  <span class="rcn-status off" id="overall" hidden></span>
 </header>
 
 <main>
@@ -167,12 +168,12 @@
       <div class="tile">
         <div class="head"><span class="title">Color camera</span><button class="rcn-btn quiet small cam-toggle" aria-pressed="false">Show camera</button></div>
         <div class="legend rcn-legend"></div>
-        <div class="frame"><img id="ov-color" alt="Color camera" hidden><div class="empty rcn-small rcn-muted cam-paused">camera paused</div></div>
+        <div class="frame"><img id="ov-color" alt="Color camera" hidden><div class="empty cam-paused"></div></div>
       </div>
       <div class="tile">
         <div class="head"><span class="title">Depth camera</span><button class="rcn-btn quiet small cam-toggle" aria-pressed="false">Show camera</button></div>
         <div class="legend rcn-legend"></div>
-        <div class="frame"><img id="ov-depth" alt="Depth camera" hidden><div class="empty rcn-small rcn-muted cam-paused">camera paused</div></div>
+        <div class="frame"><img id="ov-depth" alt="Depth camera" hidden><div class="empty cam-paused"></div></div>
       </div>
       <div class="tile">
         <div class="head"><span class="title">Lidar</span></div>
@@ -235,12 +236,11 @@
       <h3 class="sec">Topic rates</h3>
       <table><thead><tr><th>Topic</th><th>Rate</th><th>Status</th></tr></thead><tbody id="rates"></tbody></table>
       <div class="bar-row"><h3 class="sec">Watchdog log</h3><button class="rcn-btn quiet small" id="clear-log">Clear log</button></div>
-      <pre class="rcn-code" id="watchdog-log">No watchdog events yet.</pre>
+      <pre class="rcn-code" id="watchdog-log">No events</pre>
     </div>
   </details>
 
   <div class="foot">
-    <button class="rcn-btn quiet small" id="refresh"><svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#refresh"/></svg>Refresh</button>
     <span class="rcn-small rcn-muted" id="timestamp"></span>
   </div>
 </main>
@@ -253,20 +253,19 @@
 const { $, esc, icon, pill, STATUS_ICON, store, setHtml } = RcnUi;
 const { post, LOST } = RcnApi;
 const STATUS = { healthy: 'ok', stale: 'warn', dead: 'err', unsupervised: 'off' };
-const WORD = { healthy: 'OK', stale: 'Check', dead: 'Down', unsupervised: 'Off' };
+const WORD = { healthy: 'OK', stale: 'Stale', dead: 'Down', unsupervised: 'Off' };
 
 
 // -- apps --
 let apps = [];
 let setup = { complete: true, open: [] };
-const SETUP_NEEDED = 'Finish setting up this car to unlock this app: racecar setup car';
 const lockedApp = (a) => !setup.complete && a.group !== 'core';
 function renderSetup(view) {
   setup = view || { complete: true, open: [] };
   const note = $('setup-note');
   note.hidden = setup.complete;
   const n = setup.open.length;
-  note.textContent = setup.complete ? '' : `Finish setting up this car to unlock the Tools and Autonomy apps. Run: racecar setup car (${n} remaining step${n === 1 ? '' : 's'})`;
+  note.textContent = setup.complete ? '' : `Finish setup to unlock Tools and Autonomy. ${n} step${n === 1 ? '' : 's'} left.`;
   const profile = apps.find((a) => a.id === 'profile');
   if (!setup.complete && profile) {
     const link = document.createElement('a');
@@ -309,7 +308,7 @@ function withPlanned(group, tiles) {
 function renderApps() {
   for (const group of ['core', 'tools', 'autonomy']) setHtml(`apps-${group}`, withPlanned(group, apps.filter((a) => a.group === group).map((a) => [a.id, (() => {
     const [cls, badge, word] = APP_STATE[a.state] || ['', '', 'Stopped'];
-    const tip = lockedApp(a) ? 'Finish setting up this car to unlock this app' : a.desc;
+    const tip = lockedApp(a) ? 'Finish setup to unlock' : a.desc;
     return `<button class="app ${cls}${lockedApp(a) ? ' locked' : ''}" data-id="${a.id}" data-tip="${esc(tip)}"
         aria-label="${esc(`${a.name}, ${word.toLowerCase()}. ${a.desc}`)}">
       <span class="glyph">${icon(a.icon)}${badge ? `<span class="badge">${icon(badge)}</span>` : ''}</span>
@@ -322,27 +321,26 @@ document.querySelector('main').addEventListener('click', (e) => {
   if (!el || !el.dataset.id) return;
   const app = apps.find((a) => a.id === el.dataset.id);
   if (!app || app.state === 'unavailable') return;
-  if (lockedApp(app)) { $('msg').textContent = SETUP_NEEDED; return; }
+  if (lockedApp(app)) return;
   const other = apps.find((a) => a.exclusive && a.id !== app.id && live(a));
   if (app.exclusive && other && !live(app)
-      && !confirm(`${other.name} is open. Close it and open ${app.name}?`)) return;
+      && !confirm(`Close ${other.name} and open ${app.name}?`)) return;
   const auto = features.find((f) => f.id === 'autonomy');
   if (app.exclusive && !live(app) && auto && live(auto)) {
     const last = auto.last || {};
     const ask = last.mode === 'mapping'
-      ? `Mapping ${last.map} is running. Save it, stop it, and open ${app.name}?`
-      : `Localizing on ${last.map || 'a map'}. Stop it and open ${app.name}?`;
+      ? `Save ${last.map}, stop mapping, and open ${app.name}?`
+      : `Stop localizing and open ${app.name}?`;
     if (!confirm(ask)) return;
   }
   const needsCamera = app.needs === 'camera' && !live(app) && featureState('camera') === 'inactive';
-  if (needsCamera && !confirm(`${app.name} needs the camera. Turn it on?\n\n${RESTART}`)) return;
+  if (needsCamera && !confirm(`Turn on the camera and open ${app.name}?`)) return;
   // Opened from the click so the browser allows the new tab.
   window.open(`launch?app=${encodeURIComponent(app.id)}`, '_blank');
   if (needsCamera) setFeature({ feature: 'camera', on: true });
 });
 
 // -- features: camera and detections restart teleop; autonomy is its own service --
-const RESTART = 'The car stops for about 15 seconds.';
 let features = [];
 let featureMessage = '';
 function featureState(id) { return (features.find((f) => f.id === id) || {}).state; }
@@ -358,6 +356,8 @@ function renderFeatures(view) {
       <span class="name">${esc(f.name)}</span></button>`;
   }).join(''));
   const job = view.job || {};
+  // Grayed while a change runs; only a failure has words.
+  $('features').classList.toggle('busy', !!job.busy);
   if (job.message && job.message !== featureMessage) $('msg').textContent = job.message;
   featureMessage = job.message || '';
 }
@@ -373,9 +373,10 @@ function autonomyClick(f) {
   const last = f.last || {};
   if (!live(f)) {
     if (!last.map) { window.open(RcnRoute.app('mapview'), '_blank'); return; }
-    let ask = last.mode === 'mapping' ? `Continue mapping ${last.map}?` : `Localize on ${last.map} again?`;
     const driving = apps.filter((a) => a.exclusive && live(a)).map((a) => a.name);
-    if (driving.length) ask += ` ${driving.join(' and ')} will close.`;
+    const close = driving.length ? `Close ${driving.join(' and ')} and ` : '';
+    let ask = last.mode === 'mapping' ? `${close}continue mapping ${last.map}?` : `${close}localize on ${last.map} again?`;
+    ask = ask[0].toUpperCase() + ask.slice(1);
     if (confirm(ask)) setFeature({ feature: 'autonomy', action: 'resume' });
     return;
   }
@@ -398,14 +399,15 @@ $('features').addEventListener('click', (e) => {
   if (!f || f.state === 'activating') return;
   if (f.id === 'autonomy') { autonomyClick(f); return; }
   const on = f.state !== 'active';
-  let ask = `Turn ${on ? 'on' : 'off'} ${f.name.toLowerCase()}?`;
+  const what = f.id === 'camera' ? 'the camera' : f.name.toLowerCase();
+  let ask = `Turn ${on ? 'on' : 'off'} ${what}?`;
   if (on && f.id === 'detections' && featureState('camera') !== 'active') ask = 'Turn on detections and the camera?';
   if (!on && f.id === 'camera') {
-    if (featureState('detections') === 'active') ask = 'Turn off the camera and detections?';
+    const both = featureState('detections') === 'active' ? 'the camera and detections' : 'the camera';
     const users = apps.filter((a) => a.needs === 'camera' && live(a)).map((a) => a.name);
-    if (users.length) ask += ` ${users.join(' and ')} will have no camera.`;
+    ask = users.length ? `Turn off ${both} while ${users.join(' and ')} ${users.length > 1 ? 'use' : 'uses'} it?` : `Turn off ${both}?`;
   }
-  if (confirm(`${ask}\n\n${RESTART}`)) setFeature({ feature: f.id, on });
+  if (confirm(ask)) setFeature({ feature: f.id, on });
 });
 
 // -- charts (shared: /ui/charts.js) --
@@ -479,7 +481,7 @@ function renderHistory() {
   const b0 = t1 - BATTERY_VIEW_SEC, bt = RcnCharts.clockTicksEvery(300);
   seriesTile('ov-volts', 'Voltage', 'V', 2, 0.1, col(history.battery, 1), b0, t1, bt, 60, 'ov-volts-now');
   seriesTile('ov-amps', 'Current', 'A', 2, 0.2, col(history.battery, 2), b0, t1, bt, 60, 'ov-amps-now');
-  seriesTile('ov-temp', 'Temperature', 'C', 1, 2, col(history.system, 1), t0, t1, clockTicks, 60, 'ov-temp-now');
+  seriesTile('ov-temp', 'Temperature', '\u00b0C', 1, 2, col(history.system, 1), t0, t1, clockTicks, 60, 'ov-temp-now');
   seriesTile('ov-mem', 'In use', '%', 0, 5, col(history.system, 2), t0, t1, clockTicks, 60, 'ov-mem-now');
 }
 function seriesTile(id, name, unit, digits, minSpan, pts, t0, t1, ticks, gap, nowId) {
@@ -560,8 +562,8 @@ function renderBasic(data) {
   const bk = !b ? 'off' : (b.stale ? 'warn' : 'ok');
   const stale = b && b.stale ? ' No recent reading.' : '';
   setHtml('chips-battery', [
-    chip('volts', 'battery', 'Voltage', bk, b ? b.volts.toFixed(2) : null, 'V', b ? `Battery voltage: ${b.volts.toFixed(2)} V.${stale}` : 'Battery voltage: no data.'),
-    chip('amps', 'battery', 'Current', bk, b ? b.amps.toFixed(2) : null, 'A', b ? `Battery current: ${b.amps.toFixed(2)} A.${stale}` : 'Battery current: no data.'),
+    chip('volts', 'battery', 'Voltage', bk, b ? b.volts.toFixed(2) : null, 'V', b ? `Battery voltage: ${b.volts.toFixed(2)} V.${stale}` : 'Battery voltage: no reading.'),
+    chip('amps', 'battery', 'Current', bk, b ? b.amps.toFixed(2) : null, 'A', b ? `Battery current: ${b.amps.toFixed(2)} A.${stale}` : 'Battery current: no reading.'),
   ].join(''));
   const rates = data.rates || {};
   const groups = { sensors: [], compute: [], actuation: [], autonomy: [] };
@@ -572,13 +574,13 @@ function renderBasic(data) {
       const measuring = rates[n.topic] && rates[n.topic].warming;
       const st = measuring ? 'off' : (STATUS[n.status] || 'off'), r = hz(rates[n.topic]);
       const tip = measuring ? `${n.label}: measuring.`
-        : `${n.label}: ${r !== null ? `${r.toFixed(1)} Hz` : (n.alive ? 'running' : 'no data')}. ${WORD[n.status] || n.status}.${n.detail ? ` ${n.detail}` : ''}`;
+        : `${n.label}: ${r !== null ? `${r.toFixed(1)} Hz. ` : (n.alive ? '' : 'no reading. ')}${WORD[n.status] || n.status}.${n.detail ? ` ${n.detail}` : ''}`;
       groups[group].push(chip(key, glyph, word, st, r !== null ? r.toFixed(0) : null, 'Hz', tip));
     } else if (kind === 'rate') {
       const rr = rates[key] || {}, r = hz(rr);
       const st = rr.warming ? 'off' : (r === null ? 'err' : (rr.stale ? 'warn' : 'ok'));
       groups[group].push(chip(key, glyph, word, st, r !== null ? r.toFixed(0) : null, 'Hz',
-        rr.warming ? `${label}: measuring.` : `${label}: ${r !== null ? `${r.toFixed(1)} Hz` : 'no data'}.`));
+        rr.warming ? `${label}: measuring.` : `${label}: ${r !== null ? `${r.toFixed(1)} Hz` : 'no reading'}.`));
     } else if (kind === 'health') {
       const h = (data.system_health || {})[key];
       if (h && key === 'power' && h.volts !== null) {
@@ -617,11 +619,11 @@ function renderAdvanced(data) {
       <div class="rcn-small rcn-muted">${esc(h.detail)}</div></div>`).join('');
   $('rates').innerHTML = Object.entries(data.rates || {}).map(([topic, r]) => {
     const kind = r.warming ? 'off' : (r.hz === null ? 'err' : (r.stale ? 'warn' : 'ok'));
-    const word = r.warming ? 'Measuring' : (r.hz === null ? 'No data' : (r.stale ? 'Stale' : 'OK'));
+    const word = r.warming ? 'Measuring' : (r.hz === null ? 'No reading' : (r.stale ? 'Stale' : 'OK'));
     return `<tr><td class="rcn-mono">${esc(topic)}</td><td class="rcn-num">${r.hz === null ? '-' : r.hz.toFixed(1) + ' Hz'}</td><td>${pill(kind, word)}</td></tr>`;
   }).join('');
   const wl = data.watchdog_log || [];
-  $('watchdog-log').textContent = wl.length ? wl.join('\n') : 'No watchdog events yet.';
+  $('watchdog-log').textContent = wl.length ? wl.join('\n') : 'No events';
 }
 
 function renderOverall(data) {
@@ -634,6 +636,7 @@ function renderOverall(data) {
   setOverall(kind, word);
 }
 function setOverall(kind, word) { $('overall').outerHTML = pill(kind, word).replace('class="', 'id="overall" class="'); }
+
 
 function setView(view) {
   $('basic').hidden = view !== 'basic';
@@ -652,12 +655,14 @@ let overrideOn = false;
 RcnOverride.onChange = (o) => {
   const on = !!o.on;
   $('override').setAttribute('aria-pressed', on);
-  if (overrideOn && !on && o.ended) $('msg').textContent = `Safety override off. ${o.ended}`;
+  if (overrideOn && !on && o.ended) $('msg').textContent = 'Safety override off.';
+  // Grayed until the car confirms the override.
+  $('override').classList.toggle('waiting', on && o.confirmed === false);
   overrideOn = on;
 };
 RcnOverride.onLost = () => { $('msg').textContent = LOST; };
 function startOverride() {
-  if (!confirm('The car may start moving without warning. Do not leave it unattended.')) return;
+  if (!confirm('Turn on safety override?')) return;
   $('msg').textContent = '';
   RcnOverride.send('start');
 }
@@ -680,7 +685,7 @@ function pillText(e) {
   if (pillView === 'percent' && e.soc !== null) return `${Math.round(e.soc)}% left`;
   if (pillView === 'clock') {
     const at = new Date(Date.now() + e.minutes_left * 60000);
-    return `until ${at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}`;
+    return `until ${at.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}`;
   }
   return minutesText(e.minutes_left);
 }
@@ -748,7 +753,7 @@ setInterval(renderClock, 1000);
 
 // Network: the pill names the client network; the menu lists every interface.
 function networkLabel(rows) {
-  const client = rows.find((r) => r.kind === 'Wi-Fi' && r.state === 'connected');
+  const client = rows.find((r) => r.kind === 'WiFi' && r.state === 'connected');
   if (client) return client.network;
   if (rows.some((r) => r.kind === 'Ethernet' && r.state === 'connected')) return 'Ethernet';
   if (rows.some((r) => r.kind === 'Access point' && r.state === 'connected')) return 'Access point';
@@ -801,18 +806,18 @@ function update(refresh) {
 }
 $('clear-apps').onclick = async () => {
   if (!confirm('Stop the running apps?')) return;
-  $('msg').textContent = 'Stopping apps...';
+  $('clear-apps').disabled = true;
   try {
     const r = await (await post('api/clear-apps')).json();
     $('msg').textContent = r.message;
   } catch (err) { $('msg').textContent = LOST; }
+  $('clear-apps').disabled = false;
   update(true);
 };
 $('clear-log').onclick = async () => {
   try { await post('api/clear-log'); } catch (err) { /* shown on the next update */ }
   update(true);
 };
-$('refresh').onclick = () => { update(true); pollOverview(); pollHistory(); };
 
 update(false);
 const statusTimer = setInterval(() => update(false), 3000);

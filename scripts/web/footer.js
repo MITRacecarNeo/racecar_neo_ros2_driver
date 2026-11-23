@@ -14,8 +14,9 @@
   const footer = document.createElement('footer');
   footer.className = 'rcn-footer';
   footer.innerHTML = '<span class="rcn-car"></span><span>racecar OS</span>'
-    + '<span>Driver {{driver}}</span><span>Firmware <b>...</b></span>';
+    + '<span>Driver {{driver}}</span><span class="rcn-fw" hidden>Firmware <b></b></span>';
   const firmware = footer.querySelector('b');
+  const firmwareItem = footer.querySelector('.rcn-fw');
   const car = footer.querySelector('.rcn-car');
   document.body.append(footer);
 
@@ -29,7 +30,9 @@
   async function poll() {
     try {
       const about = await (await fetch(url)).json();
-      firmware.textContent = about.firmware || 'unknown';
+      // Shown once the version is known.
+      firmware.textContent = about.firmware || '';
+      firmwareItem.hidden = !about.firmware;
       if (about.car) car.textContent = about.car;
     } catch (err) {
       // 8080 unreachable: keep the last value.

@@ -27,9 +27,9 @@
     const state = stall && stall.state;
     let text = '';
     const left = deadline === null ? 0 : Math.max(0, Math.ceil((deadline - performance.now()) / 1000));
-    if (state === 'tripped') text = 'Car Stalled. Return the throttle stick to the neutral position.';
-    else if (state === 'cooldown') text = `Car Stalled. Driving will resume in ${left} s.`;
-    else if (state === 'lockout') text = `Car Stalled and locked out. Driving resumes in ${left} s.`;
+    if (state === 'tripped') text = 'Car stalled. Return the throttle stick to neutral.';
+    else if (state === 'cooldown') text = `Car stalled. Driving resumes in ${left} s.`;
+    else if (state === 'lockout') text = `Car stalled and locked out. Driving resumes in ${left} s.`;
     banner.querySelector('span').textContent = text;
     banner.classList.toggle('warn', state === 'tripped' || state === 'cooldown');
     banner.hidden = !text;

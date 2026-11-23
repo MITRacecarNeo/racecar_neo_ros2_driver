@@ -28,7 +28,7 @@
   <div class="glyph" id="glyph"></div>
   <h2 id="title"></h2>
   <div class="bar" role="progressbar" aria-label="Loading"><div id="fill"></div></div>
-  <div class="rcn-small rcn-muted" id="note">Opening...</div>
+  <div class="rcn-small rcn-muted" id="note"></div>
   <div class="acts">
     <a class="rcn-btn quiet small" id="cancel" href="/">Cancel</a>
   </div>
@@ -60,13 +60,13 @@ $('cancel').onclick = (e) => {
 };
 
 async function launch() {
-  $('note').textContent = 'Opening...';
+  $('note').textContent = '';
   $('fill').style.width = '0';
   let app = null;
   try {
     app = ((await (await fetch('api/status')).json()).apps || []).find((a) => a.id === id);
   } catch (err) { /* reported below */ }
-  if (!app) { fail('Unknown app.'); return; }
+  if (!app) { fail('No such app.'); return; }
   document.title = `${app.name} - RACECAR Neo`;
   $('glyph').innerHTML = `<svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#${app.icon}"/></svg>`;
   $('title').textContent = app.name;

@@ -57,8 +57,9 @@ class Message:
 
 
 def warn_message(minutes: float | None) -> Message:
-    left = f'{minutes:.0f} min left. ' if minutes is not None else ''
-    return Message('warn', f'Low battery: {left}Charge or swap the battery.')
+    if minutes is None:
+        return Message('warn', 'Low battery. Charge or swap the battery.')
+    return Message('warn', f'Low battery: {minutes:.0f} min left. Charge or swap the battery.')
 
 
 def countdown_message(seconds: int, start: bool = False) -> Message:

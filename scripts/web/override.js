@@ -12,7 +12,7 @@
   'use strict';
   const PERIOD_MS = 1000;
   const url = RcnRoute.app('home', 'api/override');
-  const ON = 'Safety switch override is on. The car may move without warning. Do not leave it unattended.';
+  const ON = 'Safety override is on. The car may move without warning.';
   let epoch = 0;  // Replies to requests sent before the last start or stop are ignored.
   let banner = null;
 
@@ -35,8 +35,8 @@
 
   function render(o) {
     const on = !!(o && o.on);
-    banner.querySelector('span').textContent = on && o.confirmed === false ? 'Safety override starting...' : ON;
-    banner.hidden = !on;
+    // Until the car confirms, the page that started it grays its tile; the banner waits.
+    banner.hidden = !on || o.confirmed === false;
     if (api.onChange) api.onChange(o || { on: false });
   }
 
