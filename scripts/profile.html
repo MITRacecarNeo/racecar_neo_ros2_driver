@@ -27,6 +27,8 @@ main > .rcn-override { margin: var(--rcn-space-3) var(--rcn-space-3) 0; flex: no
 #stage { position: relative; flex: 1; min-width: 0; }
 #stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; display: block; }
 #loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--rcn-text-muted); }
+#loading .bar { width: min(240px, 50%); height: 4px; border-radius: 2px; background: var(--rcn-steel); overflow: hidden; }
+#loading .bar i { display: block; height: 100%; width: 0; background: var(--rcn-orange); transition: width 0.2s; }
 #layers { position: absolute; left: var(--rcn-space-3); top: var(--rcn-space-3); display: flex; gap: var(--rcn-space-2); flex-wrap: wrap; }
 #layers .rcn-btn.off { opacity: 0.5; }
 #panel { width: var(--panel-w, 420px); max-width: 70vw; overflow-y: auto; background: var(--rcn-surface);
@@ -64,7 +66,7 @@ body.panel-hidden #panel, body.panel-hidden #grip { display: none; }
     <aside id="panel"></aside>
     <div id="grip" role="separator" aria-label="Resize the details"></div>
     <div id="stage">
-      <div id="loading">Loading the car model...</div>
+      <div id="loading"><div class="bar" role="progressbar" aria-label="Car model"><i id="loadfill"></i></div></div>
       <div id="layers"></div>
     </div>
   </div>
@@ -128,15 +130,16 @@ function fmt(v) {
   if (typeof v === 'object') return Object.entries(v).map(([k, x]) => `${k} ${fmt(x)}`).join(', ');
   return String(v);
 }
+const { keyLabel, cap: word } = window.RcnUi;
 function rows(obj) {
-  return '<table>' + Object.entries(obj).map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(fmt(v))}</td></tr>`).join('') + '</table>';
+  return '<table>' + Object.entries(obj).map(([k, v]) => `<tr><td>${esc(keyLabel(k))}</td><td>${esc(fmt(v))}</td></tr>`).join('') + '</table>';
 }
 
 function carPanel() {
   const head = car.nickname ? `${car.hostname} (${car.nickname})` : car.hostname;
   $('title').textContent = head || 'Car Profile';
   const cal = car.calibration.map((r) =>
-    `<tr><td>${esc(r.label)}</td><td class="${r.state === 'calibrated' ? 'ok' : 'bad'}">${esc(r.state)}</td></tr>`).join('');
+    `<tr><td>${esc(r.label)}</td><td class="${r.state === 'calibrated' ? 'ok' : 'bad'}">${esc(word(r.state))}</td></tr>`).join('');
   const parts = Object.entries(names.parts).map(([id, label]) =>
     `<button class="rcn-btn quiet small" data-part="${id}">${esc(label)}</button>`).join('')
     + names.extra.map((p) => `<button class="rcn-btn quiet small" data-part="${p.id}">${esc(p.label)}</button>`).join('');
@@ -145,7 +148,7 @@ function carPanel() {
              'Access point': car.ap.ssid, 'Car address': car.ap.ip,
              Driver: car.about.driver, Firmware: car.about.firmware })}
     <h3>Calibration</h3><table>${cal}</table>
-    <h3>Parts</h3><div class="rcn-small rcn-muted">${car.model ? 'Tap a part on the car or in the list.' : 'Tap a part in the list.'}</div>
+    <h3>Parts</h3>
     <div class="parts">${parts}</div>`;
   for (const b of $('panel').querySelectorAll('[data-part]')) b.addEventListener('click', () => select(b.dataset.part));
 }
@@ -156,20 +159,21 @@ function partPanel(p) {
   if (p.topics.length) {
     html += '<h3>Data</h3><table>' + p.topics.map((t) =>
       `<tr><td>${esc(t.topic)}${t.type ? `<br><span class="rcn-muted">${esc(t.type)}</span>` : ''}</td>
-       <td class="${t.hz ? 'ok' : 'bad'}">${t.hz ? t.hz.toFixed(1) + ' Hz' : 'no data'}</td></tr>`).join('') + '</table>';
+       <td class="${t.hz ? 'ok' : 'bad'}">${t.hz ? t.hz.toFixed(1) + ' Hz' : 'No reading'}</td></tr>`).join('') + '</table>';
   }
   for (const c of p.calibration) {
-    html += `<h3>${esc(c.label)}</h3><div class="rcn-small ${c.state === 'calibrated' ? 'ok' : 'bad'}">${esc(c.state)} ${esc(c.detail)}</div>`;
+    const said = c.state === 'calibrated' ? `Calibrated ${c.detail}` : word(c.detail || c.state);
+    html += `<h3>${esc(c.label)}</h3><div class="rcn-small ${c.state === 'calibrated' ? 'ok' : 'bad'}">${esc(said)}</div>`;
     if (Object.keys(c.values).length) html += rows(c.values);
   }
   if (Object.keys(p.frames).length) html += '<h3>Position on the car</h3>' + rows(p.frames);
   if (Object.keys(p.record).length) html += '<h3>Car record</h3>' + rows(p.record);
   if (p.firmware && Object.keys(p.firmware).length) html += '<h3>Firmware</h3>' + rows(p.firmware);
   if (p.power && Object.keys(p.power).length) html += '<h3>Power</h3>' + rows(p.power);
-  else if (p.power) html += '<h3>Power</h3><div class="rcn-small rcn-muted">No battery reading. Is teleop running?</div>';
+  else if (p.power) html += '<h3>Power</h3><div class="rcn-small rcn-muted">No reading</div>';
   if (p.system) {
     const s = p.system;
-    html += '<h3>System</h3>' + rows({ 'Chip temperature (C)': s.soc_temp_c, 'ARM clock (MHz)': s.arm_mhz,
+    html += '<h3>System</h3>' + rows({ 'Chip temperature (\u00b0C)': s.soc_temp_c, 'ARM clock (MHz)': s.arm_mhz,
       'ARM maximum (MHz)': s.arm_max_mhz });
   }
   html += '<button class="rcn-btn quiet small" id="back">Back to the car</button>';
@@ -302,7 +306,7 @@ async function start() {
     layerButtons();
     frame();
   }, (p) => {
-    if (p.total) $('loading').textContent = `Loading the car model... ${Math.round((100 * p.loaded) / p.total)}%`;
+    if (p.total) $('loadfill').style.width = `${Math.round((100 * p.loaded) / p.total)}%`;
   }, () => { $('loading').textContent = 'The car model did not load.'; });
 }
 start();

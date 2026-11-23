@@ -57,19 +57,18 @@ details pre { max-height: 40vh; overflow: auto; white-space: pre-wrap; }
 </header>
 <main>
   <section id="center">
-    <h2 id="ctitle">Pick a step to calibrate</h2>
+    <h2 id="ctitle"></h2>
     <div id="stage"></div>
     <div id="instruction"></div>
     <div class="meters" id="meters"></div>
     <div class="answers" id="answers" hidden>
       <button class="rcn-btn primary" data-answer="">Enter</button>
-      <button class="rcn-btn quiet" data-answer="s">Skip (s)</button>
-      <button class="rcn-btn quiet" data-answer="b">Back (b)</button>
-      <button class="rcn-btn quiet" data-answer="q">Stop (q)</button>
+      <button class="rcn-btn quiet" data-answer="s">Skip</button>
+      <button class="rcn-btn quiet" data-answer="b">Back</button>
       <input class="rcn-input" id="answer" placeholder="Answer" autocomplete="off" autocapitalize="off" spellcheck="false">
       <button class="rcn-btn quiet" id="send">Send</button>
     </div>
-    <div class="row"><button class="rcn-btn danger small" id="stop" hidden>Stop the run</button></div>
+    <div class="row"><button class="rcn-btn danger small" id="stop" hidden>Stop</button></div>
     <div id="outcome"></div>
     <div id="results"></div>
     <div class="plots" id="plots"></div>
@@ -81,6 +80,7 @@ details pre { max-height: 40vh; overflow: auto; white-space: pre-wrap; }
 'use strict';
 RcnProfileNav.mount('calibration');
 const $ = (id) => document.getElementById(id);
+const { keyLabel, cap } = RcnUi;
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const WORD = { valid: '[ OK ]', failed: '[FAIL]', unchecked: '[ -- ]', open: '[OPEN]' };
 const TIP = { valid: 'Calibrated and checked', failed: 'The last check failed', unchecked: 'Not checked since it was calibrated', open: 'Not calibrated on this car' };
@@ -101,11 +101,11 @@ function fmt(v) {
 
 function renderTiles() {
   $('tiles').innerHTML = view.steps.map((s) => {
-    const vals = Object.entries(s.values).map(([k, v]) => `${esc(k)} ${esc(fmt(v))}`).join('<br>');
+    const vals = Object.entries(s.values).map(([k, v]) => `${esc(keyLabel(k))} ${esc(fmt(v))}`).join('<br>');
     const busy = !!running;
     return `<div class="tile ${s.state}"><div class="top"><span class="name">${esc(s.label)}</span>
       <span class="state ${s.state}" title="${TIP[s.state]}">${WORD[s.state]}</span></div>
-      <div class="detail">${s.state === 'open' ? esc(s.detail) : `Calibrated ${esc(s.detail)}`}${s.result ? `<br>Check ${esc(s.result.result)} ${esc(s.result.time)}` : ''}</div>
+      <div class="detail">${s.state === 'open' ? esc(cap(s.detail)) : `Calibrated ${esc(s.detail)}`}${s.result ? `<br>Check ${esc(s.result.result)} ${esc(s.result.time)}` : ''}</div>
       ${vals ? `<div class="detail">${vals}</div>` : ''}
       <div class="row"><button class="rcn-btn primary small" data-run="${s.key}" ${busy ? 'disabled' : ''}>Calibrate</button>
       ${s.check ? `<button class="rcn-btn quiet small" data-check="${s.key}" ${busy ? 'disabled' : ''}>Check</button>` : ''}</div></div>`;
@@ -132,7 +132,7 @@ function showStep(label) {
 
 async function start(key, mode) {
   const r = await post('api/calibration/run', { step: key, mode });
-  if (!r.ok) { alert(r.message || 'Did not start.'); return; }
+  if (!r.ok) { alert(r.message || `Could not start the ${mode === 'check' ? 'check' : 'calibration'}.`); return; }
   since = 0; psince = 0; events = [];
   running = `${mode}:${key}`;
   showStep(running);
@@ -153,7 +153,7 @@ function renderLive(e) {
     const gyro = e.still.length === 6 ? e.still.slice(3) : e.still;
     const worst = Math.max(...gyro);
     const cls = worst < STILL_LIMIT ? 'ok' : worst < 2 * STILL_LIMIT ? 'warn' : 'bad';
-    const word = cls === 'ok' ? 'still' : cls === 'warn' ? 'moving a little' : 'moving';
+    const word = cls === 'ok' ? 'Still' : cls === 'warn' ? 'Moving a little' : 'Moving';
     html += meter('Stillness', Math.min(worst, 3 * STILL_LIMIT), 3 * STILL_LIMIT, cls, word);
   }
   $('meters').innerHTML = html;
@@ -165,7 +165,7 @@ function renderResults() {
   let html = '';
   if (results.length) {
     html += '<table class="vals"><tr><th>Value</th><th>Measured</th><th>Expected</th><th>Between runs</th><th></th></tr>'
-      + results.map((r) => `<tr><td>${esc(r.key)}</td><td>${esc(fmt(r.value))}</td>
+      + results.map((r) => `<tr><td>${esc(keyLabel(r.key))}</td><td>${esc(fmt(r.value))}</td>
         <td>${r.warn ? `${fmt(r.warn[0])} to ${fmt(r.warn[1])}` : '-'}</td><td>${r.spread ? `+/- ${fmt(r.spread)}` : '-'}</td>
         <td class="${r.verdict}">${r.verdict}</td></tr>`).join('') + '</table>';
   }
@@ -179,7 +179,8 @@ function renderResults() {
     const pass = outcome.result !== 'FAIL';
     $('center').className = pass ? 'pass' : 'fail';
     $('outcome').className = pass ? 'pass' : 'fail';
-    $('outcome').textContent = pass ? 'Calibration valid.' : `Calibration failed: ${outcome.reason}. Nothing was saved.`;
+    // The tile shows a pass; only a failure has words.
+    $('outcome').textContent = pass ? '' : `Calibration failed: ${outcome.reason}.`;
   }
 }
 
@@ -270,7 +271,7 @@ async function poll() {
   running = null;
   if (!events.some((e) => e.kind === 'outcome')) {
     $('outcome').className = job.code === 0 ? 'pass' : 'fail';
-    $('outcome').textContent = job.code === 0 ? 'Finished.' : 'Stopped before the end. Nothing was saved.';
+    $('outcome').textContent = job.code === 0 ? '' : 'Stopped.';
   }
   await load();
 }

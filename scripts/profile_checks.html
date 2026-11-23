@@ -113,7 +113,7 @@ function render() {
   $('health').innerHTML = view.health.map((n) => card(n, by(n), { names: [n] })).join('');
   $('guided').innerHTML = view.guided.map((n) => card(n, [], { guided: n })).join('');
   $('summary').className = last ? last.result : '';
-  $('summary').textContent = last ? `Last run ${last.time}: ${last.result}` : 'No checks run yet.';
+  $('summary').textContent = last ? `Last run ${last.time.slice(0, 16)} ${MARK[last.result] || ''}` : 'No checks run';
   const busy = view.job.running;
   for (const b of document.querySelectorAll('[data-run], #runall')) b.disabled = busy;
   for (const b of document.querySelectorAll('[data-run]')) b.addEventListener('click', () => run(JSON.parse(b.dataset.run)));
@@ -127,7 +127,7 @@ async function load() {
 
 async function run(body) {
   const r = await post('api/checks/run', body);
-  if (!r.ok) { alert(r.message || 'Did not start.'); return; }
+  if (!r.ok) { alert(r.message || 'Could not start the check.'); return; }
   since = 0;
   $('out').textContent = '';
   watch(body.guided ? INFO[body.guided][0] : body.all ? 'All checks' : INFO[body.names[0]][0]);
@@ -135,7 +135,7 @@ async function run(body) {
 }
 
 function watch(title) {
-  $('jobtitle').textContent = `Running: ${title.replace(/^check:/, '')}`;
+  $('jobtitle').textContent = title.replace(/^check:/, '');
   $('job').classList.add('show');
   poll();
 }
@@ -153,7 +153,7 @@ async function poll() {
   if (job.prompt) $('ptext').textContent = job.prompt.text.trim();
   if (job.running) { timer = setTimeout(poll, 400); return; }
   timer = null;
-  $('jobtitle').textContent = job.code === 0 ? 'Finished.' : 'Finished with a failure.';
+  // The result rows show how it went.
   load();
 }
 

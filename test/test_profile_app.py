@@ -322,3 +322,76 @@ class TestSetup:
         assert post(server, '/api/setup/done', {'step': 'esc'})[0].status == 200
         setup = yaml.safe_load((car_profile_dir / 'car.yaml').read_text())['setup']
         assert setup['esc']['by'] == 'user'
+
+
+class TestPageWording:
+    def test_field_labels(self, pa):
+        assert pa.field_label('ESC model (label)') == 'ESC model'
+        assert pa.field_label('Boost converter (board label)') == 'Boost converter'
+        assert pa.field_label('Spur gear') == 'Spur gear'
+        assert (
+            pa.field_label('Idle battery current (optional; 8080 Current chip, car on a stand)')
+            == 'Idle battery current (A, optional)'
+        )
+
+    def test_calibration_label(self, pa):
+        assert pa.calibration_label('LSM9DS1 accel bias and scale, gyro bias') == (
+            'LSM9DS1 accelerometer bias and scale, gyro bias'
+        )
+
+    @pytest.mark.parametrize(
+        'detail, shown',
+        [
+            (
+                'kernel log 2 NVMe, 0 PCIe error line(s) this boot; first: nvme nvme0: I/O',
+                '2 NVMe errors this boot',
+            ),
+            (
+                'kernel log 1 NVMe, 3 PCIe error line(s) this boot',
+                '1 NVMe error, 3 PCIe errors this boot',
+            ),
+            ('9.810 m/s^2 (+0.0%)', '9.810 m/s² (+0.0%)'),
+            ('1 error line(s)', '1 error line'),
+            ('2 frame(s), 1 reset(s)', '2 frames, 1 reset'),
+            ('7.38 V, 24%', '7.38 V, 24%'),
+            ('last check failed: imu, mag', 'Last check failed: IMU, magnetometer'),
+            ('running', 'Running'),
+        ],
+    )
+    def test_check_detail(self, pa, detail, shown):
+        assert pa.check_detail(detail) == shown
+
+    def test_check_row(self, pa):
+        row = pa.check_row(
+            {'name': 'gyro at rest', 'status': 'WARN', 'detail': 'x',
+             'repair': 'Calibrate imu again', 'link': '/calibration'}
+        )  # fmt: skip
+        assert (row['name'], row['repair'], row['link']) == (
+            'Gyro at rest',
+            'Recalibrate the IMU',
+            'calibration',
+        )
+        assert pa.check_row({'name': 'health nvme', 'link': '/handbook/health'})['name'] == (
+            'Data drive'
+        )
+        assert pa.checks_last(None) is None
+        assert pa.checks_last({'rows': [{'name': 'lidar'}]})['rows'][0]['name'] == 'Lidar'
+
+
+GONE_PROFILE = (
+    'Loading the car model...', 'Tap a part on the car', 'Is teleop running?', "'no data'",
+    'Reading the car...', 'Waiting for the car...', "'Marked done.'", "'Did not start.'",
+    'this page reloads by itself', 'Pick a step to calibrate', 'Calibration valid.',
+    'Nothing was saved.', 'Stop (q)', 'Skip (s)', 'Back (b)', 'Stop the run', "'moving a little'",
+    'No checks run yet.', 'Finished with a failure.', 'Running: ', "'Running...'",
+)  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    'name',
+    ['profile.html', 'profile_setup.html', 'profile_calibration.html', 'profile_checks.html'],
+)
+def test_removed_wordings_stay_out(name):
+    text = (Path(__file__).resolve().parent.parent / 'scripts' / name).read_text()
+    for gone in GONE_PROFILE:
+        assert gone not in text, (name, gone)

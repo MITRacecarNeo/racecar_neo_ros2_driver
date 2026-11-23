@@ -27,6 +27,7 @@ main > .rcn-override { margin: 0 0 var(--rcn-space-4); }
 .mark.done { color: #6fd08c; } .mark.open { color: var(--rcn-led-red); } .mark.run { color: var(--rcn-gold); }
 .sheet { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); display: none; align-items: center; justify-content: center; z-index: 30; padding: var(--rcn-space-3); }
 .sheet.show { display: flex; }
+body.waiting main, body.waiting .sheet > div { opacity: 0.5; pointer-events: none; }
 .sheet > div { width: 100%; max-width: 640px; max-height: 90vh; overflow: auto; background: var(--rcn-bg); border: 1px solid var(--rcn-border);
                border-radius: var(--rcn-radius-lg); padding: var(--rcn-space-4); }
 .sheet h2 { font-size: 20px; line-height: 28px; margin: 0 0 var(--rcn-space-1); }
@@ -49,7 +50,7 @@ main > .rcn-override { margin: 0 0 var(--rcn-space-4); }
   <span class="rcn-spacer"></span>
 </header>
 <main>
-  <div class="summary rcn-muted" id="summary">Reading the car...</div>
+  <div class="summary rcn-muted" id="summary"></div>
   <div id="groups"></div>
   <p class="rcn-small rcn-muted">Sensor calibration is on the <a href="calibration">Calibration</a> page.</p>
 </main>
@@ -78,10 +79,10 @@ main > .rcn-override { margin: 0 0 var(--rcn-space-4); }
 RcnProfileNav.mount('setup');
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-// Steps that end the page's connection, and what to say first.
+// Steps that end the page's connection ask first; the page reloads when the car answers again.
 const DROPS = {
-  access_point: "The car's WiFi restarts. Reconnect to the car's network, then this page reloads by itself.",
-  reboot: 'The car restarts. This page reloads when the car is back.',
+  access_point: "Restart the car's WiFi?",
+  reboot: 'Restart the car?',
 };
 // Steps whose popup only saves answers.
 const FORMS = new Set(['identity', 'esc', 'measurements', 'record']);
@@ -129,7 +130,7 @@ function openStep(key) {
   current = s;
   $('stitle').textContent = s.title;
   $('stime').textContent = s.time ? `Takes ${s.time}.` : '';
-  $('snote').textContent = [NOTES[key], DROPS[key]].filter(Boolean).join(' ');
+  $('snote').textContent = NOTES[key] || '';
   $('guide').href = GUIDE[key] || `handbook/installation#${key}`;
   $('sform').innerHTML = s.fields.filter((f) => f.kind !== 'hidden').map((f) => {
     const id = `f-${f.key}`;
@@ -142,7 +143,7 @@ function openStep(key) {
   $('run').textContent = key === 'reboot' ? 'Reboot' : FORMS.has(key) ? 'Save' : 'Run';
   $('out').textContent = '';
   $('out').classList.remove('show');
-  $('status').textContent = s.done ? `Done${s.detail ? `: ${s.detail}` : ''}.` : '';
+  $('status').textContent = '';
   since = 0;
   $('sheet').classList.add('show');
   if (view.job.running && view.job.label === key) watch();
@@ -161,7 +162,7 @@ function values() {
 async function run() {
   if (DROPS[current.key] && !confirm(DROPS[current.key])) return;
   const r = await post('api/setup/run', { step: current.key, values: values() });
-  if (!r.ok) { $('status').textContent = r.message || 'Did not start.'; return; }
+  if (!r.ok) { $('status').textContent = r.message || 'Could not start the step.'; return; }
   since = 0;
   $('out').textContent = '';
   watch();
@@ -180,8 +181,9 @@ async function poll() {
   try {
     job = await fetch(`api/setup/job?since=${since}`).then((r) => r.json());
   } catch (e) {
+    // Grayed until the car answers again.
     lost = true;
-    $('status').textContent = 'Waiting for the car...';
+    document.body.classList.add('waiting');
     timer = setTimeout(poll, 3000);
     return;
   }
@@ -199,7 +201,6 @@ async function poll() {
     if (document.activeElement !== $('pinput')) $('pinput').focus();
   }
   if (job.running) {
-    $('status').textContent = 'Running...';
     timer = setTimeout(poll, 500);
     return;
   }
@@ -208,8 +209,9 @@ async function poll() {
   $('promptrow').classList.remove('show');
   await load();
   const s = step(current.key);
-  $('status').textContent = job.code === 0 && s.done ? 'Done.'
-    : `${job.code === 0 ? 'Finished' : 'Stopped with an error'}. ${s.done ? '' : `Still open${s.detail ? `: ${s.detail}` : ''}.`}`;
+  // The tile shows a finished step; only a step left open has words.
+  $('status').textContent = job.code !== 0 ? 'Could not finish the step.'
+    : (s.done ? '' : `Still open${s.detail ? `: ${s.detail}` : ''}.`);
 }
 
 function send() {
@@ -223,7 +225,6 @@ $('run').addEventListener('click', (e) => { e.preventDefault(); run(); });
 $('markdone').addEventListener('click', async () => {
   await post('api/setup/done', { step: current.key });
   await load();
-  $('status').textContent = 'Marked done.';
 });
 $('close').addEventListener('click', () => { $('sheet').classList.remove('show'); clearTimeout(timer); current = null; load(); });
 $('stop').addEventListener('click', () => post('api/setup/stop'));

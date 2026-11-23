@@ -26,6 +26,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import threading
 import time
@@ -113,7 +114,7 @@ PARTS: dict[str, Part] = {
         ('/encoder/speed', '/battery/voltage', '/battery/current'),
     ),
     'battery': Part(
-        'Battery', 'middle', 'The car battery.', ('/battery/state',), record=('battery',)
+        'Battery', 'middle', 'Powers the car.', ('/battery/state',), record=('battery',)
     ),
     'power_sensor': Part(
         'Power sensor',
@@ -145,7 +146,7 @@ PARTS: dict[str, Part] = {
         record=('servo',),
     ),
     'wheels': Part(
-        'Wheels', 'bottom', 'Four wheels; the front pair steers.', ('/odom',), ('odom',)
+        'Wheels', 'bottom', 'Four wheels, Ackermann steering.', ('/odom',), ('odom',)
     ),
 }
 # Wheel nodes open the wheels part.
@@ -229,7 +230,8 @@ def calibration_rows() -> list[dict[str, Any]]:
     for step, (key, state, detail) in zip(
         calibrate.STEPS, calibrate.status_rows(config_dir()), strict=True
     ):
-        rows.append({'key': key, 'label': step.label, 'state': state, 'detail': detail,
+        rows.append({'key': key, 'label': calibration_label(step.label), 'state': state,
+                     'detail': detail,
                      'values': calibrate.step_values(step)})  # fmt: skip
     return rows
 
@@ -538,6 +540,76 @@ def load_car_setup() -> Any:
     return car_setup
 
 
+# -- page wording --
+# The command-line tools keep their own wording; these read the same data for the pages.
+
+FIELD_LABELS = {
+    'ESC program settings (program card, items 1 to 12)': 'ESC program (items 1 to 12)',
+    'Idle battery current (optional; 8080 Current chip, car on a stand)': (
+        'Idle battery current (A, optional)'
+    ),
+}
+STEP_NAMES = {
+    'imu': 'IMU', 'mag': 'magnetometer', 'realsense': 'RealSense IMU', 'lidar': 'lidar',
+    'camera': 'camera mount', 'odom': 'odometry', 'steering': 'steering',
+    'dynamics': 'vehicle dynamics',
+}  # fmt: skip
+CHECK_NAMES = {'health link': 'Board link', 'health nvme': 'Data drive', 'health power': 'Power'}
+PLURAL = re.compile(r'(\d+) ((?:[A-Za-z]+ )*)([A-Za-z]+)\(s\)')
+KERNEL_LOG = re.compile(r'^kernel log (\d+) NVMe, (\d+) PCIe error line\(s\) this boot')
+
+
+def field_label(label: str) -> str:
+    """Return a setup question's label as the page shows it: no '(label)' notes."""
+    label = FIELD_LABELS.get(label, label)
+    return re.sub(r' \((board )?label\)$', '', label)
+
+
+def calibration_label(label: str) -> str:
+    return label.replace('accel bias', 'accelerometer bias')
+
+
+def _plural(m: re.Match[str]) -> str:
+    n = int(m.group(1))
+    return f'{n} {m.group(2)}{m.group(3)}{"" if n == 1 else "s"}'
+
+
+def check_detail(detail: str) -> str:
+    """Return a check result's detail for the page: whole words, plurals, units."""
+    m = KERNEL_LOG.match(detail)
+    if m:
+        nvme, pcie = int(m.group(1)), int(m.group(2))
+        parts = [f'{n} {what} error{"" if n == 1 else "s"}' for n, what in
+                 ((nvme, 'NVMe'), (pcie, 'PCIe')) if n]  # fmt: skip
+        return (', '.join(parts) or 'No errors') + ' this boot'
+    m = re.fullmatch(r'last check failed: ([\w, ]+)', detail)
+    if m:
+        keys = [k.strip() for k in m.group(1).split(',')]
+        detail = 'last check failed: ' + ', '.join(STEP_NAMES.get(k, k) for k in keys)
+    detail = PLURAL.sub(_plural, detail).replace('m/s^2', 'm/s\u00b2')
+    return detail[:1].upper() + detail[1:] if detail[:1].islower() else detail
+
+
+def check_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Return one `racecar check` result row worded for the page."""
+    name = str(row.get('name', ''))
+    name = CHECK_NAMES.get(name, name[:1].upper() + name[1:])
+    repair = str(row.get('repair', ''))
+    m = re.fullmatch(r'Calibrate (\w+) again', repair)
+    if m:
+        repair = f'Recalibrate the {STEP_NAMES.get(m.group(1), m.group(1))}'
+    # Results saved before the pages moved under a name path link from the root.
+    link = str(row.get('link', '')).lstrip('/')
+    return {**row, 'name': name, 'detail': check_detail(str(row.get('detail', ''))),
+            'repair': repair, 'link': link}  # fmt: skip
+
+
+def checks_last(last: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not last:
+        return last
+    return {**last, 'rows': [check_row(r) for r in last.get('rows') or []]}
+
+
 def setup_view() -> dict[str, Any]:
     """Return the Setup page tiles: each step's state, detail, time and questions, by group."""
     cs = load_car_setup()
@@ -549,9 +621,10 @@ def setup_view() -> dict[str, Any]:
         for key in keys:
             step = by_key[key]
             done, by, detail = cs.evaluate(car, step)
+            fields = [{**f, 'label': field_label(f['label'])} for f in cs.step_fields(car, key)]
             steps.append({
                 'key': key, 'title': step.title, 'done': done, 'by': by, 'detail': detail,
-                'time': cs.STEP_TIME.get(key, ''), 'fields': cs.step_fields(car, key),
+                'time': cs.STEP_TIME.get(key, ''), 'fields': fields,
             })  # fmt: skip
         groups.append({'title': title, 'steps': steps})
     return {'groups': groups, 'complete': cs.setup_complete(car.info())}
@@ -621,7 +694,8 @@ def calibration_view() -> dict[str, Any]:
             if not isinstance(v, list) or len(v) <= 3
         }
         steps.append({
-            'key': key, 'label': step.label, 'state': tile_state(state, detail, result),
+            'key': key, 'label': calibration_label(step.label),
+            'state': tile_state(state, detail, result),
             'detail': detail, 'result': result, 'check': bool(step.check),
             'optional': step.optional, 'position': step.position, 'values': values,
         })  # fmt: skip
@@ -669,7 +743,7 @@ def load_racecar_check() -> Any:
 def checks_view() -> dict[str, Any]:
     rc = load_racecar_check()
     return {'parked': list(rc.PARKED), 'health': list(rc.HEALTH), 'guided': list(GUIDED),
-            'last': rc.read_last()}  # fmt: skip
+            'last': checks_last(rc.read_last())}  # fmt: skip
 
 
 def checks_argv(names: list[str], run_all: bool, guided: str) -> list[str]:
