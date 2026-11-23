@@ -27,6 +27,7 @@ CORE = (
     'racecar-jupyter',
     'racecar-mapview',
     'racecar-profile',
+    'racecar-files',
     BATTERY_GUARD,
 )
 

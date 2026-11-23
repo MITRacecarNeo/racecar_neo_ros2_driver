@@ -256,6 +256,10 @@ __RC_SVC_HELP__
                     # The core units (phase 11 of setup_all.sh), e.g. after an upgrade.
                     bash "$pkg_dir/scripts/setup_services.sh" "$@"
                     ;;
+                web)
+                    # The port-80 web server: every app at /<name>/ (phase 13 of setup_all.sh).
+                    bash "$pkg_dir/scripts/setup_web.sh" "$@"
+                    ;;
                 dashboards)
                     # Installs the four lab dashboards' units, stopped and
                     # disabled.
@@ -1538,7 +1542,7 @@ _racecar_complete() {
             ;;
         setup)
             if [[ $COMP_CWORD -eq 2 ]]; then
-                COMPREPLY=( $(compgen -W "all car services networking realsense dashboards" -- "$cur") )
+                COMPREPLY=( $(compgen -W "all car services networking realsense dashboards web" -- "$cur") )
             elif [[ "${COMP_WORDS[2]}" == "networking" ]]; then
                 COMPREPLY=( $(compgen -W "--ssid= --id= --psk= --channel= --ap-addr= --ap-iface= --eth-static= --eth-mode= --show --reset --help" -- "$cur") )
             elif [[ "${COMP_WORDS[2]}" == "dashboards" ]]; then

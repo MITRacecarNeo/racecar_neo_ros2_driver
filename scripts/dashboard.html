@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RACECAR Neo</title>
-<link rel="stylesheet" href="/ui/rcn.css?v={{asset}}">
-<script src="/ui/charts.js?v={{asset}}"></script>
-<script src="/ui/ui.js?v={{asset}}"></script>
-<script src="/ui/api.js?v={{asset}}"></script>
-<link rel="icon" href="/ui/brand/app-icon-32.png">
-<link rel="apple-touch-icon" href="/ui/brand/app-icon-180.png">
+<link rel="stylesheet" href="ui/rcn.css?v={{asset}}">
+<script src="ui/charts.js?v={{asset}}"></script>
+<script src="ui/ui.js?v={{asset}}"></script>
+<script src="ui/api.js?v={{asset}}"></script>
+<link rel="icon" href="ui/brand/app-icon-32.png">
+<link rel="apple-touch-icon" href="ui/brand/app-icon-180.png">
 <style>
   .rcn-header .host { font: 600 16px/24px var(--rcn-font-sans); color: var(--rcn-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .rcn-header { position: relative; }
@@ -108,7 +108,7 @@
 <body data-home>
 
 <header class="rcn-header">
-  <img class="rcn-mark" src="/ui/brand/mark.png" alt="RACECAR Neo">
+  <img class="rcn-mark" src="ui/brand/mark.png" alt="RACECAR Neo">
   <span class="host" id="host"></span>
   <span id="clock" aria-label="Car time"></span>
   <span class="rcn-spacer"></span>
@@ -118,7 +118,7 @@
   </span>
   <span class="rcn-status off batt" id="batt-time" role="button" tabindex="0" hidden></span>
   <span class="rcn-status off batt" id="batt-power" hidden></span>
-  <span class="rcn-status off" id="overall"><svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#info"/></svg>Loading</span>
+  <span class="rcn-status off" id="overall"><svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#info"/></svg>Loading</span>
 </header>
 
 <main>
@@ -129,15 +129,15 @@
     <!-- display: contents keeps the override and Shut Down tiles in the same grid as the core apps. -->
     <div id="apps-core" style="display: contents"></div>
     <button class="app" id="override" aria-pressed="false" data-tip="Drive without a controller. Press any controller button except LB to stop">
-      <span class="glyph"><svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#alert"/></svg></span>
+      <span class="glyph"><svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#alert"/></svg></span>
       <span class="name">Safety Override</span></button>
     <button class="app" id="poweroff" data-tip="Shut down the car safely">
-      <span class="glyph"><svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#power"/></svg></span>
+      <span class="glyph"><svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#power"/></svg></span>
       <span class="name">Shut Down</span></button>
   </div>
   <div class="bar-row group-row">
     <div class="rcn-eyebrow">Tools</div>
-    <button class="rcn-btn quiet small" id="clear-apps"><svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#stop"/></svg>Clear apps</button>
+    <button class="rcn-btn quiet small" id="clear-apps"><svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#stop"/></svg>Clear apps</button>
   </div>
   <div class="apps" id="apps-tools"></div>
   <div class="bar-row group-row"><div class="rcn-eyebrow">Autonomy</div></div>
@@ -145,7 +145,7 @@
   <div class="rcn-small rcn-muted" id="msg"></div>
 
   <details id="features-section">
-    <summary>Features <svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#chevron-down"/></svg></summary>
+    <summary>Features <svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#chevron-down"/></svg></summary>
     <div class="apps" id="features"></div>
   </details>
 
@@ -160,7 +160,7 @@
   </dialog>
 
   <details id="overview">
-    <summary>Overview <svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#chevron-down"/></svg></summary>
+    <summary>Overview <svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#chevron-down"/></svg></summary>
     <div class="tiles">
       <div class="tile">
         <div class="head"><span class="title">Color camera</span><button class="rcn-btn quiet small cam-toggle" aria-pressed="false">Show camera</button></div>
@@ -211,7 +211,7 @@
   </details>
 
   <details id="system">
-    <summary>System status <svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#chevron-down"/></svg></summary>
+    <summary>System status <svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#chevron-down"/></svg></summary>
     <div class="views" role="group" aria-label="View">
       <button class="rcn-btn quiet small" id="view-basic" aria-pressed="true">Basic</button>
       <button class="rcn-btn quiet small" id="view-advanced" aria-pressed="false">Advanced</button>
@@ -238,14 +238,14 @@
   </details>
 
   <div class="foot">
-    <button class="rcn-btn quiet small" id="refresh"><svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#refresh"/></svg>Refresh</button>
+    <button class="rcn-btn quiet small" id="refresh"><svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#refresh"/></svg>Refresh</button>
     <span class="rcn-small rcn-muted" id="timestamp"></span>
   </div>
 </main>
 
-<script src="/ui/battery.js?v={{asset}}"></script>
-<script src="/ui/stall.js?v={{asset}}"></script>
-<script src="/ui/override.js?v={{asset}}"></script>
+<script src="ui/battery.js?v={{asset}}"></script>
+<script src="ui/stall.js?v={{asset}}"></script>
+<script src="ui/override.js?v={{asset}}"></script>
 <script>
 'use strict';
 const { $, esc, icon, pill, STATUS_ICON, store, setHtml } = RcnUi;
@@ -268,7 +268,7 @@ function renderSetup(view) {
   const profile = apps.find((a) => a.id === 'profile');
   if (!setup.complete && profile) {
     const link = document.createElement('a');
-    link.href = `${location.protocol}//${location.hostname}:${profile.port}/setup`;
+    link.href = RcnRoute.app('profile', 'setup');
     link.textContent = 'Open Setup';
     note.append(' ', link);
   }
@@ -329,7 +329,7 @@ document.querySelector('main').addEventListener('click', (e) => {
   const needsCamera = app.needs === 'camera' && !live(app) && featureState('camera') === 'inactive';
   if (needsCamera && !confirm(`${app.name} needs the camera. Turn it on?\n\n${RESTART}`)) return;
   // Opened from the click so the browser allows the new tab.
-  window.open(`/launch?app=${encodeURIComponent(app.id)}`, '_blank');
+  window.open(`launch?app=${encodeURIComponent(app.id)}`, '_blank');
   if (needsCamera) setFeature({ feature: 'camera', on: true });
 });
 
@@ -355,7 +355,7 @@ function renderFeatures(view) {
 }
 async function setFeature(body) {
   try {
-    const r = await (await post('/api/feature', body)).json();
+    const r = await (await post('api/feature', body)).json();
     $('msg').textContent = r.message;
     featureMessage = r.message;
   } catch (err) { $('msg').textContent = LOST; }
@@ -364,7 +364,7 @@ async function setFeature(body) {
 function autonomyClick(f) {
   const last = f.last || {};
   if (!live(f)) {
-    if (!last.map) { window.open(`${location.protocol}//${location.hostname}:8084/`, '_blank'); return; }
+    if (!last.map) { window.open(RcnRoute.app('mapview'), '_blank'); return; }
     let ask = last.mode === 'mapping' ? `Continue mapping ${last.map}?` : `Localize on ${last.map} again?`;
     const driving = apps.filter((a) => a.exclusive && live(a)).map((a) => a.name);
     if (driving.length) ask += ` ${driving.join(' and ')} will close.`;
@@ -425,7 +425,7 @@ function loadFrame(id, name) {
   const next = new Image();
   next.onload = () => { img.src = next.src; delete img.dataset.busy; };
   next.onerror = () => { delete img.dataset.busy; };
-  next.src = `/api/overview/${name}.jpg?t=${frameTick++}`;
+  next.src = `api/overview/${name}.jpg?t=${frameTick++}`;
 }
 function drawLidar() {
   const box = $('ov-lidar');
@@ -495,12 +495,12 @@ function setCamera(on) {
 document.querySelectorAll('.cam-toggle').forEach((b) => { b.onclick = () => setCamera(!showCamera); });
 function pollOverview() {
   if (!overviewOpen()) return;
-  fetch('/api/overview').then((r) => r.json()).then((d) => { ov = d; renderOverview(); }).catch(() => {});
+  fetch('api/overview').then((r) => r.json()).then((d) => { ov = d; renderOverview(); }).catch(() => {});
   if (showCamera) { loadFrame('ov-color', 'color'); loadFrame('ov-depth', 'depth'); }
 }
 function pollHistory() {
   if (!overviewOpen()) return;
-  fetch('/api/history').then((r) => r.json()).then((h) => { history = h; renderHistory(); }).catch(() => {});
+  fetch('api/history').then((r) => r.json()).then((h) => { history = h; renderHistory(); }).catch(() => {});
 }
 $('overview').addEventListener('toggle', () => {
   store.set('rcn-overview-open', overviewOpen() ? '1' : '0');
@@ -701,7 +701,7 @@ function renderBattery(b) {
 }
 RcnBattery.onCancel = async () => {
   try {
-    const r = await (await post('/api/battery/cancel')).json();
+    const r = await (await post('api/battery/cancel')).json();
     $('msg').textContent = r.message;
   } catch (err) { $('msg').textContent = LOST; }
   update(true);
@@ -709,7 +709,7 @@ RcnBattery.onCancel = async () => {
 $('poweroff').onclick = async () => {
   if (!confirm('Shut down the car?')) return;
   try {
-    const r = await post('/api/shutdown');
+    const r = await post('api/shutdown');
     const o = await r.json();
     if (!r.ok) { $('msg').textContent = o.message; return; }
   } catch (err) { $('msg').textContent = LOST; return; }
@@ -768,7 +768,7 @@ document.addEventListener('click', (ev) => { if (!$('net-menu').contains(ev.targ
 document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') toggleNetMenu(false); });
 
 function update(refresh) {
-  return fetch(refresh ? '/api/status?refresh=1' : '/api/status')
+  return fetch(refresh ? 'api/status?refresh=1' : 'api/status')
     .then((r) => r.json())
     .then((data) => {
       apps = data.apps || [];
@@ -795,13 +795,13 @@ $('clear-apps').onclick = async () => {
   if (!confirm('Stop the running apps?')) return;
   $('msg').textContent = 'Stopping apps...';
   try {
-    const r = await (await post('/api/clear-apps')).json();
+    const r = await (await post('api/clear-apps')).json();
     $('msg').textContent = r.message;
   } catch (err) { $('msg').textContent = LOST; }
   update(true);
 };
 $('clear-log').onclick = async () => {
-  try { await post('/api/clear-log'); } catch (err) { /* shown on the next update */ }
+  try { await post('api/clear-log'); } catch (err) { /* shown on the next update */ }
   update(true);
 };
 $('refresh').onclick = () => { update(true); pollOverview(); pollHistory(); };

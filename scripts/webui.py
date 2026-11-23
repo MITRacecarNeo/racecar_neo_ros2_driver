@@ -22,6 +22,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from functools import cache
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import ipaddress
 import json
 import logging
 from pathlib import Path
@@ -41,7 +42,7 @@ PREFIX = '/ui/'
 CACHE_CONTROL = 'max-age=300'
 # Pages link the shared files as /ui/<file>?v={{asset}}; bump this when a file
 # in scripts/web/ changes, so browsers fetch the new copy at once.
-ASSET_VERSION = '37'
+ASSET_VERSION = '38'
 TYPES = {
     '.css': 'text/css; charset=utf-8',
     '.js': 'text/javascript; charset=utf-8',
@@ -52,8 +53,8 @@ TYPES = {
 }
 PACKAGE_XML = Path(__file__).resolve().parent.parent / 'package.xml'
 PAGE_TAGS = (
-    '<script src="/ui/footer.js?v={{asset}}" defer></script>'
-    '<script src="/ui/home.js?v={{asset}}" defer></script>'
+    '<script src="ui/footer.js?v={{asset}}" defer></script>'
+    '<script src="ui/home.js?v={{asset}}" defer></script>'
 )
 # Shared files whose text gets the placeholders filled.
 FILLED = ('.js',)
@@ -80,13 +81,42 @@ def driver_version() -> str:
     return found.group(1).strip() if found else 'unknown'
 
 
+@cache
+def routes_json() -> str:
+    from racecar_neo_ros2_driver import apps
+
+    return json.dumps(apps.routes())
+
+
 def fill(text: str) -> str:
-    """Replace {{asset}}, {{home}} and {{driver}} in a page or a shared script."""
+    """Replace {{asset}}, {{home}}, {{driver}} and {{routes}} in a page or a shared script."""
+    if '{{routes}}' in text:
+        text = text.replace('{{routes}}', routes_json())
     return (
         text.replace('{{asset}}', ASSET_VERSION)
         .replace('{{home}}', str(home_port()))
         .replace('{{driver}}', driver_version())
     )
+
+
+# The path nginx forwards an app under (/mapper/); anything else reads as /.
+PREFIX_HEADER = 'X-Forwarded-Prefix'
+VALID_PREFIX = re.compile(r'/[a-z0-9-]+/')
+HEAD_TAG = re.compile(r'<head[^>]*>', re.I)
+
+
+def base_tags(prefix: str) -> str:
+    """Return the tags every page's head starts with: its base path and the app addresses."""
+    return f'<base href="{prefix}"><script src="ui/route.js?v={ASSET_VERSION}"></script>'
+
+
+def with_base(text: str, prefix: str) -> str:
+    """Put base_tags right after <head>, so the page's relative links resolve under its path."""
+    m = HEAD_TAG.search(text)
+    if m is None:
+        return base_tags(prefix) + text
+    end = m.end()
+    return text[:end] + base_tags(prefix) + text[end:]
 
 
 def with_page_scripts(text: str) -> str:
@@ -201,8 +231,36 @@ class AppHandler(BaseHTTPRequestHandler):
             raise ValueError('expected a JSON object')
         return data
 
+    def client_ip(self) -> str:
+        """
+        Return the client's address; through the car's own web server, the one it forwards.
+
+        X-Real-IP is trusted only from this machine (nginx on port 80), so a
+        client elsewhere cannot name itself as the access point or the car.
+        """
+        peer = self.client_address[0]
+        forwarded = (self.headers.get('X-Real-IP') or '').strip()
+        try:
+            if forwarded and ipaddress.ip_address(peer).is_loopback:
+                ipaddress.ip_address(forwarded)
+                return forwarded
+        except ValueError:
+            pass
+        return peer
+
+    def prefix(self) -> str:
+        """Return the path this request came under through port 80 (/mapper/), else /."""
+        value = self.headers.get(PREFIX_HEADER) or '/'
+        return value if VALID_PREFIX.fullmatch(value) else '/'
+
     def page(self, path: Path) -> None:
-        self.send(200, read_page(path).encode(), 'text/html; charset=utf-8')
+        html = with_base(read_page(path), self.prefix())
+        self.send(200, html.encode(), 'text/html; charset=utf-8')
+
+    def redirect(self, where: str, code: int = 302, headers: dict[str, str] | None = None) -> None:
+        """Redirect to `where`, a path inside this app, under the path the request came in."""
+        location = self.prefix() + where.lstrip('/')
+        self.send(code, b'', 'text/plain', headers={'Location': location, **(headers or {})})
 
     def refuse_cross_site(self) -> bool:
         """

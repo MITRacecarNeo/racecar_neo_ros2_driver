@@ -4,17 +4,17 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Line follow - RACECAR Neo</title>
-<link rel="stylesheet" href="/ui/rcn.css?v={{asset}}">
-<script src="/ui/battery.js?v={{asset}}" defer></script>
-<script src="/ui/stall.js?v={{asset}}" defer></script>
-<link rel="icon" href="/ui/brand/app-icon-32.png">
-<script src="/ui/lost.js?v={{asset}}" defer></script>
-<script src="/ui/override.js?v={{asset}}" defer></script>
-<script src="/ui/charts.js?v={{asset}}"></script>
-<script src="/ui/ui.js?v={{asset}}"></script>
-<script src="/ui/api.js?v={{asset}}"></script>
-<script src="/ui/tune.js?v={{asset}}"></script>
-<script src="/ui/logs.js?v={{asset}}"></script>
+<link rel="stylesheet" href="ui/rcn.css?v={{asset}}">
+<script src="ui/battery.js?v={{asset}}" defer></script>
+<script src="ui/stall.js?v={{asset}}" defer></script>
+<link rel="icon" href="ui/brand/app-icon-32.png">
+<script src="ui/lost.js?v={{asset}}" defer></script>
+<script src="ui/override.js?v={{asset}}" defer></script>
+<script src="ui/charts.js?v={{asset}}"></script>
+<script src="ui/ui.js?v={{asset}}"></script>
+<script src="ui/api.js?v={{asset}}"></script>
+<script src="ui/tune.js?v={{asset}}"></script>
+<script src="ui/logs.js?v={{asset}}"></script>
 <style>
   .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--rcn-space-4); }
   @media (max-width: 1100px) { .grid { grid-template-columns: 1fr; } }
@@ -38,7 +38,7 @@
 </head>
 <body>
 <header class="rcn-header">
-  <img class="rcn-mark" src="/ui/brand/mark.png" alt="RACECAR Neo">
+  <img class="rcn-mark" src="ui/brand/mark.png" alt="RACECAR Neo">
   <div class="rcn-heading">
     <span class="rcn-title">Line follow</span>
     <span class="rcn-meta">line <b id="mode">-</b> &middot; offset <b id="err">-</b> &middot; steer <b id="steer">-</b> &middot; throttle <b id="thr">-</b> &middot; encoder <b id="enc">-</b> m/s &middot; camera <b id="fps">-</b> fps &middot; processed <b id="pfps">-</b> fps &middot; frame <b id="res">-</b></span>
@@ -123,10 +123,10 @@ const DUALS = [
   { lo: 'v_low', hi: 'v_high', label: 'value', tip: '0 to 255', max: 255, cls: '' },
 ];
 
-function saveTune() { post('/save').then(() => RcnUi.toast('Saved.')); }
-function loadTune() { post('/load').then(() => RcnUi.toast('Loaded.')); }
-function reset() { post('/load'); }
-function stopCar() { post('/params', { speed: 0 }); }
+function saveTune() { post('save').then(() => RcnUi.toast('Saved.')); }
+function loadTune() { post('load').then(() => RcnUi.toast('Loaded.')); }
+function reset() { post('load'); }
+function stopCar() { post('params', { speed: 0 }); }
 
 function setFill(d) {
   const lo = parseInt($(`in_${d.lo}`).value), hi = parseInt($(`in_${d.hi}`).value);
@@ -173,12 +173,12 @@ function syncDuals(p) {
   }
 }
 
-RcnUi.frames($('color'), '/frame/color', 120);
-RcnUi.frames($('mask'), '/frame/mask', 120);
+RcnUi.frames($('color'), 'frame/color', 120);
+RcnUi.frames($('mask'), 'frame/mask', 120);
 
 const LOST = '<span><svg viewBox="0 0 22 8"><rect x="1" y="1" width="20" height="6" fill="var(--rcn-led-red)"/></svg>Line lost</span>';
 
-RcnApi.poll('/state', 120, (d) => {
+RcnApi.poll('state', 120, (d) => {
   $('mode').textContent = d.found ? 'found' : 'lost';
   $('err').textContent = d.error;
   $('steer').textContent = d.steer;

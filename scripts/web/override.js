@@ -11,7 +11,7 @@
 (function () {
   'use strict';
   const PERIOD_MS = 1000;
-  const url = `${location.protocol}//${location.hostname}:{{home}}/api/override`;
+  const url = RcnRoute.app('home', 'api/override');
   const ON = 'Safety switch override is on. The car may move without warning. Do not leave it unattended.';
   let epoch = 0;  // Replies to requests sent before the last start or stop are ignored.
   let banner = null;
@@ -25,7 +25,7 @@
     banner.id = 'override-banner';
     banner.setAttribute('role', 'alert');
     banner.hidden = true;
-    banner.innerHTML = `<svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#alert"/></svg>
+    banner.innerHTML = `<svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#alert"/></svg>
       <span>${ON}</span>
       <button class="rcn-btn small" type="button">Turn off</button>`;
     banner.querySelector('button').onclick = () => send('stop');

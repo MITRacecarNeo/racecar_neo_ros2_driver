@@ -102,7 +102,7 @@ Log in again over SSH.
 `racecar setup car` takes the car the rest of the way. It shows a checklist,
 then runs the next open step.
 
-The Setup page of the Car Profile app (`http://<car>.local:8088/setup`)
+The Setup page of the Car Profile app (`http://<car>.local/profile/setup`)
 runs the same steps from a browser. Tap a tile to run a step or fill in its
 answers. When a step asks for the password, type the racecar password in
 the box that opens.

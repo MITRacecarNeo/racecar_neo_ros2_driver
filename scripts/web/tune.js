@@ -21,7 +21,7 @@
     timer = setTimeout(() => {
       const body = pending;
       pending = {}; timer = null;
-      RcnApi.post('/params', body);
+      RcnApi.post('params', body);
     }, SEND_MS);
   }
 

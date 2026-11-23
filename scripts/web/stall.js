@@ -7,7 +7,7 @@
 (function () {
   'use strict';
   const PERIOD_MS = 1000;
-  const url = `${location.protocol}//${location.hostname}:{{home}}/api/stall`;
+  const url = RcnRoute.app('home', 'api/stall');
   let stall = null;
   let deadline = null;
   let banner = null;
@@ -18,7 +18,7 @@
     banner.id = 'stall-banner';
     banner.setAttribute('role', 'alert');
     banner.hidden = true;
-    banner.innerHTML = '<svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#alert"/></svg><span></span>';
+    banner.innerHTML = '<svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#alert"/></svg><span></span>';
     const main = document.querySelector('main');
     if (main) main.prepend(banner); else document.body.prepend(banner);
   }

@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RACECAR Neo setup</title>
-<link rel="stylesheet" href="/ui/rcn.css?v={{asset}}">
-<script src="/ui/ui.js?v={{asset}}"></script>
-<script src="/ui/profile_nav.js?v={{asset}}"></script>
-<script src="/ui/battery.js?v={{asset}}" defer></script>
-<script src="/ui/stall.js?v={{asset}}" defer></script>
-<link rel="icon" href="/ui/brand/app-icon-32.png">
-<link rel="apple-touch-icon" href="/ui/brand/app-icon-180.png">
+<link rel="stylesheet" href="ui/rcn.css?v={{asset}}">
+<script src="ui/ui.js?v={{asset}}"></script>
+<script src="ui/profile_nav.js?v={{asset}}"></script>
+<script src="ui/battery.js?v={{asset}}" defer></script>
+<script src="ui/stall.js?v={{asset}}" defer></script>
+<link rel="icon" href="ui/brand/app-icon-32.png">
+<link rel="apple-touch-icon" href="ui/brand/app-icon-180.png">
 <style>
 main { max-width: 1100px; margin: 0 auto; padding: var(--rcn-space-4); }
 main > .rcn-override { margin: 0 0 var(--rcn-space-4); }
@@ -44,14 +44,14 @@ main > .rcn-override { margin: 0 0 var(--rcn-space-4); }
 </head>
 <body>
 <header class="rcn-header">
-  <img class="rcn-mark" src="/ui/brand/mark.png" alt="RACECAR Neo">
+  <img class="rcn-mark" src="ui/brand/mark.png" alt="RACECAR Neo">
   <span class="rcn-title">Setup</span>
   <span class="rcn-spacer"></span>
 </header>
 <main>
   <div class="summary rcn-muted" id="summary">Reading the car...</div>
   <div id="groups"></div>
-  <p class="rcn-small rcn-muted">Sensor calibration is on the <a href="/calibration">Calibration</a> page.</p>
+  <p class="rcn-small rcn-muted">Sensor calibration is on the <a href="calibration">Calibration</a> page.</p>
 </main>
 <div class="sheet" id="sheet"><div>
   <h2 id="stitle"></h2>
@@ -92,7 +92,7 @@ const NOTES = {
   measurements: 'Keep the stock geometry for a car built to the fleet design. Otherwise enter your measurements in millimeters.',
   record: 'The fleet parts are filled in. Change any that differ on this car.',
 };
-const GUIDE = { esc: '/handbook/calibration#esc-program-settings' };
+const GUIDE = { esc: 'handbook/calibration#esc-program-settings' };
 
 let view = null, current = null, since = 0, timer = null, lost = false;
 
@@ -116,7 +116,7 @@ function render() {
 }
 
 async function load() {
-  view = await fetch('/api/setup').then((r) => r.json());
+  view = await fetch('api/setup').then((r) => r.json());
   render();
   if (view.job.running && !current) openStep(view.job.label);
 }
@@ -130,7 +130,7 @@ function openStep(key) {
   $('stitle').textContent = s.title;
   $('stime').textContent = s.time ? `Takes ${s.time}.` : '';
   $('snote').textContent = [NOTES[key], DROPS[key]].filter(Boolean).join(' ');
-  $('guide').href = GUIDE[key] || `/handbook/installation#${key}`;
+  $('guide').href = GUIDE[key] || `handbook/installation#${key}`;
   $('sform').innerHTML = s.fields.filter((f) => f.kind !== 'hidden').map((f) => {
     const id = `f-${f.key}`;
     if (f.kind === 'yes-no') {
@@ -160,7 +160,7 @@ function values() {
 
 async function run() {
   if (DROPS[current.key] && !confirm(DROPS[current.key])) return;
-  const r = await post('/api/setup/run', { step: current.key, values: values() });
+  const r = await post('api/setup/run', { step: current.key, values: values() });
   if (!r.ok) { $('status').textContent = r.message || 'Did not start.'; return; }
   since = 0;
   $('out').textContent = '';
@@ -178,7 +178,7 @@ function watch() {
 async function poll() {
   let job;
   try {
-    job = await fetch(`/api/setup/job?since=${since}`).then((r) => r.json());
+    job = await fetch(`api/setup/job?since=${since}`).then((r) => r.json());
   } catch (e) {
     lost = true;
     $('status').textContent = 'Waiting for the car...';
@@ -216,17 +216,17 @@ function send() {
   const text = $('pinput').value;
   $('pinput').value = '';
   $('promptrow').classList.remove('show');
-  post('/api/setup/input', { text });
+  post('api/setup/input', { text });
 }
 
 $('run').addEventListener('click', (e) => { e.preventDefault(); run(); });
 $('markdone').addEventListener('click', async () => {
-  await post('/api/setup/done', { step: current.key });
+  await post('api/setup/done', { step: current.key });
   await load();
   $('status').textContent = 'Marked done.';
 });
 $('close').addEventListener('click', () => { $('sheet').classList.remove('show'); clearTimeout(timer); current = null; load(); });
-$('stop').addEventListener('click', () => post('/api/setup/stop'));
+$('stop').addEventListener('click', () => post('api/setup/stop'));
 $('psend').addEventListener('click', send);
 $('pinput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); send(); } });
 $('sform').addEventListener('submit', (e) => { e.preventDefault(); run(); });

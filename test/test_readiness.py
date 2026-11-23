@@ -24,7 +24,7 @@ class TestRows:
         rows = rd.imu_rows(still(gyro=(0.0, 0.0, math.radians(-1.59))))
         assert rows[0].status == rd.WARN and rows[0].repair == 'Calibrate imu'
         assert rd.imu_rows(still(gyro=(0.0, 0.0, 0.05)))[0].status == rd.FAIL
-        assert rows[0].link == '/calibration'
+        assert rows[0].link == 'calibration'
 
     def test_gravity(self):
         assert rd.imu_rows(still(accel=(0, 0, G * 1.02)))[1].status == rd.WARN

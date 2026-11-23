@@ -25,6 +25,7 @@ This package is the v2 successor to [`racecar-neo-ros2-backend`](https://github.
 - [Car data](#car-data)
 - [Bag recording](#bag-recording)
 - [Car Profile app](#car-profile-app)
+- [Files app](#files-app)
 - [Maps](#maps)
 - [Jupyter notebooks](#jupyter-notebooks)
   - [Student library and labs](#student-library-and-labs)
@@ -450,7 +451,17 @@ Changes apply on the **next boot**; `status` reports a pending change when the d
 
 ## Web dashboard
 
-Once `racecar-teleop.service` is running, browse to `http://<robot>:8080`.
+Once `racecar-teleop.service` is running, browse to the car with no port:
+`http://racecar-neo-0.local/`, or an address such as `http://10.42.0.1/` on
+the car's access point. It opens the home page (`/home/`, also
+`http://<robot>:8080`). `racecar setup web` ends by loading the home page
+through each of these addresses.
+
+**Addresses.** Every app has a name address on port 80 as well as its port:
+`/home/`, `/profile/`, `/jupyter/`, `/files/`, `/terminal/`, `/webteleop/`,
+`/linefollow/`, `/wallfollow/`, `/camlabel/`, `/mapper/`. The names come
+from the `path` field of `config/apps.yaml`; `racecar setup web` writes the
+nginx site after an app is added.
 
 **Apps.** One tile per app, in three groups. Hover over a tile for what it
 does. A white border means the app is running.
@@ -891,6 +902,14 @@ unless you pass `--force`, because rosbag2 drops messages rather than blocking:
 the bag looks healthy until it is read. Name the topics you need, or
 `--exclude '/camera/.*'`.
 
+## Files app
+
+`racecar-files.service` serves port 8089 (`/files/`) from boot. The Pages
+list shows every app, its address, and a green dot when it runs. The file
+browser opens `~/jupyter_ws` and the folders it links to (data, maps, the
+student library): code with line numbers, Markdown and notebooks rendered,
+images, and a download button for any file. It changes nothing.
+
 ## Car Profile app
 
 `racecar-profile.service` serves the car's own page on port 8088 from boot:
@@ -1028,7 +1047,8 @@ start or load; see [docs/advanced-settings.md](docs/advanced-settings.md),
 
 ## Jupyter notebooks
 
-`http://<robot>:8888/lab`: JupyterLab with `import rclpy` working out of the box. Notebooks land in `~/jupyter_ws/`. No token / password by default (the systemd unit assumes the robot's network is trusted).
+`http://<robot>/jupyter/` or `http://<robot>:8888/jupyter/lab` (`:8888/` and
+`:8888/lab` lead there): JupyterLab with `import rclpy` working out of the box. Notebooks land in `~/jupyter_ws/`. No token / password by default (the systemd unit assumes the robot's network is trusted).
 
 ### Student library and labs
 

@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RACECAR Neo terminal</title>
-<link rel="stylesheet" href="/ui/rcn.css?v={{asset}}">
-<script src="/ui/stall.js?v={{asset}}" defer></script>
-<link rel="icon" href="/ui/brand/app-icon-32.png">
-<link rel="apple-touch-icon" href="/ui/brand/app-icon-180.png">
+<link rel="stylesheet" href="ui/rcn.css?v={{asset}}">
+<script src="ui/stall.js?v={{asset}}" defer></script>
+<link rel="icon" href="ui/brand/app-icon-32.png">
+<link rel="apple-touch-icon" href="ui/brand/app-icon-180.png">
 <style>
   main { max-width: 360px; margin: 0 auto; padding: var(--rcn-space-8) var(--rcn-space-4); }
   form { display: flex; flex-direction: column; gap: var(--rcn-space-3); }
@@ -18,11 +18,11 @@
 </head>
 <body>
 <header class="rcn-header">
-  <img class="rcn-mark" src="/ui/brand/mark.png" alt="RACECAR Neo">
+  <img class="rcn-mark" src="ui/brand/mark.png" alt="RACECAR Neo">
   <span class="rcn-title">Terminal</span>
 </header>
 <main>
-  <form method="post" action="/login">
+  <form method="post" action="login">
     <input id="password" name="password" type="password" placeholder="Password" aria-label="Password" autocomplete="current-password" required autofocus>
     <button class="rcn-btn" type="submit">Log in</button>
     <div class="rcn-small" id="msg" role="alert"></div>

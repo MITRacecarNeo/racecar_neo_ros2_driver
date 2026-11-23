@@ -11,6 +11,10 @@
 #   name, icon, desc
 #               tile label, icon in scripts/web/icons.svg, hover tip
 #   port        where the app serves its page
+#   path        its name on the car's web server: http://<car>/<path>/ (port 80
+#               forwards to the port; setup_web.sh writes the nginx site)
+#   prefixed    the app itself serves under /<path>/ on its port too
+#               (JupyterLab's base_url); the others serve at / on their port
 #   group       the 8080 row: core, tools, or autonomy. Core apps run at boot
 #               and stay open while setup is unfinished; Tools and Autonomy
 #               wait for setup. Clear apps stops every app whose unit is not
@@ -26,6 +30,7 @@
 
 home:
   port: 8080
+  path: home
   unit: racecar-dashboard
 
 apps:
@@ -33,6 +38,7 @@ apps:
     name: Car Profile
     icon: car
     port: 8088
+    path: profile
     group: core
     unit: racecar-profile
     exclusive: false
@@ -43,16 +49,30 @@ apps:
     name: JupyterLab
     icon: notebook
     port: 8888
+    path: jupyter
+    prefixed: true
     group: core
     unit: racecar-jupyter
     exclusive: false
     startable: false
     desc: Notebooks and code
 
+  - id: files
+    name: Files
+    icon: folder
+    port: 8089
+    path: files
+    group: core
+    unit: racecar-files
+    exclusive: false
+    startable: false
+    desc: Browse the car's pages and files
+
   - id: terminal
     name: Terminal
     icon: terminal
     port: 8086
+    path: terminal
     group: tools
     unit: racecar-terminal
     exclusive: false
@@ -63,6 +83,7 @@ apps:
     name: Web Teleop
     icon: gamepad
     port: 8081
+    path: webteleop
     group: tools
     unit: racecar-webteleop
     exclusive: true
@@ -75,6 +96,7 @@ apps:
     name: Line Follow
     icon: line
     port: 8082
+    path: linefollow
     group: tools
     unit: racecar-linefollow
     exclusive: true
@@ -88,6 +110,7 @@ apps:
     name: Wall Follow
     icon: wall
     port: 8083
+    path: wallfollow
     group: tools
     unit: racecar-wallfollow
     exclusive: true
@@ -100,6 +123,7 @@ apps:
     name: Camera Label
     icon: tag
     port: 8085
+    path: camlabel
     group: tools
     unit: racecar-camlabel
     exclusive: false
@@ -113,6 +137,7 @@ apps:
     name: Mapper
     icon: map
     port: 8084
+    path: mapper
     group: autonomy
     unit: racecar-mapview
     exclusive: false

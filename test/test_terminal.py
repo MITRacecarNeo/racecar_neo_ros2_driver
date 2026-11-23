@@ -215,7 +215,7 @@ def client(tmp_path):
 class TestServer:
     def test_login_page_without_a_session(self, client):
         resp, body = client('GET', '/')
-        assert resp.status == 200 and b'action="/login"' in body
+        assert resp.status == 200 and b'action="login"' in body
 
     def test_login_sets_a_strict_cookie(self, client):
         resp = client.login()
@@ -392,7 +392,7 @@ class TestLayoutApi:
 
     def test_page_places_panes_without_moving_iframes(self):
         html = (Path(__file__).resolve().parent.parent / 'scripts' / 'terminal.html').read_text()
-        assert 'frame.src = `/pane/${id}/`' in html
+        assert 'frame.src = `pane/${id}/`' in html
         assert 'Ctrl+Shift+E' in html and 'Ctrl+Shift+O' in html
         assert 'attachCustomKeyEventHandler' in html
         assert 'data-tip' not in html

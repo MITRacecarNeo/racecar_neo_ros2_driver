@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Camera label - RACECAR Neo</title>
-<link rel="stylesheet" href="/ui/rcn.css?v={{asset}}">
-<script src="/ui/battery.js?v={{asset}}" defer></script>
-<script src="/ui/stall.js?v={{asset}}" defer></script>
-<link rel="icon" href="/ui/brand/app-icon-32.png">
-<script src="/ui/lost.js?v={{asset}}" defer></script>
-<script src="/ui/ui.js?v={{asset}}"></script>
-<script src="/ui/api.js?v={{asset}}"></script>
+<link rel="stylesheet" href="ui/rcn.css?v={{asset}}">
+<script src="ui/battery.js?v={{asset}}" defer></script>
+<script src="ui/stall.js?v={{asset}}" defer></script>
+<link rel="icon" href="ui/brand/app-icon-32.png">
+<script src="ui/lost.js?v={{asset}}" defer></script>
+<script src="ui/ui.js?v={{asset}}"></script>
+<script src="ui/api.js?v={{asset}}"></script>
 <style>
   .rcn-header .rcn-meta abbr { text-decoration: underline dotted; cursor: help; }
   .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--rcn-space-4); }
@@ -33,7 +33,7 @@
 </head>
 <body>
 <header class="rcn-header">
-  <img class="rcn-mark" src="/ui/brand/mark.png" alt="RACECAR Neo">
+  <img class="rcn-mark" src="ui/brand/mark.png" alt="RACECAR Neo">
   <div class="rcn-heading">
     <span class="rcn-title">Camera label</span>
     <span class="rcn-meta">unlabeled <b id="ucount">0</b> &middot; labeled <b id="lcount">0</b> &middot;
@@ -89,10 +89,10 @@ const { token, font } = RcnUi;
 const cam = document.getElementById('cam'), camx = cam.getContext('2d');
 const limg = new Image();
 limg.onload = () => camx.drawImage(limg, 0, 0, cam.width, cam.height);
-RcnUi.frames(limg, '/frame', 160);
+RcnUi.frames(limg, 'frame', 160);
 
 function snap() {
-  post('/snap').then(r => {
+  post('snap').then(r => {
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.json();
   }).then(d => {
@@ -139,7 +139,7 @@ function drawLab() {
 
 function pick(n) {
   current = n; boxes = []; drag = null;
-  uimg.src = `/uimg?n=${n}&v=${uv[n]}`;
+  uimg.src = `uimg?n=${n}&v=${uv[n]}`;
   list();
   for (const el of document.querySelectorAll('#uthumbs img')) {
     el.classList.toggle('sel', el.dataset.n == n);
@@ -240,14 +240,14 @@ function saveLabels() {
   const out = boxes.map(b => ({ cls: b.cls,
     cx: (b.x + b.w / 2) / lab.width, cy: (b.y + b.h / 2) / lab.height,
     w: b.w / lab.width, h: b.h / lab.height }));
-  post('/label', { n: current, boxes: out })
+  post('label', { n: current, boxes: out })
     .then(() => refresh().then(advance))
     .catch(() => refresh().then(advance));
 }
 
 function delImg() {
   if (current === null) return;
-  post('/delu', { n: current })
+  post('delu', { n: current })
     .then(() => refresh().then(advance));
 }
 
@@ -265,7 +265,7 @@ document.addEventListener('keydown', e => {
 let unlabeled = [], labeled = [], uv = {}, lv = {};
 
 function refresh() {
-  return fetch('/info').then(r => r.json()).then(d => {
+  return fetch('info').then(r => r.json()).then(d => {
     uv = {}; lv = {};
     unlabeled = d.unlabeled.map(([n, v]) => (uv[n] = v, n));
     labeled = d.labeled.map(([n, v]) => (lv[n] = v, n));
@@ -275,10 +275,10 @@ function refresh() {
     document.getElementById('pres').textContent =
       d.cam[0] ? `${d.preview_width}x${Math.round(d.preview_width * d.cam[1] / d.cam[0])}` : `${d.preview_width}px`;
     document.getElementById('uthumbs').innerHTML = unlabeled.length
-      ? unlabeled.map(n => `<img src="/thumb?src=u&n=${n}&v=${uv[n]}" data-n="${n}" onclick="pick(${n})" title="u${n}.jpg">`).join('')
+      ? unlabeled.map(n => `<img src="thumb?src=u&n=${n}&v=${uv[n]}" data-n="${n}" onclick="pick(${n})" title="u${n}.jpg">`).join('')
       : 'None yet. Snap some frames above.';
     document.getElementById('lthumbs').innerHTML = labeled.length
-      ? labeled.map(n => `<img src="/thumb?src=l&n=${n}&v=${lv[n]}" onclick="showLabeled(${n})" title="img${n}.jpg">`).join('')
+      ? labeled.map(n => `<img src="thumb?src=l&n=${n}&v=${lv[n]}" onclick="showLabeled(${n})" title="img${n}.jpg">`).join('')
       : 'None yet.';
     for (const el of document.querySelectorAll('#uthumbs img')) {
       el.classList.toggle('sel', el.dataset.n == current);
@@ -312,20 +312,20 @@ rimg.onload = () => {
 function showLabeled(n) {
   currentLabeled = n;
   document.getElementById('delbtn').style.display = '';
-  fetch('/label?n=' + n).then(r => r.json()).then(d => {
+  fetch('label?n=' + n).then(r => r.json()).then(d => {
     revBoxes = d.boxes.map(b => ({ x: (b.cx - b.w / 2) * rc.width, y: (b.cy - b.h / 2) * rc.height,
                                    w: b.w * rc.width, h: b.h * rc.height, cls: b.cls }));
     rc.style.display = 'block';
     const names = revBoxes.map(b => b.cls).join(', ');
     document.getElementById('revinfo').textContent = `img${n}${names ? ': ' + names : ': no boxes'}`;
-    rimg.src = `/img?n=${n}&v=${lv[n]}`;
+    rimg.src = `img?n=${n}&v=${lv[n]}`;
   });
 }
 
 function delLabeled() {
   if (currentLabeled === null) return;
   if (!confirm(`Delete img${currentLabeled} and its labels?`)) return;
-  post('/dell', { n: currentLabeled }).then(() => {
+  post('dell', { n: currentLabeled }).then(() => {
     currentLabeled = null;
     rc.style.display = 'none';
     document.getElementById('delbtn').style.display = 'none';

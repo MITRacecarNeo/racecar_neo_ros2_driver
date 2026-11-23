@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RACECAR Neo handbook</title>
-<link rel="stylesheet" href="/ui/rcn.css?v={{asset}}">
-<script src="/ui/ui.js?v={{asset}}"></script>
-<script src="/ui/profile_nav.js?v={{asset}}"></script>
-<script src="/ui/battery.js?v={{asset}}" defer></script>
-<script src="/ui/stall.js?v={{asset}}" defer></script>
-<link rel="icon" href="/ui/brand/app-icon-32.png">
-<link rel="apple-touch-icon" href="/ui/brand/app-icon-180.png">
+<link rel="stylesheet" href="ui/rcn.css?v={{asset}}">
+<script src="ui/ui.js?v={{asset}}"></script>
+<script src="ui/profile_nav.js?v={{asset}}"></script>
+<script src="ui/battery.js?v={{asset}}" defer></script>
+<script src="ui/stall.js?v={{asset}}" defer></script>
+<link rel="icon" href="ui/brand/app-icon-32.png">
+<link rel="apple-touch-icon" href="ui/brand/app-icon-180.png">
 <style>
 main { overflow-x: hidden; }
 main > .rcn-override { margin: var(--rcn-space-3) var(--rcn-space-3) 0; }
@@ -35,16 +35,16 @@ article :target { scroll-margin-top: var(--rcn-space-4); }
 </head>
 <body>
 <header class="rcn-header">
-  <img class="rcn-mark" src="/ui/brand/mark.png" alt="RACECAR Neo">
+  <img class="rcn-mark" src="ui/brand/mark.png" alt="RACECAR Neo">
   <span class="rcn-title">Handbook</span>
   <span class="rcn-spacer"></span>
 </header>
 <main><article id="page"></article></main>
 <script>
 'use strict';
-const name = decodeURIComponent(location.pathname.replace(/^\/handbook\//, '')) || 'index';
+const name = decodeURIComponent(location.pathname.split('/handbook/').pop()) || 'index';
 RcnProfileNav.mount('handbook', name);
-fetch(`/api/handbook/${encodeURIComponent(name)}`).then((r) => r.json()).then((page) => {
+fetch(`api/handbook/${encodeURIComponent(name)}`).then((r) => r.json()).then((page) => {
   document.title = `${page.title} - RACECAR Neo handbook`;
   // Rendered on the car from docs/handbook/ (scripts/handbook.py), text escaped there.
   document.getElementById('page').innerHTML = page.html;

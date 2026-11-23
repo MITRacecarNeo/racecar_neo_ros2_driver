@@ -553,10 +553,10 @@ def make_handler(ctx: Context) -> type[BaseHTTPRequestHandler]:
             return None
 
         def _allowed(self) -> bool:
-            return client_allowed(self.client_address[0], ctx.allow_lan())
+            return client_allowed(self.client_ip(), ctx.allow_lan())
 
         def _redirect(self, where: str, headers: dict[str, str] | None = None) -> None:
-            self.send(303, b'', 'text/plain', headers={'Location': where, **(headers or {})})
+            self.redirect(where, 303, headers)
 
         def do_GET(self) -> None:  # noqa: N802
             if self.serve_asset():
@@ -683,11 +683,11 @@ def make_handler(ctx: Context) -> type[BaseHTTPRequestHandler]:
             ok = bool(password) and ctx.authenticate(ctx.user, password)
             ctx.guard.record(ok, now)
             if not ok:
-                log.warning('Failed terminal login from %s', self.client_address[0])
+                log.warning('Failed terminal login from %s', self.client_ip())
                 self._redirect('/?e=locked' if ctx.guard.locked(now) else '/?e=password')
                 return
             token = ctx.sessions.create(now)
-            log.info('Terminal login from %s', self.client_address[0])
+            log.info('Terminal login from %s', self.client_ip())
             cookie = f'{COOKIE}={token}; HttpOnly; SameSite=Strict; Path=/'
             self._redirect('/', {'Set-Cookie': cookie})
 

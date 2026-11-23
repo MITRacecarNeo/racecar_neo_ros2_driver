@@ -117,3 +117,46 @@ class TestCli:
         )
         assert r.returncode == 0, r.stderr
         assert 'terminal' in r.stdout.split()
+
+
+class TestRoutes:
+    def test_every_app_and_home_has_a_path(self):
+        routes = apps.routes()
+        assert set(routes) == {'home', *(a['id'] for a in apps.all_apps())}
+        paths = [r[0] for r in routes.values()]
+        assert len(paths) == len(set(paths))
+        assert all(re.fullmatch(r'[a-z0-9-]+', p) for p in paths)
+
+    def test_mapper_and_jupyter(self):
+        routes = apps.routes()
+        assert routes['mapview'][0] == 'mapper'
+        assert routes['jupyter'] == ['jupyter', 8888, True]
+        assert routes['home'] == ['home', apps.home_port(), False]
+
+
+class TestNginx:
+    def test_one_location_per_route(self):
+        site = apps.nginx_site()
+        for path, port, prefixed in apps.routes().values():
+            upstream = f'/{path}/' if prefixed else '/'
+            assert f'location /{path}/ {{' in site
+            assert f'proxy_pass http://127.0.0.1:{port}{upstream};' in site
+            assert f'location = /{path} {{ return 301 /{path}/; }}' in site
+
+    def test_headers_and_root(self):
+        site = apps.nginx_site()
+        headers = (
+            'X-Forwarded-Prefix', 'X-Real-IP $remote_addr', 'Upgrade $http_upgrade', 'Host $host'
+        )
+        assert all(h in site for h in headers)
+        assert 'listen 80 default_server;' in site
+        assert 'location = / { return 302 /home/; }' in site
+
+    def test_cli(self):
+        assert '\n'.join(_cli('nginx')) == apps.nginx_site().rstrip('\n')
+
+    def test_any_host_name_or_address(self):
+        # One default server with no name: the car's IP and its .local name both reach it.
+        site = apps.nginx_site()
+        assert site.count('server {') == 1 and 'server_name _;' in site
+        assert 'listen [::]:80 default_server;' in site

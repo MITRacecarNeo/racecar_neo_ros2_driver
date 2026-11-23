@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RACECAR Neo calibration</title>
-<link rel="stylesheet" href="/ui/rcn.css?v={{asset}}">
-<script src="/ui/ui.js?v={{asset}}"></script>
-<script src="/ui/profile_nav.js?v={{asset}}"></script>
-<script src="/ui/battery.js?v={{asset}}" defer></script>
-<script src="/ui/stall.js?v={{asset}}" defer></script>
-<link rel="icon" href="/ui/brand/app-icon-32.png">
-<link rel="apple-touch-icon" href="/ui/brand/app-icon-180.png">
+<link rel="stylesheet" href="ui/rcn.css?v={{asset}}">
+<script src="ui/ui.js?v={{asset}}"></script>
+<script src="ui/profile_nav.js?v={{asset}}"></script>
+<script src="ui/battery.js?v={{asset}}" defer></script>
+<script src="ui/stall.js?v={{asset}}" defer></script>
+<link rel="icon" href="ui/brand/app-icon-32.png">
+<link rel="apple-touch-icon" href="ui/brand/app-icon-180.png">
 <style>
 main { max-width: 1200px; margin: 0 auto; padding: var(--rcn-space-4); }
 main > .rcn-override { margin: 0 0 var(--rcn-space-4); }
@@ -51,7 +51,7 @@ details pre { max-height: 40vh; overflow: auto; white-space: pre-wrap; }
 </head>
 <body>
 <header class="rcn-header">
-  <img class="rcn-mark" src="/ui/brand/mark.png" alt="RACECAR Neo">
+  <img class="rcn-mark" src="ui/brand/mark.png" alt="RACECAR Neo">
   <span class="rcn-title">Calibration</span>
   <span class="rcn-spacer"></span>
 </header>
@@ -115,7 +115,7 @@ function renderTiles() {
 }
 
 async function load() {
-  view = await fetch('/api/calibration').then((r) => r.json());
+  view = await fetch('api/calibration').then((r) => r.json());
   running = view.job.running && view.job.label.includes(':') ? view.job.label : null;
   renderTiles();
   if (running && !timer) { showStep(running); poll(); }
@@ -131,7 +131,7 @@ function showStep(label) {
 }
 
 async function start(key, mode) {
-  const r = await post('/api/calibration/run', { step: key, mode });
+  const r = await post('api/calibration/run', { step: key, mode });
   if (!r.ok) { alert(r.message || 'Did not start.'); return; }
   since = 0; psince = 0; events = [];
   running = `${mode}:${key}`;
@@ -238,8 +238,8 @@ async function poll() {
   let job, prog;
   try {
     [job, prog] = await Promise.all([
-      fetch(`/api/setup/job?since=${since}`).then((r) => r.json()),
-      fetch(`/api/calibration/progress?since=${psince}`).then((r) => r.json()),
+      fetch(`api/setup/job?since=${since}`).then((r) => r.json()),
+      fetch(`api/calibration/progress?since=${psince}`).then((r) => r.json()),
     ]);
   } catch (e) {
     timer = setTimeout(poll, 2000);
@@ -275,11 +275,11 @@ async function poll() {
   await load();
 }
 
-for (const b of document.querySelectorAll('[data-answer]')) b.addEventListener('click', () => post('/api/setup/input', { text: b.dataset.answer }));
-function send() { post('/api/setup/input', { text: $('answer').value }); $('answer').value = ''; }
+for (const b of document.querySelectorAll('[data-answer]')) b.addEventListener('click', () => post('api/setup/input', { text: b.dataset.answer }));
+function send() { post('api/setup/input', { text: $('answer').value }); $('answer').value = ''; }
 $('send').addEventListener('click', send);
 $('answer').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); send(); } });
-$('stop').addEventListener('click', () => post('/api/setup/stop'));
+$('stop').addEventListener('click', () => post('api/setup/stop'));
 load();
 </script>
 </body>

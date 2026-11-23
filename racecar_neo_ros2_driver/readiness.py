@@ -32,8 +32,9 @@ SCAN_HZ_OK, SCAN_HZ_FAIL = 6.0, 3.0
 SCAN_VALID_OK, SCAN_VALID_FAIL = 0.5, 0.2
 # Share of a stream's nominal rate: under OK warns, under FAIL fails.
 RATE_OK, RATE_FAIL = 0.8, 0.5
-CALIBRATION_PAGE = '/calibration'
-HEALTH_PAGE = '/handbook/health'
+# Pages of the Car Profile app, relative to its address.
+CALIBRATION_PAGE = 'calibration'
+HEALTH_PAGE = 'handbook/health'
 
 
 @dataclass(frozen=True)

@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>RACECAR Neo terminal</title>
-<link rel="stylesheet" href="/ui/rcn.css?v={{asset}}">
-<script src="/ui/ui.js?v={{asset}}"></script>
-<script src="/ui/api.js?v={{asset}}"></script>
-<script src="/ui/battery.js?v={{asset}}" defer></script>
-<script src="/ui/stall.js?v={{asset}}" defer></script>
-<link rel="icon" href="/ui/brand/app-icon-32.png">
-<link rel="apple-touch-icon" href="/ui/brand/app-icon-180.png">
+<link rel="stylesheet" href="ui/rcn.css?v={{asset}}">
+<script src="ui/ui.js?v={{asset}}"></script>
+<script src="ui/api.js?v={{asset}}"></script>
+<script src="ui/battery.js?v={{asset}}" defer></script>
+<script src="ui/stall.js?v={{asset}}" defer></script>
+<link rel="icon" href="ui/brand/app-icon-32.png">
+<link rel="apple-touch-icon" href="ui/brand/app-icon-180.png">
 <style>
   html, body { height: 100%; }
   body { display: flex; flex-direction: column; overflow: hidden; }
@@ -43,7 +43,7 @@
 </head>
 <body>
 <header class="rcn-header">
-  <img class="rcn-mark" src="/ui/brand/mark.png" alt="RACECAR Neo">
+  <img class="rcn-mark" src="ui/brand/mark.png" alt="RACECAR Neo">
   <span class="rcn-title">Terminal</span>
   <span id="msg" role="status"></span>
   <span class="rcn-spacer"></span>
@@ -56,7 +56,7 @@
     <button class="rcn-btn quiet small" id="reset" title="Close all but Terminal 1">Reset</button>
     <button class="rcn-btn quiet small" id="font-down" title="Smaller text">A-</button>
     <button class="rcn-btn quiet small" id="font-up" title="Larger text">A+</button>
-    <form method="post" action="/logout"><button class="rcn-btn quiet small" type="submit">Log out</button></form>
+    <form method="post" action="logout"><button class="rcn-btn quiet small" type="submit">Log out</button></form>
   </span>
 </header>
 <main>
@@ -125,7 +125,7 @@ function makePane(id) {
     <button data-act="close" title="Close (Ctrl+Shift+W)">Close</button></div>`;
   const frame = document.createElement('iframe');
   frame.title = 'Terminal';
-  frame.src = `/pane/${id}/`;
+  frame.src = `pane/${id}/`;
   el.append(frame);
   el.querySelector('.bar').onclick = (ev) => {
     const act = ev.target.dataset && ev.target.dataset.act;
@@ -273,7 +273,7 @@ async function closePane(id) {
   layout = removePane(layout, id);
   render();
   await save();
-  post('/api/pane/close', { id });
+  post('api/pane/close', { id });
 }
 async function reset() {
   const [keep, ...rest] = ids(layout);
@@ -284,7 +284,7 @@ async function reset() {
   maximized = null;
   render();
   await save();
-  for (const id of rest) post('/api/pane/close', { id });
+  for (const id of rest) post('api/pane/close', { id });
 }
 $('reset').onclick = reset;
 function toggleMax(id) {
@@ -316,7 +316,7 @@ function download(name, text, type) {
 }
 async function exportText(id) {
   try {
-    const r = await post('/api/scrollback', { id, title: titleOf(id) });
+    const r = await post('api/scrollback', { id, title: titleOf(id) });
     const o = await r.json();
     if (!r.ok) { say(o.message); return; }
     download(o.name, o.text, 'text/plain');
@@ -340,7 +340,7 @@ function renderPresets() {
 }
 async function loadPresets() {
   try {
-    const r = await fetch('/api/presets');
+    const r = await fetch('api/presets');
     if (r.ok) { presets = await r.json(); renderPresets(); }
   } catch (err) { say(LOST); }
 }
@@ -366,7 +366,7 @@ async function applyPreset(name, kind) {
   toggleMenu(false);
   if (!confirm(`Replace the open terminals with ${name}?`)) return;
   try {
-    const r = await post('/api/presets/apply', { name, kind });
+    const r = await post('api/presets/apply', { name, kind });
     const o = await r.json();
     if (r.ok) { maximized = null; adopt(o); } else say(o.message || 'Could not open the preset.');
   } catch (err) { say(LOST); }
@@ -377,7 +377,7 @@ async function savePreset() {
   if (!name || !name.trim()) return;
   if (presets.user.some((p) => p.name === name.trim()) && !confirm(`Replace ${name.trim()}?`)) return;
   try {
-    const r = await post('/api/presets/save', { name: name.trim(), layout });
+    const r = await post('api/presets/save', { name: name.trim(), layout });
     if (r.ok) { presets = await r.json(); renderPresets(); say(`Saved ${name.trim()}.`); }
     else say((await r.json()).message);
   } catch (err) { say(LOST); }
@@ -385,7 +385,7 @@ async function savePreset() {
 async function deletePreset(name) {
   if (!confirm(`Delete ${name}?`)) return;
   try {
-    const r = await post('/api/presets/delete', { name });
+    const r = await post('api/presets/delete', { name });
     if (r.ok) { presets = await r.json(); renderPresets(); }
   } catch (err) { say(LOST); }
 }
@@ -395,7 +395,7 @@ $('import-file').onchange = async () => {
   if (!file) return;
   try {
     const list = JSON.parse(await file.text());
-    const r = await post('/api/presets/import', { presets: list });
+    const r = await post('api/presets/import', { presets: list });
     const o = await r.json();
     if (r.ok) { presets = o; renderPresets(); say(`Imported ${o.imported} presets.`); } else say('That file has no presets.');
   } catch (err) { say('That file has no presets.'); }
@@ -408,7 +408,7 @@ async function post(path, body) {
 }
 async function save() {
   try {
-    const r = await post('/api/layout', { version, layout });
+    const r = await post('api/layout', { version, layout });
     const state = await r.json();
     if (r.ok || r.status === 409) adopt(state);
     if (r.status === 409) say('Changed on another device.');
@@ -422,7 +422,7 @@ function adopt(state) {
 async function poll() {
   if (dragging) return;
   try {
-    const r = await fetch('/api/layout');
+    const r = await fetch('api/layout');
     if (r.status === 401) { location.reload(); return; }
     const state = await r.json();
     if (state.version !== version) adopt(state);

@@ -509,7 +509,7 @@ def test_release_stops_the_resends(node):
 
 def test_page_has_the_joystick():
     page = (Path(tp.__file__).parent / 'teleop.html').read_text()
-    assert '/ui/joystick.js' in page and 'id="joymode"' in page and 'Joystick mode' in page
+    assert 'ui/joystick.js' in page and 'id="joymode"' in page and 'Joystick mode' in page
     assert "matchMedia('(pointer: coarse)')" in page
     assert 'joy.active' in page and 'size: 180' in page
 

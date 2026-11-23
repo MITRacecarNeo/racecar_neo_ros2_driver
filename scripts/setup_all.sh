@@ -10,7 +10,7 @@
 
 set -eo pipefail
 
-PHASES=12
+PHASES=13
 FROM=1
 SKIP=","
 usage() {
@@ -84,39 +84,39 @@ sudo -v
 SUDO_KEEPALIVE_PID=$!
 trap 'kill $SUDO_KEEPALIVE_PID 2>/dev/null' EXIT
 
-echo "==> [1/12] ROS2 Jazzy + driver dependencies"
+echo "==> [1/13] ROS2 Jazzy + driver dependencies"
 phase 1 bash "$SCRIPT_DIR/setup_ros2.sh"
 
 echo
-echo "==> [2/12] Robotics dev tools"
+echo "==> [2/13] Robotics dev tools"
 phase 2 bash "$SCRIPT_DIR/setup_dev_tools.sh"
 
 echo
-echo "==> [3/12] User environment (groups, .bashrc)"
+echo "==> [3/13] User environment (groups, .bashrc)"
 phase 3 bash "$SCRIPT_DIR/setup_user_env.sh"
 
 echo
-echo "==> [4/12] raspi-config flags (I2C, SPI, serial)"
+echo "==> [4/13] raspi-config flags (I2C, SPI, serial)"
 phase 4 bash "$SCRIPT_DIR/setup_raspi_config.sh"
 
 echo
-echo "==> [5/12] udev rules (stable /dev/neo-pit-pcb, /dev/lidar)"
+echo "==> [5/13] udev rules (stable /dev/neo-pit-pcb, /dev/lidar)"
 phase 5 bash "$SCRIPT_DIR/setup_udev.sh"
 
 echo
-echo "==> [6/12] Dot matrix fonts"
+echo "==> [6/13] Dot matrix fonts"
 phase 6 bash "$SCRIPT_DIR/setup_dotmatrix.sh"
 
 echo
-echo "==> [7/12] Coral EdgeTPU userspace"
+echo "==> [7/13] Coral EdgeTPU userspace"
 phase 7 bash "$SCRIPT_DIR/setup_coral.sh"
 
 echo
-echo "==> [8/12] RealSense D435i driver + Pi 5 IMU fix"
+echo "==> [8/13] RealSense D435i driver + Pi 5 IMU fix"
 phase 8 bash "$SCRIPT_DIR/setup_realsense.sh"
 
 echo
-echo "==> [9/12] Workspace build"
+echo "==> [9/13] Workspace build"
 # The car profile (~/.config/racecar) holds this car's settings; moving the
 # per-car files out of the driver folder needs the built package.
 workspace_and_profile() {
@@ -132,21 +132,25 @@ workspace_and_profile() {
 phase 9 workspace_and_profile
 
 echo
-echo "==> [10/12] JupyterLab + workspace"
+echo "==> [10/13] JupyterLab + workspace"
 phase 10 bash "$SCRIPT_DIR/setup_jupyter.sh"
 
 echo
-echo "==> [11/12] systemd services (data, teleop, watchdog, dashboard, jupyter, mapview, autonomy)"
+echo "==> [11/13] systemd services (data, teleop, watchdog, dashboard, jupyter, mapview, autonomy)"
 phase 11 bash "$SCRIPT_DIR/setup_services.sh"
 
 echo
-echo "==> [12/12] Lab dashboards (install units, disabled)"
+echo "==> [12/13] Lab dashboards (install units, disabled)"
 DASHBOARDS_OK=1
 if [ "$FROM" -le 12 ] && [[ "$SKIP" != *",12,"* ]]; then
     bash "$SCRIPT_DIR/setup_dashboards.sh" || DASHBOARDS_OK=0
 else
     echo "    skipped"
 fi
+
+echo
+echo "==> [13/13] Web server (every app at http://<car>/<name>/)"
+phase 13 bash "$SCRIPT_DIR/setup_web.sh"
 
 # The NVMe data drive is never formatted here; `racecar disk setup` asks first.
 if [ -e /dev/nvme0n1 ] && ! findmnt -n /mnt/nvme >/dev/null 2>&1; then

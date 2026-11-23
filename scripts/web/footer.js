@@ -10,7 +10,7 @@
 (function () {
   'use strict';
   const PERIOD_MS = 60000;
-  const url = `${location.protocol}//${location.hostname}:{{home}}/api/about`;
+  const url = RcnRoute.app('home', 'api/about');
   const footer = document.createElement('footer');
   footer.className = 'rcn-footer';
   footer.innerHTML = '<span class="rcn-car"></span><span>racecar OS</span>'

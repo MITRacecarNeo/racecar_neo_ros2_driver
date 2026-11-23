@@ -227,8 +227,34 @@ Every app's server is built on `scripts/webui.py`:
 | `serve()` | Threaded server, an optional spin thread, SIGINT and SIGTERM taken back from rclpy, then `cleanup` and the join |
 | `ros_spinner`, `spin_until_stopped` | Executor loop on the EventsExecutor (default executor when the import is missing) that logs an error and spins on; ends quietly at shutdown |
 | `fill`, `read_page`, `static_file` | `{{asset}}` (`ASSET_VERSION`), `{{home}}` (the 8080 port) and `{{driver}}` (`package.xml` version) filled in pages and shared scripts; `read_page` adds `web/footer.js` (the car as `hostname (nickname)`, driver version, firmware version, from 8080 `/api/about`) and `web/home.js` (the header's `.rcn-mark` becomes a home link; closes the tab, else loads 8080; skipped on a page whose `<body>` has `data-home`) before `</body>` |
+| `AppHandler.prefix`, `with_base`, `AppHandler.redirect`, `AppHandler.client_ip` | Name paths: nginx sends `X-Forwarded-Prefix` (`/mapper/`, validated); `page` puts `<base href="<prefix>">` and `web/route.js` after `<head>`, so relative links resolve under the path and on the port; `redirect` keeps the prefix; `client_ip` takes `X-Real-IP` only from loopback |
+| `web/route.js` | `RcnRoute.app(id, sub)`: another app's address, in the name form on port 80 and the port form otherwise, from `apps.routes()` (`{{routes}}`) |
 | `same_origin`, `sibling_origin`, `AppHandler.refuse_cross_site` | Origin checks for page-only calls and for CORS from the other app ports; every app's `do_POST` refuses another site's page |
 | `scripts/web/` `ui.js`, `api.js`, `tune.js`, `logs.js` | The page side: helpers, POST and `/state` polling, tuning sliders, the Logs section (`docs/dashboards.md`) |
+
+### Name paths
+
+```
+browser ──▶ nginx :80 /<path>/ ──▶ 127.0.0.1:<port>/   (X-Forwarded-Prefix, X-Real-IP, Upgrade)
+                      /jupyter/ ──▶ 127.0.0.1:8888/jupyter/   (prefixed: JupyterLab base_url)
+browser ──▶ <car>:<port>/        (direct; prefix /)
+```
+
+`config/apps.yaml` gives each app a `path` (default: its id) and
+`prefixed` (the app serves under its path itself). `apps.routes()` feeds
+both `apps.py nginx` (the site `scripts/setup_web.sh` installs as
+`/etc/nginx/sites-available/racecar`) and `web/route.js`.
+
+### Files app
+
+`scripts/files_app.py` (`racecar-files.service`, port 8089, core group),
+page `scripts/files.html`. Read-only. `resolve` refuses `..`; a path
+leaves `~/jupyter_ws` only through a link the workspace holds
+(`racecar-neo/library` into `/opt/racecar-neo`). `/api/pages` lists home and every app with `systemctl is-active`;
+`/api/list` a folder; `/api/view` a file as text, or as HTML for Markdown
+(`handbook.render`, script links dropped) and notebooks (cells escaped,
+PNG outputs only when base64); `/api/raw` the bytes, HTML as text/plain and
+SVG under a `default-src 'none'` CSP.
 
 ### Car Profile app
 
@@ -552,7 +578,7 @@ it as dead.
 
 ## Process model
 
-Seven core systemd units, all `User=racecar`:
+Eight core systemd units, all `User=racecar`:
 
 ```
 racecar-data.service        (oneshot at boot, before the others)
@@ -565,6 +591,7 @@ racecar-dashboard.service   (independent, port 8080)
 racecar-jupyter.service     (independent, port 8888)
 racecar-mapview.service     (independent, port 8084)
 racecar-profile.service     (independent, port 8088)
+racecar-files.service       (independent, port 8089)
 racecar-battery-guard.service (independent; Restart=always)
 ```
 

@@ -4,17 +4,17 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RACECAR Neo car profile</title>
-<link rel="stylesheet" href="/ui/rcn.css?v={{asset}}">
-<script src="/ui/ui.js?v={{asset}}"></script>
-<script src="/ui/profile_nav.js?v={{asset}}"></script>
-<script src="/ui/battery.js?v={{asset}}" defer></script>
-<script src="/ui/stall.js?v={{asset}}" defer></script>
-<link rel="icon" href="/ui/brand/app-icon-32.png">
-<link rel="apple-touch-icon" href="/ui/brand/app-icon-180.png">
+<link rel="stylesheet" href="ui/rcn.css?v={{asset}}">
+<script src="ui/ui.js?v={{asset}}"></script>
+<script src="ui/profile_nav.js?v={{asset}}"></script>
+<script src="ui/battery.js?v={{asset}}" defer></script>
+<script src="ui/stall.js?v={{asset}}" defer></script>
+<link rel="icon" href="ui/brand/app-icon-32.png">
+<link rel="apple-touch-icon" href="ui/brand/app-icon-180.png">
 <script type="importmap">
 { "imports": {
-  "three": "/ui/vendor/three/three.module.min.js?v={{asset}}",
-  "three/addons/": "/ui/vendor/three/"
+  "three": "./ui/vendor/three/three.module.min.js?v={{asset}}",
+  "three/addons/": "./ui/vendor/three/"
 } }
 </script>
 <style>
@@ -54,10 +54,10 @@ body.panel-hidden #panel, body.panel-hidden #grip { display: none; }
 </head>
 <body>
 <header class="rcn-header">
-  <img class="rcn-mark" src="/ui/brand/mark.png" alt="RACECAR Neo">
+  <img class="rcn-mark" src="ui/brand/mark.png" alt="RACECAR Neo">
   <span class="rcn-title" id="title">Car Profile</span>
   <span class="rcn-spacer"></span>
-  <button class="rcn-btn quiet small" id="paneltoggle" aria-label="Show or hide the details" title="Details"><svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#info"/></svg></button>
+  <button class="rcn-btn quiet small" id="paneltoggle" aria-label="Show or hide the details" title="Details"><svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#info"/></svg></button>
 </header>
 <main>
   <div id="work">
@@ -180,7 +180,7 @@ function partPanel(p) {
 async function poll() {
   if (!selected) return;
   try {
-    const r = await fetch(`/api/part?id=${encodeURIComponent(selected)}`);
+    const r = await fetch(`api/part?id=${encodeURIComponent(selected)}`);
     if (r.ok) partPanel(await r.json());
   } catch (e) { /* the next poll tries again */ }
   if (selected) timer = setTimeout(poll, 1000);
@@ -284,7 +284,7 @@ function frame() {
 }
 
 async function start() {
-  [car, names] = await Promise.all([fetch('/api/car').then((r) => r.json()), fetch('/api/parts').then((r) => r.json())]);
+  [car, names] = await Promise.all([fetch('api/car').then((r) => r.json()), fetch('api/parts').then((r) => r.json())]);
   carPanel();
   if (!car.model) {
     $('loading').textContent = 'No car model on this car.';
@@ -292,7 +292,7 @@ async function start() {
   }
   stage.prepend(renderer.domElement);
   resize();
-  new GLTFLoader().load('/model', (gltf) => {
+  new GLTFLoader().load('model', (gltf) => {
     root = gltf.scene;
     root.rotation.x = -Math.PI / 2;  // the model is +Z up
     scene.add(root);

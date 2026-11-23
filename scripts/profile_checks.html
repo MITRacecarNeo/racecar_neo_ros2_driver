@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RACECAR Neo checks</title>
-<link rel="stylesheet" href="/ui/rcn.css?v={{asset}}">
-<script src="/ui/ui.js?v={{asset}}"></script>
-<script src="/ui/profile_nav.js?v={{asset}}"></script>
-<script src="/ui/battery.js?v={{asset}}" defer></script>
-<script src="/ui/stall.js?v={{asset}}" defer></script>
-<link rel="icon" href="/ui/brand/app-icon-32.png">
-<link rel="apple-touch-icon" href="/ui/brand/app-icon-180.png">
+<link rel="stylesheet" href="ui/rcn.css?v={{asset}}">
+<script src="ui/ui.js?v={{asset}}"></script>
+<script src="ui/profile_nav.js?v={{asset}}"></script>
+<script src="ui/battery.js?v={{asset}}" defer></script>
+<script src="ui/stall.js?v={{asset}}" defer></script>
+<link rel="icon" href="ui/brand/app-icon-32.png">
+<link rel="apple-touch-icon" href="ui/brand/app-icon-180.png">
 <style>
 main { max-width: 1100px; margin: 0 auto; padding: var(--rcn-space-4); }
 main > .rcn-override { margin: 0 0 var(--rcn-space-4); }
@@ -40,7 +40,7 @@ h2 { font-size: 18px; line-height: 26px; margin: var(--rcn-space-6) 0 var(--rcn-
 </head>
 <body>
 <header class="rcn-header">
-  <img class="rcn-mark" src="/ui/brand/mark.png" alt="RACECAR Neo">
+  <img class="rcn-mark" src="ui/brand/mark.png" alt="RACECAR Neo">
   <span class="rcn-title">Checks</span>
   <span class="rcn-spacer"></span>
 </header>
@@ -120,13 +120,13 @@ function render() {
 }
 
 async function load() {
-  view = await fetch('/api/checks').then((r) => r.json());
+  view = await fetch('api/checks').then((r) => r.json());
   render();
   if (view.job.running && view.job.label.startsWith('check:') && !timer) watch(view.job.label);
 }
 
 async function run(body) {
-  const r = await post('/api/checks/run', body);
+  const r = await post('api/checks/run', body);
   if (!r.ok) { alert(r.message || 'Did not start.'); return; }
   since = 0;
   $('out').textContent = '';
@@ -143,7 +143,7 @@ function watch(title) {
 async function poll() {
   clearTimeout(timer);
   let job;
-  try { job = await fetch(`/api/setup/job?since=${since}`).then((r) => r.json()); } catch (e) { timer = setTimeout(poll, 2000); return; }
+  try { job = await fetch(`api/setup/job?since=${since}`).then((r) => r.json()); } catch (e) { timer = setTimeout(poll, 2000); return; }
   if (job.lines.length) {
     $('out').textContent += job.lines.join('\n') + '\n';
     $('out').scrollTop = $('out').scrollHeight;
@@ -158,11 +158,11 @@ async function poll() {
 }
 
 $('runall').addEventListener('click', () => run({ all: true }));
-for (const b of document.querySelectorAll('[data-answer]')) b.addEventListener('click', () => post('/api/setup/input', { text: b.dataset.answer }));
-function send() { post('/api/setup/input', { text: $('answer').value }); $('answer').value = ''; }
+for (const b of document.querySelectorAll('[data-answer]')) b.addEventListener('click', () => post('api/setup/input', { text: b.dataset.answer }));
+function send() { post('api/setup/input', { text: $('answer').value }); $('answer').value = ''; }
 $('send').addEventListener('click', send);
 $('answer').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); send(); } });
-$('stop').addEventListener('click', () => post('/api/setup/stop'));
+$('stop').addEventListener('click', () => post('api/setup/stop'));
 load();
 </script>
 </body>

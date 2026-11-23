@@ -480,14 +480,21 @@ class Live:
 # -- handbook --
 
 
-def handbook_link(target: str) -> str:
-    """Point a handbook link at its route in this app."""
+def handbook_link(target: str, page: str = 'index') -> str:
+    """
+    Point a handbook link at its route in this app, relative to the app's address.
+
+    An in-page link (#anchor) names its page too: the page's <base href> is
+    the app's address, where a bare #anchor would land on the home page.
+    """
     path, _, frag = target.partition('#')
+    if not path and frag:
+        return f'handbook/{page}#{frag}'
     if path in handbook.LINKED_DOCS:
         path = Path(path).name
     if '://' in target or not path.endswith('.md') or '/' in path:
         return target
-    return f'/handbook/{path[:-3]}' + (f'#{frag}' if frag else '')
+    return f'handbook/{path[:-3]}' + (f'#{frag}' if frag else '')
 
 
 def handbook_menu() -> list[dict[str, str]]:
@@ -512,7 +519,9 @@ def handbook_view(name: str) -> dict[str, Any] | None:
     if name not in files:
         return None
     page = handbook.render(
-        files[name].read_text(), handbook_link, lambda src: '/handbook/img/' + Path(src).name
+        files[name].read_text(),
+        lambda target: handbook_link(target, name),
+        lambda src: 'handbook/img/' + Path(src).name,
     )
     return {'name': name, 'title': page.title, 'html': page.html}
 
@@ -721,7 +730,7 @@ class Handler(webui.AppHandler):
         elif path == '/api/handbook':
             self.send_json({'pages': handbook_menu()})
         elif path == '/handbook' or path == '/handbook/':
-            self._redirect('/handbook/index')
+            self.redirect('handbook/index')
         elif path.startswith('/handbook/img/'):
             self._image(path.removeprefix('/handbook/img/'))
         elif path.startswith('/api/handbook/'):

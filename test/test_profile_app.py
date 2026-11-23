@@ -132,8 +132,9 @@ class TestRates:
 
 class TestHandbookRoutes:
     def test_links_point_at_routes(self, pa):
-        assert pa.handbook_link('installation.md#nvme') == '/handbook/installation#nvme'
-        assert pa.handbook_link('../troubleshooting.md#x') == '/handbook/troubleshooting#x'
+        assert pa.handbook_link('installation.md#nvme') == 'handbook/installation#nvme'
+        assert pa.handbook_link('#nvme', 'installation') == 'handbook/installation#nvme'
+        assert pa.handbook_link('../troubleshooting.md#x') == 'handbook/troubleshooting#x'
         assert pa.handbook_link('https://github.com/x') == 'https://github.com/x'
 
     def test_view_has_pages_and_html(self, pa):
@@ -198,7 +199,7 @@ class TestHttp:
 
     def test_handbook_pages(self, server):
         res, data = request(server, '/handbook/installation')
-        assert res.status == 200 and b'/api/handbook/' in data
+        assert res.status == 200 and b'api/handbook/' in data
         page = json.loads(request(server, '/api/handbook/health')[1])
         assert page['title'] == 'Health checks'
         assert request(server, '/handbook/nope')[0].status == 404

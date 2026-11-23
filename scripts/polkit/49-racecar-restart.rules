@@ -14,6 +14,7 @@ polkit.addRule(function (action, subject) {
         "racecar-dashboard.service",
         "racecar-mapview.service",
         "racecar-profile.service",
+        "racecar-files.service",
         "racecar-battery-guard.service"
     ];
     if (units.indexOf(action.lookup("unit")) >= 0 &&

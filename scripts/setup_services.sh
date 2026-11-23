@@ -13,6 +13,7 @@
 #   racecar-jupyter.service   JupyterLab (port 8888)
 #   racecar-mapview.service   web map viewer (port 8084)
 #   racecar-profile.service   Car Profile app (port 8088)
+#   racecar-files.service     Files app (port 8089)
 #   racecar-battery-guard.service  low-battery warning and safe shutdown
 # Installed, not enabled (started on demand):
 #   racecar-autonomy.service  SLAM mapping or localization, BindsTo=teleop
@@ -32,6 +33,7 @@ SERVICES=(
     racecar-jupyter.service
     racecar-mapview.service
     racecar-profile.service
+    racecar-files.service
     racecar-battery-guard.service
 )
 # Mapping at boot would build an unsaved map and take CPU from every lab; the

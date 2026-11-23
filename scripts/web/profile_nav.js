@@ -5,7 +5,7 @@
      adds the menu button at the right end of the header and the menu on the
      right side of the page. `current` is the page id (home, handbook, setup,
      calibration, checks); `sub` is the handbook page shown, if any. The
-     handbook pages (/api/handbook) are listed under Handbook.
+     handbook pages (api/handbook) are listed under Handbook.
 
    The menu starts closed on narrow screens and open on wide ones; the choice
    is kept per browser. */
@@ -14,11 +14,11 @@
   const KEY = 'rcn-profile-nav';
   const WIDE = '(min-width: 900px)';
   const PAGES = [
-    { id: 'home', label: 'Car', href: '/', icon: 'car' },
-    { id: 'handbook', label: 'Handbook', href: '/handbook/index', icon: 'book' },
-    { id: 'setup', label: 'Setup', href: '/setup', icon: 'check' },
-    { id: 'calibration', label: 'Calibration', href: '/calibration', icon: 'target' },
-    { id: 'checks', label: 'Checks', href: '/checks', icon: 'pulse' },
+    { id: 'home', label: 'Car', href: './', icon: 'car' },
+    { id: 'handbook', label: 'Handbook', href: 'handbook/index', icon: 'book' },
+    { id: 'setup', label: 'Setup', href: 'setup', icon: 'check' },
+    { id: 'calibration', label: 'Calibration', href: 'calibration', icon: 'target' },
+    { id: 'checks', label: 'Checks', href: 'checks', icon: 'pulse' },
   ];
 
   function stored() {
@@ -28,7 +28,7 @@
     try { localStorage.setItem(KEY, value); } catch (e) { /* private window */ }
   }
   function icon(name) {
-    return `<svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#${name}"/></svg>`;
+    return `<svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#${name}"/></svg>`;
   }
   function esc(s) {
     return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -70,10 +70,10 @@
       }).join('');
     document.body.append(nav);
 
-    fetch('/api/handbook').then((r) => r.json()).then((d) => {
+    fetch('api/handbook').then((r) => r.json()).then((d) => {
       nav.querySelector('#pnav-handbook').innerHTML = d.pages
         .filter((p) => p.name !== 'index')
-        .map((p) => `<a href="/handbook/${esc(p.name)}"${p.name === sub ? ' class="on"' : ''}>${esc(p.title)}</a>`)
+        .map((p) => `<a href="handbook/${esc(p.name)}"${p.name === sub ? ' class="on"' : ''}>${esc(p.title)}</a>`)
         .join('');
     }).catch(() => {});
 

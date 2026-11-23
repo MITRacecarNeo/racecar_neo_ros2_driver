@@ -1586,10 +1586,10 @@ class DashboardHandler(webui.AppHandler):
             if self.path == '/api/battery/cancel':
                 if _sampler is not None:
                     _sampler.cancel_shutdown()
-                log.warning('Shutdown cancel requested from %s', self.client_address[0])
+                log.warning('Shutdown cancel requested from %s', self.client_ip())
                 self.send_json({'ok': True, 'message': 'Shutdown canceled.'}, 200)
                 return
-            log.warning('Turn off requested from %s', self.client_address[0])
+            log.warning('Shut down requested from %s', self.client_ip())
             self.send_json({'ok': True, 'message': FINAL_MESSAGE}, 200)
             threading.Thread(target=turn_off, daemon=True).start()
             return
@@ -1622,7 +1622,7 @@ class DashboardHandler(webui.AppHandler):
         cors = {'Access-Control-Allow-Origin': origin, 'Vary': 'Origin'} if origin else {}
         if action == 'start':
             _override.start(now)
-            log.warning('Safety override turned on from %s', self.client_address[0])
+            log.warning('Safety override turned on from %s', self.client_ip())
         elif action == 'keep':
             _override.keep(now)
         elif action == 'stop':

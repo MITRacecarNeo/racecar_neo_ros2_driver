@@ -90,6 +90,19 @@ All notable changes to this project will be documented in this file. The format 
   `~/jupyter_ws/racecar-neo/labs`. `racecar library install` reinstalls
   both, moving existing labs to `~/backups` first; `racecar library
   --status` lists pinned and installed versions.
+- Name addresses: every app at `http://<car>/<name>/` on port 80 (`/home/`,
+  `/profile/`, `/jupyter/`, `/files/`, `/terminal/`, `/mapper/`, ...), served by
+  nginx from the `path` field of `config/apps.yaml`
+  (`racecar_neo_ros2_driver/apps.py nginx`). `http://<car>/` with no port,
+  by the `.local` name or an IP address, opens the home page. `racecar setup
+  web` (`setup_web.sh`, phase 13 of `setup_all.sh`) installs it and checks
+  the home page through each address. The port
+  addresses keep working; links between apps follow the address in use
+  (`scripts/web/route.js`).
+- Files app (`scripts/files_app.py`, `racecar-files.service`, port 8089, Core
+  group): the car's pages with their addresses and state, and a read-only
+  browser of `~/jupyter_ws` (code highlighted, Markdown and notebooks
+  rendered, images shown, any file downloaded).
 
 ### Fixed
 
@@ -112,6 +125,12 @@ All notable changes to this project will be documented in this file. The format 
 ### Changed
 
 - The map viewer is named Mapper; the Turn Off tile is Shut Down.
+- Pages link relative to their own address (`<base href>`), so they work
+  under a name path and on their port. JupyterLab serves under `/jupyter/`
+  on port 8888 as well (`--ServerApp.base_url`); `:8888/` and `:8888/lab`
+  redirect there (`scripts/jupyter/racecar_jupyter_redirect.py`).
+- The apps log the client's address from nginx (`X-Real-IP`, trusted only
+  from the car itself); the Terminal's access-point rule uses it.
 - eth0's fixed address is `192.168.52.(200 + car number)` (numbers 0 to 54),
   so cars on one switch do not collide; `.200` without a number.
 - `racecar calibrate` restarts teleop without sudo.

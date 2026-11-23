@@ -39,6 +39,8 @@ def _registry(path: Path) -> dict[str, Any]:
     for entry in data['apps']:
         entry.setdefault('unit', None)
         entry.setdefault('needs', None)
+        entry.setdefault('path', entry['id'])
+        entry.setdefault('prefixed', False)
     return data
 
 
@@ -71,6 +73,55 @@ def driving_apps() -> list[dict[str, Any]]:
     return [a for a in all_apps() if a['exclusive']]
 
 
+def routes() -> dict[str, list[Any]]:
+    """Return {id: [path, port, prefixed]} for the home page and every app, for the pages."""
+    home = registry()['home']
+    out = {'home': [home['path'], int(home['port']), False]}
+    for a in all_apps():
+        out[a['id']] = [a['path'], int(a['port']), bool(a['prefixed'])]
+    return out
+
+
+# One location per app on port 80. X-Forwarded-Prefix tells the app its path,
+# so its pages resolve their links under it (webui.py, <base href>).
+NGINX_LOCATION = """    location /{path}/ {{
+        proxy_pass http://127.0.0.1:{port}{upstream};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Prefix /{path}/;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_read_timeout 1h;
+        proxy_buffering off;
+    }}
+    location = /{path} {{ return 301 /{path}/; }}
+"""
+
+
+def nginx_site() -> str:
+    """Return the nginx site that serves every app at /<path>/ on port 80."""
+    blocks = []
+    for path, port, prefixed in routes().values():
+        # A prefixed app keeps the path in the request; the others get it stripped.
+        upstream = f'/{path}/' if prefixed else '/'
+        blocks.append(NGINX_LOCATION.format(path=path, port=port, upstream=upstream))
+    home = registry()['home']['path']
+    return (
+        '# Written by scripts/setup_web.sh from config/apps.yaml; do not edit by hand.\n'
+        'map $http_upgrade $connection_upgrade {\n'
+        '    default upgrade;\n'
+        "    '' close;\n"
+        '}\n\n'
+        'server {\n'
+        '    listen 80 default_server;\n'
+        '    listen [::]:80 default_server;\n'
+        '    server_name _;\n'
+        '    client_max_body_size 20m;\n'
+        f'    location = / {{ return 302 /{home}/; }}\n\n' + '\n'.join(blocks) + '}\n'
+    )
+
+
 def matches(a: dict[str, Any], where: Sequence[str]) -> bool:
     """
     Return True when every condition holds.
@@ -98,7 +149,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     lst.add_argument('--where', action='append', default=[], metavar='KEY[=VALUE]')
     lst.add_argument('--fields', default='id', help='comma-separated keys (default id)')
     sub.add_parser('home', help='the home page unit and port, tab-separated')
+    sub.add_parser('nginx', help="the port-80 nginx site for every app's name path")
     args = parser.parse_args(argv)
+
+    if args.cmd == 'nginx':
+        sys.stdout.write(nginx_site())
+        return 0
 
     if args.cmd == 'home':
         home = registry()['home']

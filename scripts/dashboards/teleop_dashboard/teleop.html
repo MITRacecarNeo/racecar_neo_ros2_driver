@@ -4,19 +4,19 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Web teleop - RACECAR Neo</title>
-<link rel="stylesheet" href="/ui/rcn.css?v={{asset}}">
-<script src="/ui/battery.js?v={{asset}}" defer></script>
-<script src="/ui/stall.js?v={{asset}}" defer></script>
-<link rel="icon" href="/ui/brand/app-icon-32.png">
-<script src="/ui/lost.js?v={{asset}}" defer></script>
-<script src="/ui/override.js?v={{asset}}" defer></script>
-<script src="/ui/charts.js?v={{asset}}"></script>
-<script src="/ui/ui.js?v={{asset}}"></script>
-<script src="/ui/api.js?v={{asset}}"></script>
-<script src="/ui/tune.js?v={{asset}}"></script>
-<script src="/ui/logs.js?v={{asset}}"></script>
-<script src="/ui/lidar.js?v={{asset}}"></script>
-<script src="/ui/joystick.js?v={{asset}}"></script>
+<link rel="stylesheet" href="ui/rcn.css?v={{asset}}">
+<script src="ui/battery.js?v={{asset}}" defer></script>
+<script src="ui/stall.js?v={{asset}}" defer></script>
+<link rel="icon" href="ui/brand/app-icon-32.png">
+<script src="ui/lost.js?v={{asset}}" defer></script>
+<script src="ui/override.js?v={{asset}}" defer></script>
+<script src="ui/charts.js?v={{asset}}"></script>
+<script src="ui/ui.js?v={{asset}}"></script>
+<script src="ui/api.js?v={{asset}}"></script>
+<script src="ui/tune.js?v={{asset}}"></script>
+<script src="ui/logs.js?v={{asset}}"></script>
+<script src="ui/lidar.js?v={{asset}}"></script>
+<script src="ui/joystick.js?v={{asset}}"></script>
 <style>
   .grid { display: grid; grid-template-columns: minmax(300px, 400px) minmax(320px, 1fr) minmax(320px, 1fr); gap: var(--rcn-space-4); align-items: stretch; }
   .column { display: grid; gap: var(--rcn-space-4); align-content: start; }
@@ -60,7 +60,7 @@
 </head>
 <body>
 <header class="rcn-header">
-  <img class="rcn-mark" src="/ui/brand/mark.png" alt="RACECAR Neo">
+  <img class="rcn-mark" src="ui/brand/mark.png" alt="RACECAR Neo">
   <div class="rcn-heading">
     <span class="rcn-title">Web teleop</span>
     <span class="rcn-meta">throttle <b id="thr">-</b> &middot; steer <b id="steer">-</b> &middot; encoder <b id="enc">-</b> m/s &middot; camera <b id="fps">-</b> fps &middot; depth <b id="dfps">-</b> fps &middot; frame <b id="res">-</b></span>
@@ -93,8 +93,8 @@
     <div class="rcn-zoombox">
       <canvas id="lidar" class="rcn-canvas" width="560" height="560" title="Nose up. Scroll to zoom"></canvas>
       <div class="rcn-zoom">
-        <button class="rcn-btn quiet" onclick="lidar.zoom(1 / 1.25)" aria-label="Zoom in"><svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#plus"/></svg></button>
-        <button class="rcn-btn quiet" onclick="lidar.zoom(1.25)" aria-label="Zoom out"><svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#minus"/></svg></button>
+        <button class="rcn-btn quiet" onclick="lidar.zoom(1 / 1.25)" aria-label="Zoom in"><svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#plus"/></svg></button>
+        <button class="rcn-btn quiet" onclick="lidar.zoom(1.25)" aria-label="Zoom out"><svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#minus"/></svg></button>
       </div>
     </div>
     <div class="rcn-caption">Range <span id="lidarRange">4.0</span> m</div>
@@ -233,7 +233,7 @@ function command() {
 let lastSent = '';
 function sendCmd(force) {
   const c = command(), s = JSON.stringify(c);
-  if (s !== lastSent || force) { lastSent = s; post('/cmd', c); }
+  if (s !== lastSent || force) { lastSent = s; post('cmd', c); }
   for (const b of document.querySelectorAll('#pad button')) b.classList.toggle('down', held.has(`${b.dataset.axis}:${b.dataset.val}`));
 }
 function press(axis, val) { held.add(`${axis}:${val}`); sendCmd(false); }
@@ -289,17 +289,17 @@ for (const b of document.querySelectorAll('#pad button')) {
   for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) b.addEventListener(ev, () => release_(axis, val));
   b.addEventListener('contextmenu', (e) => e.preventDefault());
 }
-function stopCar() { releaseAll(); post('/params', { speed: 0 }); }
-function reset() { post('/load'); }
-function saveTune() { post('/save').then(() => RcnUi.toast('Saved.')); }
-function loadTune() { post('/load').then(() => RcnUi.toast('Loaded.')); }
+function stopCar() { releaseAll(); post('params', { speed: 0 }); }
+function reset() { post('load'); }
+function saveTune() { post('save').then(() => RcnUi.toast('Saved.')); }
+function loadTune() { post('load').then(() => RcnUi.toast('Loaded.')); }
 
 // ---- tune ----
 const form = RcnTune.sliders($('tuneform'), SLIDERS);
 
 // ---- camera ----
-RcnUi.frames($('color'), '/frame', 120);
-RcnUi.frames($('depth'), '/depth', 120);
+RcnUi.frames($('color'), 'frame', 120);
+RcnUi.frames($('depth'), 'depth', 120);
 
 // ---- detections: boxes arrive as fractions of the frame ----
 const detToggle = $('dettoggle');
@@ -363,9 +363,9 @@ function buildMatrix(id, editable) {
 }
 function setCell(i, v) { matrixCells[i] = v; $('matrixEdit').children[i].classList.toggle('on', !!v); }
 function editMatrix(f) { for (let i = 0; i < 192; i++) setCell(i, f(matrixCells[i], i)); }
-function sendMatrix() { post('/matrix', { pixels: matrixCells }); }
-function sendText() { post('/text', { text: $('matrixText').value }); }
-function release() { post('/display/release'); }
+function sendMatrix() { post('matrix', { pixels: matrixCells }); }
+function sendText() { post('text', { text: $('matrixText').value }); }
+function release() { post('display/release'); }
 function showMatrix(pixels) {
   const dots = $('matrixState').children;
   for (let i = 0; i < 192; i++) dots[i].classList.toggle('on', !!(pixels && pixels[i]));
@@ -385,7 +385,7 @@ function hueColor(i) {
 }
 function setLed(i, c) { ledColors[i] = c; $('ledEdit').children[i].style.background = rgb(c); }
 function editLeds(f) { for (let i = 0; i < 84; i++) setLed(i, f(ledColors[i], i)); }
-function sendLeds() { post('/leds', { colors: ledColors }); }
+function sendLeds() { post('leds', { colors: ledColors }); }
 function buildLeds(id, editable) {
   const el = $(id);
   for (let i = 0; i < 84; i++) {
@@ -448,7 +448,7 @@ function setLegend(id, items) {
 // ---- state ----
 const WORDS = { '1': 'FORWARD', '-1': 'BACK' }, TURNS = { '1': 'RIGHT', '-1': 'LEFT' };
 const fmt = (v) => v.map((n) => (n >= 0 ? ' ' : '') + n.toFixed(3)).join('  ');
-RcnApi.poll('/state', 120, (d) => {
+RcnApi.poll('state', 120, (d) => {
     $('thr').textContent = d.speed_cmd;
     $('steer').textContent = d.steer;
     $('enc').textContent = d.enc_speed;

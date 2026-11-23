@@ -231,7 +231,7 @@ class TestDashboardHTML:
 
     def test_html_references_api_endpoint(self, dashboard):
         html = dashboard.webui.read_page(dashboard._HTML_PATH)
-        assert "'/api/status'" in html and "'/api/status?refresh=1'" in html
+        assert "'api/status'" in html and "'api/status?refresh=1'" in html
 
     def test_title_says_racecar(self, dashboard):
         html = dashboard.webui.read_page(dashboard._HTML_PATH)
@@ -326,13 +326,13 @@ class FakeRun:
 
 
 class TestHome:
-    def test_apps_cover_the_six_dashboards(self, dashboard):
+    def test_apps_cover_every_dashboard(self, dashboard):
         ports = [a['port'] for a in dashboard.APPS]
-        assert ports == [8088, 8888, 8086, 8081, 8082, 8083, 8085, 8084]
+        assert ports == [8088, 8888, 8089, 8086, 8081, 8082, 8083, 8085, 8084]
         groups = {g: [a['id'] for a in dashboard.APPS if a['group'] == g]
                   for g in ('core', 'tools', 'autonomy')}  # fmt: skip
         assert groups == {
-            'core': ['profile', 'jupyter'],
+            'core': ['profile', 'jupyter', 'files'],
             'tools': ['terminal', 'webteleop', 'linefollow', 'wallfollow', 'camlabel'],
             'autonomy': ['mapview'],
         }
@@ -444,7 +444,7 @@ class TestHome:
 
     def test_launch_page_opens_then_waits(self, dashboard):
         html = dashboard.webui.read_page(dashboard._LAUNCH_PATH)
-        assert "RcnApi.post('/api/open'" in html and '/api/ready?app=' in html
+        assert "RcnApi.post('api/open'" in html and 'api/ready?app=' in html
         assert 'location.replace' in html and 'id="cancel"' in html
         assert 'window.close()' in html
         assert 'Try again' not in html
@@ -542,9 +542,9 @@ class TestHome:
 
     def test_page_uses_the_shared_assets(self, dashboard):
         html = dashboard.webui.read_page(dashboard._HTML_PATH)
-        assert '/ui/rcn.css' in html and '/ui/brand/' in html and '/launch?app=' in html
-        assert html.count('/ui/brand/mark.png') == 1, 'one logo on the page, in color'
-        assert '/ui/brand/lockup' not in html
+        assert 'ui/rcn.css' in html and 'ui/brand/' in html and 'launch?app=' in html
+        assert html.count('ui/brand/mark.png') == 1, 'one logo on the page, in color'
+        assert 'ui/brand/lockup' not in html
 
 
 class TestHistory:
@@ -592,7 +592,7 @@ class TestHistory:
 
     def test_page_charts_both_series(self, dashboard):
         html = dashboard.webui.read_page(dashboard._HTML_PATH)
-        assert "fetch('/api/history')" in html and "fetch('/api/overview')" in html
+        assert "fetch('api/history')" in html and "fetch('api/overview')" in html
         for chart in ('ov-volts', 'ov-amps', 'ov-temp', 'ov-mem', 'ov-imu', 'ov-speed'):
             assert f'id="{chart}"' in html
         assert 'Pack' not in html and 'pack' not in html
@@ -731,7 +731,7 @@ class TestOverrideEndpoint:
 
     def test_page_has_the_toggle_and_warning(self, dashboard):
         html = dashboard.webui.read_page(dashboard._HTML_PATH)
-        assert 'id="override"' in html and '/ui/override.js?v=' in html
+        assert 'id="override"' in html and 'ui/override.js?v=' in html
         assert 'The car may start moving without warning. Do not leave it unattended.' in html
         assert 'RcnOverride.onChange' in html
 
@@ -982,7 +982,8 @@ class TestOrigins:
         [
             ('http://car.local:8084', True),
             ('http://car.local:8085', True),
-            ('http://car.local:8089', False),
+            ('http://car.local:8089', True),
+            ('http://car.local:8099', False),
             ('http://other:8084', False),
         ],
     )
@@ -1086,13 +1087,13 @@ class TestBatteryPage:
         assert html.index('id="apps-tools"') < html.index('id="apps-autonomy"')
         assert '<span class="name">Shut Down</span>' in html and 'Turn Off' not in html
         assert "confirm('Shut down the car?')" in html
-        assert '/api/shutdown' in html
+        assert 'api/shutdown' in html
 
     def test_header_pills_and_cancel_on_the_shared_banner(self, dashboard):
         html = dashboard.webui.read_page(dashboard._HTML_PATH)
         for element in ('batt-time', 'batt-power'):
             assert f'id="{element}"' in html
-        assert '/api/battery/cancel' in html
+        assert 'api/battery/cancel' in html
         assert 'RcnBattery.onCancel' in html and 'RcnBattery.update(e)' in html
         # The shared scripts draw the banners; this page keeps no copy.
         for element in ('battery-banner', 'override-banner', 'battery-cancel'):

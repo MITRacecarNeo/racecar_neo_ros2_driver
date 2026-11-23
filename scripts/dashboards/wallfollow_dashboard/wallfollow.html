@@ -4,18 +4,18 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Wall follow - RACECAR Neo</title>
-<link rel="stylesheet" href="/ui/rcn.css?v={{asset}}">
-<script src="/ui/battery.js?v={{asset}}" defer></script>
-<script src="/ui/stall.js?v={{asset}}" defer></script>
-<link rel="icon" href="/ui/brand/app-icon-32.png">
-<script src="/ui/lost.js?v={{asset}}" defer></script>
-<script src="/ui/override.js?v={{asset}}" defer></script>
-<script src="/ui/charts.js?v={{asset}}"></script>
-<script src="/ui/ui.js?v={{asset}}"></script>
-<script src="/ui/api.js?v={{asset}}"></script>
-<script src="/ui/tune.js?v={{asset}}"></script>
-<script src="/ui/logs.js?v={{asset}}"></script>
-<script src="/ui/lidar.js?v={{asset}}"></script>
+<link rel="stylesheet" href="ui/rcn.css?v={{asset}}">
+<script src="ui/battery.js?v={{asset}}" defer></script>
+<script src="ui/stall.js?v={{asset}}" defer></script>
+<link rel="icon" href="ui/brand/app-icon-32.png">
+<script src="ui/lost.js?v={{asset}}" defer></script>
+<script src="ui/override.js?v={{asset}}" defer></script>
+<script src="ui/charts.js?v={{asset}}"></script>
+<script src="ui/ui.js?v={{asset}}"></script>
+<script src="ui/api.js?v={{asset}}"></script>
+<script src="ui/tune.js?v={{asset}}"></script>
+<script src="ui/logs.js?v={{asset}}"></script>
+<script src="ui/lidar.js?v={{asset}}"></script>
 <style>
   .grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) minmax(0, 1fr); gap: var(--rcn-space-4); }
   @media (max-width: 1100px) { .grid { grid-template-columns: 1fr; } }
@@ -24,7 +24,7 @@
 </head>
 <body>
 <header class="rcn-header">
-  <img class="rcn-mark" src="/ui/brand/mark.png" alt="RACECAR Neo">
+  <img class="rcn-mark" src="ui/brand/mark.png" alt="RACECAR Neo">
   <div class="rcn-heading">
     <span class="rcn-title">Wall follow</span>
     <span class="rcn-meta">mode <b id="mode">-</b> &middot; error <b id="err">-</b> &middot; steer <b id="steer">-</b> &middot; throttle <b id="thr">-</b> &middot; encoder <b id="enc">-</b> m/s</span>
@@ -41,8 +41,8 @@
     <div class="rcn-zoombox">
       <canvas id="lidar" class="rcn-canvas" width="560" height="560"></canvas>
       <div class="rcn-zoom">
-        <button class="rcn-btn quiet" onclick="lidar.zoom(1 / 1.25)" aria-label="Zoom in"><svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#plus"/></svg></button>
-        <button class="rcn-btn quiet" onclick="lidar.zoom(1.25)" aria-label="Zoom out"><svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#minus"/></svg></button>
+        <button class="rcn-btn quiet" onclick="lidar.zoom(1 / 1.25)" aria-label="Zoom in"><svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#plus"/></svg></button>
+        <button class="rcn-btn quiet" onclick="lidar.zoom(1.25)" aria-label="Zoom out"><svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#minus"/></svg></button>
       </div>
     </div>
     <div class="rcn-caption">Range <span id="lidarRange">4.0</span> m</div>
@@ -91,10 +91,10 @@ const SLIDERS = {
 const form = RcnTune.sliders($('form'), SLIDERS.static);
 let mode = 'static';
 
-function saveTune() { post('/save').then(() => RcnUi.toast('Saved.')); }
-function loadTune() { post('/load').then(() => RcnUi.toast('Loaded.')); }
-function reset() { post('/load'); }
-function stopCar() { post('/params', { speed: 0 }); }
+function saveTune() { post('save').then(() => RcnUi.toast('Saved.')); }
+function loadTune() { post('load').then(() => RcnUi.toast('Loaded.')); }
+function reset() { post('load'); }
+function stopCar() { post('params', { speed: 0 }); }
 
 // ---- lidar: the scan, plus the windows or arc the controller reads ----
 const lidar = RcnLidar.view($('lidar'), $('lidarRange'));
@@ -116,7 +116,7 @@ function drawLidar(scan, ov) {
   });
 }
 
-RcnApi.poll('/state', 120, (d) => {
+RcnApi.poll('state', 120, (d) => {
   mode = (d.params.mode == 1 || d.params.mode === 'dynamic') ? 'dynamic' : 'static';
   const ov = d.overlay || {};
   $('mode').textContent = mode;

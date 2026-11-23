@@ -4,14 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>RACECAR Neo Mapper</title>
-<link rel="stylesheet" href="/ui/rcn.css?v={{asset}}">
-<script src="/ui/ui.js?v={{asset}}"></script>
-<script src="/ui/api.js?v={{asset}}"></script>
-<script src="/ui/joystick.js?v={{asset}}"></script>
-<script src="/ui/battery.js?v={{asset}}" defer></script>
-<script src="/ui/stall.js?v={{asset}}" defer></script>
-<link rel="icon" href="/ui/brand/app-icon-32.png">
-<link rel="apple-touch-icon" href="/ui/brand/app-icon-180.png">
+<link rel="stylesheet" href="ui/rcn.css?v={{asset}}">
+<script src="ui/ui.js?v={{asset}}"></script>
+<script src="ui/api.js?v={{asset}}"></script>
+<script src="ui/joystick.js?v={{asset}}"></script>
+<script src="ui/battery.js?v={{asset}}" defer></script>
+<script src="ui/stall.js?v={{asset}}" defer></script>
+<link rel="icon" href="ui/brand/app-icon-32.png">
+<link rel="apple-touch-icon" href="ui/brand/app-icon-180.png">
 <style>
 :root {
   /* Canvas colors, read by the script. */
@@ -79,7 +79,7 @@ main.maps-open #hint { left: calc(min(340px, 80%) + var(--rcn-space-3)); }
 </head>
 <body>
 <header class="rcn-header" id="head">
-  <img class="rcn-mark" src="/ui/brand/mark.png" alt="RACECAR Neo">
+  <img class="rcn-mark" src="ui/brand/mark.png" alt="RACECAR Neo">
   <span class="rcn-title">Mapper</span>
   <span id="mode"></span>
   <span id="mapname"></span>
@@ -108,13 +108,13 @@ main.maps-open #hint { left: calc(min(340px, 80%) + var(--rcn-space-3)); }
   </div>
   <aside id="maps"><div class="top"><h2>Maps</h2><button class="rcn-btn quiet small" id="mapsclose">Close</button></div><div id="maplist"></div></aside>
   <div id="tools">
-    <button class="rcn-btn quiet" id="zin" title="Zoom in" aria-label="Zoom in"><svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#plus"/></svg></button>
-    <button class="rcn-btn quiet" id="zout" title="Zoom out" aria-label="Zoom out"><svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#minus"/></svg></button>
-    <button class="rcn-btn quiet" id="center" title="Center on the car" aria-label="Center on the car"><svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#target"/></svg></button>
-    <button class="rcn-btn quiet" id="rotl" title="Rotate the map left" aria-label="Rotate the map left"><svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#rotate-left"/></svg></button>
-    <button class="rcn-btn quiet" id="rotr" title="Rotate the map right" aria-label="Rotate the map right"><svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#rotate-right"/></svg></button>
-    <button class="rcn-btn quiet" id="carup" title="Keep the car pointing up" aria-label="Keep the car pointing up" aria-pressed="false"><svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#navigate"/></svg></button>
-    <button class="rcn-btn quiet" id="cleartrail" title="Clear trail" aria-label="Clear trail"><svg class="rcn-icon"><use href="/ui/icons.svg?v={{asset}}#eraser"/></svg></button>
+    <button class="rcn-btn quiet" id="zin" title="Zoom in" aria-label="Zoom in"><svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#plus"/></svg></button>
+    <button class="rcn-btn quiet" id="zout" title="Zoom out" aria-label="Zoom out"><svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#minus"/></svg></button>
+    <button class="rcn-btn quiet" id="center" title="Center on the car" aria-label="Center on the car"><svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#target"/></svg></button>
+    <button class="rcn-btn quiet" id="rotl" title="Rotate the map left" aria-label="Rotate the map left"><svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#rotate-left"/></svg></button>
+    <button class="rcn-btn quiet" id="rotr" title="Rotate the map right" aria-label="Rotate the map right"><svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#rotate-right"/></svg></button>
+    <button class="rcn-btn quiet" id="carup" title="Keep the car pointing up" aria-label="Keep the car pointing up" aria-pressed="false"><svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#navigate"/></svg></button>
+    <button class="rcn-btn quiet" id="cleartrail" title="Clear trail" aria-label="Clear trail"><svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#eraser"/></svg></button>
   </div>
 </main>
 <div id="job"><span id="jobtitle"></span><button class="rcn-btn quiet small" id="jobmore">Show output</button><pre class="rcn-code" id="joblines"></pre></div>
@@ -407,7 +407,7 @@ holdToRotate($('rotl'), -ROT_STEP);
 holdToRotate($('rotr'), ROT_STEP);
 $('carup').onclick = () => setCarUp(!view.carUp);
 $('cleartrail').onclick = async () => {
-  try { await RcnApi.post('/api/trail/clear'); } catch (err) { /* the next poll shows it */ }
+  try { await RcnApi.post('api/trail/clear'); } catch (err) { /* the next poll shows it */ }
   trail = { id: -1, from: 0, points: [] };
   draw();
 };
@@ -429,7 +429,7 @@ async function finishPose(x, y, yaw) {
   if (purpose === 'set') {
     if (!confirm(`Set the car's pose to ${text}?`)) { poseTool.start = poseTool.end = null; draw(); return; }
     poseTool = null; hint('');
-    report(await post('/api/pose', { x, y, yaw }));
+    report(await post('api/pose', { x, y, yaw }));
   } else {
     const req = pending;
     if (!confirm(`Start mapping "${req.name}" from "${req.source}" with the car at ${text}?`)) {
@@ -465,10 +465,10 @@ async function action(body) {
   // Mapping and localization run without the driving apps; their names come from the car.
   if (body.action === 'start' || body.action === 'load') {
     let driving = [];
-    try { driving = (await (await fetch('/api/driving', { cache: 'no-store' })).json()).apps || []; } catch (err) { /* the car stops them anyway */ }
+    try { driving = (await (await fetch('api/driving', { cache: 'no-store' })).json()).apps || []; } catch (err) { /* the car stops them anyway */ }
     if (driving.length && !confirm(`${driving.join(' and ')} is open. Close it and continue?`)) return { ok: false };
   }
-  const r = await post('/api/action', body);
+  const r = await post('api/action', body);
   if (!r.ok) report(r);
   poll();
   return r;
@@ -500,7 +500,7 @@ function render() {
     f.append(button('Set pose', '', () => startPoseTool('set'), running, 'map'));
     f.append(button('Find me', '', async () => {
       if (!confirm('Search the whole map for the car? Drive slowly until it shows localized.')) return;
-      report(await post('/api/find', {}));
+      report(await post('api/find', {}));
     }, running || s.localizer !== 'amcl', 'target'));
     f.append(button('Stop', 'danger', () => { if (confirm('Stop localization?')) action({ action: 'stop' }); }, running, 'stop'));
   } else {
@@ -526,7 +526,7 @@ function openStart(source) {
 $('startcancel').onclick = () => $('startsheet').classList.remove('show');
 async function nameTaken(name) {
   try {
-    const data = await (await fetch('/api/maps', { cache: 'no-store' })).json();
+    const data = await (await fetch('api/maps', { cache: 'no-store' })).json();
     return data.maps.some((m) => m.name === name);
   } catch (err) { return false; }
 }
@@ -541,7 +541,7 @@ $('startgo').onclick = async () => {
     replace = true;
   }
   if (source) {
-    preview = await fetchGrid(`/api/saved?name=${encodeURIComponent(source)}`);
+    preview = await fetchGrid(`api/saved?name=${encodeURIComponent(source)}`);
     if (!preview) { flash(`Cannot read ${source}`, 'bad'); return; }
     fit(preview); pending = { name, source, replace }; startPoseTool('extend'); draw();
     return;
@@ -557,7 +557,7 @@ async function openMaps() {
   mapsOpen = true;
   document.querySelector('main').classList.add('maps-open');
   render(); draw();
-  const res = await fetch('/api/maps', { cache: 'no-store' });
+  const res = await fetch('api/maps', { cache: 'no-store' });
   const data = await res.json();
   const list = $('maplist'); list.replaceChildren();
   if (!data.maps.length) { list.textContent = 'No maps yet.'; return; }
@@ -565,7 +565,7 @@ async function openMaps() {
   for (const m of data.maps) {
     const row = document.createElement('div'); row.className = 'map';
     const img = document.createElement('img'); img.loading = 'lazy'; img.alt = '';
-    img.src = `/api/thumb?name=${encodeURIComponent(m.name)}&t=${encodeURIComponent(m.saved)}`;
+    img.src = `api/thumb?name=${encodeURIComponent(m.name)}&t=${encodeURIComponent(m.saved)}`;
     const info = document.createElement('div'); info.className = 'info';
     info.innerHTML = '<div class="name"></div><div class="rcn-small rcn-muted"></div><div class="acts"></div>';
     info.querySelector('.name').textContent = m.name + (m.note ? ` (${m.note})` : '');
@@ -634,7 +634,7 @@ async function waitForJob() {
   for (;;) {
     await new Promise((res) => setTimeout(res, 300));
     try {
-      const j = (await (await fetch('/api/state', { cache: 'no-store' })).json()).job || {};
+      const j = (await (await fetch('api/state', { cache: 'no-store' })).json()).job || {};
       if (!j.running) return j.code === 0;
     } catch (err) { /* keep waiting */ }
   }
@@ -684,12 +684,11 @@ $('more').onclick = () => {
 
 // -- checks before mapping (racecar check) --
 const START_TIP = 'To start mapping, run checks first';
-const PROFILE_PORT = 8088;  // the Car Profile app, where the repairs are
 const MARKS = { OK: '[ OK ]', WARN: '[WARN]', FAIL: '[FAIL]' };
 let checks = { passed: false, rows: [], job: {} };
 let showChecksWhenDone = false;
 async function loadChecks() {
-  try { checks = await (await fetch('/api/checks', { cache: 'no-store' })).json(); } catch (e) { return; }
+  try { checks = await (await fetch('api/checks', { cache: 'no-store' })).json(); } catch (e) { return; }
   if (showChecksWhenDone && !(checks.job && checks.job.running)) { showChecksWhenDone = false; showChecks(); }
 }
 function showChecks() {
@@ -698,7 +697,7 @@ function showChecks() {
     ? `Passed ${checks.time}. Mapping can start.`
     : (checks.reason || 'The checks have not run.');
   $('checkrows').innerHTML = rows.map((r) => {
-    const link = r.link ? `${location.protocol}//${location.hostname}:${PROFILE_PORT}${r.link}` : '';
+    const link = r.link ? RcnRoute.app('profile', r.link) : '';
     const repair = r.repair ? `<span class="crepair">${link ? `<a href="${esc(link)}" target="_blank">${esc(r.repair)}</a>` : esc(r.repair)}</span>` : '';
     return `<div class="crow"><span class="cmark ${r.status}">${MARKS[r.status] || ''}</span><span>${esc(r.name)}: ${esc(r.detail)}</span>${repair}</div>`;
   }).join('');
@@ -709,7 +708,7 @@ async function runChecks() {
   checks = { ...checks, job: { running: true } };
   renderKey = '';
   render();
-  const r = await post('/api/checks/run', {});
+  const r = await post('api/checks/run', {});
   if (!r.ok) { report(r); await loadChecks(); renderKey = ''; return; }
   showChecksWhenDone = true;
 }
@@ -732,7 +731,7 @@ function driveCommand() {
 }
 function sendDrive(force) {
   const c = driveCommand(), s = JSON.stringify(c);
-  if (s !== drive.last || force) { drive.last = s; post('/cmd', c); }
+  if (s !== drive.last || force) { drive.last = s; post('cmd', c); }
   for (const b of document.querySelectorAll('#dpad button')) b.classList.toggle('down', drive.held.has(`${b.dataset.axis}:${b.dataset.val}`));
 }
 function driveRelease() { drive.held.clear(); djoy.stop(); sendDrive(true); }
@@ -788,7 +787,7 @@ async function poll() {
   busy = true;
   try {
     const next = trail.from + trail.points.length;
-    const res = await fetch(`/api/state?trail_from=${next}&trail_id=${trail.id}`, { cache: 'no-store' });
+    const res = await fetch(`api/state?trail_from=${next}&trail_id=${trail.id}`, { cache: 'no-store' });
     const s = await res.json();
     const t = s.trail;
     // The server sends the points from `next` on, or the whole trail after a restart.
@@ -798,7 +797,7 @@ async function poll() {
     lostContact = false;
     if (s.map_version && s.map_version !== gridVersion) {
       gridVersion = s.map_version;
-      const g = await fetchGrid('/api/map');
+      const g = await fetchGrid('api/map');
       if (g) { grid = g; if (!view.fitted && !preview) fit(grid); }
     }
     if (!s.map_version) grid = null;
