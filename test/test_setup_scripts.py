@@ -332,6 +332,7 @@ class TestNetworkPolkitRule:
             'org.freedesktop.NetworkManager.wifi.scan',
             'org.freedesktop.NetworkManager.settings.modify.own',
             'org.freedesktop.NetworkManager.settings.modify.system',
+            'org.freedesktop.NetworkManager.wifi.share.protected',
         ],
     )
     def test_grants_the_actions_the_wifi_command_needs(self, text, action_id):

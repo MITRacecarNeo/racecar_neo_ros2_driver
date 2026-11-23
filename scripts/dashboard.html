@@ -22,6 +22,7 @@
   #net-menu table { border-collapse: collapse; width: 100%; font: 400 14px/20px var(--rcn-font-sans); }
   #net-menu td { padding: 4px 8px 4px 0; white-space: nowrap; }
   #net-menu td.dim { color: var(--rcn-text-muted); }
+  #net-configure { margin: var(--rcn-space-2) 0 var(--rcn-space-1); }
   #batt-time { cursor: pointer; }
   @media (max-width: 480px) { #batt-power { display: none; } }
   main { max-width: 1100px; margin: 0 auto; padding: var(--rcn-space-6) var(--rcn-space-4) var(--rcn-space-8); }
@@ -32,6 +33,7 @@
   .app { display: flex; flex-direction: column; align-items: center; gap: var(--rcn-space-2); background: none; border: 0; padding: 0; color: var(--rcn-text); cursor: pointer; font: inherit; }
   .app .glyph { position: relative; width: 76px; height: 76px; border-radius: 20px; background: var(--rcn-surface); display: grid; place-items: center; color: var(--rcn-orange); border: 3px solid var(--rcn-steel); transition: border-color 0.12s, background-color 0.12s; }
   .app .glyph > .rcn-icon { width: 36px; height: 36px; }
+  a.app { text-decoration: none; }
   .app.locked { opacity: 0.4; cursor: not-allowed; }
   .app.planned { opacity: 0.45; cursor: default; pointer-events: none; }
   .app.planned .glyph { border-style: dashed; background: none; }
@@ -114,7 +116,7 @@
   <span class="rcn-spacer"></span>
   <span class="net">
     <span class="rcn-status off" id="net-pill" role="button" tabindex="0" aria-haspopup="true" aria-expanded="false" hidden></span>
-    <div id="net-menu" hidden><table id="net-table"></table></div>
+    <div id="net-menu" hidden><table id="net-table"></table><a class="rcn-btn small" id="net-configure" href="connections" target="_blank">Configure</a></div>
   </span>
   <span class="rcn-status off batt" id="batt-time" role="button" tabindex="0" hidden></span>
   <span class="rcn-status off batt" id="batt-power" hidden></span>
@@ -281,19 +283,25 @@ const APP_STATE = {
 };
 // Apps not built yet: dashed, grayed tiles in their place, after the app named.
 const PLANNED = [
-  { group: 'core', after: 'profile', name: 'Connections', icon: 'wifi' },
   { group: 'core', after: 'jupyter', name: 'Files', icon: 'folder' },
   { group: 'tools', after: 'terminal', name: 'Browser', icon: 'globe' },
   { group: 'autonomy', after: 'mapview', name: 'Planner', icon: 'navigate' },
   { group: 'autonomy', after: 'mapview', name: 'Modules', icon: 'grid' },
   { group: 'autonomy', after: 'mapview', name: 'Scripter', icon: 'code' },
 ];
+// Pages of this server shown as Core tiles, after the app named.
+const PAGE_TILES = [
+  { group: 'core', after: 'profile', name: 'Connections', icon: 'wifi', href: 'connections', tip: 'Change WiFi and network settings' },
+];
+const pageTile = (p) => `<a class="app on" href="${p.href}" target="_blank" data-tip="${esc(p.tip)}">
+  <span class="glyph">${icon(p.icon)}</span><span class="name">${esc(p.name)}</span></a>`;
 const plannedTile = (p) => `<div class="app planned" aria-hidden="true">
   <span class="glyph">${icon(p.icon)}</span><span class="name">${esc(p.name)}</span></div>`;
 function withPlanned(group, tiles) {
   const out = [];
   for (const [id, html] of tiles) {
     out.push(html);
+    out.push(...PAGE_TILES.filter((p) => p.group === group && p.after === id).map(pageTile));
     out.push(...PLANNED.filter((p) => p.group === group && p.after === id && !apps.some((a) => a.name === p.name)).map(plannedTile));
   }
   return out.join('');

@@ -29,7 +29,9 @@
 #   RACECAR_AP_ID         (default: 1; the number appended to the SSID base)
 #   RACECAR_AP_SSID_BASE  (default: racecar-neo)
 #   RACECAR_AP_SSID       (default: racecar-neo-<id>; full SSID override)
-#   RACECAR_AP_PSK        (default: racecar@mit)
+#   RACECAR_AP_PSK        (default: racecar@mit; an existing AP keeps its password
+#                          unless this is set, so a change from the Connections
+#                          page survives a rerun)
 #   RACECAR_AP_CHANNEL    (default: 6)
 #   RACECAR_AP_ADDR       (default: 10.42.0.1/24)
 #   RACECAR_ETH_STATIC    (default: 192.168.52.(200 + RACECAR_AP_ID)/24, .200 without an ID)
@@ -178,6 +180,10 @@ if nmcli -t -f NAME con show | grep -x "$AP_CON_NAME" >/dev/null; then
     # a no-op. --show-secrets exposes the PSK for comparison, and
     # connection.interface-name moves an AP still pinned to wlan0.
     nmcli_get() { sudo nmcli --show-secrets -g "$1" con show "$AP_CON_NAME" 2>/dev/null; }
+    if [ -z "${RACECAR_AP_PSK:-}" ]; then
+        have_psk=$(nmcli_get 802-11-wireless-security.psk || true)
+        [ -n "$have_psk" ] && AP_PSK="$have_psk"
+    fi
     diff_ap=false
     for spec in \
         "connection.interface-name=$AP_IFACE" \

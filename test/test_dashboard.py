@@ -1374,7 +1374,79 @@ def test_footer_names_the_car(dashboard):
 
 def test_planned_apps_show_as_placeholders(dashboard):
     html = (Path(dashboard.__file__).parent / 'dashboard.html').read_text()
-    for name in ('Connections', 'Files', 'Browser', 'Planner', 'Modules', 'Scripter'):
+    for name in ('Files', 'Browser', 'Planner', 'Modules', 'Scripter'):
         assert f"name: '{name}'" in html, name
     assert '.app.planned .glyph { border-style: dashed;' in html
     assert '!apps.some((a) => a.name === p.name)' in html
+
+
+def test_connections_tile_and_configure_link(dashboard):
+    html = (Path(dashboard.__file__).parent / 'dashboard.html').read_text()
+    assert "name: 'Connections', icon: 'wifi', href: 'connections'" in html
+    assert "after: 'profile', name: 'Connections'" in html
+    assert 'id="net-configure" href="connections"' in html
+    assert "{ group: 'core', after: 'profile', name: 'Connections', icon: 'wifi' }," not in html
+
+
+class FakeJobs:
+    def __getattr__(self, name):
+        return lambda *a: (name, a)
+
+
+class TestConnectionJob:
+    def job(self, dashboard, action, **body):
+        return dashboard.connection_job(action, body, FakeJobs())
+
+    def test_join_checks_before_running(self, dashboard):
+        short = self.job(dashboard, 'join', ssid='Home', security='psk', password='short')
+        assert short == 'Use 8 to 63 characters.'
+        assert self.job(dashboard, 'join', ssid='', security='psk') == 'Reload the page.'
+        assert self.job(dashboard, 'join', ssid='x', security='wep') == 'Reload the page.'
+        body = {'ssid': 'Home', 'security': 'psk', 'password': 'longenough'}
+        run, failure = self.job(dashboard, 'join', **body)
+        assert run() == ('join', ('Home', 'psk', 'longenough', ''))
+        assert failure == 'Could not join Home.'
+        run, _ = self.job(dashboard, 'join', ssid='Duck', security='psk', saved=True)
+        assert run()[0] == 'join'
+
+    def test_other_actions(self, dashboard):
+        run, failure = self.job(dashboard, 'forget', uuid='u1', ssid='Duck')
+        assert run() == ('forget', ('u1',)) and failure == 'Could not forget Duck.'
+        assert self.job(dashboard, 'forget') == 'Reload the page.'
+        run, failure = self.job(dashboard, 'order', uuids=['a', 'b'])
+        assert run() == ('order', (['a', 'b'],)) and failure == 'Could not save the order.'
+        assert self.job(dashboard, 'order', uuids='a') == 'Reload the page.'
+        run, failure = self.job(dashboard, 'wifi', on=True)
+        assert run() == ('wifi_power', (True,)) and failure == 'Could not turn on WiFi.'
+        assert self.job(dashboard, 'wifi', on=False)[1] == 'Could not turn off WiFi.'
+        assert self.job(dashboard, 'ap-password', password='short') == 'Use 8 to 63 characters.'
+        run, failure = self.job(dashboard, 'ap-password', password='newpass123')
+        assert run() == ('ap_password', ('newpass123',))
+        assert failure == 'Could not change the password.'
+        assert self.job(dashboard, 'ap-off') == 'Reload the page.'
+
+
+def test_connections_page_text(dashboard):
+    html = (Path(dashboard.__file__).parent / 'connections.html').read_text()
+    assert "'Sign-in needed'" in html
+    # No sign-in button until the Browser app; no eth0 or access point on/off.
+    assert 'portal' not in html.replace("portal: 'Sign-in needed'", '').replace('.chip.portal', '')
+    assert html.count('class="switch"') == 1
+    # Confirms ask only the question; graying shows a running change.
+    gone_text = (
+        '...', 'It may disconnect', 'Rejoin with', 'Not saved', "'Off'", 'No other networks'
+    )
+    for gone in gone_text:
+        assert gone not in html, gone
+    for asked in ('`Leave ${view.wifi.network}?`', "'Turn off WiFi?'",
+                  '`Disconnect every device from ${view.ap.ssid}?`'):  # fmt: skip
+        assert asked in html, asked
+
+
+def test_device_names_route_and_edit_button(dashboard):
+    src = (Path(dashboard.__file__).parent / 'dashboard.py').read_text()
+    assert "if action == 'names':" in src and 'netconfig.save_names(names)' in src
+    html = (Path(dashboard.__file__).parent / 'connections.html').read_text()
+    assert '>Edit devices</button>' in html and 'maxlength="32"' in html
+    # Ping test is the last pane.
+    assert html.index('<section id="ping">') > html.index('<section id="devices">')

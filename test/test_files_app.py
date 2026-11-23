@@ -11,6 +11,16 @@ def files():
     return load_script('files_app')
 
 
+@pytest.fixture(autouse=True)
+def roots(files, tmp_path, monkeypatch):
+    # The library and data roots of the test tree stand in for /opt/racecar-neo and /mnt/nvme/data.
+    monkeypatch.setattr(
+        files,
+        'allowed_roots',
+        lambda root=None: [(tmp_path / p).resolve() for p in ('jupyter_ws', 'opt', 'data')],
+    )
+
+
 @pytest.fixture
 def ws(tmp_path):
     root = tmp_path / 'jupyter_ws'
@@ -38,6 +48,28 @@ class TestResolve:
         assert files.resolve('', ws) == ws
         assert files.resolve('labs/drive.py', ws) == ws / 'labs' / 'drive.py'
         assert files.resolve('data/run.csv', ws) is not None
+
+    def test_links_elsewhere_are_refused(self, files, ws, tmp_path):
+        ssh = tmp_path / 'home' / '.ssh'
+        ssh.mkdir(parents=True)
+        (ssh / 'id_test').write_text('not a key')
+        (ws / 'labs' / 'keys').symlink_to(ssh)
+        (ws / 'labs' / 'etc').symlink_to(tmp_path / 'secret.txt')
+        assert files.resolve('labs/keys', ws) is None
+        assert files.resolve('labs/keys/id_test', ws) is None
+        assert files.resolve('labs/etc', ws) is None
+        assert files.listing('labs/keys', ws) is None
+        assert files.view('labs/keys/id_test', ws) is None
+
+    def test_only_get_routes(self, files):
+        assert not any(
+            hasattr(files.Handler, m) for m in ('do_POST', 'do_PUT', 'do_DELETE', 'do_PATCH')
+        )
+
+    def test_real_roots(self, files, monkeypatch):
+        monkeypatch.undo()
+        roots = files.allowed_roots()
+        assert files.LIBRARY_ROOT.resolve() in roots and files.ROOT.resolve() in roots
 
     def test_nested_link_is_entered(self, files, ws):
         assert files.resolve('racecar-neo/library/racecar_core.py', ws) is not None

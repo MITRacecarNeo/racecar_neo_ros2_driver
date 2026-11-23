@@ -26,6 +26,7 @@ This package is the v2 successor to [`racecar-neo-ros2-backend`](https://github.
 - [Bag recording](#bag-recording)
 - [Car Profile app](#car-profile-app)
 - [Files app](#files-app)
+- [Connections page](#connections-page)
 - [Maps](#maps)
 - [Jupyter notebooks](#jupyter-notebooks)
   - [Student library and labs](#student-library-and-labs)
@@ -901,6 +902,30 @@ Recording every topic pulls in `/camera/color` and `/camera/depth`, roughly
 unless you pass `--force`, because rosbag2 drops messages rather than blocking:
 the bag looks healthy until it is read. Name the topics you need, or
 `--exclude '/camera/.*'`.
+
+## Connections page
+
+The Connections tile in Core, or Configure in the 8080 network menu, opens
+`http://<robot>/home/connections`.
+
+- WiFi (wlan0): on or off, the current network and whether it reaches the
+  internet (Online, No internet, Sign-in needed), the visible networks (tap
+  one to join), and the saved ones in the order the car tries them (arrows,
+  then Save order; the cross forgets one).
+- Access point (wlan1): name, channel, address, and Change password (typed
+  twice). Every device on the access point disconnects and rejoins with the
+  new password. `racecar setup networking` keeps it unless
+  `RACECAR_AP_PSK` is set.
+- Ethernet (eth0): state and address.
+- Devices: everything connected to the car, on the access point or eth0:
+  name, address, MAC, interface, signal, and time connected. Edit devices
+  gives each one a nickname, kept by MAC in the car profile
+  (`~/.config/racecar/devices.yaml`); a device without one shows the name
+  it sends, if any.
+- Ping test: four pings to google.com; whether they arrive, the average
+  time, and the interface used.
+
+A change to the network the browser is on asks first.
 
 ## Files app
 

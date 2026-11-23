@@ -33,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from battery_alert import Announcer, final_message  # noqa: E402, I100  sibling scripts
 import car_setup  # noqa: E402
 import features  # noqa: E402
+import netconfig  # noqa: E402
 from safe_shutdown import shutdown_sequence  # noqa: E402
 from sysinfo import (  # noqa: E402
     classify_ext5v,
@@ -414,6 +415,53 @@ def clock_view(now: float) -> dict[str, Any]:
     """Return the car's time, UTC offset, and zone name, so the page shows the car's clock."""
     local = time.localtime(now)
     return {'epoch': now, 'utc_offset': float(local.tm_gmtoff), 'zone': local.tm_zone}
+
+
+RELOAD = 'Reload the page.'
+
+
+def connection_job(
+    action: str, body: dict[str, Any], jobs: netconfig.Jobs | None = None
+) -> tuple[Callable[[], tuple[bool, str]], str] | str:
+    """
+    Return the change a Connections request asks for and its failure message.
+
+    A refusal is returned as a str. A request the page cannot send (no
+    network, a malformed list, an unknown action) is answered with RELOAD.
+    """
+    jobs = jobs or _net_jobs
+    text = lambda key: str(body.get(key) or '')  # noqa: E731
+    ssid = text('ssid')
+    if action == 'join':
+        security = text('security')
+        if not ssid or security not in ('open', 'psk', 'sae', 'enterprise'):
+            return RELOAD
+        saved = bool(body.get('saved'))
+        problem = netconfig.check_join(security, text('password'), text('identity'), saved)
+        if problem:
+            return problem
+        return (
+            lambda: jobs.join(ssid, security, text('password'), text('identity')),
+            f'Could not join {ssid}.',
+        )
+    if action == 'forget':
+        if not text('uuid'):
+            return RELOAD
+        return (lambda: jobs.forget(text('uuid'))), f'Could not forget {ssid or "the network"}.'
+    if action == 'order':
+        uuids = body.get('uuids')
+        if not isinstance(uuids, list) or not all(isinstance(u, str) for u in uuids):
+            return RELOAD
+        return (lambda: jobs.order(uuids)), 'Could not save the order.'
+    if action == 'wifi':
+        on = bool(body.get('on'))
+        return (lambda: jobs.wifi_power(on)), f'Could not turn {"on" if on else "off"} WiFi.'
+    if action == 'ap-password':
+        problem = netconfig.check_ap_password(text('password'))
+        if problem:
+            return problem
+        return (lambda: jobs.ap_password(text('password'))), 'Could not change the password.'
+    return RELOAD
 
 
 def page_origin(origin: str | None, host: str | None) -> bool:
@@ -1485,6 +1533,8 @@ def get_status() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 _HTML_PATH = Path(__file__).resolve().parent / 'dashboard.html'
+_CONNECTIONS_PATH = Path(__file__).resolve().parent / 'connections.html'
+_net_jobs = netconfig.Jobs()
 _LAUNCH_PATH = Path(__file__).resolve().parent / 'dashboard_launch.html'
 
 
@@ -1500,6 +1550,14 @@ class DashboardHandler(webui.AppHandler):
             self.page(_HTML_PATH)
         elif url.path == '/launch':
             self.page(_LAUNCH_PATH)
+        elif url.path == '/connections':
+            self.page(_CONNECTIONS_PATH)
+        elif url.path == '/api/connections':
+            rescan = query.get('rescan', [''])[0] == '1'
+            view = netconfig.view(self.client_ip(), rescan=rescan)
+            self.send_json({**view, 'job': _net_jobs.view()}, 200)
+        elif url.path == '/api/connections/job':
+            self.send_json(_net_jobs.view(), 200)
         elif url.path == '/api/status':
             if note_view():
                 # The cached snapshot may be minutes old; refresh what is cheap.
@@ -1593,6 +1651,15 @@ class DashboardHandler(webui.AppHandler):
             self.send_json({'ok': True, 'message': FINAL_MESSAGE}, 200)
             threading.Thread(target=turn_off, daemon=True).start()
             return
+        if self.path == '/api/connections':
+            self._connections()
+            return
+        if self.path == '/api/connections/ping':
+            if not page_origin(self.headers.get('Origin'), self.headers.get('Host')):
+                self.send_json({'ok': False, 'message': 'Not allowed from this page.'}, 403)
+                return
+            self.send_json(netconfig.ping_test(), 200)
+            return
         if self.path not in ('/api/open', '/api/override', '/api/feature'):
             self.send_error(404)
             return
@@ -1615,6 +1682,46 @@ class DashboardHandler(webui.AppHandler):
         _refresh_apps()
         log.info('open %s: %s', target, message)
         self.send_json({'ok': ok, 'message': message}, 200 if ok else 400)
+
+    def _connections(self) -> None:
+        if not page_origin(self.headers.get('Origin'), self.headers.get('Host')):
+            self.send_json({'ok': False, 'message': 'Not allowed from this page.'}, 403)
+            return
+        try:
+            body = self.read_json()
+            action = str(body.get('action', ''))
+        except (ValueError, AttributeError):
+            self.send_json({'ok': False, 'message': RELOAD}, 400)
+            return
+        if action == 'names':
+            self._device_names(body.get('names'))
+            return
+        job = connection_job(action, body)
+        if isinstance(job, str):
+            self.send_json({'ok': False, 'message': job}, 400)
+            return
+        target, failure = job
+        if not _net_jobs.start(action, target, failure):
+            self.send_json({'ok': False, 'message': 'Another change is running.'}, 409)
+            return
+        # Names only; passwords are never logged.
+        log.info('Connections %s from %s', action, self.client_ip())
+        self.send_json({'ok': True, 'job': _net_jobs.view()}, 202)
+
+    def _device_names(self, names: Any) -> None:
+        if not isinstance(names, dict) or not all(isinstance(v, str) for v in names.values()):
+            self.send_json({'ok': False, 'message': RELOAD}, 400)
+            return
+        try:
+            netconfig.save_names(names)
+        except ValueError:
+            self.send_json({'ok': False, 'message': RELOAD}, 400)
+            return
+        except OSError:
+            log.exception('Saving device names failed')
+            self.send_json({'ok': False, 'message': 'Could not save the names.'}, 500)
+            return
+        self.send_json({'ok': True}, 200)
 
     def _override(self, action: str) -> None:
         now = time.monotonic()

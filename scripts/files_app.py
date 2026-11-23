@@ -4,8 +4,10 @@ Files app on port 8089 (/files/): the car's pages and the student workspace.
 
 Read-only. Lists every app with its name address and port, and browses
 ~/jupyter_ws: folders, text and code, Markdown and notebooks rendered, images
-shown, any file downloaded. Paths never step up with `..`; links inside the
-workspace (data, maps, the student library) are followed to their targets.
+shown, any file downloaded. Paths never step up with `..`. Links inside the
+workspace are followed only into ALLOWED_ROOTS: the workspace, the student
+library under /opt/racecar-neo, and the car's data root (data, maps); a link
+to anywhere else (~/.ssh, /etc) is refused. Only GET routes exist.
 
 Run by scripts/racecar-files.service. The page is scripts/files.html.
 """
@@ -30,6 +32,16 @@ import webui  # noqa: E402
 
 PAGE = HERE / 'files.html'
 ROOT = Path.home() / 'jupyter_ws'
+LIBRARY_ROOT = Path('/opt/racecar-neo')
+
+
+def allowed_roots(root: Path = ROOT) -> list[Path]:
+    """Return the real folders a workspace path may lead into."""
+    from racecar_neo_ros2_driver import data_root
+
+    return [p.resolve() for p in (root, LIBRARY_ROOT, data_root.data_dir())]
+
+
 # Larger files are offered for download, not shown.
 VIEW_MAX_BYTES = 2 * 1024 * 1024
 TEXT_SUFFIXES = {
@@ -56,17 +68,19 @@ def resolve(rel: str, root: Path = ROOT) -> Path | None:
     """
     Return the file or folder `rel` names under the workspace, or None.
 
-    `rel` is a path below the workspace with no `..`. Only a link the
-    workspace holds leads elsewhere; `racecar-neo/library` points into
-    /opt/racecar-neo.
+    `rel` is a path below the workspace with no `..`. Its real target must
+    fall under allowed_roots, so a link the workspace holds reaches the
+    library or the data root but not ~/.ssh or /etc.
     """
     parts = [p for p in unquote(rel).split('/') if p not in ('', '.')]
     if any(p == '..' for p in parts):
         return None
     target = (root / Path(*parts)) if parts else root
     try:
-        target.resolve(strict=True)
+        real = target.resolve(strict=True)
     except OSError:
+        return None
+    if not any(real == r or r in real.parents for r in allowed_roots(root)):
         return None
     return target
 

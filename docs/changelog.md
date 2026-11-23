@@ -99,6 +99,16 @@ All notable changes to this project will be documented in this file. The format 
   the home page through each address. The port
   addresses keep working; links between apps follow the address in use
   (`scripts/web/route.js`).
+- Connections page on the 8080 server (`/connections`,
+  `scripts/connections.html`, `scripts/netconfig.py`), from a Core tile and
+  Configure in the network menu: WiFi on or off, join (password or
+  enterprise account), forget and order the saved networks; a ping test;
+  the access point password; eth0 state; the connected devices with MAC,
+  interface and signal, and nicknames kept by MAC in the car profile
+  (`devices.yaml`). The Files app serves only the workspace, the student
+  library and the data root; a workspace link elsewhere is refused. The racecar account may restart the access point
+  (`49-racecar-network.rules`, `wifi.share.protected`). Passwords go to NetworkManager over D-Bus,
+  never on a command line.
 - Files app (`scripts/files_app.py`, `racecar-files.service`, port 8089, Core
   group): the car's pages with their addresses and state, and a read-only
   browser of `~/jupyter_ws` (code highlighted, Markdown and notebooks
@@ -125,6 +135,8 @@ All notable changes to this project will be documented in this file. The format 
 ### Changed
 
 - The map viewer is named Mapper; the Turn Off tile is Shut Down.
+- `racecar setup networking` keeps the access point's password unless
+  `RACECAR_AP_PSK` is set.
 - Pages link relative to their own address (`<base href>`), so they work
   under a name path and on their port. JupyterLab serves under `/jupyter/`
   on port 8888 as well (`--ServerApp.base_url`); `:8888/` and `:8888/lab`

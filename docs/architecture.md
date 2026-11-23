@@ -245,6 +245,26 @@ browser ──▶ <car>:<port>/        (direct; prefix /)
 both `apps.py nginx` (the site `scripts/setup_web.sh` installs as
 `/etc/nginx/sites-available/racecar`) and `web/route.js`.
 
+### Connections page
+
+`scripts/connections.html`, served by the 8080 dashboard at `/connections`.
+`scripts/netconfig.py` reads through `nmcli` (devices, saved WiFi profiles,
+the wlan0 scan, the `racecar-neo-ap` profile, `iw` stations) and sends
+secrets over the system D-Bus (`Bus.add_and_activate`, `Bus.set_secret`).
+Changes run one at a time in `Jobs` off the request thread; the page polls
+`/api/connections/job` and grays out while one runs.
+
+```
+connections.html ──GET /api/connections──▶ netconfig.view ──▶ nmcli, iw
+                 ──POST /api/connections─▶ dashboard.connection_job (checks)
+                                            └▶ Jobs: join, forget, order, wifi, ap-password
+                                                 ├▶ nmcli (no secrets)
+                                                 └▶ D-Bus NetworkManager (passwords)
+```
+
+`view` names the device the request arrives on (`via`) from the client
+address, so the page warns before a change to that link.
+
 ### Files app
 
 `scripts/files_app.py` (`racecar-files.service`, port 8089, core group),
