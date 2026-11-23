@@ -23,7 +23,7 @@ class TestRegistry:
     def test_every_entry_is_complete(self):
         for a in apps.all_apps():
             assert set(REQUIRED) <= set(a), a['id']
-            assert a['group'] in ('core', 'utilities'), a['id']
+            assert a['group'] in ('core', 'tools', 'autonomy'), a['id']
             assert isinstance(a['exclusive'], bool) and isinstance(a['startable'], bool)
             assert a['needs'] in (None, 'camera'), a['id']
 

@@ -33,6 +33,8 @@
   .app .glyph { position: relative; width: 76px; height: 76px; border-radius: 20px; background: var(--rcn-surface); display: grid; place-items: center; color: var(--rcn-orange); border: 3px solid var(--rcn-steel); transition: border-color 0.12s, background-color 0.12s; }
   .app .glyph > .rcn-icon { width: 36px; height: 36px; }
   .app.locked { opacity: 0.4; cursor: not-allowed; }
+  .app.planned { opacity: 0.45; cursor: default; pointer-events: none; }
+  .app.planned .glyph { border-style: dashed; background: none; }
   .setup-note { color: var(--rcn-gold); margin: 0 0 var(--rcn-space-4); }
   .app .name { font: 600 15px/20px var(--rcn-font-sans); text-align: center; }
   .app.on .glyph { border-color: var(--rcn-paper); }
@@ -124,20 +126,22 @@
   <p class="setup-note" id="setup-note" hidden></p>
   <div class="bar-row group-row"><div class="rcn-eyebrow">Core</div></div>
   <div class="apps">
-    <!-- display: contents keeps the override and Turn Off tiles in the same grid as the core apps. -->
+    <!-- display: contents keeps the override and Shut Down tiles in the same grid as the core apps. -->
     <div id="apps-core" style="display: contents"></div>
     <button class="app" id="override" aria-pressed="false" data-tip="Drive without a controller. Press any controller button except LB to stop">
       <span class="glyph"><svg class="rcn-icon"><use href="/ui/icons.svg#alert"/></svg></span>
       <span class="name">Safety Override</span></button>
     <button class="app" id="poweroff" data-tip="Shut down the car safely">
       <span class="glyph"><svg class="rcn-icon"><use href="/ui/icons.svg#power"/></svg></span>
-      <span class="name">Turn Off</span></button>
+      <span class="name">Shut Down</span></button>
   </div>
   <div class="bar-row group-row">
-    <div class="rcn-eyebrow">Utilities</div>
+    <div class="rcn-eyebrow">Tools</div>
     <button class="rcn-btn quiet small" id="clear-apps"><svg class="rcn-icon"><use href="/ui/icons.svg#stop"/></svg>Clear apps</button>
   </div>
-  <div class="apps" id="apps-utilities"></div>
+  <div class="apps" id="apps-tools"></div>
+  <div class="bar-row group-row"><div class="rcn-eyebrow">Autonomy</div></div>
+  <div class="apps" id="apps-autonomy"></div>
   <div class="rcn-small rcn-muted" id="msg"></div>
 
   <details id="features-section">
@@ -260,7 +264,7 @@ function renderSetup(view) {
   const note = $('setup-note');
   note.hidden = setup.complete;
   const n = setup.open.length;
-  note.textContent = setup.complete ? '' : `Finish setting up this car to unlock the utility apps. Run: racecar setup car (${n} remaining step${n === 1 ? '' : 's'})`;
+  note.textContent = setup.complete ? '' : `Finish setting up this car to unlock the Tools and Autonomy apps. Run: racecar setup car (${n} remaining step${n === 1 ? '' : 's'})`;
   const profile = apps.find((a) => a.id === 'profile');
   if (!setup.complete && profile) {
     const link = document.createElement('a');
@@ -275,15 +279,33 @@ const APP_STATE = {
   failed: ['err', 'cross', 'Failed'],
   unavailable: ['unavailable', '', 'Not available'],
 };
+// Apps not built yet: dashed, grayed tiles in their place, after the app named.
+const PLANNED = [
+  { group: 'core', after: 'profile', name: 'Connections', icon: 'wifi' },
+  { group: 'core', after: 'jupyter', name: 'Pages', icon: 'layers' },
+  { group: 'autonomy', after: 'mapview', name: 'Planner', icon: 'navigate' },
+  { group: 'autonomy', after: 'mapview', name: 'Modules', icon: 'grid' },
+  { group: 'autonomy', after: 'mapview', name: 'Scripter', icon: 'code' },
+];
+const plannedTile = (p) => `<div class="app planned" aria-hidden="true">
+  <span class="glyph">${icon(p.icon)}</span><span class="name">${esc(p.name)}</span></div>`;
+function withPlanned(group, tiles) {
+  const out = [];
+  for (const [id, html] of tiles) {
+    out.push(html);
+    out.push(...PLANNED.filter((p) => p.group === group && p.after === id && !apps.some((a) => a.name === p.name)).map(plannedTile));
+  }
+  return out.join('');
+}
 function renderApps() {
-  for (const group of ['core', 'utilities']) setHtml(`apps-${group}`, apps.filter((a) => a.group === group).map((a) => {
+  for (const group of ['core', 'tools', 'autonomy']) setHtml(`apps-${group}`, withPlanned(group, apps.filter((a) => a.group === group).map((a) => [a.id, (() => {
     const [cls, badge, word] = APP_STATE[a.state] || ['', '', 'Stopped'];
     const tip = lockedApp(a) ? 'Finish setting up this car to unlock this app' : a.desc;
     return `<button class="app ${cls}${lockedApp(a) ? ' locked' : ''}" data-id="${a.id}" data-tip="${esc(tip)}"
         aria-label="${esc(`${a.name}, ${word.toLowerCase()}. ${a.desc}`)}">
       <span class="glyph">${icon(a.icon)}${badge ? `<span class="badge">${icon(badge)}</span>` : ''}</span>
       <span class="name">${esc(a.name)}</span></button>`;
-  }).join(''));
+  })()])));
 }
 const live = (a) => a.state === 'active' || a.state === 'activating';
 document.querySelector('main').addEventListener('click', (e) => {
@@ -632,7 +654,7 @@ function startOverride() {
 }
 $('override').onclick = () => (overrideOn ? RcnOverride.send('stop') : startOverride());
 
-// Battery: header pills, cancel, and Turn Off. The banner and its countdown
+// Battery: header pills, cancel, and Shut Down. The banner and its countdown
 // are /ui/battery.js, fed from this page's status poll.
 let battery = null;
 let turningOff = false;
@@ -684,7 +706,7 @@ RcnBattery.onCancel = async () => {
   update(true);
 };
 $('poweroff').onclick = async () => {
-  if (!confirm('Turn the car off?')) return;
+  if (!confirm('Shut down the car?')) return;
   try {
     const r = await post('/api/shutdown');
     const o = await r.json();
@@ -769,8 +791,8 @@ function update(refresh) {
     });
 }
 $('clear-apps').onclick = async () => {
-  if (!confirm('Stop all utilities?')) return;
-  $('msg').textContent = 'Stopping utilities...';
+  if (!confirm('Stop the running apps?')) return;
+  $('msg').textContent = 'Stopping apps...';
   try {
     const r = await (await post('/api/clear-apps')).json();
     $('msg').textContent = r.message;

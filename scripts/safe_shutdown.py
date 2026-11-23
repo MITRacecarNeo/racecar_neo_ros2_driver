@@ -3,7 +3,7 @@ Safe shutdown of the car.
 
 Stops recording, driving, autonomy, and teleop, then powers off.
 
-Used by the battery guard (battery_guard.py) and by the Turn Off tile on the
+Used by the battery guard (battery_guard.py) and by the Shut Down tile on the
 8080 home page (dashboard.py). Both run as the racecar user;
 polkit/49-racecar-power.rules grants the teleop stop and the power off, and
 the other rules the lab apps and autonomy.

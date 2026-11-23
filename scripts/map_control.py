@@ -587,7 +587,7 @@ def resume(out: Out = print, timeout: float = READY_TIMEOUT_SEC) -> int:
     values = read_mode_file()
     mode, name = values.get('AUTONOMY_MODE'), values.get('AUTONOMY_MAP', '')
     if mode not in ('mapping', 'localization') or not valid_name(name):
-        raise MapError('no earlier run to resume. Start mapping or load a map in the map viewer.')
+        raise MapError('no earlier run to resume. Start mapping or load a map in the Mapper.')
     if mode == 'localization':
         return load(
             name, localizer=values.get('AUTONOMY_LOCALIZER') or 'amcl', out=out, timeout=timeout

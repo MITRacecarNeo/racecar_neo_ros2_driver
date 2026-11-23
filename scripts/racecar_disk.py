@@ -48,7 +48,7 @@ WRITERS = tuple(
     for u in (
         units.AUTONOMY,
         apps.app('mapview')['unit'],
-        *(a['unit'] for a in apps.all_apps() if a['group'] == 'utilities'),
+        *(a['unit'] for a in apps.all_apps() if a['unit'] and a['unit'] not in units.CORE),
     )
 )
 # ~/data folders whose place under the data root differs.
@@ -207,7 +207,7 @@ def recording_now() -> bool:
 
 def refuse_while_busy(run: Run = run_command) -> None:
     if unit_active(units.service(units.AUTONOMY), run) and mapping_now():
-        raise DiskError('mapping is running. Save and stop it in the map viewer first.')
+        raise DiskError('mapping is running. Save and stop it in the Mapper first.')
     if recording_now():
         raise DiskError('a recording is running. Stop it first: racecar log stop')
 

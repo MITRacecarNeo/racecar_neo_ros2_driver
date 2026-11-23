@@ -44,6 +44,10 @@ All notable changes to this project will be documented in this file. The format 
   asks the step's questions, shows about how long it takes, and runs the
   step's command with its output, passing the password to sudo from the
   page. The 8080 setup note opens it.
+- 8080 app groups: Core (Car Profile, JupyterLab, Safety Override, Shut
+  Down), Tools (Terminal, web teleop, line follow, wall follow, camera
+  label) and Autonomy (Mapper). Clear apps stops every app that does not
+  start at boot, the Terminal included; Tools and Autonomy wait for setup.
 - Every page's footer names the car: its hostname, and its nickname in
   parentheses when it has one (`racecar-neo-0 (Bill)`).
 - Map viewer: Run checks (the parked checks), with Start mapping and Extend
@@ -107,6 +111,7 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Changed
 
+- The map viewer is named Mapper; the Turn Off tile is Shut Down.
 - eth0's fixed address is `192.168.52.(200 + car number)` (numbers 0 to 54),
   so cars on one switch do not collide; `.200` without a number.
 - `racecar calibrate` restarts teleop without sudo.

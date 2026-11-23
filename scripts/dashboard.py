@@ -1011,7 +1011,7 @@ def autonomy_view(values: dict[str, str] | None, age: float | None) -> dict[str,
         return {
             'status': 'unsupervised',
             'headline': 'Stopped',
-            'lines': ['Start mapping or load a map in the map viewer.'],
+            'lines': ['Start mapping or load a map in the Mapper.'],
             'port': MAPVIEW_PORT,
         }
     mode, name = values.get('mode', ''), values.get('map') or '(no map)'
@@ -1108,9 +1108,13 @@ def open_app(target: str, run: Callable[..., Any] = subprocess.run) -> tuple[boo
     return True, f'{app["name"]} started.'
 
 
+# Units started at boot (racecar_neo_ros2_driver/units.py); Clear apps leaves them running.
+CORE_UNITS = frozenset(units.CORE)
+
+
 def clear_apps(run: Callable[..., Any] = subprocess.run) -> tuple[bool, str]:
-    """Stop every running utility to free CPU; core apps and the dashboard keep running."""
-    units = [a['unit'] for a in APPS if a['group'] == 'utilities']
+    """Stop every running app not started at boot to free CPU; the boot apps keep running."""
+    units = [a['unit'] for a in APPS if a['unit'] and a['unit'] not in CORE_UNITS]
     states = unit_states(units, run)
     stopped, errors = 0, []
     for unit in units:
@@ -1122,7 +1126,7 @@ def clear_apps(run: Callable[..., Any] = subprocess.run) -> tuple[bool, str]:
                 stopped += 1
     if errors:
         return False, ' '.join(errors)
-    return True, 'Utilities stopped.' if stopped else 'No utilities running.'
+    return True, 'Apps stopped.' if stopped else 'No apps running.'
 
 
 def _systemctl(verb: str, unit: str, run: Callable[..., Any]) -> str:

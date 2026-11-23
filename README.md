@@ -196,7 +196,7 @@ The steps, in order:
 | `record` | The car record (parts and labels), with the stock build as defaults |
 | `finish` | Backs up the profile to the data root and prints `racecar status` |
 
-Each step checks the car first, so a step already done shows as done and the tool can stop and start again at any point. The state and the car record are kept in the profile's `car.yaml`. Until every step is done, the 8080 home page keeps the Utilities apps closed; the Core apps stay open. After the `identity` step, open the car at `http://racecar-neo-<number>.local:8080`.
+Each step checks the car first, so a step already done shows as done and the tool can stop and start again at any point. The state and the car record are kept in the profile's `car.yaml`. Until every step is done, the 8080 home page keeps the Tools and Autonomy apps closed; the Core apps stay open. After the `identity` step, open the car at `http://racecar-neo-<number>.local:8080`.
 
 The access point alone: `racecar setup networking --id=N`. See [Networking (optional)](#networking-optional).
 
@@ -452,25 +452,28 @@ Changes apply on the **next boot**; `status` reports a pending change when the d
 
 Once `racecar-teleop.service` is running, browse to `http://<robot>:8080`.
 
-**Apps.** One tile per app, in two groups. Hover over a tile for what it
+**Apps.** One tile per app, in three groups. Hover over a tile for what it
 does. A white border means the app is running.
 
-- Core: map viewer and JupyterLab, which start at boot; Terminal, which
-  starts when opened; the safety override and Turn Off (below).
-- Utilities: web teleop, line follow, wall follow, and camera label.
-- Tap a tile to open the app in a new tab. A stopped utility is started
+- Core: Car Profile and JupyterLab, which start at boot; the safety
+  override and Shut Down (below).
+- Tools: Terminal, web teleop, line follow, wall follow, and camera label,
+  which start when opened. Clear apps stops them.
+- Autonomy: Mapper (the map viewer), which starts at boot.
+- Tap a tile to open the app in a new tab. A stopped app is started
   first, and the tab shows a loading bar until the app is ready. Cancel
   closes that tab without opening the app.
 - Web teleop, line follow, wall follow, and autonomy (mapping or
   localization) drive the car, so only one runs at a time. Opening one while
   another runs asks before closing the other; a map being built is saved
-  first. The map viewer and the Autonomy tile ask the same way, and
+  first. The Mapper and the Autonomy feature ask the same way, and
   `racecar map start`, `load`, and `resume` close the driving apps.
-- Clear apps stops every utility to free the CPU. Core apps keep running.
-- Starting and stopping utilities from the page needs the permission rule
+- Clear apps stops every app that does not start at boot, to free the CPU.
+- Starting and stopping apps from the page needs the permission rule
   that `scripts/setup_user_env.sh` installs.
 
-**Footer.** Every page the car serves shows "racecar OS", the driver
+**Footer.** Every page the car serves shows the car (`racecar-neo-0 (Bill)`,
+or the hostname alone without a nickname), "racecar OS", the driver
 version, and the Teensy firmware version at the bottom of the screen.
 
 **Home shortcut.** On every app page, the R logo in the header goes home. It
@@ -522,7 +525,7 @@ about 30 s after boot.
 
 See [Low-battery shutdown](#low-battery-shutdown).
 
-**Turn Off.** The Turn Off tile shuts the car down safely. It asks first.
+**Shut Down.** The Shut Down tile shuts the car down safely. It asks first.
 It stops a recording, the driving apps, autonomy (saving a map being
 built), and teleop, then powers off. Turn off the power switch after the
 car is off.
@@ -982,7 +985,7 @@ overrides the folder. `scripts/setup_jupyter.sh` links `~/jupyter_ws/data` to
 the data root and `~/jupyter_ws/maps` to its `maps/`, so JupyterLab shows
 them.
 
-### Map viewer
+### Mapper
 
 `racecar-mapview.service` serves a map page on port 8084 from boot,
 independent of teleop: `http://<robot>:8084` on a phone or laptop on the

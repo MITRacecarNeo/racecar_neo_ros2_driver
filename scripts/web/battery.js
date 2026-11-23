@@ -8,7 +8,7 @@
    The 8080 page (<body data-home>) polls the estimate itself, so this file
    does not: it passes each estimate in with RcnBattery.update(), sets
    RcnBattery.onCancel to show Cancel shutdown, and calls RcnBattery.final()
-   once Turn Off is accepted. */
+   once Shut Down is accepted. */
 (function () {
   'use strict';
   const PERIOD_MS = 3000;

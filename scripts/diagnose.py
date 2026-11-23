@@ -1185,7 +1185,7 @@ def autonomy_checks(unit_state: str, ros: RosResult, sampled: bool) -> list[Chec
     if localized:
         out.append(Check(g, 'localized', OK, 'yes'))
     elif mode == 'localization':
-        hint = 'drive slowly, or Set pose / Find me in the map viewer (port 8084)'
+        hint = 'drive slowly, or Set pose / Find me in the Mapper (port 8084)'
         out.append(Check(g, 'localized', WARN, f'no; {hint}'))
     else:
         out.append(Check(g, 'localized', WARN, 'no; is the lidar running?'))

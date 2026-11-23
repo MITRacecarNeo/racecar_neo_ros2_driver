@@ -328,9 +328,15 @@ class FakeRun:
 class TestHome:
     def test_apps_cover_the_six_dashboards(self, dashboard):
         ports = [a['port'] for a in dashboard.APPS]
-        assert ports == [8086, 8888, 8084, 8088, 8081, 8082, 8083, 8085]
-        core = [a['id'] for a in dashboard.APPS if a['group'] == 'core']
-        assert core == ['terminal', 'jupyter', 'mapview', 'profile']
+        assert ports == [8088, 8888, 8086, 8081, 8082, 8083, 8085, 8084]
+        groups = {g: [a['id'] for a in dashboard.APPS if a['group'] == g]
+                  for g in ('core', 'tools', 'autonomy')}  # fmt: skip
+        assert groups == {
+            'core': ['profile', 'jupyter'],
+            'tools': ['terminal', 'webteleop', 'linefollow', 'wallfollow', 'camlabel'],
+            'autonomy': ['mapview'],
+        }
+        assert next(a for a in dashboard.APPS if a['id'] == 'mapview')['name'] == 'Mapper'
         exclusive = [a['id'] for a in dashboard.APPS if a['exclusive']]
         assert exclusive == ['webteleop', 'linefollow', 'wallfollow']
         startable = [a['id'] for a in dashboard.APPS if a['startable']]
@@ -348,10 +354,10 @@ class TestHome:
         assert run.states['racecar-terminal'] == 'active'
         assert dashboard.open_app('terminal', run) == (True, 'Terminal is running.')
 
-    def test_clear_apps_leaves_the_terminal_running(self, dashboard):
+    def test_clear_apps_stops_the_terminal_too(self, dashboard):
         run = FakeRun({'racecar-terminal': 'active', 'racecar-camlabel': 'active'})
         dashboard.clear_apps(run)
-        assert run.states['racecar-terminal'] == 'active'
+        assert run.states['racecar-terminal'] == 'inactive'
         assert run.states['racecar-camlabel'] == 'inactive'
 
     def test_open_exclusive_stops_the_other_first(self, dashboard):
@@ -379,7 +385,7 @@ class TestHome:
         assert not ok and 'racecar service start mapview' in message
         assert not [c for c in run.calls if c[1] == '--no-ask-password']
 
-    def test_clear_apps_stops_utilities_only(self, dashboard):
+    def test_clear_apps_leaves_the_boot_apps(self, dashboard):
         run = FakeRun(
             {
                 'racecar-mapview': 'active',
@@ -390,7 +396,7 @@ class TestHome:
                 'racecar-teleop': 'active',
             }
         )
-        assert dashboard.clear_apps(run) == (True, 'Utilities stopped.')
+        assert dashboard.clear_apps(run) == (True, 'Apps stopped.')
         assert run.states['racecar-webteleop'] == 'inactive'
         assert run.states['racecar-camlabel'] == 'inactive'
         for unit in ('racecar-mapview', 'racecar-jupyter', 'racecar-dashboard', 'racecar-teleop'):
@@ -403,7 +409,7 @@ class TestHome:
         assert not ok and 'racecar-linefollow' in message and 'setup_user_env.sh' in message
 
     def test_clear_apps_with_none_running(self, dashboard):
-        assert dashboard.clear_apps(FakeRun({})) == (True, 'No utilities running.')
+        assert dashboard.clear_apps(FakeRun({})) == (True, 'No apps running.')
 
     def test_clear_log_hides_earlier_lines_and_keeps_the_file(
         self, dashboard, tmp_path, monkeypatch
@@ -1073,11 +1079,13 @@ class TestBatteryEndpoints:
 
 
 class TestBatteryPage:
-    def test_turn_off_tile_next_to_the_override(self, dashboard):
+    def test_shut_down_tile_next_to_the_override(self, dashboard):
         html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert html.index('id="override"') < html.index('id="poweroff"')
-        assert html.index('id="poweroff"') < html.index('id="apps-utilities"')
-        assert "confirm('Turn the car off?')" in html
+        assert html.index('id="poweroff"') < html.index('id="apps-tools"')
+        assert html.index('id="apps-tools"') < html.index('id="apps-autonomy"')
+        assert '<span class="name">Shut Down</span>' in html and 'Turn Off' not in html
+        assert "confirm('Shut down the car?')" in html
         assert '/api/shutdown' in html
 
     def test_header_pills_and_cancel_on_the_shared_banner(self, dashboard):
@@ -1340,14 +1348,17 @@ class TestSetupGate:
 
     def test_core_apps_still_open(self, dashboard, set_up_car):
         self._unfinish(set_up_car)
-        run = FakeRun(states={'racecar-terminal': 'inactive'})
-        ok, _ = dashboard.open_app('terminal', run=run)
-        assert ok
+        run = FakeRun(states={'racecar-profile': 'active', 'racecar-terminal': 'inactive'})
+        assert dashboard.open_app('profile', run=run)[0]
+        assert dashboard.open_app('terminal', run=run) == (False, dashboard.SETUP_NEEDED)
 
     def test_page_grays_out_locked_tiles(self, dashboard):
         html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert 'id="setup-note"' in html and "a.group !== 'core'" in html
-        note = 'Finish setting up this car to unlock the utility apps. Run: racecar setup car'
+        note = (
+            'Finish setting up this car to unlock the Tools and Autonomy apps. '
+            'Run: racecar setup car'
+        )
         assert note in html
         assert f"const SETUP_NEEDED = '{dashboard.SETUP_NEEDED}';" in html
         assert 'Finish setting up this car to unlock this app' in html
@@ -1358,3 +1369,11 @@ def test_footer_names_the_car(dashboard):
     assert dashboard.car_label('racecar-neo-0', '') == 'racecar-neo-0'
     footer = (Path(dashboard.__file__).parent / 'web' / 'footer.js').read_text()
     assert 'class="rcn-car"' in footer and 'about.car' in footer
+
+
+def test_planned_apps_show_as_placeholders(dashboard):
+    html = (Path(dashboard.__file__).parent / 'dashboard.html').read_text()
+    for name in ('Connections', 'Pages', 'Planner', 'Modules', 'Scripter'):
+        assert f"name: '{name}'" in html, name
+    assert '.app.planned .glyph { border-style: dashed;' in html
+    assert "!apps.some((a) => a.name === p.name)" in html
