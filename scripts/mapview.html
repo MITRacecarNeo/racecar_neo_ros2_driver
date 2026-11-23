@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="/ui/rcn.css?v={{asset}}">
 <script src="/ui/ui.js?v={{asset}}"></script>
 <script src="/ui/api.js?v={{asset}}"></script>
+<script src="/ui/joystick.js?v={{asset}}"></script>
 <script src="/ui/battery.js?v={{asset}}" defer></script>
 <script src="/ui/stall.js?v={{asset}}" defer></script>
 <link rel="icon" href="/ui/brand/app-icon-32.png">
@@ -59,6 +60,21 @@ main.maps-open #hint { left: calc(min(340px, 80%) + var(--rcn-space-3)); }
 .map .info { flex: 1; min-width: 0; }
 .map .name { font-weight: 600; word-break: break-all; }
 .map .acts { display: flex; gap: var(--rcn-space-2); flex-wrap: wrap; margin-top: var(--rcn-space-2); }
+#drivebox { position: absolute; left: var(--rcn-space-3); bottom: var(--rcn-space-3); background: var(--rcn-surface);
+            border: 1px solid var(--rcn-border); border-radius: var(--rcn-radius-lg); padding: var(--rcn-space-2) var(--rcn-space-3); z-index: 4; }
+#drivebox .dhead { display: flex; align-items: center; gap: var(--rcn-space-2); justify-content: space-between; }
+#drivebox.off #drivebody { opacity: 0.4; pointer-events: none; }
+#drivebox.folded #drivebody { display: none; }
+.dpad { display: grid; grid-template-columns: repeat(3, 56px); grid-template-rows: repeat(3, 56px); gap: 6px; justify-content: center; margin-top: var(--rcn-space-2); touch-action: none; user-select: none; }
+.dpad button { font: 700 22px/1 var(--rcn-font-sans); border-radius: var(--rcn-radius-md); border: 2px solid var(--rcn-border); background: var(--rcn-bg); color: var(--rcn-text); }
+.dpad button.down { background: var(--rcn-orange); border-color: var(--rcn-orange); color: var(--rcn-ink); }
+.dpad[hidden], #djoy[hidden], #djoytoggle[hidden] { display: none; }
+#djoy { margin-top: var(--rcn-space-2); }
+#checksheet .crow { display: grid; grid-template-columns: 56px 1fr; gap: 2px 8px; font-size: 14px; margin: 4px 0; }
+#checksheet .cmark { font: 700 13px/20px var(--rcn-font-mono); }
+#checksheet .OK { color: #6fd08c; } #checksheet .WARN { color: var(--rcn-gold); } #checksheet .FAIL { color: var(--rcn-led-red); }
+#checksheet .crepair { grid-column: 2; color: var(--rcn-text-muted); }
+@media (max-width: 700px) { .dpad { grid-template-columns: repeat(3, 48px); grid-template-rows: repeat(3, 48px); } }
 </style>
 </head>
 <body>
@@ -76,11 +92,28 @@ main.maps-open #hint { left: calc(min(340px, 80%) + var(--rcn-space-3)); }
 <main>
   <canvas id="view"></canvas>
   <div id="hint" class="rcn-panel rcn-small"></div>
+  <div id="drivebox" class="off">
+    <div class="dhead"><b>Drive</b>
+      <label class="rcn-small" id="djoytoggle"><input type="checkbox" id="djoymode"> Joystick</label>
+      <button class="rcn-btn quiet small" id="dfold" aria-label="Show or hide the drive controls">Hide</button></div>
+    <div id="drivebody">
+      <div id="djoy" hidden></div>
+      <div class="dpad" id="dpad">
+        <div></div><button data-axis="fwd" data-val="1" aria-label="Forward (W)">&#9650;</button><div></div>
+        <button data-axis="turn" data-val="-1" aria-label="Left (A)">&#9664;</button><div></div>
+        <button data-axis="turn" data-val="1" aria-label="Right (D)">&#9654;</button>
+        <div></div><button data-axis="fwd" data-val="-1" aria-label="Back (S)">&#9660;</button><div></div>
+      </div>
+    </div>
+  </div>
   <aside id="maps"><div class="top"><h2>Maps</h2><button class="rcn-btn quiet small" id="mapsclose">Close</button></div><div id="maplist"></div></aside>
   <div id="tools">
     <button class="rcn-btn quiet" id="zin" title="Zoom in" aria-label="Zoom in"><svg class="rcn-icon"><use href="/ui/icons.svg#plus"/></svg></button>
     <button class="rcn-btn quiet" id="zout" title="Zoom out" aria-label="Zoom out"><svg class="rcn-icon"><use href="/ui/icons.svg#minus"/></svg></button>
     <button class="rcn-btn quiet" id="center" title="Center on the car" aria-label="Center on the car"><svg class="rcn-icon"><use href="/ui/icons.svg#target"/></svg></button>
+    <button class="rcn-btn quiet" id="rotl" title="Rotate the map left" aria-label="Rotate the map left"><svg class="rcn-icon"><use href="/ui/icons.svg#rotate-left"/></svg></button>
+    <button class="rcn-btn quiet" id="rotr" title="Rotate the map right" aria-label="Rotate the map right"><svg class="rcn-icon"><use href="/ui/icons.svg#rotate-right"/></svg></button>
+    <button class="rcn-btn quiet" id="carup" title="Keep the car pointing up" aria-label="Keep the car pointing up" aria-pressed="false"><svg class="rcn-icon"><use href="/ui/icons.svg#navigate"/></svg></button>
     <button class="rcn-btn quiet" id="cleartrail" title="Clear trail" aria-label="Clear trail"><svg class="rcn-icon"><use href="/ui/icons.svg#eraser"/></svg></button>
   </div>
 </main>
@@ -96,6 +129,12 @@ main.maps-open #hint { left: calc(min(340px, 80%) + var(--rcn-space-3)); }
   <div class="row"><button class="rcn-btn primary" id="startgo">Start</button><button class="rcn-btn quiet" id="startcancel">Cancel</button></div>
 </div></div>
 
+<div class="sheet" id="checksheet"><div>
+  <h2>Checks</h2>
+  <div class="rcn-small rcn-muted" id="checknote"></div>
+  <div id="checkrows"></div>
+  <div class="row"><button class="rcn-btn quiet" id="checkclose">Close</button></div>
+</div></div>
 <div class="sheet" id="stopsheet"><div>
   <h2>Unsaved map</h2>
   <div id="stopnote">Save the map before stopping?</div>
@@ -120,7 +159,8 @@ const css = RcnUi.token;
 const { esc, icon, pill, setHtml } = RcnUi;
 
 // View: screen = (world - center) * scale, y up.
-const view = { cx: 0, cy: 0, scale: 40, fitted: false };
+// rot turns the drawn map clockwise on screen (radians); carUp keeps the car pointing up.
+const view = { cx: 0, cy: 0, scale: 40, fitted: false, rot: 0, carUp: false };
 let state = {};
 let grid = null;           // {info, image (offscreen canvas)}
 let gridVersion = -1;
@@ -147,7 +187,17 @@ function toScreen(x, y) {
   return [canvas.width / 2 + (x - view.cx) * view.scale * d, canvas.height / 2 - (y - view.cy) * view.scale * d];
 }
 function toWorld(px, py) {
-  return [view.cx + (px - canvas.clientWidth / 2) / view.scale, view.cy - (py - canvas.clientHeight / 2) / view.scale];
+  // Undo the map rotation about the canvas center, then the pan and zoom.
+  const cx = canvas.clientWidth / 2, cy = canvas.clientHeight / 2;
+  const c = Math.cos(-view.rot), s = Math.sin(-view.rot);
+  const dx = px - cx, dy = py - cy;
+  const ux = cx + dx * c - dy * s, uy = cy + dx * s + dy * c;
+  return [view.cx + (ux - cx) / view.scale, view.cy - (uy - cy) / view.scale];
+}
+// A screen drag (dx, dy) as a pan of the unrotated map.
+function unrotate(dx, dy) {
+  const c = Math.cos(-view.rot), s = Math.sin(-view.rot);
+  return [dx * c - dy * s, dx * s + dy * c];
 }
 
 function buildImage(info, data) {
@@ -238,6 +288,14 @@ function draw() {
   const d = devicePixelRatio;
   ctx.fillStyle = css('--map-unknown');
   ctx.fillRect(0, 0, canvas.width, canvas.height);
+  if (view.carUp && state.pose) {
+    view.cx = state.pose[0]; view.cy = state.pose[1];
+    view.rot = state.pose[2] - Math.PI / 2;
+  }
+  ctx.save();
+  ctx.translate(canvas.width / 2, canvas.height / 2);
+  ctx.rotate(view.rot);
+  ctx.translate(-canvas.width / 2, -canvas.height / 2);
   const g = preview || grid;
   if (g) drawGrid(g);
   drawOrigin();
@@ -255,6 +313,7 @@ function draw() {
     const [a, b] = poseTool.start, [c, e] = poseTool.end;
     drawCar(a, b, Math.atan2(e - b, c - a), css('--map-trail'), 0.9);
   }
+  ctx.restore();
   drawScale();
 }
 
@@ -271,7 +330,8 @@ canvas.addEventListener('pointerdown', (e) => {
   }
   if (pointers.size === 2) {
     const [p, q] = [...pointers.values()];
-    pinch = { dist: Math.hypot(p[0] - q[0], p[1] - q[1]), scale: view.scale };
+    pinch = { dist: Math.hypot(p[0] - q[0], p[1] - q[1]), scale: view.scale,
+      angle: Math.atan2(q[1] - p[1], q[0] - p[0]), rot: view.rot };
   }
 });
 canvas.addEventListener('pointermove', (e) => {
@@ -286,8 +346,11 @@ canvas.addEventListener('pointermove', (e) => {
   if (pointers.size === 2 && pinch) {
     const [p, q] = [...pointers.values()];
     view.scale = Math.max(2, Math.min(400, pinch.scale * Math.hypot(p[0] - q[0], p[1] - q[1]) / pinch.dist));
-  } else if (pointers.size === 1) {
-    view.cx -= (e.offsetX - prev[0]) / view.scale; view.cy += (e.offsetY - prev[1]) / view.scale;
+    // Two fingers turning turn the map, unless the car-up lock holds it.
+    if (!view.carUp) view.rot = pinch.rot + Math.atan2(q[1] - p[1], q[0] - p[0]) - pinch.angle;
+  } else if (pointers.size === 1 && !view.carUp) {
+    const [dx, dy] = unrotate(e.offsetX - prev[0], e.offsetY - prev[1]);
+    view.cx -= dx / view.scale; view.cy += dy / view.scale;
   }
   draw();
 });
@@ -317,6 +380,32 @@ $('center').onclick = () => {
   draw();
 };
 
+const ROT_STEP = Math.PI / 12;  // 15 degrees
+const ROT_REPEAT_MS = 120;
+function setCarUp(on) {
+  view.carUp = on;
+  $('carup').classList.toggle('on', on);
+  $('carup').setAttribute('aria-pressed', String(on));
+  draw();
+}
+// A press turns one step; holding keeps turning. The map stays where the lock left it.
+function holdToRotate(button, step) {
+  let timer = null;
+  const turn = () => { if (view.carUp) setCarUp(false); view.rot += step; draw(); };
+  const stop = () => { clearInterval(timer); timer = null; };
+  button.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    button.setPointerCapture(e.pointerId);
+    turn();
+    stop();
+    timer = setInterval(turn, ROT_REPEAT_MS);
+  });
+  for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) button.addEventListener(ev, stop);
+  button.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+holdToRotate($('rotl'), -ROT_STEP);
+holdToRotate($('rotr'), ROT_STEP);
+$('carup').onclick = () => setCarUp(!view.carUp);
 $('cleartrail').onclick = async () => {
   try { await RcnApi.post('/api/trail/clear'); } catch (err) { /* the next poll shows it */ }
   trail = { id: -1, from: 0, points: [] };
@@ -363,6 +452,7 @@ function showBanner() {
   const b = $('banner'), s = state.status || {}, sys = state.sys || {};
   let msg = null;
   if (flashMsg && Date.now() < flashMsg.until) msg = flashMsg;
+  else if (checks.job && checks.job.running) msg = { text: 'Checks are running', kind: 'bad' };
   else if (lostContact) msg = { text: RcnApi.LOST, kind: 'bad' };
   else if (sys.throttled_now && sys.throttled_now.length) msg = { text: `Pi throttled now: ${sys.throttled_now.join(', ')}. This run is not valid.`, kind: 'bad' };
   else if (sys.temp_c != null && sys.temp_c >= 78) msg = { text: `Pi is hot (${sys.temp_c.toFixed(0)} C).`, kind: 'warn' };
@@ -414,7 +504,11 @@ function render() {
     }, running || s.localizer !== 'amcl', 'target'));
     f.append(button('Stop', 'danger', () => { if (confirm('Stop localization?')) action({ action: 'stop' }); }, running, 'stop'));
   } else {
-    f.append(button('Start mapping', 'primary', () => openStart(null), running, 'play'));
+    const start = button('Start mapping', 'primary', () => openStart(null), running || !checks.passed, 'play');
+    if (!checks.passed) start.title = START_TIP;
+    f.append(start);
+    const busyChecks = !!(checks.job && checks.job.running);
+    f.append(button(busyChecks ? 'Checking...' : 'Run checks', '', runChecks, running || busyChecks, 'check'));
   }
   f.append(button('Maps', mapsOpen ? 'quiet on' : '', toggleMaps, false, 'layers'));
 }
@@ -478,7 +572,9 @@ async function openMaps() {
     info.querySelector('.rcn-muted').textContent = `${m.state}; ${m.saved}; ${m.size}`;
     const acts = info.querySelector('.acts');
     acts.append(button('Load', 'primary', () => openLoad(m.name), running || m.state === 'unsaved', null, true));
-    acts.append(button('Extend', '', () => { closeMaps(); openStart(m.name); }, running, null, true));
+    const extend = button('Extend', '', () => { closeMaps(); openStart(m.name); }, running || !checks.passed, null, true);
+    if (!checks.passed) extend.title = START_TIP;
+    acts.append(extend);
     if (m.state !== 'saved') {
       acts.append(button('Keep', '', () => {
         if (confirm(`Keep the autosave of "${m.name}" as its saved map?`)) {
@@ -586,6 +682,107 @@ $('more').onclick = () => {
   $('more').textContent = open ? 'Hide' : 'Details';
 };
 
+// -- checks before mapping (racecar check) --
+const START_TIP = 'To start mapping, run checks first';
+const PROFILE_PORT = 8088;  // the Car Profile app, where the repairs are
+const MARKS = { OK: '[ OK ]', WARN: '[WARN]', FAIL: '[FAIL]' };
+let checks = { passed: false, rows: [], job: {} };
+let showChecksWhenDone = false;
+async function loadChecks() {
+  try { checks = await (await fetch('/api/checks', { cache: 'no-store' })).json(); } catch (e) { return; }
+  if (showChecksWhenDone && !(checks.job && checks.job.running)) { showChecksWhenDone = false; showChecks(); }
+}
+function showChecks() {
+  const rows = checks.rows || [];
+  $('checknote').textContent = checks.passed
+    ? `Passed ${checks.time}. Mapping can start.`
+    : (checks.reason || 'The checks have not run.');
+  $('checkrows').innerHTML = rows.map((r) => {
+    const link = r.link ? `${location.protocol}//${location.hostname}:${PROFILE_PORT}${r.link}` : '';
+    const repair = r.repair ? `<span class="crepair">${link ? `<a href="${esc(link)}" target="_blank">${esc(r.repair)}</a>` : esc(r.repair)}</span>` : '';
+    return `<div class="crow"><span class="cmark ${r.status}">${MARKS[r.status] || ''}</span><span>${esc(r.name)}: ${esc(r.detail)}</span>${repair}</div>`;
+  }).join('');
+  $('checksheet').classList.add('show');
+}
+async function runChecks() {
+  // The button grays out at once; the results open when the run ends.
+  checks = { ...checks, job: { running: true } };
+  renderKey = '';
+  render();
+  const r = await post('/api/checks/run', {});
+  if (!r.ok) { report(r); await loadChecks(); renderKey = ''; return; }
+  showChecksWhenDone = true;
+}
+$('checkclose').onclick = () => $('checksheet').classList.remove('show');
+setInterval(async () => { const before = checks.passed; await loadChecks(); if (before !== checks.passed) renderKey = ''; }, 1500);
+loadChecks();
+
+// -- driving from the map: the Web Teleop joystick or pad --
+const drive = { held: new Set(), joy: { active: false, fwd: 0, turn: 0 }, last: '' };
+const DRIVE_KEYS = { KeyW: ['fwd', 1], ArrowUp: ['fwd', 1], KeyS: ['fwd', -1], ArrowDown: ['fwd', -1],
+  KeyA: ['turn', -1], ArrowLeft: ['turn', -1], KeyD: ['turn', 1], ArrowRight: ['turn', 1] };
+function canDrive() {
+  const mode = (state.status || {}).mode;
+  return mode === 'mapping' || mode === 'localization';
+}
+function driveCommand() {
+  if (drive.joy.active) return { fwd: +drive.joy.fwd.toFixed(3), turn: +drive.joy.turn.toFixed(3) };
+  const sum = (axis) => [...drive.held].filter((h) => h.startsWith(axis + ':')).reduce((a, h) => a + parseInt(h.split(':')[1]), 0);
+  return { fwd: Math.sign(sum('fwd')), turn: Math.sign(sum('turn')) };
+}
+function sendDrive(force) {
+  const c = driveCommand(), s = JSON.stringify(c);
+  if (s !== drive.last || force) { drive.last = s; post('/cmd', c); }
+  for (const b of document.querySelectorAll('#dpad button')) b.classList.toggle('down', drive.held.has(`${b.dataset.axis}:${b.dataset.val}`));
+}
+function driveRelease() { drive.held.clear(); djoy.stop(); sendDrive(true); }
+setInterval(() => { if (drive.held.size || drive.joy.active) sendDrive(true); }, 100);
+const typingIn = (e) => ['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName);
+document.addEventListener('keydown', (e) => {
+  if (e.repeat || !(e.code in DRIVE_KEYS) || typingIn(e) || !canDrive()) return;
+  e.preventDefault(); drive.held.add(DRIVE_KEYS[e.code].join(':')); sendDrive(false);
+});
+document.addEventListener('keyup', (e) => {
+  if (!(e.code in DRIVE_KEYS)) return;
+  drive.held.delete(DRIVE_KEYS[e.code].join(':')); sendDrive(false);
+});
+window.addEventListener('blur', () => driveRelease());
+document.addEventListener('visibilitychange', () => { if (document.hidden) driveRelease(); });
+for (const b of document.querySelectorAll('#dpad button')) {
+  const key = `${b.dataset.axis}:${b.dataset.val}`;
+  b.addEventListener('pointerdown', (e) => { e.preventDefault(); b.setPointerCapture(e.pointerId); drive.held.add(key); sendDrive(false); });
+  for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) b.addEventListener(ev, () => { drive.held.delete(key); sendDrive(false); });
+  b.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+const djoy = RcnJoystick.mount($('djoy'), {
+  size: window.matchMedia('(max-width: 700px)').matches ? 140 : 160,
+  onMove: (x, y) => { drive.joy.active = x !== 0 || y !== 0; drive.joy.fwd = y; drive.joy.turn = x; sendDrive(!drive.joy.active); },
+});
+const DJOY_KEY = 'rcn-mapper-joystick', DFOLD_KEY = 'rcn-mapper-drive-folded';
+const store = { get: (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* private window */ } } };
+function setDriveJoystick(on) { driveRelease(); $('djoy').hidden = !on; $('dpad').hidden = on; store.set(DJOY_KEY, on ? '1' : '0'); }
+if (window.matchMedia('(pointer: coarse)').matches) {
+  $('djoytoggle').hidden = true; $('djoy').hidden = false; $('dpad').hidden = true;
+} else {
+  $('djoymode').checked = store.get(DJOY_KEY) === '1';
+  setDriveJoystick($('djoymode').checked);
+  $('djoymode').addEventListener('change', () => setDriveJoystick($('djoymode').checked));
+}
+function setFolded(folded) {
+  $('drivebox').classList.toggle('folded', folded);
+  $('dfold').textContent = folded ? 'Show' : 'Hide';
+  store.set(DFOLD_KEY, folded ? '1' : '0');
+  if (folded) driveRelease();
+}
+$('dfold').onclick = () => setFolded(!$('drivebox').classList.contains('folded'));
+setFolded(store.get(DFOLD_KEY) === '1');
+function showDrive() {
+  const on = canDrive();
+  if (!on && !$('drivebox').classList.contains('off')) driveRelease();
+  $('drivebox').classList.toggle('off', !on);
+}
+
 async function poll() {
   if (busy) return;
   busy = true;
@@ -605,9 +802,10 @@ async function poll() {
       if (g) { grid = g; if (!view.fitted && !preview) fit(grid); }
     }
     if (!s.map_version) grid = null;
-    showStatus(); showJob();
+    showStatus(); showJob(); showDrive();
     // Rebuild the controls only when what they depend on changes.
-    const key = [(s.status || {}).mode, (s.status || {}).localizer, !!(s.job && s.job.running), !!poseTool].join('|');
+    const key = [(s.status || {}).mode, (s.status || {}).localizer, !!(s.job && s.job.running), !!poseTool,
+      checks.passed, !!(checks.job && checks.job.running)].join('|');
     if (key !== renderKey) {
       // A command just finished: the open map list may show a stale state.
       if (mapsOpen && renderKey.split('|')[2] === 'true' && !(s.job && s.job.running)) openMaps();

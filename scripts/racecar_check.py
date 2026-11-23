@@ -268,6 +268,43 @@ def read_last() -> dict[str, Any] | None:
         return None
 
 
+def gate(last: dict[str, Any] | None = None) -> dict[str, Any]:
+    """
+    Return whether the last parked checks still let mapping start: {passed, reason, time}.
+
+    A pass needs every parked check in the last results with none failed (a
+    WARN passes), from this boot, this teleop start, and no calibration
+    written since.
+    """
+    last = read_last() if last is None else last
+    if not last:
+        return {'passed': False, 'reason': 'The checks have not run.', 'time': ''}
+    rows = [r for r in last.get('rows', []) if r.get('group') in PARKED]
+    out = {'passed': False, 'time': last.get('time', ''), 'result': last.get('result', '')}
+    if {r.get('group') for r in rows} < set(PARKED):
+        return {**out, 'reason': 'Not every check has run.'}
+    if any(r.get('status') == readiness.FAIL for r in rows):
+        return {**out, 'reason': 'A check failed.'}
+    if last.get('boot_id') != boot_id():
+        return {**out, 'reason': 'The car restarted since the checks ran.'}
+    if last.get('teleop_started') != teleop_started():
+        return {**out, 'reason': 'Teleop restarted since the checks ran.'}
+    if calibration_mtime() > float(last.get('calibration_mtime') or 0.0):
+        return {**out, 'reason': 'A calibration changed since the checks ran.'}
+    return {**out, 'passed': True, 'reason': ''}
+
+
+def require_pass(out: Any = print) -> bool:
+    """Run the parked checks unless a pass stands; return whether mapping may start."""
+    if gate()['passed']:
+        return True
+    rows = run(list(PARKED))
+    out('')
+    print_rows(rows, use_color())
+    save(rows, list(PARKED))
+    return readiness.worst(rows) != readiness.FAIL
+
+
 def run(names: list[str], seconds: float = SAMPLE_SEC) -> list[readiness.Row]:
     rows: list[readiness.Row] = []
     if 'calibration' in names:

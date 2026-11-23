@@ -993,7 +993,8 @@ page shows their output:
 
 | Button | Does |
 |---|---|
-| Start mapping | `racecar map start NAME` |
+| Run checks | `racecar check` (the parked checks, about 5 seconds, car still); the rows show in a panel with their repairs |
+| Start mapping | `racecar map start NAME`; grayed until the checks pass |
 | Save, Stop | `racecar map save`, `racecar map stop` |
 | Maps | Lists the saved maps with thumbnails; Load, Extend, and Keep (on an unsaved map) |
 | Extend | Shows the saved map; drag from the car's position toward the way it faces, then `racecar map start NEW --from NAME --pose ...` |
@@ -1001,8 +1002,21 @@ page shows their output:
 | Find me | Searches the whole map (AMCL only); drive slowly until `localized` |
 | Clear trail | Clears the car's path on every open map page |
 
-The page never drives the car. Start, stop, and load restart the autonomy
-service and ask first. With no browser open it holds no ROS subscriptions
+Start mapping and Extend stay grayed until the parked checks pass. A pass
+(a WARN counts) lasts until a reboot, a teleop restart, or a calibration
+written since; a pass from the Car Profile Checks page counts too.
+`racecar map start` runs the same checks first unless a pass stands, and
+refuses on a FAIL; `--skip-checks` starts anyway.
+
+The Drive panel (bottom left) drives the car while mapping or localization
+runs, grayed out otherwise: the joystick on touch screens, the pad or WASD
+on a laptop with a Joystick toggle, as Web Teleop. It publishes `/drive` at
+15 Hz with full speed and steering (`throttle_node` still applies the
+mapping speed cap), so RB on the gamepad or the 8080 safety override must
+allow it. A command older than 0.5 s drives zero, and releasing, a lost
+focus or a hidden page stops the car. Requests from another site's page
+are refused. Start, stop, and load restart the autonomy service and ask
+first. With no browser open it holds no ROS subscriptions
 and uses about 0.1% of a core; with one open, about 6%.
 
 `racecar map foxglove on` adds `foxglove_bridge` for Lichtblick from the next

@@ -609,3 +609,18 @@ def test_setup_links_the_maps_into_jupyter():
     text = (Path(__file__).resolve().parent.parent / 'scripts' / 'setup_jupyter.sh').read_text()
     assert 'MAP_ROOT="$DATA_ROOT/maps"' in text
     assert 'ln -sfn "$target" "$JUPYTER_WS/$link"' in text
+
+
+class TestChecksBeforeMapping:
+    def test_start_refused_on_a_failed_check(self, cli, root, monkeypatch, capsys):
+        monkeypatch.setattr(cli, 'checks_pass', lambda: False)
+        started = []
+        monkeypatch.setattr(cli.mc, 'start', lambda *a, **k: started.append(a) or 0)
+        assert cli.main(['start', 'room']) == 1
+        assert started == [] and 'a check failed' in capsys.readouterr().out
+        assert cli.main(['start', 'room', '--skip-checks']) == 0 and started
+
+    def test_passing_checks_start(self, cli, root, monkeypatch):
+        monkeypatch.setattr(cli, 'checks_pass', lambda: True)
+        monkeypatch.setattr(cli.mc, 'start', lambda *a, **k: 0)
+        assert cli.main(['start', 'room']) == 0

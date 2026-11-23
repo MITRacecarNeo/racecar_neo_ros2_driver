@@ -32,6 +32,7 @@ import time
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+import labkit
 import map_control as mc
 import numpy as np
 from racecar_neo_ros2_driver import apps, autonomy as au, frames
@@ -45,6 +46,13 @@ PORT = apps.port('mapview')
 HERE = Path(__file__).resolve().parent
 PAGE = HERE / 'mapview.html'
 RACECAR_MAP = HERE / 'racecar_map.py'
+RACECAR_CHECK = HERE / 'racecar_check.py'
+# Driving from the page: /drive at this rate while a command is fresh, the
+# same timeout as Web Teleop, and full speed and angle (the mapping speed cap
+# in throttle_node still applies while mapping).
+DRIVE_HZ = 15.0
+CMD_TIMEOUT_SEC = 0.5
+DRIVE_MODES = ('mapping', 'localization')
 IDLE_SEC = 10.0
 SCAN_PERIOD_SEC = 0.2
 SCAN_POINTS = 360
@@ -223,11 +231,30 @@ def action_argv(req: dict[str, Any]) -> list[str]:
     return argv
 
 
+def axis(value: Any) -> float:
+    """Clamp a page's drive value to -1..1; anything that is not a number reads 0."""
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return max(-1.0, min(1.0, f)) if math.isfinite(f) else 0.0
+
+
+def checks_view() -> dict[str, Any]:
+    """Return the mapping gate and the parked check rows from racecar_check.py's last results."""
+    import racecar_check as rc
+
+    last = rc.read_last()
+    rows = [r for r in (last or {}).get('rows', []) if r.get('group') in rc.PARKED]
+    return {**rc.gate(last), 'rows': rows}
+
+
 class Job:
     """One `racecar map` child at a time; its output lines and exit code for the page."""
 
-    def __init__(self, program: Sequence[str]) -> None:
+    def __init__(self, program: Sequence[str], name: str = 'racecar map') -> None:
         self._program = list(program)
+        self.name = name
         self._lock = threading.Lock()
         self.argv: list[str] = []
         self.lines: list[str] = []
@@ -263,7 +290,7 @@ class Job:
         with self._lock:
             self.code, self.running = code, False
             last = self.lines[-1] if self.lines else ''
-        print(f'mapview: racecar map {" ".join(argv)}: exit {code}: {last}', flush=True)
+        print(f'mapview: {" ".join([self.name, *argv])}: exit {code}: {last}', flush=True)
 
     def state(self) -> dict[str, Any]:
         with self._lock:
@@ -323,7 +350,12 @@ class Viewer:
         self.sys: dict[str, Any] = {}
         self._cpu = CpuMeter()
         self._laser = frames.laser_mount(mc.current_frames())
+        from ackermann_msgs.msg import AckermannDriveStamped
+
+        self._drive_pub = self.node.create_publisher(AckermannDriveStamped, '/drive', 1)
+        self.cmd = {'fwd': 0.0, 'turn': 0.0, 'stamp': 0.0}
         threading.Thread(target=self._watch, daemon=True).start()
+        threading.Thread(target=self._drive_loop, daemon=True).start()
 
     def _spin(self) -> None:
         webui.spin_until_stopped(
@@ -385,6 +417,36 @@ class Viewer:
                 }
                 with self._lock:
                     self.sys = info
+
+    def can_drive(self) -> bool:
+        """Driving from the page works only while mapping or localization runs."""
+        with self._lock:
+            return self.status.get('mode') in DRIVE_MODES
+
+    def set_cmd(self, fwd: Any, turn: Any, now: float | None = None) -> None:
+        with self._lock:
+            self.cmd = {'fwd': axis(fwd), 'turn': axis(turn),
+                        'stamp': time.monotonic() if now is None else now}  # fmt: skip
+
+    def drive_command(self, now: float) -> tuple[float, float] | None:
+        """Return (speed, steer) to publish now, or None when the page is not driving."""
+        with self._lock:
+            cmd, mode = dict(self.cmd), self.status.get('mode')
+            open_ = self.gate.open
+        if not open_ or mode not in DRIVE_MODES:
+            return None
+        if now - cmd['stamp'] > CMD_TIMEOUT_SEC:
+            return 0.0, 0.0
+        return labkit.clamp_speed(cmd['fwd'], reverse=True), max(-1.0, min(1.0, cmd['turn']))
+
+    def _drive_loop(self) -> None:
+        # Publishes only while a page is open and the map has the car on it, so
+        # with no page the mux sees no /drive from here.
+        while True:
+            time.sleep(1.0 / DRIVE_HZ)
+            command = self.drive_command(time.monotonic())
+            if command is not None:
+                self._drive_pub.publish(labkit.drive_msg(*command, reverse=True))
 
     def _on_status(self, msg: Any) -> None:
         values = mc.status_dict(msg)
@@ -490,6 +552,7 @@ class Viewer:
 class Handler(webui.AppHandler):
     viewer: Viewer
     job: Job
+    checks: Job
     cache = 'no-store'
 
     def do_GET(self) -> None:  # noqa: N802
@@ -511,6 +574,8 @@ class Handler(webui.AppHandler):
                 self.send(204, b'', 'application/octet-stream')
             else:
                 self._grid(*payload)
+        elif url.path == '/api/checks':
+            self.send_json({**checks_view(), 'job': self.checks.state()})
         elif url.path == '/api/driving':
             self.send_json({'apps': mc.running_driving_apps()})
         elif url.path == '/api/maps':
@@ -549,6 +614,11 @@ class Handler(webui.AppHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
+        # The page drives the car: a request from another site's page is refused.
+        origin, host = self.headers.get('Origin'), self.headers.get('Host')
+        if not webui.same_origin(origin, host, allow_missing=True):
+            self.send_json({'ok': False, 'message': 'Not allowed from this page.'}, 403)
+            return
         try:
             body = self.read_json()
             if path == '/api/action':
@@ -562,6 +632,15 @@ class Handler(webui.AppHandler):
                 x, y, yaw = (float(body[k]) for k in ('x', 'y', 'yaw'))
                 self.viewer.set_pose(x, y, yaw)
                 self.send_json({'ok': True, 'message': 'pose sent'})
+            elif path == '/api/checks/run':
+                if not self.checks.start([]):
+                    self.send_json({'ok': False, 'message': 'The checks are running.'}, 409)
+                    return
+                self.send_json({'ok': True})
+            elif path == '/cmd':
+                self.viewer.touch()
+                self.viewer.set_cmd(body.get('fwd', 0), body.get('turn', 0))
+                self.send_json({'ok': True, 'drive': self.viewer.can_drive()})
             elif path == '/api/trail/clear':
                 self.viewer.clear_trail()
                 self.send_json({'ok': True})
@@ -581,6 +660,7 @@ def main() -> int:
     rclpy.init()
     Handler.viewer = Viewer()
     Handler.job = Job([sys.executable, str(RACECAR_MAP)])
+    Handler.checks = Job([sys.executable, str(RACECAR_CHECK)], 'racecar check')
     print(f'mapview: http://0.0.0.0:{PORT}', flush=True)
     webui.serve(PORT, Handler, cleanup=Handler.viewer.shutdown)
     return 0

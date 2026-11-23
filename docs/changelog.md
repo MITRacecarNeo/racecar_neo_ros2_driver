@@ -44,6 +44,10 @@ All notable changes to this project will be documented in this file. The format 
   asks the step's questions, shows about how long it takes, and runs the
   step's command with its output, passing the password to sudo from the
   page. The 8080 setup note opens it.
+- Map viewer: Run checks (the parked checks), with Start mapping and Extend
+  grayed until they pass; a Drive panel (joystick or pad, as web teleop)
+  while mapping or localization runs. `racecar map start` runs the checks
+  first and refuses on a FAIL (`--skip-checks` to start anyway).
 - Web teleop joystick: phones and tablets drive with a joystick (proportional
   throttle and steering, 10% dead zone); laptops switch to it with Joystick
   mode. `/cmd` takes any value from -1 to 1 (`scripts/web/joystick.js`).
@@ -83,6 +87,8 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Fixed
 
+- Web teleop and the map viewer refuse drive requests from another site's
+  page (Origin check).
 - `setup_realsense.sh` installs the RealSense library with the camera
   package, so an upgrade no longer leaves the library older than the
   package built against it.

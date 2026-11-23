@@ -128,12 +128,15 @@ code, pre, .rcn-mono { font-family: var(--rcn-font-mono); }
   text-decoration: none;
 }
 .rcn-btn.primary { background: var(--rcn-accent); color: var(--rcn-on-accent); }
-.rcn-btn.primary:hover { background: var(--rcn-accent-hover); border-color: var(--rcn-accent-hover); }
-.rcn-btn:not(.primary):hover { border-color: var(--rcn-accent-hover); color: var(--rcn-accent-hover); }
 .rcn-btn.danger { background: var(--rcn-crimson); border-color: var(--rcn-crimson); color: var(--rcn-paper); }
-.rcn-btn.danger:hover { background: var(--rcn-red); border-color: var(--rcn-red); color: var(--rcn-paper); }
 .rcn-btn.quiet { border-color: var(--rcn-border); color: var(--rcn-text); }
 .rcn-btn.small { font-size: 14px; line-height: 20px; padding: 6px 12px; }
+/* Hover only where a pointer hovers: a touch screen would keep it after a tap. */
+@media (hover: hover) {
+  .rcn-btn.primary:hover { background: var(--rcn-accent-hover); border-color: var(--rcn-accent-hover); }
+  .rcn-btn:not(.primary):hover { border-color: var(--rcn-accent-hover); color: var(--rcn-accent-hover); }
+  .rcn-btn.danger:hover { background: var(--rcn-red); border-color: var(--rcn-red); color: var(--rcn-paper); }
+}
 .rcn-btn[aria-pressed="true"], .rcn-btn.on { background: var(--rcn-surface); border-color: var(--rcn-accent); color: var(--rcn-text); }
 .rcn-btn:disabled { opacity: 0.45; cursor: default; pointer-events: none; }
 .rcn-btn svg { width: 20px; height: 20px; flex: none; }

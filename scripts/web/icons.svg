@@ -41,4 +41,7 @@
   <symbol id="menu" viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/></symbol>
   <symbol id="book" viewBox="0 0 24 24"><path d="M5 4h10a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h10"/></symbol>
   <symbol id="car" viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="5" rx="1"/><rect x="2" y="8" width="20" height="7" rx="1"/><circle cx="7" cy="19" r="2.5"/><circle cx="17" cy="19" r="2.5"/></symbol>
+  <symbol id="rotate-left" viewBox="0 0 24 24"><path d="M4 5v5h5"/><path d="M5 10a8 8 0 1 1 2 6"/></symbol>
+  <symbol id="rotate-right" viewBox="0 0 24 24"><path d="M20 5v5h-5"/><path d="M19 10a8 8 0 1 0-2 6"/></symbol>
+  <symbol id="navigate" viewBox="0 0 24 24"><path d="M12 3l7 18-7-4-7 4z"/></symbol>
 </svg>

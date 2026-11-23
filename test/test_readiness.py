@@ -152,3 +152,33 @@ def test_racecar_check_dispatches():
 
     tool = (Path(__file__).resolve().parent.parent / 'scripts' / 'racecar-tool.sh').read_text()
     assert 'python3 "$pkg_dir/scripts/racecar_check.py" "$@"' in tool
+
+
+class TestGate:
+    @pytest.fixture
+    def last(self, rc, monkeypatch):
+        monkeypatch.setattr(rc, 'boot_id', lambda: 'boot')
+        monkeypatch.setattr(rc, 'teleop_started', lambda: 'start')
+        monkeypatch.setattr(rc, 'calibration_mtime', lambda: 10.0)
+        rows = [{'group': g, 'status': 'OK'} for g in rc.PARKED]
+        return {'boot_id': 'boot', 'teleop_started': 'start', 'calibration_mtime': 10.0,
+                'rows': rows, 'time': 't'}  # fmt: skip
+
+    def test_pass_and_warn(self, rc, last):
+        assert rc.gate(last)['passed']
+        last['rows'][0]['status'] = 'WARN'
+        assert rc.gate(last)['passed']
+
+    def test_reasons(self, rc, last, monkeypatch):
+        assert rc.gate({})['reason'] == 'The checks have not run.'
+        assert 'Not every' in rc.gate({**last, 'rows': last['rows'][1:]})['reason']
+        failed = [{**r, 'status': 'FAIL'} if i == 0 else r for i, r in enumerate(last['rows'])]
+        assert rc.gate({**last, 'rows': failed})['reason'] == 'A check failed.'
+        assert 'restarted' in rc.gate({**last, 'boot_id': 'old'})['reason']
+        assert 'Teleop' in rc.gate({**last, 'teleop_started': 'old'})['reason']
+        monkeypatch.setattr(rc, 'calibration_mtime', lambda: 11.0)
+        assert 'calibration' in rc.gate(last)['reason']
+
+    def test_health_rows_do_not_block(self, rc, last):
+        last['rows'].append({'group': 'power', 'status': 'FAIL'})
+        assert rc.gate(last)['passed']

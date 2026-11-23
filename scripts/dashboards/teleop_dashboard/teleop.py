@@ -517,6 +517,11 @@ class Handler(webui.AppHandler):
             self.send_error(404)
 
     def do_POST(self) -> None:
+        # The page drives the car: a request from another site's page is refused.
+        origin, host = self.headers.get('Origin'), self.headers.get('Host')
+        if not webui.same_origin(origin, host, allow_missing=True):
+            self.send(403, b'Not allowed from this page.', 'text/plain')
+            return
         if self.path == '/cmd':
             set_cmd(self.read_json())
         elif self.path == '/params':
