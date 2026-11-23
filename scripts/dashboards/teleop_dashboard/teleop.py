@@ -19,7 +19,7 @@ Same pattern as the other lab dashboards (stdlib HTTP + rclpy) on port
 each -1, 0, or +1, from whichever buttons or keys are down at once, and
 posts it on every change and every 100 ms while anything is held:
 
-  throttle = fwd  * speed      (fwd  = +1 forward, -1 back)
+  throttle = fwd  * speed      (fwd  = +1 forward, -1 back; the joystick anything between)
   steering = turn * angle      (turn = +1 right,  -1 left; student convention)
 
 /drive is published at a fixed rate from a timer. A command older than
@@ -152,10 +152,15 @@ _params = TUNING.params
 LOG = labkit.RunLog('teleop', 't,fwd,turn,speed_cmd,steer,speed_ms', _marks)
 
 
-def _axis(v: Any) -> int:
-    """Squash whatever the browser sent to -1, 0, or +1."""
-    v = int(v)
-    return (v > 0) - (v < 0)
+def _axis(v: Any) -> float:
+    """Clamp what the browser sent to -1..1: the pad sends -1, 0, 1, the joystick any value."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(f):
+        return 0.0
+    return round(max(-1.0, min(1.0, f)), 3)
 
 
 def heading_deg(mag: list[float]) -> float:
@@ -197,7 +202,7 @@ def set_display(kind: str, value: Any) -> None:
 
 def set_cmd(data: dict[str, Any], now: float | None = None) -> None:
     """
-    Take the browser's command: {'fwd': -1|0|1, 'turn': -1|0|1}.
+    Take the browser's command: {'fwd': -1..1, 'turn': -1..1}.
 
     Both axes together are one command, so forward and left arrive as one
     post and are applied at the same instant.
@@ -454,7 +459,7 @@ class TeleopNode(Node):
         sensors = self._sample_sensors(t)
         self._send_display(now)
         LOG.rows.append(
-            f'{t},{fwd},{turn},{self._speed_cmd:.3f},{self._steer_cmd:.3f},{self._enc:.3f}\n'
+            f'{t},{fwd:g},{turn:g},{self._speed_cmd:.3f},{self._steer_cmd:.3f},{self._enc:.3f}\n'
         )
         LOG.hist.append([t, round(self._enc, 3), round(self._speed_cmd, 3)])
         with _lock:

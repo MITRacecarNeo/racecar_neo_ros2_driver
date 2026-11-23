@@ -137,7 +137,8 @@ registry; a hard-coded port or unit list is a bug.
 
 ## webteleop
 
-Drive from buttons or the keyboard, with every sensor in view: color and
+Drive from buttons, the keyboard, or a joystick (phones and tablets, or
+Joystick mode on a laptop), with every sensor in view: color and
 depth previews with the object detector's boxes, the lidar, encoder, IMU,
 battery, and compass, plus dot matrix and LED strip editors. The cards match
 the simulator's sensor dashboard, read from ROS topics instead of

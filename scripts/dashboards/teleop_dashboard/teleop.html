@@ -16,6 +16,7 @@
 <script src="/ui/tune.js?v={{asset}}"></script>
 <script src="/ui/logs.js?v={{asset}}"></script>
 <script src="/ui/lidar.js?v={{asset}}"></script>
+<script src="/ui/joystick.js?v={{asset}}"></script>
 <style>
   .grid { display: grid; grid-template-columns: minmax(300px, 400px) minmax(320px, 1fr) minmax(320px, 1fr); gap: var(--rcn-space-4); align-items: stretch; }
   .column { display: grid; gap: var(--rcn-space-4); align-content: start; }
@@ -48,6 +49,8 @@
   .rcn-input { width: 100%; max-width: 420px; }
   input[type=color] { width: 44px; height: 36px; border: 1px solid var(--rcn-border); border-radius: var(--rcn-radius-sm); background: var(--rcn-bg); padding: 2px; }
   .pad { display: grid; grid-template-columns: repeat(3, 84px); grid-template-rows: repeat(3, 84px); gap: 8px; justify-content: center; margin: var(--rcn-space-3) auto; touch-action: none; user-select: none; }
+  .pad[hidden], #joystick[hidden], #joytoggle[hidden] { display: none; }
+  #joystick { margin: var(--rcn-space-3) auto; }
   .pad button { font: 700 28px/1 var(--rcn-font-sans); border-radius: var(--rcn-radius-lg); border: 2px solid var(--rcn-border); background: var(--rcn-bg); color: var(--rcn-text); cursor: pointer; touch-action: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; }
   .pad button .key { font: 600 12px/1 var(--rcn-font-sans); color: var(--rcn-text-muted); }
   .pad button.down { background: var(--rcn-orange); border-color: var(--rcn-orange); color: var(--rcn-ink); }
@@ -115,7 +118,9 @@
   </div>
 
   <div class="rcn-section span2">
-    <h2>Drive</h2>
+    <div class="rcn-head"><h2>Drive</h2>
+      <label class="rcn-small" id="joytoggle"><input type="checkbox" id="joymode"> Joystick mode</label></div>
+    <div id="joystick" hidden></div>
     <div class="pad" id="pad">
       <div></div>
       <button data-axis="fwd" data-val="1" title="Forward (W)">&#9650;<span class="key">W</span></button>
@@ -218,7 +223,10 @@ const XYZ = [['x', 'a'], ['y', 'b'], ['z', 'c']];
 // ---- driving: whatever is held right now, from any source ----
 // Two holds on different axes give a diagonal; two on one axis cancel to 0.
 const held = new Set();
+// The joystick, while touched, sends its own values instead of the keys'.
+const joy = { active: false, fwd: 0, turn: 0 };
 function command() {
+  if (joy.active) return { fwd: +joy.fwd.toFixed(3), turn: +joy.turn.toFixed(3) };
   const sum = (axis) => [...held].filter((h) => h.startsWith(axis + ':')).reduce((a, h) => a + parseInt(h.split(':')[1]), 0);
   return { fwd: Math.sign(sum('fwd')), turn: Math.sign(sum('turn')) };
 }
@@ -232,7 +240,37 @@ function press(axis, val) { held.add(`${axis}:${val}`); sendCmd(false); }
 function release_(axis, val) { held.delete(`${axis}:${val}`); sendCmd(false); }
 function releaseAll() { held.clear(); sendCmd(true); }
 // The service drops a command older than cmd_timeout, so repeat while held.
-setInterval(() => { if (held.size) sendCmd(true); }, 100);
+setInterval(() => { if (held.size || joy.active) sendCmd(true); }, 100);
+
+// Touch-first screens get the joystick only; others the pad, with a toggle.
+const JOY_KEY = 'rcn-teleop-joystick';
+const touchFirst = window.matchMedia('(pointer: coarse)').matches;
+const joystick = RcnJoystick.mount($('joystick'), {
+  size: 180,
+  onMove: (x, y) => {
+    joy.active = x !== 0 || y !== 0;
+    joy.fwd = y;
+    joy.turn = x;
+    sendCmd(!joy.active);
+  },
+});
+function setJoystickMode(on) {
+  joystick.stop();
+  $('joystick').hidden = !on;
+  $('pad').hidden = on;
+  try { localStorage.setItem(JOY_KEY, on ? '1' : '0'); } catch (e) { /* private window */ }
+}
+if (touchFirst) {
+  $('joytoggle').hidden = true;
+  $('joystick').hidden = false;
+  $('pad').hidden = true;
+} else {
+  let saved = '0';
+  try { saved = localStorage.getItem(JOY_KEY) || '0'; } catch (e) { /* private window */ }
+  $('joymode').checked = saved === '1';
+  setJoystickMode(saved === '1');
+  $('joymode').addEventListener('change', () => setJoystickMode($('joymode').checked));
+}
 const typing = (e) => ['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName);
 document.addEventListener('keydown', (e) => {
   if (e.repeat || !(e.code in KEYS) || typing(e)) return;

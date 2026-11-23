@@ -44,6 +44,9 @@ All notable changes to this project will be documented in this file. The format 
   asks the step's questions, shows about how long it takes, and runs the
   step's command with its output, passing the password to sudo from the
   page. The 8080 setup note opens it.
+- Web teleop joystick: phones and tablets drive with a joystick (proportional
+  throttle and steering, 10% dead zone); laptops switch to it with Joystick
+  mode. `/cmd` takes any value from -1 to 1 (`scripts/web/joystick.js`).
 - `racecar check`: the parked checks before mapping or driving
   (calibration, IMU at rest, odometry still, lidar, sensor rates, teleop,
   battery; `--all` adds the power, link and drive checks), each failing row
