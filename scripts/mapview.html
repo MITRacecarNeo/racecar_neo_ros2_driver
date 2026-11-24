@@ -124,7 +124,7 @@ main.maps-open #hint { left: calc(min(340px, 80%) + var(--rcn-space-3)); }
 <div class="sheet" id="startsheet"><div>
   <h2 id="starttitle">New map</h2>
   <div class="rcn-small rcn-muted" id="startnote">Teleop must be running. Drive with the gamepad.</div>
-  <div class="row"><input type="text" class="rcn-input" id="newname" placeholder="map name (letters, digits, - and _)"
+  <div class="row"><input type="text" class="rcn-input" id="newname" placeholder="Letters, digits, - and _"
     autocomplete="off" autocapitalize="off" spellcheck="false"></div>
   <div class="row"><button class="rcn-btn primary" id="startgo">Start</button><button class="rcn-btn quiet" id="startcancel">Cancel</button></div>
 </div></div>
@@ -417,8 +417,8 @@ function hint(text) { $('hint').textContent = text; $('hint').classList.toggle('
 function startPoseTool(purpose) {
   poseTool = { purpose, start: null, end: null };
   hint(purpose === 'set'
-    ? 'Set pose: Tap where the car currently is and drag toward the way it faces.'
-    : 'Where is the car on this map? Tap where it is and drag toward the way it faces.');
+    ? 'Tap where the car is. Drag toward the way it faces.'
+    : 'Tap where the car is on this map. Drag toward the way it faces.');
   render();
 }
 function cancelPoseTool() { poseTool = null; pending = null; preview = null; hint(''); render(); draw(); }
@@ -443,7 +443,8 @@ async function finishPose(x, y, yaw) {
 
 // -- requests --
 const post = RcnApi.postJson;
-function report(r) { flash(r.message || (r.ok ? 'done' : 'failed'), r.ok ? 'info' : 'bad'); }
+// The pills and the map show a success; only a failure has words.
+function report(r) { if (!r.ok) flash(r.message || 'Could not finish.', 'bad'); }
 // A flash message shows for FLASH_MS over the standing banner (throttled, hot, mapping cap).
 const FLASH_MS = 4000;
 let flashMsg = null;
@@ -452,11 +453,11 @@ function showBanner() {
   const b = $('banner'), s = state.status || {}, sys = state.sys || {};
   let msg = null;
   if (flashMsg && Date.now() < flashMsg.until) msg = flashMsg;
-  else if (checks.job && checks.job.running) msg = { text: 'Checks are running', kind: 'bad' };
   else if (lostContact) msg = { text: RcnApi.LOST, kind: 'bad' };
   else if (sys.throttled_now && sys.throttled_now.length) msg = { text: `Pi throttled now: ${sys.throttled_now.join(', ')}. This run is not valid.`, kind: 'bad' };
-  else if (sys.temp_c != null && sys.temp_c >= 78) msg = { text: `Pi is hot (${sys.temp_c.toFixed(0)} C).`, kind: 'warn' };
-  else if (s.mode === 'mapping') msg = { text: 'Speed limited for mapping. Turn gently.', kind: 'warn' };
+  else if (sys.temp_c != null && sys.temp_c >= 78) msg = { text: `Pi is hot (${sys.temp_c.toFixed(0)} \u00b0C).`, kind: 'warn' };
+  else if (s.mode === 'mapping') msg = { text: 'Drive slowly and turn gently.', kind: 'warn' };
+  else if (s.mode === 'localization' && !localized()) msg = { text: 'Drive slowly until localized.', kind: 'warn' };
   b.textContent = msg ? msg.text : '';
   b.className = msg ? `show ${msg.kind}` : '';
 }
@@ -466,7 +467,7 @@ async function action(body) {
   if (body.action === 'start' || body.action === 'load') {
     let driving = [];
     try { driving = (await (await fetch('api/driving', { cache: 'no-store' })).json()).apps || []; } catch (err) { /* the car stops them anyway */ }
-    if (driving.length && !confirm(`${driving.join(' and ')} is open. Close it and continue?`)) return { ok: false };
+    if (driving.length && !confirm(`Close ${driving.join(' and ')} and continue?`)) return { ok: false };
   }
   const r = await post('api/action', body);
   if (!r.ok) report(r);
@@ -499,7 +500,7 @@ function render() {
   } else if (mode === 'localization') {
     f.append(button('Set pose', '', () => startPoseTool('set'), running, 'map'));
     f.append(button('Find me', '', async () => {
-      if (!confirm('Search the whole map for the car? Drive slowly until it shows localized.')) return;
+      if (!confirm('Search the whole map for the car?')) return;
       report(await post('api/find', {}));
     }, running || s.localizer !== 'amcl', 'target'));
     f.append(button('Stop', 'danger', () => { if (confirm('Stop localization?')) action({ action: 'stop' }); }, running, 'stop'));
@@ -508,7 +509,7 @@ function render() {
     if (!checks.passed) start.title = START_TIP;
     f.append(start);
     const busyChecks = !!(checks.job && checks.job.running);
-    f.append(button(busyChecks ? 'Checking...' : 'Run checks', '', runChecks, running || busyChecks, 'check'));
+    f.append(button('Run checks', '', runChecks, running || busyChecks, 'check'));
   }
   f.append(button('Maps', mapsOpen ? 'quiet on' : '', toggleMaps, false, 'layers'));
 }
@@ -537,12 +538,12 @@ $('startgo').onclick = async () => {
   // Extending in place keeps the name; any other existing name is replaced only on confirm.
   let replace = false;
   if (name !== source && await nameTaken(name)) {
-    if (!confirm(`"${name}" exists. Replace it?`)) return;
+    if (!confirm(`Replace the map ${name}?`)) return;
     replace = true;
   }
   if (source) {
     preview = await fetchGrid(`api/saved?name=${encodeURIComponent(source)}`);
-    if (!preview) { flash(`Cannot read ${source}`, 'bad'); return; }
+    if (!preview) { flash(`Could not read ${source}.`, 'bad'); return; }
     fit(preview); pending = { name, source, replace }; startPoseTool('extend'); draw();
     return;
   }
@@ -560,7 +561,7 @@ async function openMaps() {
   const res = await fetch('api/maps', { cache: 'no-store' });
   const data = await res.json();
   const list = $('maplist'); list.replaceChildren();
-  if (!data.maps.length) { list.textContent = 'No maps yet.'; return; }
+  if (!data.maps.length) { list.textContent = 'No maps'; return; }
   const running = !!(state.job && state.job.running);
   for (const m of data.maps) {
     const row = document.createElement('div'); row.className = 'map';
@@ -569,7 +570,7 @@ async function openMaps() {
     const info = document.createElement('div'); info.className = 'info';
     info.innerHTML = '<div class="name"></div><div class="rcn-small rcn-muted"></div><div class="acts"></div>';
     info.querySelector('.name').textContent = m.name + (m.note ? ` (${m.note})` : '');
-    info.querySelector('.rcn-muted').textContent = `${m.state}; ${m.saved}; ${m.size}`;
+    info.querySelector('.rcn-muted').textContent = [m.state[0].toUpperCase() + m.state.slice(1), m.saved, m.size].join(' \u00b7 ');
     const acts = info.querySelector('.acts');
     acts.append(button('Load', 'primary', () => openLoad(m.name), running || m.state === 'unsaved', null, true));
     const extend = button('Extend', '', () => { closeMaps(); openStart(m.name); }, running || !checks.passed, null, true);
@@ -613,22 +614,19 @@ function showStatus() {
   setHtml('loc', active ? (localized() ? pill('ok', 'Localized') : pill('err', 'Not localized')) : pill('off', 'Autonomy stopped'));
   const parts = [];
   if (mode === 'localization') {
-    if (s.scan_fit) parts.push(`fit ${(parseFloat(s.scan_fit) * 100).toFixed(0)}%`);
-    if (s.pose_sd_m) parts.push(`spread ${parseFloat(s.pose_sd_m).toFixed(2)} m ${parseFloat(s.pose_sd_deg || 0).toFixed(0)} deg`);
-    if (s.localizer) parts.push(s.localizer);
+    if (s.scan_fit) parts.push(`Fit ${(parseFloat(s.scan_fit) * 100).toFixed(0)}%`);
+    if (s.pose_sd_m) parts.push(`Spread ${parseFloat(s.pose_sd_m).toFixed(2)} m, ${parseFloat(s.pose_sd_deg || 0).toFixed(0)} deg`);
+    if (s.localizer) parts.push({ amcl: 'AMCL', slam_toolbox: 'SLAM Toolbox' }[s.localizer] || s.localizer);
   }
   if (state.pose) parts.push(`x ${state.pose[0].toFixed(2)} y ${state.pose[1].toFixed(2)} ${(state.pose[2] * 180 / Math.PI).toFixed(0)} deg`);
   $('detail').textContent = parts.join(' | ');
   const sys = state.sys || {}, bits = [];
   if (sys.cpu != null) bits.push(`CPU ${sys.cpu.toFixed(0)}%`);
-  if (sys.temp_c != null) bits.push(`${sys.temp_c.toFixed(0)} C`);
+  if (sys.temp_c != null) bits.push(`${sys.temp_c.toFixed(0)} \u00b0C`);
   $('sys').textContent = bits.join('  ');
   showBanner();
 }
 
-// A success title stays JOB_HIDE_MS; a failure stays until the next command.
-const JOB_HIDE_MS = 4000;
-let jobDoneAt = null;
 // Save, then stop once the save has finished; a failed save stops nothing.
 async function waitForJob() {
   for (;;) {
@@ -647,28 +645,23 @@ $('stopsave').onclick = async () => {
   if (r.ok && await waitForJob()) action({ action: 'stop' });
 };
 const unsaved = (j) => j.lines.some((l) => l.includes('never saved'));
+// The job bar shows only a failure and an unsaved stop; the buttons gray out while a command runs.
 function jobTitle(j) {
   const [action, name] = j.argv;
-  const extend = j.argv.includes('--from');
-  if (j.running) {
+  if (j.code !== 0) {
     return {
-      start: extend ? `Extending into ${name}...` : `Starting mapping ${name}...`,
-      save: 'Saving...', stop: 'Stopping...', load: `Loading ${name}...`, recover: `Keeping ${name}...`,
-    }[action] || 'Working...';
+      start: 'Could not start mapping.', save: 'Could not save the map.', stop: 'Could not stop.',
+      load: `Could not load ${name}.`, recover: `Could not keep ${name}.`,
+    }[action] || 'Could not finish.';
   }
-  if (j.code !== 0) return `Failed: ${j.lines.length ? j.lines[j.lines.length - 1].replace(/^racecar map: /, '') : 'see output'}`;
-  if (action === 'stop' && unsaved(j)) return 'Stopped. Not saved. Use Keep in Maps to save it.';
-  return {
-    start: `Mapping ${name}`, save: 'Saved', stop: 'Stopped', load: `Localizing on ${name}`, recover: `Kept ${name}`,
-  }[action] || 'Done';
+  return 'Not saved. Press Keep in Maps to save it.';
 }
 function showJob() {
   const j = state.job || {};
   const el = $('job');
   // Failures and an unsaved stop stay up until the next command.
-  if (j.running || j.code !== 0 || (j.argv && j.argv[0] === 'stop' && unsaved(j))) jobDoneAt = null;
-  else if (jobDoneAt === null) jobDoneAt = Date.now();
-  if (!j.action || (jobDoneAt !== null && Date.now() - jobDoneAt > JOB_HIDE_MS)) { el.classList.remove('show'); return; }
+  const shown = !j.running && (j.code !== 0 || (j.argv && j.argv[0] === 'stop' && unsaved(j)));
+  if (!j.action || !shown) { el.classList.remove('show'); return; }
   el.classList.add('show');
   el.classList.toggle('failed', !j.running && j.code !== 0);
   if (j.running) el.classList.remove('open');
@@ -694,7 +687,7 @@ async function loadChecks() {
 function showChecks() {
   const rows = checks.rows || [];
   $('checknote').textContent = checks.passed
-    ? `Passed ${checks.time}. Mapping can start.`
+    ? `Passed ${checks.time.slice(0, 16)}`
     : (checks.reason || 'The checks have not run.');
   $('checkrows').innerHTML = rows.map((r) => {
     const link = r.link ? RcnRoute.app('profile', r.link) : '';

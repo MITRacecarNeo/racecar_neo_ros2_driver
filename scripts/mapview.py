@@ -36,6 +36,7 @@ import labkit
 import map_control as mc
 import numpy as np
 from racecar_neo_ros2_driver import apps, autonomy as au, frames
+from racecar_neo_ros2_driver.check_words import check_row
 from racecar_neo_ros2_driver.geometry import yaw_of
 from racecar_neo_ros2_driver.maps import map_root, valid_name
 import sysinfo
@@ -188,6 +189,10 @@ class Trail:
 # -- racecar map commands --
 
 
+NAME_RULE = 'Map names use letters, digits, - and _.'
+RELOAD = 'Reload the page.'
+
+
 def action_argv(req: dict[str, Any]) -> list[str]:
     """Return `racecar map` arguments for a page request; ValueError names what is wrong."""
     action = req.get('action')
@@ -197,7 +202,7 @@ def action_argv(req: dict[str, Any]) -> list[str]:
     if action in ('start', 'load', 'recover'):
         name = str(req.get('name') or '')
         if not valid_name(name):
-            raise ValueError('map names use letters, digits, - and _')
+            raise ValueError(NAME_RULE)
         argv.append(name)
     pose = req.get('pose')
     if pose is not None:
@@ -208,7 +213,7 @@ def action_argv(req: dict[str, Any]) -> list[str]:
     if action == 'start' and req.get('source'):
         source = str(req['source'])
         if not valid_name(source):
-            raise ValueError('map names use letters, digits, - and _')
+            raise ValueError(NAME_RULE)
         argv += ['--from', source]
     if action == 'start' and pose is not None and not req.get('source'):
         raise ValueError('a start pose needs a map to extend')
@@ -246,7 +251,7 @@ def checks_view() -> dict[str, Any]:
 
     last = rc.read_last()
     rows = [r for r in (last or {}).get('rows', []) if r.get('group') in rc.PARKED]
-    return {**rc.gate(last), 'rows': rows}
+    return {**rc.gate(last), 'rows': [check_row(r) for r in rows]}
 
 
 class Job:
@@ -518,7 +523,7 @@ class Viewer:
         with self._lock:
             publisher = self._publisher
         if publisher is None:
-            raise RuntimeError('viewer not connected')
+            raise RuntimeError('No contact')
         publisher.publish(msg)
 
     def clear_trail(self) -> None:
@@ -531,14 +536,19 @@ class Viewer:
         with self._lock:
             client = self._client
         if client is None or not client.wait_for_service(timeout_sec=1.0):
-            return False, 'autonomy is not running'
+            return False, 'Autonomy is not running.'
         done = threading.Event()
         future = client.call_async(Trigger.Request())
         future.add_done_callback(lambda _: done.set())
         if not done.wait(FIND_TIMEOUT_SEC):
-            return False, 'no reply from autonomy_node'
+            return False, 'No reply from autonomy.'
         result = future.result()
-        return bool(result.success), str(result.message)
+        # The node's reply is worded for the terminal; the page shows a failure only.
+        if result.success:
+            return True, ''
+        if 'AMCL' in str(result.message):
+            return False, 'Find me needs AMCL localization.'
+        return False, 'Could not search the map.'
 
     def shutdown(self) -> None:
         # rclpy shutdown wakes the executor; destroying the node while it waits can block.
@@ -621,14 +631,14 @@ class Handler(webui.AppHandler):
             if path == '/api/action':
                 argv = action_argv(body)
                 if not self.job.start(argv):
-                    self.send_json({'ok': False, 'message': 'another command is running'}, 409)
+                    self.send_json({'ok': False, 'message': 'Another change is running.'}, 409)
                     return
                 self.send_json({'ok': True, 'argv': argv})
             elif path == '/api/pose':
                 self.viewer.touch()
                 x, y, yaw = (float(body[k]) for k in ('x', 'y', 'yaw'))
                 self.viewer.set_pose(x, y, yaw)
-                self.send_json({'ok': True, 'message': 'pose sent'})
+                self.send_json({'ok': True})
             elif path == '/api/checks/run':
                 if not self.checks.start([]):
                     self.send_json({'ok': False, 'message': 'The checks are running.'}, 409)
@@ -648,7 +658,9 @@ class Handler(webui.AppHandler):
             else:
                 self.send(404, b'not found', 'text/plain')
         except (ValueError, KeyError, TypeError, RuntimeError) as exc:
-            self.send_json({'ok': False, 'message': str(exc)}, 400)
+            # Only these reach the page as written; anything else means the page is out of date.
+            known = str(exc) in (NAME_RULE, 'No contact')
+            self.send_json({'ok': False, 'message': str(exc) if known else RELOAD}, 400)
 
 
 def main() -> int:

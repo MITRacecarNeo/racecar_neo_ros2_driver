@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en" data-app="Wall follow">
+<html lang="en" data-app="Wall Follow">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Wall follow - RACECAR Neo</title>
+<title>Wall Follow - RACECAR Neo</title>
 <link rel="stylesheet" href="ui/rcn.css?v={{asset}}">
 <script src="ui/battery.js?v={{asset}}" defer></script>
 <script src="ui/stall.js?v={{asset}}" defer></script>
@@ -26,7 +26,7 @@
 <header class="rcn-header">
   <img class="rcn-mark" src="ui/brand/mark.png" alt="RACECAR Neo">
   <div class="rcn-heading">
-    <span class="rcn-title">Wall follow</span>
+    <span class="rcn-title">Wall Follow</span>
     <span class="rcn-meta">mode <b id="mode">-</b> &middot; error <b id="err">-</b> &middot; steer <b id="steer">-</b> &middot; throttle <b id="thr">-</b> &middot; encoder <b id="enc">-</b> m/s</span>
   </div>
   <span class="rcn-spacer"></span>
@@ -74,25 +74,25 @@ const { $, setHtml, token } = RcnUi;
 const { post } = RcnApi;
 const { timeChart, legendHtml, recentTicks } = RcnCharts;
 const COMMON = [
-  { key: 'speed', label: 'speed', tip: 'Throttle cap, 0 to 1', min: 0, max: 1, step: 0.01 },
-  { key: 'kp', tip: 'Steering per meter of error', min: 0, max: 3, step: 0.01 },
-  { key: 'kd', tip: 'Steering damper. Raise it if the car wobbles', min: 0, max: 10, step: 0.1 },
-  { key: 'speed_kp', tip: 'Throttle drop per m/s of error. 0: constant speed', min: 0, max: 1, step: 0.01 },
-  { key: 'speed_kd', tip: 'Damper on the speed correction', min: 0, max: 1, step: 0.01 },
-  { key: 'window', tip: 'Averaging window per ray, degrees', min: 1, max: 30, step: 1 },
-  { key: 'lookahead', tip: 'Distances are capped here, meters', min: 0.5, max: 6, step: 0.1 },
+  { key: 'speed', label: 'Speed', tip: 'Throttle cap, 0 to 1', min: 0, max: 1, step: 0.01 },
+  { key: 'kp', label: 'Kp', tip: 'Steering per meter of error', min: 0, max: 3, step: 0.01 },
+  { key: 'kd', label: 'Kd', tip: 'Steering damper. Raise it if the car wobbles', min: 0, max: 10, step: 0.1 },
+  { key: 'speed_kp', label: 'Speed kp', tip: 'Throttle drop per m/s of error. 0: constant speed', min: 0, max: 1, step: 0.01 },
+  { key: 'speed_kd', label: 'Speed kd', tip: 'Damper on the speed correction', min: 0, max: 1, step: 0.01 },
+  { key: 'window', label: 'Window', tip: 'Averaging window per ray, degrees', min: 1, max: 30, step: 1 },
+  { key: 'lookahead', label: 'Lookahead', tip: 'Distance cap, meters', min: 0.5, max: 6, step: 0.1 },
 ];
 const SLIDERS = {
-  static: [...COMMON, { key: 'look_angle', tip: 'Side windows this many degrees off the nose', min: 10, max: 90, step: 1 }],
+  static: [...COMMON, { key: 'look_angle', label: 'Look angle', tip: 'Side windows this many degrees off the nose', min: 10, max: 90, step: 1 }],
   dynamic: [...COMMON,
-    { key: 'width', tip: 'Search this many degrees either side of the nose', min: 10, max: 120, step: 1 },
-    { key: 'side_weight', tip: 'Bias toward the right, m per degree. Negative prefers left', min: -0.02, max: 0.02, step: 0.001 }],
+    { key: 'width', label: 'Width', tip: 'Search this many degrees either side of the nose', min: 10, max: 120, step: 1 },
+    { key: 'side_weight', label: 'Side weight', tip: 'Bias toward the right, m per degree. Negative prefers left', min: -0.02, max: 0.02, step: 0.001 }],
 };
 const form = RcnTune.sliders($('form'), SLIDERS.static);
 let mode = 'static';
 
 function saveTune() { post('save').then(() => RcnUi.toast('Saved.')); }
-function loadTune() { post('load').then(() => RcnUi.toast('Loaded.')); }
+function loadTune() { post('load'); }
 function reset() { post('load'); }
 function stopCar() { post('params', { speed: 0 }); }
 

@@ -290,7 +290,9 @@ class TestHttp:
         res, _ = request(server, 'POST', '/api/action', {'action': 'save'})
         assert res.status == 409
         res, data = request(server, 'POST', '/api/action', {'action': 'rm'})
-        assert res.status == 400 and 'unknown action' in json.loads(data)['message']
+        assert res.status == 400 and json.loads(data)['message'] == 'Reload the page.'
+        res, data = request(server, 'POST', '/api/action', {'action': 'start', 'name': 'a b'})
+        assert json.loads(data)['message'] == 'Map names use letters, digits, - and _.'
 
     def test_pose_and_find(self, mv, server):
         res, _ = request(server, 'POST', '/api/pose', {'x': 1, 'y': 2, 'yaw': 0.5})

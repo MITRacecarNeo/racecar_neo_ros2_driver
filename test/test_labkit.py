@@ -95,7 +95,7 @@ class TestTuning:
         tuning.path.write_text('kp: 3.0\n')
         tuning.load()
         assert tuning.params['kp'] == 3.0 and tuning.params['speed'] == 0.0
-        assert [m[1] for m in tuning._marks] == ['yaml load']
+        assert [m[1] for m in tuning._marks] == ['Settings loaded']
 
     def test_first_load_adds_no_mark(self, tuning):
         assert list(tuning._marks) == []

@@ -46,7 +46,7 @@
     if (!w) return;
     if (!series.some((s) => s.pts.length)) {
       const d = document.createElement('div');
-      d.className = 'empty rcn-small rcn-muted'; d.textContent = 'No data.';
+      d.className = 'empty rcn-small rcn-muted'; d.textContent = 'No reading';
       box.append(d); return;
     }
     const hasR = series.some((s) => s.axis === 'r');

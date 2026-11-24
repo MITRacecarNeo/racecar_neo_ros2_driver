@@ -124,7 +124,7 @@ class Tuning:
                 self.params.update(yaml.safe_load(self.path.read_text()) or {})
             self._clean(self.params)
             if before != '{}' and before != json.dumps(self.params, sort_keys=True):
-                self._marks.add('yaml load')
+                self._marks.add('Settings loaded')
 
     def save(self) -> None:
         """Write the current values into the profile file, seeded from the shipped one."""

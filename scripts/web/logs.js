@@ -57,7 +57,7 @@
       });
     }
 
-    $(id('save')).onclick = () => RcnApi.post('logs/save').then(() => { refresh(true); RcnUi.toast('Log saved.'); });
+    $(id('save')).onclick = () => RcnApi.post('logs/save').then(() => refresh(true));
     $(id('load')).onclick = load;
     refresh(false);
     return { load, refresh };

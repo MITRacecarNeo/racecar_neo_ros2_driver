@@ -149,6 +149,12 @@ All notable changes to this project will be documented in this file. The format 
 - Handbook wording: one instruction per sentence, no reasons attached to
   steps, the 8080 names (Tools and Autonomy, Clear apps), "Car refit" and
   "Rollback" sections.
+- Lab app and Mapper wording: the 8080 app names; slider labels instead
+  of setting keys ("Angle kp", "Crop top"); state boxes in sentence case;
+  tips without mechanics; superscript, micro and degree units; Camera Label key hints in
+  the button tips; the Mapper job bar shows only a failure, one line per
+  command; check rows worded as on the Car Profile Checks page
+  (`racecar_neo_ros2_driver/check_words.py`).
 - `racecar setup networking` keeps the access point's password unless
   `RACECAR_AP_PSK` is set.
 - Pages link relative to their own address (`<base href>`), so they work
