@@ -357,7 +357,7 @@ def _control(action: str) -> None:
 # slam_toolbox. Starting mapping or localization stops them; the map viewer
 # and the apps page ask first. Stopping them is allowed by
 # scripts/polkit/49-racecar-dashboards.rules.
-DRIVING_APPS = tuple((f"{a['unit']}.service", a['name']) for a in apps.driving_apps())
+DRIVING_APPS = tuple((f"{a['unit']}.service", a['name']) for a in apps.manual_driving_apps())
 
 
 def running_driving_apps() -> list[str]:

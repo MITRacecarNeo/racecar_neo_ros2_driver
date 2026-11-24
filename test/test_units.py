@@ -18,7 +18,8 @@ def test_core_units_are_the_boot_services_but_the_data_oneshot():
 
 
 def test_on_demand_units_are_install_only():
-    assert set(_bash_array('INSTALL_ONLY')) == {units.AUTONOMY, units.TERMINAL}
+    planner = apps.app('planner')['unit']
+    assert set(_bash_array('INSTALL_ONLY')) == {units.AUTONOMY, units.TERMINAL, planner}
 
 
 def test_app_units_in_core_match_the_registry():

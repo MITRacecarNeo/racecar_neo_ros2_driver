@@ -1134,8 +1134,10 @@ def open_app(target: str, run: Callable[..., Any] = subprocess.run) -> tuple[boo
         return False, SETUP_NEEDED
     if app['exclusive']:
         live = ('active', 'activating')
+        # An Autonomy app drives through the autonomy run; the other driving apps stop it.
         if (
-            unit_states([app['unit']], run)[app['unit']] not in live
+            app['group'] != 'autonomy'
+            and unit_states([app['unit']], run)[app['unit']] not in live
             and unit_states([AUTONOMY_UNIT], run)[AUTONOMY_UNIT] in live
         ):
             mapping = last_run().get('mode') == 'mapping'

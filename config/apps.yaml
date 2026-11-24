@@ -154,3 +154,14 @@ apps:
     exclusive: false
     startable: false
     desc: Build and load maps
+
+  - id: planner
+    name: Planner
+    icon: navigate
+    port: 8090
+    path: planner
+    group: autonomy
+    unit: racecar-planner
+    exclusive: true
+    startable: true
+    desc: Drive the car to a point on a map

@@ -283,7 +283,6 @@ const APP_STATE = {
 // Apps not built yet: dashed, grayed tiles in their place, after the app named.
 const PLANNED = [
   { group: 'core', after: 'jupyter', name: 'Files', icon: 'folder' },
-  { group: 'autonomy', after: 'mapview', name: 'Planner', icon: 'navigate' },
   { group: 'autonomy', after: 'mapview', name: 'Modules', icon: 'grid' },
   { group: 'autonomy', after: 'mapview', name: 'Scripter', icon: 'code' },
 ];
@@ -325,7 +324,7 @@ document.querySelector('main').addEventListener('click', (e) => {
   if (app.exclusive && other && !live(app)
       && !confirm(`Close ${other.name} and open ${app.name}?`)) return;
   const auto = features.find((f) => f.id === 'autonomy');
-  if (app.exclusive && !live(app) && auto && live(auto)) {
+  if (app.exclusive && app.group !== 'autonomy' && !live(app) && auto && live(auto)) {
     const last = auto.last || {};
     const ask = last.mode === 'mapping'
       ? `Save ${last.map}, stop mapping, and open ${app.name}?`

@@ -331,12 +331,12 @@ class CpuMeter:
 class Viewer:
     """rclpy node whose subscriptions exist only while a browser is polling."""
 
-    def __init__(self) -> None:
+    def __init__(self, name: str = 'mapview') -> None:
         import rclpy
         from rclpy.executors import SingleThreadedExecutor
 
         self._rclpy = rclpy
-        self.node = rclpy.create_node('mapview')
+        self.node = rclpy.create_node(name)
         self._executor = SingleThreadedExecutor()
         self._executor.add_node(self.node)
         self._spinner = threading.Thread(target=self._spin, daemon=True)

@@ -30,6 +30,7 @@ This package is the v2 successor to [`racecar-neo-ros2-backend`](https://github.
 - [Browser app](#browser-app)
 - [Maps](#maps)
 - [Navigation](#navigation)
+  - [Planner](#planner)
 - [Jupyter notebooks](#jupyter-notebooks)
   - [Student library and labs](#student-library-and-labs)
 - [Manual build](#manual-build)
@@ -475,7 +476,8 @@ does. A white border means the app is running.
   override and Shut Down (below).
 - Tools: Terminal, web teleop, line follow, wall follow, and camera label,
   which start when opened. Clear apps stops them.
-- Autonomy: Mapper (the map viewer), which starts at boot.
+- Autonomy: Mapper (the map viewer), which starts at boot, and the
+  Planner, which starts when opened. Clear apps stops the Planner.
 - Tap a tile to open the app in a new tab. A stopped app is started
   first, and the tab shows a loading bar until the app is ready. Cancel
   closes that tab without opening the app.
@@ -483,7 +485,9 @@ does. A white border means the app is running.
   localization) drive the car, so only one runs at a time. Opening one while
   another runs asks before closing the other; a map being built is saved
   first. The Mapper and the Autonomy feature ask the same way, and
-  `racecar map start`, `load`, and `resume` close the driving apps.
+  `racecar map start`, `load`, and `resume` close the driving apps. The
+  Planner drives through localization, so opening it leaves autonomy
+  running, and loading a map leaves it open.
 - Clear apps stops every app that does not start at boot, to free the CPU.
 - Starting and stopping apps from the page needs the permission rule
   that `scripts/setup_user_env.sh` installs.
@@ -994,12 +998,36 @@ racecar nav cancel                # stop the goal that is running
   firmware holds nothing slower than 0.5 m/s, so Nav2 stops instead.
 - The car needs a steering table (`racecar calibrate steering`); without one,
   localization runs without Nav2.
-- The safety override stays on only while the 8080 page is in front. On a
-  phone, switching to another app ends it within a second or so, and the
-  car stops.
+- The safety override stays on only while the 8080 page or the Planner is
+  in front. On a phone, switching to another app ends it within a second or
+  so, and the car stops.
 - Settings: `config/nav2.yaml` (planner, controller, costmaps) and
   `config/nav2_bt.xml` (recovery: clear the costmaps and wait; no turning
   in place). A car profile `params/nav2.yaml` overrides any of them.
+
+### Planner
+
+`racecar-planner.service` serves the Planner on port 8090
+(`http://<robot>/planner/`), in the 8080 Autonomy group. It starts when
+opened and stops with Clear apps. The page shows the map, the car, the lidar
+scan, and the path Nav2 plans.
+
+| Button | Does |
+|---|---|
+| Goal | Drag on the map from the goal toward the way the car should face |
+| Go | Sends the goal to Nav2; the header shows Navigating and the distance left, then Arrived or Could not reach the goal |
+| Try again | Sends the goal that failed again |
+| Stop | Cancels the goal |
+| Set pose | As in the Mapper |
+| Safety override | Turns the 8080 safety override on or off; the page keeps it on while it is in front |
+| Maps | Lists the saved maps; Load starts localization and Nav2 on one |
+| Costmap (map tools) | Shows Nav2's global costmap over the map |
+
+- Loading a map while the Mapper is mapping asks to save the map first.
+  Mapping stays in the Mapper.
+- The Drive panel works as in the Mapper, during localization and while no
+  goal is running.
+- The costmap is sent only while Costmap is on.
 
 ## Maps
 

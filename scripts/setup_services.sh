@@ -41,6 +41,7 @@ SERVICES=(
 INSTALL_ONLY=(
     racecar-autonomy.service
     racecar-terminal.service
+    racecar-planner.service
 )
 
 changed=0

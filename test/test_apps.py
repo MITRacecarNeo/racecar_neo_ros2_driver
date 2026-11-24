@@ -54,6 +54,10 @@ class TestRegistry:
 
     def test_driving_apps_are_the_exclusive_ones(self):
         ids = [a['id'] for a in apps.driving_apps()]
+        assert ids == ['webteleop', 'linefollow', 'wallfollow', 'planner']
+
+    def test_manual_driving_apps_leave_out_autonomy(self):
+        ids = [a['id'] for a in apps.manual_driving_apps()]
         assert ids == ['webteleop', 'linefollow', 'wallfollow']
 
     def test_callers_get_copies(self):
@@ -102,6 +106,7 @@ class TestCli:
             'racecar-webteleop\t8081',
             'racecar-linefollow\t8082',
             'racecar-wallfollow\t8083',
+            'racecar-planner\t8090',
         ]
 
     def test_apps_beside_the_drivers(self):

@@ -8,6 +8,7 @@
 <script src="ui/ui.js?v={{asset}}"></script>
 <script src="ui/api.js?v={{asset}}"></script>
 <script src="ui/joystick.js?v={{asset}}"></script>
+<script src="ui/mapview_core.js?v={{asset}}"></script>
 <script src="ui/battery.js?v={{asset}}" defer></script>
 <script src="ui/stall.js?v={{asset}}" defer></script>
 <link rel="icon" href="ui/brand/app-icon-32.png">
@@ -154,13 +155,13 @@ main.maps-open #hint { left: calc(min(340px, 80%) + var(--rcn-space-3)); }
 'use strict';
 const $ = (id) => document.getElementById(id);
 const canvas = $('view');
-const ctx = canvas.getContext('2d');
 const css = RcnUi.token;
 const { esc, icon, pill, setHtml } = RcnUi;
-
-// View: screen = (world - center) * scale, y up.
-// rot turns the drawn map clockwise on screen (radians); carUp keeps the car pointing up.
-const view = { cx: 0, cy: 0, scale: 40, fitted: false, rot: 0, carUp: false };
+// The map view (pan, zoom, rotate, car-up, the pose drag) is web/mapview_core.js.
+const mv = RcnMapView.create(canvas, { draw: () => draw() });
+const view = mv.view;
+const fit = mv.fit;
+const fetchGrid = mv.fetchGrid;
 let state = {};
 let grid = null;           // {info, image (offscreen canvas)}
 let gridVersion = -1;
@@ -168,244 +169,36 @@ let preview = null;        // saved map shown while picking an extend pose
 let trail = { id: -1, from: 0, points: [] };
 let renderKey = '';
 let mapsOpen = false;     // map list sidebar
-let poseTool = null;       // {purpose: 'set'|'extend', start: [x,y], end: [x,y]}
+let poseTool = null;       // {purpose: 'set'|'extend'}; the drag itself is mv.dragging()
 let pending = null;        // extend request waiting for a pose
 let busy = false;
 
-function resize() {
-  const r = canvas.getBoundingClientRect();
-  canvas.width = Math.round(r.width * devicePixelRatio);
-  canvas.height = Math.round(r.height * devicePixelRatio);
-  draw();
-}
-// The canvas area changes height when the footer, banner, hint, or command output
-// changes, not only with the window; a stale buffer would be drawn stretched.
-new ResizeObserver(resize).observe(canvas);
-
-function toScreen(x, y) {
-  const d = devicePixelRatio;
-  return [canvas.width / 2 + (x - view.cx) * view.scale * d, canvas.height / 2 - (y - view.cy) * view.scale * d];
-}
-function toWorld(px, py) {
-  // Undo the map rotation about the canvas center, then the pan and zoom.
-  const cx = canvas.clientWidth / 2, cy = canvas.clientHeight / 2;
-  const c = Math.cos(-view.rot), s = Math.sin(-view.rot);
-  const dx = px - cx, dy = py - cy;
-  const ux = cx + dx * c - dy * s, uy = cy + dx * s + dy * c;
-  return [view.cx + (ux - cx) / view.scale, view.cy - (uy - cy) / view.scale];
-}
-// A screen drag (dx, dy) as a pan of the unrotated map.
-function unrotate(dx, dy) {
-  const c = Math.cos(-view.rot), s = Math.sin(-view.rot);
-  return [dx * c - dy * s, dx * s + dy * c];
-}
-
-function buildImage(info, data) {
-  const off = document.createElement('canvas');
-  off.width = info.width; off.height = info.height;
-  const octx = off.getContext('2d');
-  const img = octx.createImageData(info.width, info.height);
-  const rgb = (c) => [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)];
-  const free = rgb(css('--map-free')), wall = rgb(css('--map-wall')), unk = rgb(css('--map-unknown'));
-  for (let r = 0; r < info.height; r++) {
-    const dst = (info.height - 1 - r) * info.width;  // OccupancyGrid rows start at the bottom
-    for (let c = 0; c < info.width; c++) {
-      const v = data[r * info.width + c];
-      const col = v < 0 ? unk : (v >= 65 ? wall : free);
-      const i = (dst + c) * 4;
-      img.data[i] = col[0]; img.data[i + 1] = col[1]; img.data[i + 2] = col[2]; img.data[i + 3] = 255;
-    }
-  }
-  octx.putImageData(img, 0, 0);
-  return { info, image: off };
-}
-
-async function fetchGrid(url) {
-  const res = await fetch(url, { cache: 'no-store' });
-  if (res.status !== 200) return null;
-  const info = JSON.parse(res.headers.get('X-Map-Info'));
-  const data = new Int8Array(await res.arrayBuffer());
-  return buildImage(info, data);
-}
-
-function fit(g) {
-  const i = g.info;
-  view.cx = i.origin[0] + i.width * i.resolution / 2;
-  view.cy = i.origin[1] + i.height * i.resolution / 2;
-  view.scale = Math.max(5, Math.min(canvas.clientWidth / (i.width * i.resolution),
-    canvas.clientHeight / (i.height * i.resolution)) * 0.92);
-  view.fitted = true;
-}
-
-function drawGrid(g) {
-  const i = g.info, d = devicePixelRatio;
-  const [x0, y1] = toScreen(i.origin[0], i.origin[1] + i.height * i.resolution);
-  ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(g.image, x0, y1, i.width * i.resolution * view.scale * d, i.height * i.resolution * view.scale * d);
-}
-
-function drawCar(x, y, yaw, color, alpha) {
-  const d = devicePixelRatio, s = view.scale * d;
-  const [px, py] = toScreen(x, y);
-  ctx.save();
-  ctx.globalAlpha = alpha;
-  ctx.translate(px, py);
-  ctx.rotate(-yaw);
-  // Footprint from frames.yaml: rear -0.06, front 0.29, half width 0.105 (base_link at the rear axle).
-  ctx.fillStyle = color;
-  ctx.strokeStyle = css('--map-outline');
-  ctx.lineWidth = 1.5 * d;
-  const w = Math.max(0.105 * s, 5 * d), front = Math.max(0.29 * s, 12 * d), rear = Math.max(0.06 * s, 3 * d);
-  ctx.beginPath();
-  ctx.moveTo(-rear, -w); ctx.lineTo(front * 0.7, -w); ctx.lineTo(front, 0); ctx.lineTo(front * 0.7, w);
-  ctx.lineTo(-rear, w); ctx.closePath();
-  ctx.fill(); ctx.stroke();
-  ctx.restore();
-}
-
-function drawScale() {
-  const d = devicePixelRatio;
-  const steps = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50];
-  const m = steps.find((s) => s * view.scale >= 60) || 50;
-  // Clear of the map list when it is open on the left.
-  const left = mapsOpen ? $('maps').offsetWidth : 0;
-  const len = m * view.scale * d, x = (left + 14) * d, y = canvas.height - 16 * d;
-  ctx.strokeStyle = css('--rcn-paper'); ctx.fillStyle = css('--rcn-paper'); ctx.lineWidth = 2 * d;
-  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + len, y); ctx.moveTo(x, y - 5 * d); ctx.lineTo(x, y);
-  ctx.moveTo(x + len, y - 5 * d); ctx.lineTo(x + len, y); ctx.stroke();
-  ctx.font = `600 ${12 * d}px Barlow, Arial, sans-serif`;
-  ctx.fillText(m >= 1 ? `${m} m` : `${m * 100} cm`, x, y - 8 * d);
-}
-
-function drawOrigin() {
-  const d = devicePixelRatio, [ox, oy] = toScreen(0, 0), l = 18 * d;
-  ctx.lineWidth = 2 * d;
-  ctx.strokeStyle = css('--map-x'); ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(ox + l, oy); ctx.stroke();
-  ctx.strokeStyle = css('--map-y'); ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(ox, oy - l); ctx.stroke();
-}
+// Clear of the map list when it is open on the left.
+mv.scaleLeft = () => (mapsOpen ? $('maps').offsetWidth : 0);
 
 function draw() {
-  const d = devicePixelRatio;
-  ctx.fillStyle = css('--map-unknown');
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  if (view.carUp && state.pose) {
-    view.cx = state.pose[0]; view.cy = state.pose[1];
-    view.rot = state.pose[2] - Math.PI / 2;
-  }
-  ctx.save();
-  ctx.translate(canvas.width / 2, canvas.height / 2);
-  ctx.rotate(view.rot);
-  ctx.translate(-canvas.width / 2, -canvas.height / 2);
-  const g = preview || grid;
-  if (g) drawGrid(g);
-  drawOrigin();
-  if (!preview) {
-    if (trail.points.length > 1) {
-      ctx.strokeStyle = css('--map-trail'); ctx.lineWidth = 2 * d; ctx.beginPath();
-      trail.points.forEach((p, i) => { const [x, y] = toScreen(p[0], p[1]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
-      ctx.stroke();
+  mv.carPose = state.pose || null;
+  mv.frame(() => {
+    const g = preview || grid;
+    if (g) mv.drawGrid(g);
+    mv.drawOrigin();
+    if (!preview) {
+      mv.drawLine(trail.points, css('--map-trail'), 2);
+      mv.drawDots(state.scan, css('--map-scan'));
+      if (state.pose) mv.drawCar(state.pose[0], state.pose[1], state.pose[2], css('--map-car'), localized() ? 1 : 0.45);
     }
-    ctx.fillStyle = css('--map-scan');
-    for (const p of state.scan || []) { const [x, y] = toScreen(p[0], p[1]); ctx.fillRect(x - d, y - d, 2 * d, 2 * d); }
-    if (state.pose) drawCar(state.pose[0], state.pose[1], state.pose[2], css('--map-car'), localized() ? 1 : 0.45);
-  }
-  if (poseTool && poseTool.end) {
-    const [a, b] = poseTool.start, [c, e] = poseTool.end;
-    drawCar(a, b, Math.atan2(e - b, c - a), css('--map-trail'), 0.9);
-  }
-  ctx.restore();
-  drawScale();
+    const d = mv.dragging();
+    if (poseTool && d && d.end) {
+      const [a, b] = d.start, [c, e] = d.end;
+      mv.drawCar(a, b, Math.atan2(e - b, c - a), css('--map-trail'), 0.9);
+    }
+  });
 }
 
 function localized() { return (state.status || {}).localized === 'true'; }
 
-// -- pan, zoom, pose tool --
-const pointers = new Map();
-let pinch = null;
-canvas.addEventListener('pointerdown', (e) => {
-  canvas.setPointerCapture(e.pointerId);
-  pointers.set(e.pointerId, [e.offsetX, e.offsetY]);
-  if (poseTool && pointers.size === 1) {
-    poseTool.start = toWorld(e.offsetX, e.offsetY); poseTool.end = null; draw(); return;
-  }
-  if (pointers.size === 2) {
-    const [p, q] = [...pointers.values()];
-    pinch = { dist: Math.hypot(p[0] - q[0], p[1] - q[1]), scale: view.scale,
-      angle: Math.atan2(q[1] - p[1], q[0] - p[0]), rot: view.rot };
-  }
-});
-canvas.addEventListener('pointermove', (e) => {
-  if (!pointers.has(e.pointerId)) return;
-  const prev = pointers.get(e.pointerId);
-  pointers.set(e.pointerId, [e.offsetX, e.offsetY]);
-  if (poseTool && poseTool.start && pointers.size === 1) {
-    const w = toWorld(e.offsetX, e.offsetY);
-    if (Math.hypot(w[0] - poseTool.start[0], w[1] - poseTool.start[1]) * view.scale > 12) poseTool.end = w;
-    draw(); return;
-  }
-  if (pointers.size === 2 && pinch) {
-    const [p, q] = [...pointers.values()];
-    view.scale = Math.max(2, Math.min(400, pinch.scale * Math.hypot(p[0] - q[0], p[1] - q[1]) / pinch.dist));
-    // Two fingers turning turn the map, unless the car-up lock holds it.
-    if (!view.carUp) view.rot = pinch.rot + Math.atan2(q[1] - p[1], q[0] - p[0]) - pinch.angle;
-  } else if (pointers.size === 1 && !view.carUp) {
-    const [dx, dy] = unrotate(e.offsetX - prev[0], e.offsetY - prev[1]);
-    view.cx -= dx / view.scale; view.cy += dy / view.scale;
-  }
-  draw();
-});
-function pointerEnd(e) {
-  pointers.delete(e.pointerId);
-  if (pointers.size < 2) pinch = null;
-  if (poseTool && poseTool.start && pointers.size === 0) {
-    if (!poseTool.end) { hint('Drag from where the car is toward the way it faces.'); return; }
-    const [a, b] = poseTool.start, [c, e2] = poseTool.end;
-    finishPose(a, b, Math.atan2(e2 - b, c - a));
-  }
-}
-canvas.addEventListener('pointerup', pointerEnd);
-canvas.addEventListener('pointercancel', pointerEnd);
-canvas.addEventListener('wheel', (e) => {
-  e.preventDefault();
-  const before = toWorld(e.offsetX, e.offsetY);
-  view.scale = Math.max(2, Math.min(400, view.scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
-  const after = toWorld(e.offsetX, e.offsetY);
-  view.cx += before[0] - after[0]; view.cy += before[1] - after[1];
-  draw();
-}, { passive: false });
-$('zin').onclick = () => { view.scale = Math.min(400, view.scale * 1.3); draw(); };
-$('zout').onclick = () => { view.scale = Math.max(2, view.scale / 1.3); draw(); };
-$('center').onclick = () => {
-  if (state.pose) { view.cx = state.pose[0]; view.cy = state.pose[1]; } else if (grid) fit(grid);
-  draw();
-};
-
-const ROT_STEP = Math.PI / 12;  // 15 degrees
-const ROT_REPEAT_MS = 120;
-function setCarUp(on) {
-  view.carUp = on;
-  $('carup').classList.toggle('on', on);
-  $('carup').setAttribute('aria-pressed', String(on));
-  draw();
-}
-// A press turns one step; holding keeps turning. The map stays where the lock left it.
-function holdToRotate(button, step) {
-  let timer = null;
-  const turn = () => { if (view.carUp) setCarUp(false); view.rot += step; draw(); };
-  const stop = () => { clearInterval(timer); timer = null; };
-  button.addEventListener('pointerdown', (e) => {
-    e.preventDefault();
-    button.setPointerCapture(e.pointerId);
-    turn();
-    stop();
-    timer = setInterval(turn, ROT_REPEAT_MS);
-  });
-  for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) button.addEventListener(ev, stop);
-  button.addEventListener('contextmenu', (e) => e.preventDefault());
-}
-holdToRotate($('rotl'), -ROT_STEP);
-holdToRotate($('rotr'), ROT_STEP);
-$('carup').onclick = () => setCarUp(!view.carUp);
+mv.bindButtons({ zin: $('zin'), zout: $('zout'), center: $('center'), rotl: $('rotl'), rotr: $('rotr'), carup: $('carup') },
+  () => (state.pose ? [state.pose[0], state.pose[1]] : null), () => grid);
 $('cleartrail').onclick = async () => {
   try { await RcnApi.post('api/trail/clear'); } catch (err) { /* the next poll shows it */ }
   trail = { id: -1, from: 0, points: [] };
@@ -415,25 +208,31 @@ $('cleartrail').onclick = async () => {
 function hint(text) { $('hint').textContent = text; $('hint').classList.toggle('show', !!text); }
 
 function startPoseTool(purpose) {
-  poseTool = { purpose, start: null, end: null };
+  poseTool = { purpose };
+  mv.tool = {
+    end: (a, b) => {
+      if (!b) { hint('Drag from where the car is toward the way it faces.'); return; }
+      finishPose(a[0], a[1], Math.atan2(b[1] - a[1], b[0] - a[0]));
+    },
+  };
   hint(purpose === 'set'
     ? 'Tap where the car is. Drag toward the way it faces.'
     : 'Tap where the car is on this map. Drag toward the way it faces.');
   render();
 }
-function cancelPoseTool() { poseTool = null; pending = null; preview = null; hint(''); render(); draw(); }
+function cancelPoseTool() { poseTool = null; mv.tool = null; pending = null; preview = null; hint(''); render(); draw(); }
 
 async function finishPose(x, y, yaw) {
   const purpose = poseTool.purpose;
   const text = `x ${x.toFixed(2)} m, y ${y.toFixed(2)} m, heading ${(yaw * 180 / Math.PI).toFixed(0)} deg`;
   if (purpose === 'set') {
-    if (!confirm(`Set the car's pose to ${text}?`)) { poseTool.start = poseTool.end = null; draw(); return; }
+    if (!confirm(`Set the car's pose to ${text}?`)) { draw(); return; }
     poseTool = null; hint('');
     report(await post('api/pose', { x, y, yaw }));
   } else {
     const req = pending;
     if (!confirm(`Start mapping "${req.name}" from "${req.source}" with the car at ${text}?`)) {
-      poseTool.start = poseTool.end = null; draw(); return;
+      draw(); return;
     }
     poseTool = null; pending = null; preview = null; hint(''); view.fitted = false; gridVersion = -1;
     await action({ action: 'start', name: req.name, source: req.source, pose: [x, y, yaw], replace: req.replace });
@@ -809,7 +608,6 @@ async function poll() {
   } finally { busy = false; }
 }
 
-resize();
 render();
 poll();
 setInterval(poll, 100);

@@ -115,6 +115,17 @@ All notable changes to this project will be documented in this file. The format 
   autonomy source through the steering table and the firmware's speed band.
   `racecar nav goal/move/cancel/status`. `setup_ros2.sh` installs the Nav2
   packages.
+- Planner app (`scripts/planner_app.py`, `scripts/planner.html`,
+  `racecar-planner.service`, port 8090, Autonomy group): a goal dragged on the
+  map, Go, Stop, and Try again; the planned path, distance left, Arrived or
+  Could not reach the goal; a Safety override toggle kept alive by the page;
+  a Costmap view, subscribed only while on; Load and Set pose as in the
+  Mapper, with a save prompt when the Mapper is mapping; the Drive panel.
+  It starts when opened and stops with Clear apps.
+- `scripts/web/mapview_core.js` (`RcnMapView`): the map view shared by the
+  Mapper and the Planner.
+- `apps.manual_driving_apps()`: the driving apps that `racecar map` closes;
+  the Planner is not one of them.
 - Browser app (`scripts/browser_app.py`, `racecar-browser.service`, port 8087,
   Tools): Firefox on the car in a virtual screen, seen and used from a page
   (noVNC), to sign the car in to a WiFi login page; the Connections page's

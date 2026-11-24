@@ -288,6 +288,31 @@ Nav2 commands and the car is localized, then a few zeros, then nothing, so
 it does not fight another `/drive` publisher; the Mapper's Drive panel
 follows the same rule. The mux is unchanged.
 
+The Planner (`scripts/planner_app.py`, page `scripts/planner.html`, unit
+`racecar-planner.service`, port 8090) builds on the Mapper's server:
+`Navigator` subclasses `mapview.Viewer` under the node name `planner`, and
+its `Handler` subclasses `mapview.Handler`. It adds a `navigate_to_pose`
+action client (goal, cancel, feedback into `Mission`), a `/plan`
+subscription (thinned to 400 points), and a `/global_costmap/costmap`
+subscription held only while the page has Costmap on. Map actions are
+limited to load, save, and stop. Both pages draw with
+`scripts/web/mapview_core.js` (`RcnMapView`: view transform, pan, zoom,
+rotate, car-up, drag tools, layers). The page loads `override.js`, so it
+keeps the safety override alive as the 8080 page does.
+
+```
+planner.html ──HTTP poll 10 Hz──▶ planner_app.py (Navigator) ──▶ /autonomy/*, /map, /scan, /plan
+     │                                   ├── navigate_to_pose (goal, cancel, feedback)
+     │                                   └── /global_costmap/costmap (Costmap on only)
+     └── override.js ──keepalive 1 Hz──▶ 8080 /api/override
+```
+
+The Planner is an `exclusive` app in the `autonomy` group:
+`apps.driving_apps()` includes it (one driving app at a time), and
+`apps.manual_driving_apps()` leaves it out, so `racecar map load` and the
+8080 Autonomy actions do not close it, and opening it does not stop
+autonomy.
+
 ### Browser app
 
 `scripts/browser_app.py` (`racecar-browser.service`, port 8087, tools group),

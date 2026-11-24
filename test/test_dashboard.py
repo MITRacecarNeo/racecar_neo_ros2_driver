@@ -332,20 +332,20 @@ class FakeRun:
 class TestHome:
     def test_apps_cover_every_dashboard(self, dashboard):
         ports = [a['port'] for a in dashboard.APPS]
-        assert ports == [8088, 8888, 8089, 8086, 8087, 8081, 8082, 8083, 8085, 8084]
+        assert ports == [8088, 8888, 8089, 8086, 8087, 8081, 8082, 8083, 8085, 8084, 8090]
         groups = {g: [a['id'] for a in dashboard.APPS if a['group'] == g]
                   for g in ('core', 'tools', 'autonomy')}  # fmt: skip
         assert groups == {
             'core': ['profile', 'jupyter', 'files'],
             'tools': ['terminal', 'browser', 'webteleop', 'linefollow', 'wallfollow', 'camlabel'],
-            'autonomy': ['mapview'],
+            'autonomy': ['mapview', 'planner'],
         }
         assert next(a for a in dashboard.APPS if a['id'] == 'mapview')['name'] == 'Mapper'
         exclusive = [a['id'] for a in dashboard.APPS if a['exclusive']]
-        assert exclusive == ['webteleop', 'linefollow', 'wallfollow']
+        assert exclusive == ['webteleop', 'linefollow', 'wallfollow', 'planner']
         startable = [a['id'] for a in dashboard.APPS if a['startable']]
         assert startable == [
-            'terminal', 'browser', 'webteleop', 'linefollow', 'wallfollow', 'camlabel'
+            'terminal', 'browser', 'webteleop', 'linefollow', 'wallfollow', 'camlabel', 'planner'
         ]
 
     def test_every_app_icon_exists(self, dashboard):
@@ -927,6 +927,15 @@ class TestDrivingAppsAndAutonomy:
         run = tool({AUTONOMY: 'active'})
         assert dashboard.open_app('camlabel', run)[0] and run.tool == []
 
+    def test_planner_drives_through_autonomy(self, dashboard, tool, monkeypatch):
+        monkeypatch.setattr(dashboard, 'last_run', lambda: {'mode': 'localization', 'map': 'hall'})
+        run = tool({AUTONOMY: 'active', 'racecar-webteleop': 'active'})
+        assert dashboard.open_app('planner', run)[0] and run.tool == []
+        assert run.states['racecar-planner'] == 'active'
+        assert run.states['racecar-webteleop'] == 'inactive'
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
+        assert "app.exclusive && app.group !== 'autonomy'" in html
+
     def test_page_asks_before_stopping_autonomy(self, dashboard):
         html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert '`Save ${last.map}, stop mapping, and open ${app.name}?`' in html
@@ -1380,8 +1389,9 @@ def test_footer_names_the_car(dashboard):
 
 def test_planned_apps_show_as_placeholders(dashboard):
     html = (Path(dashboard.__file__).parent / 'dashboard.html').read_text()
-    for name in ('Files', 'Planner', 'Modules', 'Scripter'):
+    for name in ('Files', 'Modules', 'Scripter'):
         assert f"name: '{name}'" in html, name
+    assert "name: 'Planner'" not in html
     assert '.app.planned .glyph { border-style: dashed;' in html
     assert '!apps.some((a) => a.name === p.name)' in html
 

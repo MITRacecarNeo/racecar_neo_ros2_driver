@@ -1,0 +1,23 @@
+[Unit]
+Description=RACECAR Neo Planner (port 8090)
+Wants=racecar-data.service
+After=racecar-data.service
+After=network.target
+
+[Service]
+Type=exec
+User=racecar
+Group=racecar
+# Independent of teleop: the page loads a map, which starts localization and Nav2.
+ExecStart=/home/racecar/ros2_ws/src/racecar_neo_ros2_driver/scripts/ros_exec.sh python3 /home/racecar/ros2_ws/src/racecar_neo_ros2_driver/scripts/planner_app.py
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+Environment=HOME=/home/racecar
+# RACECAR_DATA_DIR, from racecar-data.service.
+EnvironmentFile=-/run/racecar/environment
+Environment=ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
+WorkingDirectory=/home/racecar/ros2_ws
+
+[Install]
+WantedBy=multi-user.target

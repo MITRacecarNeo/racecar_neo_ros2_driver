@@ -69,8 +69,18 @@ def home_port() -> int:
 
 
 def driving_apps() -> list[dict[str, Any]]:
-    """Apps that publish /drive: one at a time, and none while mapping or localizing."""
+    """Apps that drive the car: one at a time."""
     return [a for a in all_apps() if a['exclusive']]
+
+
+def manual_driving_apps() -> list[dict[str, Any]]:
+    """
+    Driving apps that publish /drive themselves: none while mapping or localizing.
+
+    An Autonomy app (the Planner) drives through the autonomy service, so
+    mapping or localizing does not close it.
+    """
+    return [a for a in driving_apps() if a['group'] != 'autonomy']
 
 
 def routes() -> dict[str, list[Any]]:
