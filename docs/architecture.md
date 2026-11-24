@@ -265,6 +265,29 @@ connections.html ──GET /api/connections──▶ netconfig.view ──▶ nm
 `view` names the device the request arrives on (`via`) from the client
 address, so the page warns before a change to that link.
 
+### Navigation (Nav2)
+
+Localization (`launch/autonomy.launch.py`, `mode:=localization`) also starts
+Nav2's controller, planner, behavior and navigator servers under
+`lifecycle_manager_navigation`, and `nav_bridge_node`. `nav2_param_file`
+writes one parameter file at launch: `config/nav2.yaml`, the car profile
+override, the footprint from `frames.yaml` and the planner's minimum turning
+radius from the steering table. Without a steering table, Nav2 is left out.
+
+```
+racecar nav / Planner ──NavigateToPose──▶ bt_navigator (config/nav2_bt.xml)
+   ──▶ planner_server (Smac Hybrid-A*, Reeds-Shepp) ──▶ controller_server (Regulated Pure Pursuit)
+   ──/nav/cmd_vel──▶ nav_bridge_node ──/drive──▶ mux_node (autonomy source: RB or override)
+```
+
+`racecar_neo_ros2_driver/nav.py` holds the bridge's math: `SpeedMap` inverts
+the firmware's speed band (0.5 to 1.0 m/s past a 0.01 deadband) and
+throttle_node's caps; `drive_steering` maps the curvature w / v through the
+steering table (reverse table backing up). The bridge publishes only while
+Nav2 commands and the car is localized, then a few zeros, then nothing, so
+it does not fight another `/drive` publisher; the Mapper's Drive panel
+follows the same rule. The mux is unchanged.
+
 ### Browser app
 
 `scripts/browser_app.py` (`racecar-browser.service`, port 8087, tools group),

@@ -53,6 +53,9 @@ RACECAR_CHECK = HERE / 'racecar_check.py'
 # in throttle_node still applies while mapping).
 DRIVE_HZ = 15.0
 CMD_TIMEOUT_SEC = 0.5
+# After the page's last command goes stale: zeros this long, then nothing, so
+# an open but idle Drive panel never fights another /drive source (Nav2).
+STOP_SEC = 0.5
 DRIVE_MODES = ('mapping', 'localization')
 IDLE_SEC = 10.0
 SCAN_PERIOD_SEC = 0.2
@@ -434,19 +437,27 @@ class Viewer:
                         'stamp': time.monotonic() if now is None else now}  # fmt: skip
 
     def drive_command(self, now: float) -> tuple[float, float] | None:
-        """Return (speed, steer) to publish now, or None when the page is not driving."""
+        """
+        Return (speed, steer) to publish now, or None when the page is not driving.
+
+        The page posts only while a key or the joystick is held; once that
+        stops, STOP_SEC of zeros, then silence.
+        """
         with self._lock:
             cmd, mode = dict(self.cmd), self.status.get('mode')
             open_ = self.gate.open
         if not open_ or mode not in DRIVE_MODES:
             return None
-        if now - cmd['stamp'] > CMD_TIMEOUT_SEC:
+        age = now - cmd['stamp']
+        if age > CMD_TIMEOUT_SEC + STOP_SEC:
+            return None
+        if age > CMD_TIMEOUT_SEC:
             return 0.0, 0.0
         return labkit.clamp_speed(cmd['fwd'], reverse=True), max(-1.0, min(1.0, cmd['turn']))
 
     def _drive_loop(self) -> None:
-        # Publishes only while a page is open and the map has the car on it, so
-        # with no page the mux sees no /drive from here.
+        # Publishes only while the page drives and briefly after, so an idle
+        # Drive panel sends no /drive.
         while True:
             time.sleep(1.0 / DRIVE_HZ)
             command = self.drive_command(time.monotonic())

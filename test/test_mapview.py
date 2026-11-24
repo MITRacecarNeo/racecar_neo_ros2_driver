@@ -357,7 +357,18 @@ class TestDriveAndChecks:
         viewer.status = {'mode': 'mapping'}
         assert viewer.drive_command(100.1) == (0.5, -0.25)
         assert viewer.drive_command(100.0 + mv.CMD_TIMEOUT_SEC + 0.1) == (0.0, 0.0)
+        # An open page that stopped driving goes quiet, leaving /drive to Nav2.
+        assert viewer.drive_command(100.0 + mv.CMD_TIMEOUT_SEC + mv.STOP_SEC + 0.1) is None
         assert viewer.can_drive()
+
+    def test_idle_page_never_publishes(self, mv):
+        viewer = mv.Viewer.__new__(mv.Viewer)
+        viewer._lock = threading.Lock()
+        viewer.gate = mv.webui.IdleGate(10.0)
+        viewer.gate.touch()
+        viewer.status = {'mode': 'localization'}
+        viewer.cmd = {'fwd': 0.0, 'turn': 0.0, 'stamp': 0.0}
+        assert viewer.drive_command(500.0) is None
 
     def test_cmd_route_and_origin(self, mv, server):
         conn = http.client.HTTPConnection('127.0.0.1', server.server_address[1], timeout=5)

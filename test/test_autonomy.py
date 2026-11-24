@@ -127,6 +127,7 @@ class TestLaunch:
             'extend',
             'foxglove',
             'pose_source',
+            'nav',
         ]
 
 

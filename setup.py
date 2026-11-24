@@ -18,6 +18,8 @@ setup(
             [f for f in glob.glob('config/*.yaml') if not f.endswith('.local.yaml')],
         ),
         ('share/' + package_name + '/config', glob.glob('config/*.json')),
+        # Nav2 behavior trees.
+        ('share/' + package_name + '/config', glob.glob('config/*.xml')),
         ('share/' + package_name + '/urdf', glob.glob('urdf/*.xacro')),
         (
             'share/' + package_name + '/scripts',
@@ -44,6 +46,7 @@ setup(
             'gamepad_node = racecar_neo_ros2_driver.gamepad_node:main',
             'imu_fusion_node = racecar_neo_ros2_driver.imu_fusion_node:main',
             'mux_node = racecar_neo_ros2_driver.mux_node:main',
+            'nav_bridge_node = racecar_neo_ros2_driver.nav_bridge_node:main',
             'throttle_node = racecar_neo_ros2_driver.throttle_node:main',
             'pit_node = racecar_neo_ros2_driver.pit_node:main',
         ],

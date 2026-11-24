@@ -18,11 +18,18 @@ mapping run from an autosaved pose graph at `pose`; `extend` starts a mapping
 run from a saved pose graph, scan-matched from the rough `pose`, and saves
 under `map`. `foxglove:=true` adds foxglove_bridge. Each node's config loads
 its car profile override last. A node that exits ends the launch.
+
+Localization also starts Nav2 (config/nav2.yaml, config/nav2_bt.xml) and the
+drive bridge (nav_bridge_node: /nav/cmd_vel to /drive), unless `nav:=false`
+or the car has no steering table. The Nav2 parameters are written to one
+file at launch with this car's footprint (frames.yaml) and turning radius.
 """
 
 from __future__ import annotations
 
 import os
+from pathlib import Path
+import tempfile
 from typing import Any
 
 from ament_index_python.packages import get_package_share_directory
@@ -32,6 +39,7 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from racecar_neo_ros2_driver.launch_common import local_overrides
 from racecar_neo_ros2_driver.maps import map_stem, parse_pose
+import yaml
 
 MODES = ('mapping', 'localization')
 LOCALIZERS = ('amcl', 'slam_toolbox')
@@ -92,6 +100,61 @@ def autonomy_spec(
     }
 
 
+# Nav2 server: package.
+NAV2_NODES = {
+    'controller_server': 'nav2_controller',
+    'planner_server': 'nav2_planner',
+    'behavior_server': 'nav2_behaviors',
+    'bt_navigator': 'nav2_bt_navigator',
+}
+
+
+def nav2_param_file(config_dir: str, out_dir: str | None = None) -> str | None:
+    """
+    Write Nav2's parameters for this car and return the file, or None without a steering table.
+
+    config/nav2.yaml, its car profile override, then the footprint, the
+    turning radius and the behavior tree.
+    """
+    from racecar_neo_ros2_driver import frames, nav, steering
+
+    table = steering.load()
+    if table is None:
+        return None
+    tree: dict[str, Any] = {}
+    for path in _files(config_dir, 'nav2.yaml'):
+        tree = nav.merge(tree, yaml.safe_load(Path(path).read_text()) or {})
+    tree = nav.nav2_params(tree, table, frames.load_frames(config_dir))
+    tree['bt_navigator']['ros__parameters']['default_nav_to_pose_bt_xml'] = os.path.join(
+        config_dir, 'nav2_bt.xml'
+    )
+    folder = Path(out_dir or tempfile.gettempdir())
+    path = folder / f'racecar_nav2_{os.getpid()}.yaml'
+    path.write_text(yaml.safe_dump(tree, sort_keys=False))
+    return str(path)
+
+
+def nav_specs(config_dir: str, params_file: str) -> list[dict[str, Any]]:
+    """Return Nav2's servers, their lifecycle manager and the drive bridge."""
+    specs: list[dict[str, Any]] = []
+    for name, package in NAV2_NODES.items():
+        spec = {'package': package, 'executable': name, 'name': name, 'parameters': [params_file]}
+        if name == 'controller_server':
+            # The bridge reads its own topic, apart from any other cmd_vel publisher.
+            spec['remappings'] = [('cmd_vel', '/nav/cmd_vel')]
+        specs.append(spec)
+    specs.append(_lifecycle_manager('lifecycle_manager_navigation', [params_file]))
+    specs.append(
+        {
+            'package': 'racecar_neo_ros2_driver',
+            'executable': 'nav_bridge_node',
+            'name': 'nav_bridge_node',
+            'parameters': _files(config_dir, 'nav_bridge.yaml'),
+        }
+    )
+    return specs
+
+
 def foxglove_spec(config_dir: str) -> dict[str, Any]:
     return {
         'package': 'foxglove_bridge',
@@ -112,8 +175,14 @@ def node_specs(
     foxglove: bool = False,
     pose_source: str = '',
     extend: str = '',
+    nav_params: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Return (package, executable, name, parameters) per node; ValueError on a bad argument."""
+    """
+    Return (package, executable, name, parameters) per node; ValueError on a bad argument.
+
+    `nav_params`, the Nav2 parameter file, adds Nav2 and the drive bridge to
+    localization.
+    """
     specs = [
         *slam_specs(mode, localizer, map_name, pose_text, config_dir, resume, extend),
         autonomy_spec(
@@ -130,6 +199,8 @@ def node_specs(
             os.path.basename(extend),
         ),
     ]
+    if mode == 'localization' and nav_params:
+        specs += nav_specs(config_dir, nav_params)
     return [*specs, foxglove_spec(config_dir)] if foxglove else specs
 
 
@@ -223,6 +294,9 @@ def slam_specs(
 
 def _launch_setup(context: LaunchContext) -> list[Node]:
     config_dir = os.path.join(get_package_share_directory('racecar_neo_ros2_driver'), 'config')
+    mode = LaunchConfiguration('mode').perform(context)
+    want_nav = LaunchConfiguration('nav').perform(context).lower() in ('1', 'true')
+    nav_params = nav2_param_file(config_dir) if mode == 'localization' and want_nav else None
     specs = node_specs(
         LaunchConfiguration('mode').perform(context),
         LaunchConfiguration('localizer').perform(context),
@@ -234,6 +308,7 @@ def _launch_setup(context: LaunchContext) -> list[Node]:
         LaunchConfiguration('foxglove').perform(context).lower() in ('1', 'true'),
         LaunchConfiguration('pose_source').perform(context),
         LaunchConfiguration('extend').perform(context),
+        nav_params,
     )
     # 'both': node output also goes to the launch's log directory.
     return [
@@ -287,6 +362,11 @@ def generate_launch_description() -> LaunchDescription:
             ),
             DeclareLaunchArgument(
                 'pose_source', default_value='', description='reported in /autonomy/status'
+            ),
+            DeclareLaunchArgument(
+                'nav',
+                default_value='true',
+                description='localization: also start Nav2 and the drive bridge',
             ),
             OpaqueFunction(function=_launch_setup),
         ]

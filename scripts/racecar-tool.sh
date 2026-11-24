@@ -1131,6 +1131,11 @@ __RC_CLEANUP_HELP__
             python3 "${RACECAR_MAP_SCRIPT:-$pkg_dir/scripts/racecar_map.py}" "$@"
             ;;
 
+        nav)
+            # Nav2 goals on the loaded map; see scripts/racecar_nav.py.
+            python3 "${RACECAR_NAV_SCRIPT:-$pkg_dir/scripts/racecar_nav.py}" "$@"
+            ;;
+
         health)
             # Hardware checks over time with a saved report; see scripts/health.py.
             python3 "${RACECAR_HEALTH_SCRIPT:-$pkg_dir/scripts/health.py}" "$@"
@@ -1354,6 +1359,7 @@ Commands:
                           foxglove on|off     foxglove_bridge (port 8765) at the
                                               next start or load
                         Poses are in the map frame: meters, meters, radians.
+    nav <action>        Drive to a pose on the loaded map with Nav2 (goal, cancel, status).
     log <action>        Record and analyze ROS 2 bags. Actions:
                           start [name]        record; bag is <timestamp>_<name>
                                                 --topics A B    default: all
@@ -1393,7 +1399,7 @@ _racecar_complete() {
     local sub="${COMP_WORDS[1]:-}"
 
     if [[ $COMP_CWORD -eq 1 ]]; then
-        COMPREPLY=( $(compgen -W "build test source cd teleop launch lint udev watchdog service setup eth wifi desktop library log calibrate profile disk data cleanup map status health handbook check help" -- "$cur") )
+        COMPREPLY=( $(compgen -W "build test source cd teleop launch lint udev watchdog service setup eth wifi desktop library log calibrate profile disk data cleanup map status health handbook check nav help" -- "$cur") )
         return
     fi
 

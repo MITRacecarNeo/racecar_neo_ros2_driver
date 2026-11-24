@@ -109,6 +109,12 @@ All notable changes to this project will be documented in this file. The format 
   library and the data root; a workspace link elsewhere is refused. The racecar account may restart the access point
   (`49-racecar-network.rules`, `wifi.share.protected`). Passwords go to NetworkManager over D-Bus,
   never on a command line.
+- Navigation: loading a map also starts Nav2 (Smac Hybrid-A* planner with
+  Reeds-Shepp moves, Regulated Pure Pursuit with reversing, costmaps from the
+  map and the lidar) and `nav_bridge_node`, which drives `/drive` on the
+  autonomy source through the steering table and the firmware's speed band.
+  `racecar nav goal/move/cancel/status`. `setup_ros2.sh` installs the Nav2
+  packages.
 - Browser app (`scripts/browser_app.py`, `racecar-browser.service`, port 8087,
   Tools): Firefox on the car in a virtual screen, seen and used from a page
   (noVNC), to sign the car in to a WiFi login page; the Connections page's
@@ -124,6 +130,9 @@ All notable changes to this project will be documented in this file. The format 
 - Web teleop, line follow, wall follow, camera label and the map viewer
   refuse POST requests from another site's page (Origin check,
   `webui.AppHandler.refuse_cross_site`).
+- The Mapper's Drive panel sends `/drive` only while it is used; an open,
+  idle Mapper page no longer sends zeros that stop a car driven by another
+  source.
 - `setup_realsense.sh` installs the RealSense library with the camera
   package, so an upgrade no longer leaves the library older than the
   package built against it.

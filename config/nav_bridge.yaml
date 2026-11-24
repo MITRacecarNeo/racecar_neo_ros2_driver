@@ -1,0 +1,17 @@
+# Nav2 drive bridge (racecar_neo_ros2_driver/nav_bridge_node.py): cmd_vel to /drive.
+#
+# The firmware's speed band (racecar-pit-firmware config/config.h, v0.9.2):
+# a motor command past cmd_deadband targets min_speed_mps up to max_speed_mps
+# at full command. The bridge inverts that and throttle_node's caps (read from
+# config/throttle.yaml and the car profile). Speeds are m/s.
+
+nav_bridge_node:
+  ros__parameters:
+    firmware_deadband: 0.01
+    firmware_min_mps: 0.5
+    firmware_max_mps: 1.0
+    # No command for this long: stop, then go quiet.
+    command_timeout_sec: 0.5
+    # Zeros sent after the commands stop, so the car stops even if one is lost.
+    stop_messages: 5
+    rate_hz: 20.0

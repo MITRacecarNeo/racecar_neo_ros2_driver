@@ -29,6 +29,7 @@ This package is the v2 successor to [`racecar-neo-ros2-backend`](https://github.
 - [Connections page](#connections-page)
 - [Browser app](#browser-app)
 - [Maps](#maps)
+- [Navigation](#navigation)
 - [Jupyter notebooks](#jupyter-notebooks)
   - [Student library and labs](#student-library-and-labs)
 - [Manual build](#manual-build)
@@ -975,6 +976,30 @@ the CLI. Sensor calibration stays on the command line.
 The car model is read from `models/car/racecar_neo_v2_high.glb` under the
 data root and is not part of the driver. Without it, the page lists the parts
 without the 3D view. With no page open, the app holds no ROS subscriptions.
+
+## Navigation
+
+Loading a map (`racecar map load NAME`) also starts Nav2: the car drives itself
+to a pose on the map, forward or in reverse, around obstacles the lidar sees.
+It moves only while RB is held, or under the 8080 safety override.
+
+```sh
+racecar nav goal X Y HEADING      # x, y in meters, heading in degrees (map frame)
+racecar nav move 3                # 3 m ahead of the car, keeping its heading (-2: behind)
+racecar nav status                # whether Nav2 is up and has a goal
+racecar nav cancel                # stop the goal that is running
+```
+
+- Speeds: 0.5 to 1.0 m/s forward and 0.5 to 0.6 m/s in reverse. The
+  firmware holds nothing slower than 0.5 m/s, so Nav2 stops instead.
+- The car needs a steering table (`racecar calibrate steering`); without one,
+  localization runs without Nav2.
+- The safety override stays on only while the 8080 page is in front. On a
+  phone, switching to another app ends it within a second or so, and the
+  car stops.
+- Settings: `config/nav2.yaml` (planner, controller, costmaps) and
+  `config/nav2_bt.xml` (recovery: clear the costmaps and wait; no turning
+  in place). A car profile `params/nav2.yaml` overrides any of them.
 
 ## Maps
 
