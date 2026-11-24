@@ -1014,13 +1014,13 @@ scan, and the path Nav2 plans.
 
 | Button | Does |
 |---|---|
-| Goal | Drag on the map from the goal toward the way the car should face |
+| Set goal | Drag on the map from the goal toward the way the car should face; the path from the car shows dashed, or "No path to this goal." |
 | Go | Sends the goal to Nav2; the header shows Navigating and the distance left, then Arrived or Could not reach the goal |
 | Try again | Sends the goal that failed again |
 | Stop | Cancels the goal |
 | Set pose | As in the Mapper |
-| Safety override | Turns the 8080 safety override on or off; the page keeps it on while it is in front |
-| Maps | Lists the saved maps; Load starts localization and Nav2 on one |
+| Safety override (top right) | Turns the 8080 safety override on or off; the page keeps it on while it is in front |
+| Load map | Lists the saved maps; Load starts localization and Nav2 on one |
 | Costmap (map tools) | Shows Nav2's global costmap over the map |
 
 - Loading a map while the Mapper is mapping asks to save the map first.
@@ -1028,6 +1028,10 @@ scan, and the path Nav2 plans.
 - The Drive panel works as in the Mapper, during localization and while no
   goal is running.
 - The costmap is sent only while Costmap is on.
+- Lost localization pauses the goal: the car stops, the header shows
+  Relocalizing, and AMCL updates twice a second without the car moving.
+  Driving the car a little or Set pose helps. The goal continues once the
+  car is localized again, with no time limit; Stop ends it.
 
 ## Maps
 

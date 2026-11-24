@@ -43,6 +43,11 @@ class FakeNavigator:
     def stop(self):
         self.stops += 1
 
+    def preview(self, x, y, yaw):
+        if x > 5:
+            return False, 'No path to this goal.'
+        return True, [[0.0, 0.0], [x, y]]
+
     def set_costmap(self, on):
         self.costmap.append(on)
 
@@ -103,6 +108,39 @@ class TestHelpers:
         view = m.view()
         assert view == {'state': 'driving', 'goal': [3.0, 4.0, 0.5], 'left': 1.23, 'recoveries': 1}
 
+    def test_mission_pauses_while_localization_is_lost(self, pa):
+        m = pa.Mission()
+        number = m.begin([1.0, 0.0, 0.0])
+        m.update(number, state='driving')
+        assert m.step(True) is None
+        assert m.step(False) == 'pause' and m.view()['state'] == 'relocalizing'
+        m.update(number, state='stopped')  # the canceled Nav2 goal reports late
+        assert m.view()['state'] == 'relocalizing'
+        assert m.step(False) == 'nudge' and m.step(False) == 'nudge'
+        assert m.step(True) == 'resume'
+        assert m.view()['goal'] == [1.0, 0.0, 0.0]
+
+    def test_stop_ends_a_paused_goal(self, pa):
+        m = pa.Mission()
+        m.begin([1.0, 0.0, 0.0])
+        assert m.step(False) == 'pause'
+        m.stop()
+        assert m.view()['state'] == 'stopped' and m.step(False) is None
+        m.stop()
+        assert m.view()['state'] == 'stopped'
+
+    def test_goal_stops_when_localization_ends(self, pa):
+        m = pa.Mission()
+        m.begin([1.0, 0.0, 0.0])
+        assert m.step(None) == 'pause' and m.view()['state'] == 'stopped'
+        assert m.step(None) is None
+
+    def test_finished_goals_ignore_localization(self, pa):
+        m = pa.Mission()
+        number = m.begin([1.0, 0.0, 0.0])
+        m.update(number, state='arrived')
+        assert m.step(False) is None and m.view()['state'] == 'arrived'
+
     def test_registry(self, pa):
         assert pa.PORT == 8090
         assert pa.PLANNER_ACTIONS == ('load', 'save', 'stop')
@@ -131,6 +169,14 @@ class TestHttp:
         pa.Handler.viewer.ready = False
         res, data = request(server, 'POST', '/api/goal', {'x': 1, 'y': 0, 'yaw': 0})
         assert res.status == 409 and json.loads(data)['message'] == 'Load a map first.'
+
+    def test_preview(self, server):
+        res, data = request(server, 'POST', '/api/preview', {'x': 1, 'y': 2, 'yaw': 0})
+        assert res.status == 200 and json.loads(data)['path'] == [[0.0, 0.0], [1.0, 2.0]]
+        res, data = request(server, 'POST', '/api/preview', {'x': 9, 'y': 0, 'yaw': 0})
+        assert res.status == 409 and json.loads(data)['message'] == 'No path to this goal.'
+        res, _ = request(server, 'POST', '/api/preview', {'x': 'inf', 'y': 0, 'yaw': 0})
+        assert res.status == 400
 
     def test_stop(self, pa, server):
         assert request(server, 'POST', '/api/stop', {})[0].status == 200
@@ -176,6 +222,15 @@ class TestPage:
         assert 'setCostmap(false);' in self.html
         button = 'id="costmap" title="Costmap" aria-label="Costmap" aria-pressed="false"'
         assert button in self.html
+
+    def test_relocalizing_banner_and_preview(self):
+        banner = 'Localization lost. Regain position by driving the car or using Set pose.'
+        assert banner in self.html and "pill('warn', 'Relocalizing')" in self.html
+        assert "post('api/preview'" in self.html and "'No path to this goal.'" in self.html
+
+    def test_labels(self):
+        assert "button('Set goal'" in self.html and "button('Load map'" in self.html
+        assert self.html.index('id="override"') < self.html.index('id="more"')
 
     def test_loading_while_mapping_asks_to_save(self):
         assert '<h2>Unsaved map</h2>' in self.html

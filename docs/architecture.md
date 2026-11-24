@@ -295,14 +295,23 @@ its `Handler` subclasses `mapview.Handler`. It adds a `navigate_to_pose`
 action client (goal, cancel, feedback into `Mission`), a `/plan`
 subscription (thinned to 400 points), and a `/global_costmap/costmap`
 subscription held only while the page has Costmap on. Map actions are
-limited to load, save, and stop. Both pages draw with
+limited to load, save, and stop. A picked goal is previewed through
+`compute_path_to_pose` from the car's pose before Go.
+
+`Mission.step` runs twice a second on a `/autonomy/status` subscription held
+for the whole run. When localization drops during a goal, the bridge has
+already stopped the car; the Planner cancels the Nav2 goal (state
+`relocalizing`, so Nav2's progress check cannot abort it), calls AMCL's
+`/request_nomotion_update` each step, and sends the same goal again once
+localized. Stop, or localization ending, ends the goal. Both pages draw with
 `scripts/web/mapview_core.js` (`RcnMapView`: view transform, pan, zoom,
 rotate, car-up, drag tools, layers). The page loads `override.js`, so it
 keeps the safety override alive as the 8080 page does.
 
 ```
 planner.html ──HTTP poll 10 Hz──▶ planner_app.py (Navigator) ──▶ /autonomy/*, /map, /scan, /plan
-     │                                   ├── navigate_to_pose (goal, cancel, feedback)
+     │                                   ├── compute_path_to_pose (preview), navigate_to_pose (goal, cancel, feedback)
+     │                                   ├── /request_nomotion_update (while relocalizing)
      │                                   └── /global_costmap/costmap (Costmap on only)
      └── override.js ──keepalive 1 Hz──▶ 8080 /api/override
 ```

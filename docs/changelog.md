@@ -121,7 +121,10 @@ All notable changes to this project will be documented in this file. The format 
   Could not reach the goal; a Safety override toggle kept alive by the page;
   a Costmap view, subscribed only while on; Load and Set pose as in the
   Mapper, with a save prompt when the Mapper is mapping; the Drive panel.
-  It starts when opened and stops with Clear apps.
+  It starts when opened and stops with Clear apps. A picked goal shows the
+  planned path before Go. Lost localization pauses the goal (Relocalizing):
+  the car stops, AMCL updates without motion, and the goal continues once
+  localized, until Stop.
 - `scripts/web/mapview_core.js` (`RcnMapView`): the map view shared by the
   Mapper and the Planner.
 - `apps.manual_driving_apps()`: the driving apps that `racecar map` closes;

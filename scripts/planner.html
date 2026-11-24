@@ -84,6 +84,8 @@ main.maps-open #hint { left: calc(min(340px, 80%) + var(--rcn-space-3)); }
   <span id="nav"></span>
   <span id="left" class="rcn-num"></span>
   <span class="rcn-spacer"></span>
+  <button class="rcn-btn quiet small" id="override" aria-pressed="false"
+    title="Drive without a controller. Press any controller button except LB to stop"><svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#alert"/></svg>Safety override</button>
   <button class="rcn-btn quiet small" id="more" aria-expanded="false">Details</button>
   <div id="details"><span id="detail" class="rcn-small rcn-muted rcn-num"></span><span id="sys" class="rcn-small rcn-muted rcn-num"></span></div>
 </header>
@@ -150,19 +152,23 @@ let renderKey = '';
 let mapsOpen = false;
 let tool = null;           // 'goal' | 'pose' while a drag tool is active
 let goal = null;           // [x, y, yaw] picked on the map, not yet sent
+let preview = null;        // {path} or {none: true} for the picked goal; null while planning
 let busy = false;
 let lostContact = false;
 let overrideOn = false;
 
 const mission = () => state.mission || { state: 'idle' };
 const navigating = () => ['sending', 'driving'].includes(mission().state);
+// Paused while localization is lost; the car sends the goal again once localized.
+const relocalizing = () => mission().state === 'relocalizing';
+const active = () => navigating() || relocalizing();
 const localized = () => (state.status || {}).localized === 'true';
 const mode = () => (state.status || {}).mode || 'off';
 const jobRunning = () => !!(state.job && state.job.running);
 // The goal shown on the map: the one sent while it is in progress or failed, else the one picked.
 function shownGoal() {
   const m = mission();
-  return (navigating() || m.state === 'failed') && m.goal ? m.goal : goal;
+  return (active() || m.state === 'failed') && m.goal ? m.goal : goal;
 }
 
 mv.scaleLeft = () => (mapsOpen ? $('maps').offsetWidth : 0);
@@ -173,7 +179,12 @@ function draw() {
     if (grid) mv.drawGrid(grid);
     if (costmap && costmapOn) mv.drawGrid(costmap);
     mv.drawOrigin();
-    if (navigating()) mv.drawLine(state.path, css('--map-path'), 3);
+    if (active()) mv.drawLine(state.path, css('--map-path'), 3);
+    else if (goal && preview && preview.path) {
+      mv.ctx.setLineDash([8 * devicePixelRatio, 6 * devicePixelRatio]);
+      mv.drawLine(preview.path, css('--map-path'), 3);
+      mv.ctx.setLineDash([]);
+    }
     mv.drawDots(state.scan, css('--map-scan'));
     const g = shownGoal();
     if (g) mv.drawCar(g[0], g[1], g[2], css('--map-goal'), 0.85);
@@ -224,6 +235,7 @@ function setCostmap(on) {
   post('api/costmap', { on }).catch(() => {});
   draw();
 }
+$('override').onclick = toggleOverride;
 $('costmap').onclick = () => setCostmap(!costmapOn);
 
 // -- drag tools: the goal, and Set pose --
@@ -238,13 +250,24 @@ function startTool(kind) {
     end: (a, b) => {
       if (!b) { hint(DRAG_HINT[kind]); return; }
       const yaw = Math.atan2(b[1] - a[1], b[0] - a[0]);
-      if (kind === 'goal') { goal = [a[0], a[1], yaw]; endTool(); } else finishPose(a[0], a[1], yaw);
+      if (kind === 'goal') { goal = [a[0], a[1], yaw]; endTool(); planPreview(); } else finishPose(a[0], a[1], yaw);
     },
   };
   hint(DRAG_HINT[kind]);
   render();
 }
 function endTool() { tool = null; mv.tool = null; hint(''); render(); draw(); }
+
+// The path to a picked goal, planned from the car before Go; Go stays gray until it is found.
+async function planPreview() {
+  const g = goal;
+  preview = null; renderKey = ''; render();
+  const r = await post('api/preview', { x: g[0], y: g[1], yaw: g[2] });
+  if (goal !== g) return;  // a newer goal was picked meanwhile
+  preview = r.ok ? { path: r.path } : { none: true };
+  hint(r.ok ? '' : (r.message || 'No path to this goal.'));
+  renderKey = ''; render(); draw();
+}
 
 async function finishPose(x, y, yaw) {
   const text = `x ${x.toFixed(2)} m, y ${y.toFixed(2)} m, heading ${(yaw * 180 / Math.PI).toFixed(0)} deg`;
@@ -266,6 +289,7 @@ function showBanner() {
   else if (lostContact) msg = { text: RcnApi.LOST, kind: 'bad' };
   else if (sys.throttled_now && sys.throttled_now.length) msg = { text: `Pi throttled now: ${sys.throttled_now.join(', ')}.`, kind: 'bad' };
   else if (sys.temp_c != null && sys.temp_c >= 78) msg = { text: `Pi is hot (${sys.temp_c.toFixed(0)} \u00b0C).`, kind: 'warn' };
+  else if (relocalizing()) msg = { text: 'Localization lost. Regain position by driving the car or using Set pose.', kind: 'warn' };
   else if (navigating() && !overrideOn) msg = { text: 'Hold RB or turn on safety override.', kind: 'warn' };
   else if (mode() === 'localization' && !localized()) msg = { text: 'Drive slowly until localized.', kind: 'warn' };
   b.textContent = msg ? msg.text : '';
@@ -284,17 +308,17 @@ async function action(body) {
 }
 async function go(g) {
   const r = await post('api/goal', { x: g[0], y: g[1], yaw: g[2] });
-  if (r.ok) goal = null; else report(r);
+  if (r.ok) { goal = null; preview = null; hint(''); } else report(r);
   poll();
 }
 async function stop() { await post('api/stop', {}); poll(); }
 
 // -- safety override: the banner and the keepalive are /ui/override.js --
 RcnOverride.onChange = (o) => {
-  const on = !!o.on;
-  if (on !== overrideOn) { overrideOn = on; renderKey = ''; }
-  const b = $('override');
-  if (b) b.classList.toggle('waiting', on && o.confirmed === false);
+  overrideOn = !!o.on;
+  $('override').setAttribute('aria-pressed', String(overrideOn));
+  // Grayed until the car confirms the override.
+  $('override').classList.toggle('waiting', overrideOn && o.confirmed === false);
   showBanner();
 };
 RcnOverride.onLost = () => flash(RcnApi.LOST, 'bad');
@@ -317,22 +341,20 @@ function render() {
   f.replaceChildren();
   if (tool) { f.append(button('Cancel', '', endTool, false, 'cross')); return; }
   if (mode() === 'localization') {
-    if (navigating()) {
+    if (active()) {
       f.append(button('Stop', 'danger', stop, false, 'stop'));
+      if (relocalizing()) f.append(button('Set pose', '', () => startTool('pose'), running, 'map'));
     } else {
       const m = mission(), retry = m.state === 'failed' && m.goal && !goal;
       const target = goal || (retry ? m.goal : null);
-      f.append(button(retry ? 'Try again' : 'Go', 'primary', () => go(target), running || !target || !localized(), 'play'));
-      f.append(button('Goal', '', () => startTool('goal'), running, 'target'));
+      // A picked goal waits for its path; a retry has had one.
+      const planned = retry || (preview && preview.path);
+      f.append(button(retry ? 'Try again' : 'Go', 'primary', () => go(target), running || !target || !planned || !localized(), 'play'));
+      f.append(button('Set goal', '', () => startTool('goal'), running, 'target'));
       f.append(button('Set pose', '', () => startTool('pose'), running, 'map'));
     }
-    const ov = button('Safety override', '', toggleOverride, false, 'alert');
-    ov.id = 'override';
-    ov.setAttribute('aria-pressed', String(overrideOn));
-    ov.title = 'Drive without a controller. Press any controller button except LB to stop';
-    f.append(ov);
   }
-  f.append(button('Maps', mapsOpen ? 'quiet on' : '', toggleMaps, false, 'layers'));
+  f.append(button('Load map', mapsOpen ? 'quiet on' : '', toggleMaps, false, 'layers'));
 }
 
 // -- maps --
@@ -353,7 +375,7 @@ async function openMaps() {
     info.innerHTML = '<div class="name"></div><div class="rcn-small rcn-muted"></div><div class="acts"></div>';
     info.querySelector('.name').textContent = m.name + (m.note ? ` (${m.note})` : '');
     info.querySelector('.rcn-muted').textContent = [m.state[0].toUpperCase() + m.state.slice(1), m.saved, m.size].join(' \u00b7 ');
-    info.querySelector('.acts').append(button('Load', 'primary', () => openLoad(m.name), jobRunning() || navigating() || m.state === 'unsaved', null, true));
+    info.querySelector('.acts').append(button('Load', 'primary', () => openLoad(m.name), jobRunning() || active() || m.state === 'unsaved', null, true));
     row.append(img, info); list.append(row);
   }
 }
@@ -367,7 +389,7 @@ function openLoad(name) {
 }
 $('loadcancel').onclick = () => $('loadsheet').classList.remove('show');
 function load(name, search) {
-  view.fitted = false; gridVersion = -1; goal = null;
+  view.fitted = false; gridVersion = -1; goal = null; preview = null; hint('');
   return action({ action: 'load', name, search });
 }
 $('loadgo').onclick = () => {
@@ -411,7 +433,7 @@ function showStatus() {
   if (mode() === 'mapping') setHtml('loc', pill('warn', 'Mapping'));
   else setHtml('loc', active ? (localized() ? pill('ok', 'Localized') : pill('err', 'Not localized')) : pill('off', 'No map loaded'));
   const nav = active ? {
-    sending: pill('ok', 'Navigating'), driving: pill('ok', 'Navigating'),
+    sending: pill('ok', 'Navigating'), driving: pill('ok', 'Navigating'), relocalizing: pill('warn', 'Relocalizing'),
     arrived: pill('ok', 'Arrived'), failed: pill('err', 'Could not reach the goal'),
   }[m.state] || '' : '';
   setHtml('nav', nav);
@@ -523,7 +545,7 @@ async function poll() {
     }
     showStatus(); showJob(); showDrive();
     const m = mission();
-    const key = [mode(), localized(), jobRunning(), tool, !!goal, m.state, overrideOn].join('|');
+    const key = [mode(), localized(), jobRunning(), tool, !!goal, !!preview, m.state].join('|');
     if (key !== renderKey) { renderKey = key; render(); }
     draw();
   } catch (err) {
