@@ -324,7 +324,17 @@ starting its unit first. Both pages draw with
 `scripts/web/mapview_core.js` (`RcnMapView`: view transform, pan, zoom,
 rotate, car-up, drag tools, layers; `pick` turns a press on a marker into a
 one-drag tool). The page loads `override.js`, so it
-keeps the safety override alive as the 8080 page does.
+keeps the safety override alive as the 8080 page does, and so does the Mapper's;
+8080 refuses a POST from another site, host or port (`may_post`), except
+that the pages of the driving and Autonomy apps may call `/api/override`
+(`override_origin`). `#override-slot` places the banner outside the map.
+
+Both pages show the color camera in `scripts/web/camera_panel.js`
+(`RcnCamera`): frames from 8080 `/api/camera.jpg` (480 px, about 8 a second),
+asked for only while the panel is open and the page is in front. 8080
+(`overview.py`) holds one gate per camera, so a panel opens `/camera/color`
+alone and any number of pages share that subscription; a frame over
+`STALE_SEC` old is not served, and the panel grays out.
 
 ```
 planner.html ──HTTP poll 10 Hz──▶ planner_app.py (Navigator) ──▶ /autonomy/*, /map, /scan, /plan

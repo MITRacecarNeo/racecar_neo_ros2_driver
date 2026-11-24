@@ -32,6 +32,7 @@ import time
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+import features
 import labkit
 import map_control as mc
 import numpy as np
@@ -422,6 +423,7 @@ class Viewer:
                     'throttled_now': [n for n in names if 'occurred' not in n],
                     'temp_c': sysinfo.read_soc_temp(),
                     'cpu': self._cpu.read(),
+                    'camera': features.read()['camera'],
                 }
                 with self._lock:
                     self.sys = info

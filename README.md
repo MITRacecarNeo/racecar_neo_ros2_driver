@@ -1001,8 +1001,8 @@ racecar nav mission stop          # stop the Planner's mission
   firmware holds nothing slower than 0.5 m/s, so Nav2 stops instead.
 - The car needs a steering table (`racecar calibrate steering`); without one,
   localization runs without Nav2.
-- The safety override stays on only while the 8080 page or the Planner is
-  in front. On a phone, switching to another app ends it within a second or
+- The safety override stays on only while the 8080 page, the Mapper, or the
+  Planner is in front. On a phone, switching to another app ends it within a second or
   so, and the car stops.
 - Settings: `config/nav2.yaml` (planner, controller, costmaps) and
   `config/nav2_bt.xml` (recovery: clear the costmaps and wait; no turning
@@ -1051,6 +1051,9 @@ waypoints; a single goal is a mission of one.
 - The Drive panel works as in the Mapper, during localization and while no
   goal is running.
 - The costmap is sent only while Costmap is on.
+- The Camera panel shows the color camera. Show and Hide open and close it,
+  and a tap on the picture enlarges it. The picture grays out when frames
+  stop, and the panel grays out while the camera is off.
 - Lost localization pauses the mission: the car stops, and the header shows
   Relocalizing. AMCL updates once a second without the car moving.
   Driving the car a little or Set pose helps. The mission continues once the
@@ -1164,7 +1167,8 @@ mapping speed cap), so RB on the gamepad or the 8080 safety override must
 allow it. A command older than 0.5 s drives zero, and releasing, a lost
 focus or a hidden page stops the car. Requests from another site's page
 are refused. Start, stop, and load restart the autonomy service and ask
-first. With no browser open it holds no ROS subscriptions
+first. The Camera panel and the Safety override button (top right) work as
+in the [Planner](#planner). With no browser open it holds no ROS subscriptions
 and uses about 0.1% of a core; with one open, about 6%.
 
 `racecar map foxglove on` adds `foxglove_bridge` for Lichtblick from the next

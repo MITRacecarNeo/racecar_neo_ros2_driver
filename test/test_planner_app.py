@@ -463,6 +463,18 @@ class TestPage:
         assert "confirm('Turn on safety override?')" in self.html
         assert 'mv.pick = ' in self.html
 
+    def test_camera_panel_and_override_slot(self):
+        assert 'ui/camera_panel.js' in self.html and "key: 'rcn-planner-camera'" in self.html
+        # The banner sits outside the map, where its button can be pressed.
+        assert self.html.index('id="override-slot"') < self.html.index('<main>')
+        assert "getElementById('override-slot')" in (SCRIPTS / 'web' / 'override.js').read_text()
+
+    def test_camera_panel_stops_when_hidden_and_grays_within_a_second(self):
+        js = (SCRIPTS / 'web' / 'camera_panel.js').read_text()
+        assert 'shown && enabled && !document.hidden' in js and "store.get(key, '0')" in js
+        stale_ms = int(js.split('const STALE_MS = ')[1].split(';')[0])
+        assert stale_ms / 1000 + load_script('overview').STALE_SEC <= 1.0
+
     def test_costmap_is_off_until_asked(self):
         assert 'setCostmap(false);' in self.html
         button = 'id="costmap" title="Costmap" aria-label="Costmap" aria-pressed="false"'

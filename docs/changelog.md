@@ -133,6 +133,9 @@ All notable changes to this project will be documented in this file. The format 
   otherwise the waypoint is sent again, up to 10 times. A stall trip pauses
   the mission. Waypoints are red, yellow for the next one, and green once
   reached.
+- Mapper and Planner: a Camera panel with the color camera
+  (`scripts/web/camera_panel.js`, 8080 `/api/camera.jpg`, one feed for every
+  page, only while a panel is open). Mapper: a Safety override button.
 - `scripts/web/mapview_core.js` (`RcnMapView`): the map view shared by the
   Mapper and the Planner.
 - `apps.manual_driving_apps()`: the driving apps that `racecar map` closes;
@@ -152,6 +155,11 @@ All notable changes to this project will be documented in this file. The format 
 - Web teleop, line follow, wall follow, camera label and the map viewer
   refuse POST requests from another site's page (Origin check,
   `webui.AppHandler.refuse_cross_site`).
+- 8080 refuses POST requests from another site's page, the safety override
+  included (`dashboard.may_post`). The driving and Autonomy pages may call
+  `/api/override` from their own ports, and nothing else.
+- The safety override banner's Turn off button is no longer under the map
+  tools in the Planner.
 - The Mapper's Drive panel sends `/drive` only while it is used; an open,
   idle Mapper page no longer sends zeros that stop a car driven by another
   source.

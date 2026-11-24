@@ -1,4 +1,4 @@
-/* Safety-override banner for 8080 and the driving lab pages. Served at /ui/override.js.
+/* Safety-override banner for 8080 and the pages that drive the car. Served at /ui/override.js.
 
    The override is turned on from the apps page on 8080 and lapses 2 s after
    the last keepalive. Every page that loads this file sends one each second,
@@ -29,8 +29,9 @@
       <span>${ON}</span>
       <button class="rcn-btn small" type="button">Turn off</button>`;
     banner.querySelector('button').onclick = () => send('stop');
-    const main = document.querySelector('main');
-    if (main) main.prepend(banner); else document.body.prepend(banner);
+    // A page whose main is covered (a map) names the place with #override-slot.
+    const slot = document.getElementById('override-slot') || document.querySelector('main');
+    (slot || document.body).prepend(banner);
   }
 
   function render(o) {

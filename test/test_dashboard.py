@@ -5,6 +5,7 @@ import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
+import re
 import threading
 import time
 from types import SimpleNamespace
@@ -742,19 +743,167 @@ class TestOverrideEndpoint:
         assert 'RcnOverride.onChange' in html
 
 
+class TestCrossSitePosts:
+    HOST = 'car.local:8080'
+    POSTS = (
+        ('/api/override', {'action': 'start'}),
+        ('/api/open', {'app': 'webteleop'}),
+        ('/api/feature', {'feature': 'camera', 'on': False}),
+        ('/api/clear-apps', {}),
+        ('/api/clear-log', {}),
+        ('/api/shutdown', {}),
+        ('/api/battery/cancel', {}),
+        ('/api/connections', {'action': 'names', 'names': {}}),
+        ('/api/connections/ping', {}),
+    )
+    ELSEWHERE = (
+        'http://elsewhere.test',
+        'http://elsewhere.test:8080',
+        'http://elsewhere.test:8084',
+        'http://car.local.elsewhere.test:8084',
+        'https://car.local:8084',
+        'http://car.local',
+        'http://car.local:8085',
+        'http://car.local:8888',
+        'http://car.local:8089',
+        'null',
+    )
+    DRIVING = tuple(f'http://car.local:{p}' for p in (8081, 8082, 8083, 8084, 8090))
+
+    @pytest.fixture
+    def post(self, dashboard, monkeypatch):
+        acted = []
+
+        def stub(name, result=(True, '')):
+            return lambda *a, **k: (acted.append(name), result)[1]
+
+        class Session:
+            number = 1
+
+            def __getattr__(self, name):
+                return stub(name, {'on': False})
+
+        class Sampler:
+            def cancel_shutdown(self):
+                acted.append('cancel')
+
+        monkeypatch.setattr(dashboard, '_override', Session())
+        monkeypatch.setattr(dashboard, '_sampler', Sampler())
+        for name in ('open_app', 'change_feature', 'clear_apps', 'clear_watchdog_log'):
+            monkeypatch.setattr(dashboard, name, stub(name))
+        monkeypatch.setattr(dashboard, 'turn_off', stub('turn_off'))
+        monkeypatch.setattr(dashboard, '_refresh_apps', lambda: None)
+        monkeypatch.setattr(dashboard.netconfig, 'ping_test', stub('ping', {}))
+        monkeypatch.setattr(dashboard.DashboardHandler, '_device_names', stub('names'))
+        srv = ThreadingHTTPServer(('127.0.0.1', 0), dashboard.DashboardHandler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+        def send(path, body, origin, host=self.HOST):
+            acted.clear()
+            conn = http.client.HTTPConnection('127.0.0.1', srv.server_address[1], timeout=5)
+            # text/plain: a browser sends it to another site without asking first.
+            headers = {'Host': host, 'Content-Type': 'text/plain'}
+            if origin:
+                headers['Origin'] = origin
+            conn.request('POST', path, json.dumps(body), headers)
+            res = conn.getresponse()
+            res.read()
+            conn.close()
+            return res.status, list(acted)
+
+        yield send
+        srv.shutdown()
+        srv.server_close()
+
+    def test_the_list_covers_every_post(self, dashboard):
+        text = Path(dashboard.__file__).read_text().split('def do_POST')[1].split('\n    def ')[0]
+        assert set(re.findall(r"'(/api/[a-z/-]+)'", text)) == {path for path, _ in self.POSTS}
+
+    @pytest.mark.parametrize('path, body', POSTS, ids=[p for p, _ in POSTS])
+    def test_another_site_host_or_port_is_refused_and_nothing_acts(self, post, path, body):
+        for origin in self.ELSEWHERE:
+            assert post(path, body, origin) == (403, []), origin
+
+    @pytest.mark.parametrize('path, body', POSTS[1:], ids=[p for p, _ in POSTS[1:]])
+    def test_the_driving_pages_may_call_nothing_but_the_override(self, post, path, body):
+        for origin in self.DRIVING:
+            assert post(path, body, origin) == (403, []), origin
+
+    def test_the_driving_pages_may_call_the_override(self, post):
+        for origin in self.DRIVING:
+            status, acted = post('/api/override', {'action': 'start'}, origin)
+            assert status == 200 and 'start' in acted, origin
+            other = post('/api/override', {'action': 'start'}, origin, 'other.local:8080')
+            assert other == (403, []), origin
+
+    @pytest.mark.parametrize(
+        'origin, host',
+        [
+            ('http://car.local:8080', 'car.local:8080'),  # the page on its port
+            ('http://car.local', 'car.local'),  # through port 80
+            (None, 'localhost:8080'),  # a command on the car
+        ],
+    )
+    def test_this_page_and_commands_still_work(self, post, origin, host):
+        for path, body in self.POSTS[:5]:
+            status, acted = post(path, body, origin, host)
+            assert status == 200 and acted, path
+
+
+def test_camera_routes(dashboard, monkeypatch):
+    class Feed:
+        def __init__(self):
+            self.touched, self.frame = [], b'jpeg'
+
+        def touch_camera(self, name):
+            self.touched.append(name)
+
+        def jpeg(self, name):
+            return self.frame
+
+        def panel_jpeg(self):
+            return self.frame
+
+    feed = Feed()
+    monkeypatch.setattr(dashboard, '_overview', feed)
+    srv = ThreadingHTTPServer(('127.0.0.1', 0), dashboard.DashboardHandler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+    def get(path):
+        conn = http.client.HTTPConnection('127.0.0.1', srv.server_address[1], timeout=5)
+        conn.request('GET', path)
+        res = conn.getresponse()
+        out = res.status, res.read()
+        conn.close()
+        return out
+
+    try:
+        assert get('/api/camera.jpg?t=1') == (200, b'jpeg') and feed.touched == ['color']
+        assert get('/api/overview/depth.jpg')[0] == 200 and feed.touched == ['color', 'depth']
+        feed.frame = None
+        assert get('/api/camera.jpg')[0] == 404
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
 class TestOverrideOrigin:
     @pytest.mark.parametrize(
         'origin, host, allowed',
         [
             ('http://car.local:8081', 'car.local:8080', True),
             ('http://car.local:8083', 'car.local:8080', True),
+            ('http://car.local:8084', 'car.local:8080', True),
+            ('http://car.local:8090', 'car.local:8080', True),
             ('http://car.local:8085', 'car.local:8080', False),
+            ('http://car.local:8888', 'car.local:8080', False),
+            ('http://other:8084', 'car.local:8080', False),
             ('http://other:8081', 'car.local:8080', False),
             ('https://car.local:8081', 'car.local:8080', False),
             (None, 'car.local:8080', False),
         ],
     )
-    def test_only_driving_lab_pages_on_this_host(self, dashboard, origin, host, allowed):
+    def test_only_pages_that_drive_the_car_on_this_host(self, dashboard, origin, host, allowed):
         assert (dashboard.override_origin(origin, host) is not None) is allowed
 
 

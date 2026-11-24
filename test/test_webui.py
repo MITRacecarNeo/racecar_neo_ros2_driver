@@ -128,6 +128,7 @@ PAGES = (
     'dashboard.html',
     'dashboard_launch.html',
     'mapview.html',
+    'planner.html',
     'dashboards/teleop_dashboard/teleop.html',
     'dashboards/linefollow_dashboard/linefollow.html',
     'dashboards/wallfollow_dashboard/wallfollow.html',
@@ -154,6 +155,8 @@ def test_override_banner_only_on_8080_and_driving_pages():
     scripts = Path(__file__).resolve().parent.parent / 'scripts'
     driving = {
         'dashboard.html',
+        'mapview.html',
+        'planner.html',
         'dashboards/teleop_dashboard/teleop.html',
         'dashboards/linefollow_dashboard/linefollow.html',
         'dashboards/wallfollow_dashboard/wallfollow.html',

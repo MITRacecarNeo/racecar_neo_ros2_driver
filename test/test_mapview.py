@@ -403,5 +403,8 @@ class TestDriveAndChecks:
     def test_page_has_the_gate_and_drive_panel(self):
         page = (Path(__file__).resolve().parent.parent / 'scripts' / 'mapview.html').read_text()
         assert "'To start mapping, run checks first'" in page
+        assert 'ui/override.js' in page and "confirm('Turn on safety override?')" in page
+        assert page.index('id="override"') < page.index('id="more"')
+        assert "key: 'rcn-mapper-camera'" in page and 'id="override-slot"' in page
         assert 'Run checks' in page and 'id="drivebox"' in page and 'ui/joystick.js' in page
         assert 'drivenote' not in page

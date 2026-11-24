@@ -9,6 +9,7 @@
 <script src="ui/api.js?v={{asset}}"></script>
 <script src="ui/joystick.js?v={{asset}}"></script>
 <script src="ui/mapview_core.js?v={{asset}}"></script>
+<script src="ui/camera_panel.js?v={{asset}}"></script>
 <script src="ui/battery.js?v={{asset}}" defer></script>
 <script src="ui/stall.js?v={{asset}}" defer></script>
 <link rel="icon" href="ui/brand/app-icon-32.png">
@@ -32,11 +33,11 @@ header.open #details { display: flex; flex-wrap: wrap; }
 #banner.show { display: block; }
 #banner.warn { background: var(--rcn-gold); color: var(--rcn-ink); }
 #banner.bad { background: var(--rcn-crimson); color: var(--rcn-paper); }
-main { position: relative; flex: 1; min-height: 0; }
+main { position: relative; flex: 1; min-height: 0; container-type: size; }
 canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
-#tools { position: absolute; right: var(--rcn-space-3); top: var(--rcn-space-3); display: flex; flex-direction: column; gap: var(--rcn-space-2); }
+#tools { position: absolute; right: var(--rcn-space-3); top: var(--rcn-space-3); z-index: 4; display: flex; flex-direction: column; gap: var(--rcn-space-2); }
 #tools .rcn-btn { width: 44px; height: 44px; padding: 0; justify-content: center; background: var(--rcn-bg); }
-#hint { position: absolute; left: var(--rcn-space-3); top: var(--rcn-space-3); max-width: 70%; display: none; }
+#hint { position: absolute; left: var(--rcn-space-3); top: var(--rcn-space-3); max-width: 70%; z-index: 4; display: none; }
 #hint.show { display: block; }
 footer { display: flex; flex-wrap: wrap; gap: var(--rcn-space-2); padding: var(--rcn-space-3) var(--rcn-space-4); border-top: 1px solid var(--rcn-border); }
 #job { display: none; padding: var(--rcn-space-2) var(--rcn-space-4); background: var(--rcn-surface); max-height: 30vh; overflow: auto; }
@@ -109,6 +110,7 @@ main.wps-open #hint { left: calc(min(360px, 88%) + var(--rcn-space-3)); }
   <button class="rcn-btn quiet small" id="more" aria-expanded="false">Details</button>
   <div id="details"><span id="detail" class="rcn-small rcn-muted rcn-num"></span><span id="sys" class="rcn-small rcn-muted rcn-num"></span></div>
 </header>
+<div id="override-slot"></div>
 <div id="banner"></div>
 <main>
   <canvas id="view"></canvas>
@@ -127,6 +129,7 @@ main.wps-open #hint { left: calc(min(360px, 88%) + var(--rcn-space-3)); }
       </div>
     </div>
   </div>
+  <div id="camera"></div>
   <aside id="wps">
     <div class="top"><h2>Waypoints</h2><button class="rcn-btn quiet small" id="wpsclose">Close</button></div>
     <div class="row"><label>Loops <input type="number" class="rcn-input" id="loops" min="1" max="99" step="1"></label>
@@ -485,6 +488,8 @@ function render() {
   f.append(button('Load map', mapsOpen ? 'quiet on' : '', toggleMaps, false, 'layers'));
 }
 
+const camera = RcnCamera.mount($('camera'), { key: 'rcn-planner-camera' });
+
 // -- the Waypoints panel --
 function openWps() {
   if (mapsOpen) closeMaps();
@@ -831,6 +836,7 @@ async function poll() {
       previewTimer = setTimeout(planPreview, 0);
     }
     showStatus(); showJob(); showDrive();
+    camera.setEnabled((s.sys || {}).camera !== false);
     // Rebuilt only when the mission moves on, so a press on a row is not lost.
     const wk = [m.state, m.index, m.version].join('|');
     if (wpsOpen && wk !== wpsKey) { wpsKey = wk; renderWps(); }

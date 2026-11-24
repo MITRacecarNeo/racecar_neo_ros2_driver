@@ -300,12 +300,13 @@ _override = OverrideSession()
 
 def override_origin(origin: str | None, host: str | None) -> str | None:
     """
-    Return `origin` when a driving lab page on this car may call /api/override.
+    Return `origin` when a page that drives the car may call /api/override.
 
-    The lab pages (scripts/web/override.js) run on their own ports, so the
-    browser needs a CORS header to read the reply.
+    The driving apps and the Autonomy apps (scripts/web/override.js) run on
+    their own ports, so the browser needs a CORS header to read the reply.
     """
-    return webui.sibling_origin(origin, host, (a['port'] for a in APPS if a['exclusive']))
+    ports = (a['port'] for a in APPS if a['exclusive'] or a['group'] == 'autonomy')
+    return webui.sibling_origin(origin, host, ports)
 
 
 def estimate_view(values: dict[str, str] | None, age: float | None) -> dict[str, Any] | None:
@@ -472,6 +473,18 @@ def page_origin(origin: str | None, host: str | None) -> bool:
 def lab_origin(origin: str | None, host: str | None) -> str | None:
     """Return `origin` when an app page on this car (its own port) may read 8080 state."""
     return webui.sibling_origin(origin, host, (a['port'] for a in APPS))
+
+
+def may_post(path: str, origin: str | None, host: str | None) -> bool:
+    """
+    Return True when a POST to `path` from `origin` may act.
+
+    This page, or no browser page at all. The pages that drive the car, on
+    their own ports, may call /api/override and nothing else.
+    """
+    if page_origin(origin, host):
+        return True
+    return path == '/api/override' and override_origin(origin, host) is not None
 
 
 def turn_off(run: Callable[..., Any] = subprocess.run) -> list[str]:
@@ -1628,13 +1641,10 @@ class DashboardHandler(webui.AppHandler):
                 self.send_json(_overview.state(), 200)
         elif url.path in ('/api/overview/color.jpg', '/api/overview/depth.jpg'):
             name = url.path.rsplit('/', 1)[1].split('.')[0]
-            if _overview is not None:
-                _overview.touch_cameras()
-            frame = _overview.jpeg(name) if _overview is not None else None
-            if frame is None:
-                self.send_error(404)
-            else:
-                self.send(200, frame, 'image/jpeg', cache='no-store')
+            self._camera(name)
+        elif url.path == '/api/camera.jpg':
+            # The camera panel of the Mapper and the Planner.
+            self._camera('color', panel=True)
         elif url.path == '/api/ready':
             app = next((a for a in APPS if a['id'] == query.get('app', [''])[0]), None)
             if app is None:
@@ -1645,6 +1655,9 @@ class DashboardHandler(webui.AppHandler):
             self.send_error(404)
 
     def do_POST(self) -> None:  # noqa: N802
+        if not may_post(self.path, self.headers.get('Origin'), self.headers.get('Host')):
+            self.send_json({'ok': False, 'message': 'Not allowed from this page.'}, 403)
+            return
         if self.path == '/api/clear-apps':
             ok, message = clear_apps()
             _refresh_apps()
@@ -1700,6 +1713,16 @@ class DashboardHandler(webui.AppHandler):
         _refresh_apps()
         log.info('open %s: %s', target, message)
         self.send_json({'ok': ok, 'message': message}, 200 if ok else 400)
+
+    def _camera(self, name: str, panel: bool = False) -> None:
+        frame = None
+        if _overview is not None:
+            _overview.touch_camera(name)
+            frame = _overview.panel_jpeg() if panel else _overview.jpeg(name)
+        if frame is None:
+            self.send_error(404)
+        else:
+            self.send(200, frame, 'image/jpeg', cache='no-store')
 
     def _connections(self) -> None:
         if not page_origin(self.headers.get('Origin'), self.headers.get('Host')):
