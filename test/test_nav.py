@@ -244,9 +244,38 @@ class TestCli:
         args = cli.parse(['move', '-1.5'])
         assert (args.command, args.dist) == ('move', -1.5)
 
+    def test_mission_commands(self, cli, tmp_path, monkeypatch, capsys):
+        args = cli.parse(['mission', 'run', 'loop'])
+        assert (args.command, args.mission_command, args.name) == ('mission', 'run', 'loop')
+        assert cli.parse(['mission', 'list', '--map', 'hall']).map == 'hall'
+        with pytest.raises(SystemExit):
+            cli.parse(['mission'])
+        monkeypatch.setenv('RACECAR_MAP_ROOT', str(tmp_path))
+        from racecar_neo_ros2_driver import missions
+
+        missions.save('hall', 'loop', {'loops': 0, 'waypoints': [{'x': 1, 'y': 2}]})
+        assert cli.main(['mission', 'list', '--map', 'hall']) == 0
+        out = capsys.readouterr().out
+        assert out.startswith('loop') and '1 waypoint ' in out and 'until Stop' in out
+        monkeypatch.setattr(cli, 'loaded_map', lambda: '')
+        assert cli.main(['mission', 'run', 'loop']) == 2
+        monkeypatch.setattr(cli, 'planner_post', lambda path, body: (0, {}))
+        assert cli.main(['mission', 'stop']) == 1
+
     def test_in_the_racecar_tool(self):
         text = (ROOT / 'scripts' / 'racecar-tool.sh').read_text()
         assert 'scripts/racecar_nav.py' in text and 'nav <action>' in text
+
+
+def test_behavior_tree_plans_again_for_a_new_goal():
+    import xml.etree.ElementTree as ET
+
+    tree = ET.parse(ROOT / 'config' / 'nav2_bt.xml')
+    pipeline = tree.find(".//PipelineSequence[@name='NavigateWithReplanning']")
+    tags = [child.tag for child in pipeline]
+    assert tags.index('GoalUpdatedController') < tags.index('RecoveryNode')
+    assert pipeline.find('GoalUpdatedController//ComputePathToPose') is not None
+    assert {'Spin', 'BackUp', 'DriveOnHeading'}.isdisjoint({e.tag for e in tree.iter()})
 
 
 def test_behavior_tree_is_installed():

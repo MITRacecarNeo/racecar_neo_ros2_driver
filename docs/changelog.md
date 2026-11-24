@@ -123,8 +123,16 @@ All notable changes to this project will be documented in this file. The format 
   Mapper, with a save prompt when the Mapper is mapping; the Drive panel.
   It starts when opened and stops with Clear apps. A picked goal shows the
   planned path before Go. Lost localization pauses the goal (Relocalizing):
-  the car stops, AMCL updates without motion, and the goal continues once
-  localized, until Stop.
+  the car stops, and the goal continues once localized, until Stop.
+- Planner missions (`racecar_neo_ros2_driver/missions.py`): waypoints with a
+  heading or any, radius, speed limit and wait; loops (1 to 99, or until
+  Stop); Pause, Resume, Skip, Stop, and edits while running; a waypoint Nav2
+  cannot reach pauses the mission; every leg previewed before Go; missions
+  saved beside their map (`<map>/missions/`); `racecar nav mission
+  list/run/stop`. Nav2's success counts only with the car near the waypoint;
+  otherwise the waypoint is sent again, up to 10 times. A stall trip pauses
+  the mission. Waypoints are red, yellow for the next one, and green once
+  reached.
 - `scripts/web/mapview_core.js` (`RcnMapView`): the map view shared by the
   Mapper and the Planner.
 - `apps.manual_driving_apps()`: the driving apps that `racecar map` closes;

@@ -1,5 +1,6 @@
 <!--
-  Navigate to a pose for a car: replan at 1 Hz and follow the path. On a
+  Navigate to a pose for a car: replan at 1 Hz and as soon as the goal
+  changes (a mission's next waypoint), and follow the path. On a
   failure, clear both costmaps and wait, then try again (up to 3 times). No
   spin and no back-up: a car cannot turn in place, and a stuck car pauses
   for the operator to drive it free (plan decision 54).
@@ -16,6 +17,12 @@
             <ClearEntireCostmap name="ClearGlobalCostmap-Context" service_name="global_costmap/clear_entirely_global_costmap"/>
           </RecoveryNode>
         </RateController>
+        <GoalUpdatedController goal="{goal}">
+          <RecoveryNode number_of_retries="1" name="ComputePathToNewGoal">
+            <ComputePathToPose goal="{goal}" path="{path}" planner_id="{selected_planner}" error_code_id="{compute_path_error_code}"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-NewGoal" service_name="global_costmap/clear_entirely_global_costmap"/>
+          </RecoveryNode>
+        </GoalUpdatedController>
         <RecoveryNode number_of_retries="1" name="FollowPath">
           <FollowPath path="{path}" controller_id="{selected_controller}" error_code_id="{follow_path_error_code}"/>
           <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>

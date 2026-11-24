@@ -11,6 +11,8 @@
      mv.drawGrid, drawCar, drawOrigin, drawLine, drawDots: the layers a page picks from
      mv.tool = { start(w), move(w), end(start, end) } turns one-finger drags into a tool
        (the page clears it; end gets null when the drag was too short)
+     mv.pick(w)         when set and no tool is on: a press at w may return a tool for
+                        that one drag (a marker to tap or move), or null to pan
      mv.bindButtons({ zin, zout, center, rotl, rotr, carup }, () => [x, y] | null)
      mv.redraw()        draw now (also on resize)
 
@@ -170,6 +172,10 @@
     canvas.addEventListener('pointerdown', (e) => {
       canvas.setPointerCapture(e.pointerId);
       pointers.set(e.pointerId, [e.offsetX, e.offsetY]);
+      if (!mv.tool && mv.pick && pointers.size === 1) {
+        const once = mv.pick(mv.toWorld(e.offsetX, e.offsetY));
+        if (once) { once.once = true; mv.tool = once; }
+      }
       if (mv.tool && pointers.size === 1) {
         drag = { start: mv.toWorld(e.offsetX, e.offsetY), end: null };
         if (mv.tool.start) mv.tool.start(drag.start);
@@ -208,9 +214,10 @@
       pointers.delete(e.pointerId);
       if (pointers.size < 2) pinch = null;
       if (mv.tool && drag && pointers.size === 0) {
-        const done = drag;
+        const done = drag, tool = mv.tool;
         drag = null;
-        mv.tool.end(done.start, done.end);
+        if (tool.once) mv.tool = null;
+        tool.end(done.start, done.end);
       }
     }
     canvas.addEventListener('pointerup', pointerEnd);

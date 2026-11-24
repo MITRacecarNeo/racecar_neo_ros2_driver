@@ -7,23 +7,33 @@ Usage:
     racecar nav move DIST [--no-wait]          DIST meters ahead of the car (negative: behind)
     racecar nav cancel                         stop the goal that is running
     racecar nav status                         whether Nav2 is up and has a goal
+    racecar nav mission list [--map NAME]      saved Planner missions of the loaded map
+    racecar nav mission run NAME               run a saved mission in the Planner
+    racecar nav mission stop                   stop the Planner's mission
 
 Nav2 runs with localization (`racecar map load NAME`). The car moves only
 while RB is held, or under the 8080 safety override. A goal reports the
-distance left until it ends; Ctrl+C cancels it.
+distance left until it ends; Ctrl+C cancels it. Missions run in the Planner
+(scripts/planner_app.py), which `mission run` starts when it is not running;
+they are saved from its page.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import math
+import subprocess
 import sys
 import time
 from typing import Any
+import urllib.error
+import urllib.request
 
 ACTION = 'navigate_to_pose'
 SERVER_WAIT_SEC = 5.0
 REPORT_SEC = 2.0
+PLANNER_WAIT_SEC = 20.0
 
 
 def quaternion_z_w(heading_deg: float) -> tuple[float, float]:
@@ -47,7 +57,105 @@ def parse(argv: list[str]) -> argparse.Namespace:
     move.add_argument('--no-wait', action='store_true', help='send the goal and return')
     sub.add_parser('cancel', help='stop the goal that is running')
     sub.add_parser('status', help='whether Nav2 is up and has a goal')
+    mission = sub.add_parser('mission', help='saved Planner missions')
+    msub = mission.add_subparsers(dest='mission_command', required=True)
+    listed = msub.add_parser('list', help='saved missions of the loaded map')
+    listed.add_argument('--map', help='another saved map')
+    run = msub.add_parser('run', help='run a saved mission in the Planner')
+    run.add_argument('name')
+    msub.add_parser('stop', help="stop the Planner's mission")
     return p.parse_args(argv)
+
+
+# -- missions: run by the Planner (scripts/planner_app.py) --
+
+
+def loaded_map() -> str:
+    """Return the map localization runs on, from the autonomy mode file; '' if none."""
+    from map_control import read_mode_file
+
+    values = read_mode_file()
+    return values.get('AUTONOMY_MAP', '') if values.get('AUTONOMY_MODE') == 'localization' else ''
+
+
+def planner_post(path: str, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    """POST to the Planner on this car; (0, {}) when it does not answer."""
+    from racecar_neo_ros2_driver import apps
+
+    request = urllib.request.Request(
+        f'http://127.0.0.1:{apps.port("planner")}/{path}',
+        data=json.dumps(body).encode(), method='POST',
+        headers={'Content-Type': 'application/json'},
+    )  # fmt: skip
+    try:
+        with urllib.request.urlopen(request, timeout=10) as res:
+            return res.status, json.loads(res.read() or b'{}')
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read() or b'{}')
+    except (urllib.error.URLError, OSError):
+        return 0, {}
+
+
+def planner_answers() -> bool:
+    from racecar_neo_ros2_driver import apps
+
+    try:
+        url = f'http://127.0.0.1:{apps.port("planner")}/api/missions'
+        with urllib.request.urlopen(url, timeout=2) as res:
+            return res.status == 200
+    except (urllib.error.URLError, OSError):
+        return False
+
+
+def start_planner() -> bool:
+    """Start the Planner unit if it is not running; True once it answers."""
+    from racecar_neo_ros2_driver import apps, units
+
+    unit = units.service(apps.app('planner')['unit'])
+    subprocess.run([*units.systemctl_argv(), '--no-ask-password', 'start', unit],
+                   capture_output=True, check=False)  # fmt: skip
+    deadline = time.monotonic() + PLANNER_WAIT_SEC
+    while time.monotonic() < deadline:
+        if planner_answers():
+            return True
+        time.sleep(0.5)
+    return False
+
+
+def run_mission(args: argparse.Namespace) -> int:
+    from racecar_neo_ros2_driver import missions
+
+    if args.mission_command == 'list':
+        name = args.map or loaded_map()
+        if not name:
+            print('No map loaded. Load one (racecar map load NAME) or name one: --map NAME',
+                  file=sys.stderr)  # fmt: skip
+            return 2
+        found = missions.listing(name)
+        if not found:
+            print(f'No saved missions for {name}.')
+        for m in found:
+            n = m['loops']
+            loops = 'until Stop' if n == 0 else f'{n} loop' if n == 1 else f'{n} loops'
+            count = f"{m['waypoints']} waypoint" + ('s' if m['waypoints'] != 1 else '')
+            print(f"{m['name']:<24} {count:<14} {loops:<12} {m['saved']}")
+        return 0
+    if args.mission_command == 'stop':
+        code, _ = planner_post('api/control', {'verb': 'stop'})
+        print('Stopped.' if code == 200 else 'The Planner is not running.')
+        return 0 if code == 200 else 1
+    if not loaded_map():
+        print('No map loaded. Load one first: racecar map load NAME', file=sys.stderr)
+        return 2
+    if not start_planner():
+        print('The Planner did not start: racecar service status planner', file=sys.stderr)
+        return 1
+    code, reply = planner_post('api/run_saved', {'name': args.name})
+    if code != 200:
+        print(reply.get('message') or 'Could not start the mission.', file=sys.stderr)
+        return 1
+    print(f'Running {args.name}. Hold RB. Stop: racecar nav mission stop')
+    return 0
 
 
 def run_goal(node: Any, x: float, y: float, heading: float, wait: bool) -> int:
@@ -174,6 +282,8 @@ def run_status(node: Any) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse(sys.argv[1:] if argv is None else argv)
+    if args.command == 'mission':
+        return run_mission(args)
     import rclpy
 
     rclpy.init()

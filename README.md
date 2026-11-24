@@ -992,6 +992,9 @@ racecar nav goal X Y HEADING      # x, y in meters, heading in degrees (map fram
 racecar nav move 3                # 3 m ahead of the car, keeping its heading (-2: behind)
 racecar nav status                # whether Nav2 is up and has a goal
 racecar nav cancel                # stop the goal that is running
+racecar nav mission list          # saved Planner missions of the loaded map
+racecar nav mission run NAME      # run one in the Planner (started if needed)
+racecar nav mission stop          # stop the Planner's mission
 ```
 
 - Speeds: 0.5 to 1.0 m/s forward and 0.5 to 0.6 m/s in reverse. The
@@ -1010,27 +1013,47 @@ racecar nav cancel                # stop the goal that is running
 `racecar-planner.service` serves the Planner on port 8090
 (`http://<robot>/planner/`), in the 8080 Autonomy group. It starts when
 opened and stops with Clear apps. The page shows the map, the car, the lidar
-scan, and the path Nav2 plans.
+scan, the waypoints, and the paths Nav2 plans. A mission is a list of
+waypoints; a single goal is a mission of one.
 
 | Button | Does |
 |---|---|
-| Set goal | Drag on the map from the goal toward the way the car should face; the path from the car shows dashed, or "No path to this goal." |
-| Go | Sends the goal to Nav2; the header shows Navigating and the distance left, then Arrived or Could not reach the goal |
-| Try again | Sends the goal that failed again |
-| Stop | Cancels the goal |
+| Set goal | Adds waypoints until Done: a tap for any heading, a drag for a heading. The path of every leg shows dashed, or "No path to waypoint N." |
+| Waypoints | Lists the waypoints: heading or any, radius (0.25 to 3 m), speed (0.5 to 1.0 m/s, or full), wait (0 to 600 s), order; loops (1 to 99, or until Stop); Save, and the saved missions of the loaded map |
+| Go | Runs the mission; the header shows the waypoint, the loop, and the distance left, then Arrived |
+| Pause, Resume | Stops the car and holds the mission; Resume sends the waypoint again |
+| Skip | Goes on to the next waypoint |
+| Stop | Ends the mission |
 | Set pose | As in the Mapper |
 | Safety override (top right) | Turns the 8080 safety override on or off; the page keeps it on while it is in front |
 | Load map | Lists the saved maps; Load starts localization and Nav2 on one |
 | Costmap (map tools) | Shows Nav2's global costmap over the map |
 
+- A tap on a marker opens it in Waypoints; a drag moves it. Changes during a
+  mission apply from the next waypoint; a change to the one being driven to
+  sends it again.
+- A waypoint is reached within its radius, facing its heading if it has
+  one. The car drives on to the next waypoint without stopping, unless the
+  waypoint has a wait.
+- Nav2's report that a waypoint is reached counts only with the car near it
+  (its radius plus 0.15 m, and its heading). Otherwise the waypoint is sent
+  again, up to 10 times.
+- A waypoint Nav2 cannot reach pauses the mission ("Could not reach
+  waypoint N"): Resume tries again, Skip goes on, Stop ends it.
+- The motor's stall protection pauses it too ("Car stalled at waypoint N").
+  Resume and Skip work once the car can drive again.
+- Waypoints are red, yellow for the next one, and green once reached. They
+  stay green on later loops, except the next one.
+- Missions are saved beside the map, in `<map>/missions/NAME.yaml`; saving
+  over one moves the old file to `missions/previous/`.
 - Loading a map while the Mapper is mapping asks to save the map first.
   Mapping stays in the Mapper.
 - The Drive panel works as in the Mapper, during localization and while no
   goal is running.
 - The costmap is sent only while Costmap is on.
-- Lost localization pauses the goal: the car stops, the header shows
-  Relocalizing, and AMCL updates twice a second without the car moving.
-  Driving the car a little or Set pose helps. The goal continues once the
+- Lost localization pauses the mission: the car stops, and the header shows
+  Relocalizing. AMCL updates once a second without the car moving.
+  Driving the car a little or Set pose helps. The mission continues once the
   car is localized again, with no time limit; Stop ends it.
 
 ## Maps

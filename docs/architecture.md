@@ -295,23 +295,42 @@ its `Handler` subclasses `mapview.Handler`. It adds a `navigate_to_pose`
 action client (goal, cancel, feedback into `Mission`), a `/plan`
 subscription (thinned to 400 points), and a `/global_costmap/costmap`
 subscription held only while the page has Costmap on. Map actions are
-limited to load, save, and stop. A picked goal is previewed through
-`compute_path_to_pose` from the car's pose before Go.
+limited to load, save, and stop. Every leg is previewed through
+`compute_path_to_pose` before Go: the first from the car, the next from each
+waypoint, and one back to the first when the mission loops.
 
-`Mission.step` runs twice a second on a `/autonomy/status` subscription held
-for the whole run. When localization drops during a goal, the bridge has
-already stopped the car; the Planner cancels the Nav2 goal (state
-`relocalizing`, so Nav2's progress check cannot abort it), calls AMCL's
-`/request_nomotion_update` each step, and sends the same goal again once
-localized. Stop, or localization ending, ends the goal. Both pages draw with
+Missions (`racecar_neo_ros2_driver/missions.py`) are YAML files in
+`<map>/missions/`: loops, and per waypoint x, y, heading or any, radius,
+speed limit and wait. `planner_app.Run` steps through one without ROS: each
+call returns actions (send a waypoint, cancel, set the speed limit) that `Navigator._apply` carries out. A waypoint is one
+`navigate_to_pose` goal; the next preempts it, so the car does not stop
+between waypoints. `Run.tick` (10 Hz, on `/autonomy/status` and
+`/autonomy/pose` subscriptions held for the whole run) accepts a waypoint
+within its radius and heading tolerance (0.5 rad, Nav2's), counts down a
+wait, and pauses on lost localization: the bridge has already stopped the
+car, the Nav2 goal is canceled (so Nav2's progress check cannot abort it),
+and the waypoint is sent again once localized (`autonomy_node` asks AMCL for
+a no-motion update once a second meanwhile). A goal Nav2 aborts pauses the
+mission (`paused`, reason `failed`), and so does a `/pit/stall` state other
+than normal while a goal runs (reason `stalled`; resume and skip wait for
+normal). `Run.view` gives the page the next waypoint and the ones reached. Nav2 can report a goal reached for the path to the goal it
+preempted (`PipelineSequence` succeeds when FollowPath does, even with the
+planner still running), so `Run.result` counts a success only with the car
+near the waypoint and otherwise sends it again (`RETRY_LIMIT`);
+`config/nav2_bt.xml` plans again as soon as the goal changes
+(`GoalUpdatedController`), which makes this less frequent. Speed limits go on `/speed_limit` (`nav2_msgs/SpeedLimit`,
+m/s; 0 lifts it at the end). `racecar nav mission run` posts to the Planner,
+starting its unit first. Both pages draw with
 `scripts/web/mapview_core.js` (`RcnMapView`: view transform, pan, zoom,
-rotate, car-up, drag tools, layers). The page loads `override.js`, so it
+rotate, car-up, drag tools, layers; `pick` turns a press on a marker into a
+one-drag tool). The page loads `override.js`, so it
 keeps the safety override alive as the 8080 page does.
 
 ```
 planner.html ──HTTP poll 10 Hz──▶ planner_app.py (Navigator) ──▶ /autonomy/*, /map, /scan, /plan
-     │                                   ├── compute_path_to_pose (preview), navigate_to_pose (goal, cancel, feedback)
-     │                                   ├── /request_nomotion_update (while relocalizing)
+     │                                   ├── compute_path_to_pose (preview), navigate_to_pose (one per waypoint)
+     │                                   ├── /speed_limit (per waypoint)
+     │                                   ├── /pit/stall (pauses the mission)
      │                                   └── /global_costmap/costmap (Costmap on only)
      └── override.js ──keepalive 1 Hz──▶ 8080 /api/override
 ```

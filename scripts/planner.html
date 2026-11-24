@@ -19,7 +19,8 @@
   --map-free: #423f52; --map-wall: #ffffff; --map-unknown: #232228;
   --map-car: #f49a4b; --map-trail: #ffb84a; --map-scan: #f63c47;
   --map-x: #f63c47; --map-y: #ffb84a; --map-outline: #231f20;
-  --map-path: #4ab3ff; --map-goal: #6fd08c; --map-cost: #c050ff;
+  --map-path: #4ab3ff; --map-cost: #c050ff;
+  --wp-todo: #f63c47; --wp-next: #ffd93d; --wp-done: #6fd08c;
 }
 html, body { height: 100%; }
 body { display: flex; flex-direction: column; overflow: hidden; }
@@ -70,6 +71,25 @@ main.maps-open #hint { left: calc(min(340px, 80%) + var(--rcn-space-3)); }
 .dpad button.down { background: var(--rcn-orange); border-color: var(--rcn-orange); color: var(--rcn-ink); }
 .dpad[hidden], #djoy[hidden], #djoytoggle[hidden] { display: none; }
 #djoy { margin-top: var(--rcn-space-2); }
+#wps { position: absolute; top: 0; left: 0; bottom: 0; width: min(360px, 88%); display: none; overflow: auto; background: var(--rcn-surface); padding: var(--rcn-space-3) var(--rcn-space-4); z-index: 5; }
+main.wps-open #wps { display: block; }
+main.wps-open #hint { left: calc(min(360px, 88%) + var(--rcn-space-3)); }
+#wps .top { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--rcn-space-2); }
+#wps h2 { font-size: 20px; line-height: 28px; }
+#wps h3 { font-size: 16px; margin-top: var(--rcn-space-4); }
+#wps input[type=number] { width: 84px; }
+.wp { border-top: 1px solid var(--rcn-border); padding: var(--rcn-space-2) 0; cursor: pointer; }
+.wp.sel { background: var(--rcn-bg); margin: 0 calc(-1 * var(--rcn-space-2)); padding: var(--rcn-space-2); border-radius: var(--rcn-radius-md); cursor: default; }
+.wp .wphead { display: flex; align-items: center; gap: var(--rcn-space-2); }
+.wp .wpnum { font: 700 14px/24px var(--rcn-font-sans); width: 24px; height: 24px; border-radius: 12px; text-align: center; background: var(--wp-todo); color: var(--rcn-ink); flex: none; }
+.wp .wpnum.next { background: var(--wp-next); }
+.wp .wpnum.done { background: var(--wp-done); }
+.wp .wpsum { flex: 1; min-width: 0; }
+.wp .wpgrid { display: grid; grid-template-columns: auto auto; gap: var(--rcn-space-2) var(--rcn-space-3); align-items: center; margin-top: var(--rcn-space-2); }
+.wp .wpgrid label { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.wp .wpgrid label.inline { flex-direction: row; align-items: center; gap: var(--rcn-space-2); }
+.mrow { display: flex; align-items: center; gap: var(--rcn-space-2); padding: var(--rcn-space-2) 0; border-top: 1px solid var(--rcn-border); }
+.mrow .info { flex: 1; min-width: 0; }
 #override[aria-pressed="true"] { border-color: var(--rcn-crimson); background: var(--rcn-crimson-deep); color: var(--rcn-paper); }
 #override.waiting { opacity: 0.5; pointer-events: none; }
 @media (max-width: 700px) { .dpad { grid-template-columns: repeat(3, 48px); grid-template-rows: repeat(3, 48px); } }
@@ -107,6 +127,16 @@ main.maps-open #hint { left: calc(min(340px, 80%) + var(--rcn-space-3)); }
       </div>
     </div>
   </div>
+  <aside id="wps">
+    <div class="top"><h2>Waypoints</h2><button class="rcn-btn quiet small" id="wpsclose">Close</button></div>
+    <div class="row"><label>Loops <input type="number" class="rcn-input" id="loops" min="1" max="99" step="1"></label>
+      <label><input type="checkbox" id="forever"> Until Stop</label></div>
+    <div id="wplist"></div>
+    <div class="row"><button class="rcn-btn quiet small" id="wpclear">Clear</button>
+      <button class="rcn-btn quiet small" id="msave">Save</button></div>
+    <h3>Saved missions</h3>
+    <div id="missionlist"></div>
+  </aside>
   <aside id="maps"><div class="top"><h2>Maps</h2><button class="rcn-btn quiet small" id="mapsclose">Close</button></div><div id="maplist"></div></aside>
   <div id="tools">
     <button class="rcn-btn quiet" id="zin" title="Zoom in" aria-label="Zoom in"><svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#plus"/></svg></button>
@@ -126,6 +156,13 @@ main.maps-open #hint { left: calc(min(340px, 80%) + var(--rcn-space-3)); }
   <div class="row"><label><input type="radio" name="from" value="last" checked> Start from the last saved position</label></div>
   <div class="row"><label><input type="radio" name="from" value="global"> Search the whole map while driving</label></div>
   <div class="row"><button class="rcn-btn primary" id="loadgo">Load</button><button class="rcn-btn quiet" id="loadcancel">Cancel</button></div>
+</div></div>
+
+<div class="sheet" id="savesheet"><div>
+  <h2>Save mission</h2>
+  <div class="row"><input type="text" class="rcn-input" id="missionname" placeholder="Letters, digits, - and _"
+    autocomplete="off" autocapitalize="off" spellcheck="false"></div>
+  <div class="row"><button class="rcn-btn primary" id="savego">Save</button><button class="rcn-btn quiet" id="savecancel">Cancel</button></div>
 </div></div>
 
 <div class="sheet" id="unsavedsheet"><div>
@@ -151,48 +188,89 @@ let costmap = null, costmapVersion = -1, costmapOn = false;
 let renderKey = '';
 let mapsOpen = false;
 let tool = null;           // 'goal' | 'pose' while a drag tool is active
-let goal = null;           // [x, y, yaw] picked on the map, not yet sent
-let preview = null;        // {path} or {none: true} for the picked goal; null while planning
+// The mission on this page, in the format of racecar_neo_ros2_driver/missions.py:
+// loops (0: until Stop) and waypoints {x, y, heading_deg | null, radius_m, speed_mps | null, dwell_sec}.
+let plan = { loops: 1, waypoints: [] };
+let planVersion = -1;      // the car's mission version this page last took
+let selected = -1;         // the waypoint open in the panel and ringed on the map
+let preview = null;        // {legs, pose} planned for `plan`; null until planned
+let previewing = false;
+let editTimer = null, previewTimer = null;
+let edited = false;        // changed since the last mission: every waypoint is red again
+let wpsKey = '';
+let wpsOpen = false;
 let busy = false;
 let lostContact = false;
 let overrideOn = false;
 
 const mission = () => state.mission || { state: 'idle' };
-const navigating = () => ['sending', 'driving'].includes(mission().state);
-// Paused while localization is lost; the car sends the goal again once localized.
-const relocalizing = () => mission().state === 'relocalizing';
-const active = () => navigating() || relocalizing();
+const ms = () => mission().state;
+// Nav2 drives toward a waypoint, or the car waits at one.
+const moving = () => ['running', 'dwelling'].includes(ms());
+// Paused while localization is lost; the car sends the waypoint again once localized.
+const relocalizing = () => ms() === 'relocalizing';
+const paused = () => ms() === 'paused';
+const active = () => moving() || relocalizing();
+const underway = () => active() || paused();
 const localized = () => (state.status || {}).localized === 'true';
 const mode = () => (state.status || {}).mode || 'off';
 const jobRunning = () => !!(state.job && state.job.running);
-// The goal shown on the map: the one sent while it is in progress or failed, else the one picked.
-function shownGoal() {
+const deg = (rad) => rad * 180 / Math.PI;
+const rad = (d) => d * Math.PI / 180;
+
+mv.scaleLeft = () => (mapsOpen ? $('maps').offsetWidth : wpsOpen ? $('wps').offsetWidth : 0);
+
+// Red: not reached. Yellow: next. Green: reached.
+function wpState(i) {
   const m = mission();
-  return (active() || m.state === 'failed') && m.goal ? m.goal : goal;
+  if (edited) return 'todo';
+  if (underway() && i === m.next) return 'next';
+  return (m.visited || []).includes(i) ? 'done' : 'todo';
 }
 
-mv.scaleLeft = () => (mapsOpen ? $('maps').offsetWidth : 0);
+function drawWaypoints(ctx) {
+  const d = devicePixelRatio, wps = plan.waypoints;
+  ctx.save();
+  wps.forEach((w, i) => {
+    const [px, py] = mv.toScreen(w.x, w.y), mark = wpState(i), color = css(`--wp-${mark}`);
+    // The reach circle, then the heading, then the numbered marker kept upright.
+    ctx.strokeStyle = color; ctx.globalAlpha = 0.35; ctx.lineWidth = 1.5 * d;
+    ctx.beginPath(); ctx.arc(px, py, Math.max(w.radius_m * view.scale * d, 4 * d), 0, 2 * Math.PI); ctx.stroke();
+    ctx.globalAlpha = 1;
+    if (w.heading_deg != null) {
+      const a = rad(w.heading_deg), l = 22 * d;
+      ctx.lineWidth = 3 * d; ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px + Math.cos(a) * l, py - Math.sin(a) * l); ctx.stroke();
+    }
+    const r = (mark === 'next' ? 13 : 11) * d;
+    ctx.save(); ctx.translate(px, py); ctx.rotate(-view.rot);
+    ctx.fillStyle = color; ctx.beginPath(); ctx.arc(0, 0, r, 0, 2 * Math.PI); ctx.fill();
+    ctx.lineWidth = 2 * d; ctx.strokeStyle = i === selected ? css('--map-wall') : css('--map-outline'); ctx.stroke();
+    ctx.fillStyle = css('--map-outline'); ctx.font = RcnUi.font(12 * d, 700); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(String(i + 1), 0, 0.5 * d);
+    ctx.restore();
+  });
+  ctx.restore();
+}
 
 function draw() {
   mv.carPose = state.pose || null;
-  mv.frame(() => {
+  mv.frame((ctx) => {
     if (grid) mv.drawGrid(grid);
     if (costmap && costmapOn) mv.drawGrid(costmap);
     mv.drawOrigin();
     if (active()) mv.drawLine(state.path, css('--map-path'), 3);
-    else if (goal && preview && preview.path) {
-      mv.ctx.setLineDash([8 * devicePixelRatio, 6 * devicePixelRatio]);
-      mv.drawLine(preview.path, css('--map-path'), 3);
-      mv.ctx.setLineDash([]);
+    else if (preview) {
+      ctx.setLineDash([8 * devicePixelRatio, 6 * devicePixelRatio]);
+      for (const leg of preview.legs) if (leg) mv.drawLine(leg, css('--map-path'), 3);
+      ctx.setLineDash([]);
     }
     mv.drawDots(state.scan, css('--map-scan'));
-    const g = shownGoal();
-    if (g) mv.drawCar(g[0], g[1], g[2], css('--map-goal'), 0.85);
+    drawWaypoints(ctx);
     if (state.pose) mv.drawCar(state.pose[0], state.pose[1], state.pose[2], css('--map-car'), localized() ? 1 : 0.45);
-    const d = mv.dragging();
-    if (tool && d && d.end) {
-      const [a, b] = d.start, [c, e] = d.end;
-      mv.drawCar(a, b, Math.atan2(e - b, c - a), css(tool === 'goal' ? '--map-goal' : '--map-trail'), 0.9);
+    const dr = mv.dragging();
+    if (tool && dr && dr.end) {
+      const [a, b] = dr.start, [c, e] = dr.end;
+      mv.drawCar(a, b, Math.atan2(e - b, c - a), css(tool === 'goal' ? '--wp-todo' : '--map-trail'), 0.9);
     }
   });
 }
@@ -238,19 +316,20 @@ function setCostmap(on) {
 $('override').onclick = toggleOverride;
 $('costmap').onclick = () => setCostmap(!costmapOn);
 
-// -- drag tools: the goal, and Set pose --
+// -- drag tools: waypoints (Set goal), and Set pose --
 function hint(text) { $('hint').textContent = text; $('hint').classList.toggle('show', !!text); }
 const DRAG_HINT = {
-  goal: 'Tap the goal. Drag toward the way the car should face.',
+  goal: 'Tap to add a waypoint. Drag to set its heading.',
   pose: 'Tap where the car is. Drag toward the way it faces.',
 };
 function startTool(kind) {
   tool = kind;
   mv.tool = {
     end: (a, b) => {
-      if (!b) { hint(DRAG_HINT[kind]); return; }
-      const yaw = Math.atan2(b[1] - a[1], b[0] - a[0]);
-      if (kind === 'goal') { goal = [a[0], a[1], yaw]; endTool(); planPreview(); } else finishPose(a[0], a[1], yaw);
+      const yaw = b ? Math.atan2(b[1] - a[1], b[0] - a[0]) : null;
+      if (kind === 'goal') addWaypoint(a[0], a[1], yaw);
+      else if (yaw == null) hint(DRAG_HINT.pose);
+      else finishPose(a[0], a[1], yaw);
     },
   };
   hint(DRAG_HINT[kind]);
@@ -258,23 +337,69 @@ function startTool(kind) {
 }
 function endTool() { tool = null; mv.tool = null; hint(''); render(); draw(); }
 
-// The path to a picked goal, planned from the car before Go; Go stays gray until it is found.
-async function planPreview() {
-  const g = goal;
-  preview = null; renderKey = ''; render();
-  const r = await post('api/preview', { x: g[0], y: g[1], yaw: g[2] });
-  if (goal !== g) return;  // a newer goal was picked meanwhile
-  preview = r.ok ? { path: r.path } : { none: true };
-  hint(r.ok ? '' : (r.message || 'No path to this goal.'));
-  renderKey = ''; render(); draw();
-}
+// A press on a marker: a tap opens it in the panel, a drag moves it.
+mv.pick = (w) => {
+  if (tool) return null;
+  const reach = 22 / view.scale;
+  let best = -1, bestDist = reach;
+  plan.waypoints.forEach((p, i) => {
+    const dist = Math.hypot(p.x - w[0], p.y - w[1]);
+    if (dist < bestDist) { best = i; bestDist = dist; }
+  });
+  if (best < 0) return null;
+  return {
+    move: (s, e) => { plan.waypoints[best].x = +e[0].toFixed(3); plan.waypoints[best].y = +e[1].toFixed(3); draw(); },
+    end: (s, e) => { selected = best; if (e) changed(); else { openWps(); renderWps(); draw(); } },
+  };
+};
 
 async function finishPose(x, y, yaw) {
-  const text = `x ${x.toFixed(2)} m, y ${y.toFixed(2)} m, heading ${(yaw * 180 / Math.PI).toFixed(0)} deg`;
+  const text = `x ${x.toFixed(2)} m, y ${y.toFixed(2)} m, heading ${deg(yaw).toFixed(0)} deg`;
   if (!confirm(`Set the car's pose to ${text}?`)) { draw(); return; }
   endTool();
   report(await post('api/pose', { x, y, yaw }));
 }
+
+// -- the waypoints --
+function addWaypoint(x, y, yaw) {
+  plan.waypoints.push({
+    x: +x.toFixed(3), y: +y.toFixed(3),
+    heading_deg: yaw == null ? null : +(((deg(yaw) % 360) + 360) % 360).toFixed(1),
+    radius_m: 0.25, speed_mps: null, dwell_sec: 0,
+  });
+  selected = plan.waypoints.length - 1;
+  changed();
+}
+// Every change: plan again, send it to the car while a mission runs, redraw.
+function changed() {
+  preview = null;
+  edited = !underway();
+  clearTimeout(previewTimer); previewTimer = setTimeout(planPreview, 300);
+  if (underway() && plan.waypoints.length) { clearTimeout(editTimer); editTimer = setTimeout(sendEdit, 400); }
+  renderWps(); renderKey = ''; render(); draw();
+}
+async function sendEdit() {
+  editTimer = null;
+  const r = await post('api/edit', { mission: plan });
+  if (!r.ok) report(r);
+}
+
+// The path of every leg, planned from the car before Go; Go stays gray until each is found.
+async function planPreview() {
+  previewTimer = null;
+  if (underway() || !plan.waypoints.length || mode() !== 'localization') return;
+  const asked = JSON.stringify(plan);
+  previewing = true;
+  const r = await post('api/preview', { mission: plan });
+  previewing = false;
+  if (JSON.stringify(plan) !== asked) return;  // changed meanwhile; a newer preview is on its way
+  if (!r.ok) { hint(r.message || ''); renderKey = ''; render(); return; }
+  preview = { legs: r.legs, pose: state.pose };
+  const failed = r.legs.indexOf(null), n = plan.waypoints.length;
+  hint(failed < 0 ? '' : failed < n ? `No path to waypoint ${failed + 1}.` : 'No path back to waypoint 1.');
+  renderKey = ''; render(); draw();
+}
+const planned = () => !!preview && !preview.legs.includes(null);
 
 // -- requests --
 const post = RcnApi.postJson;
@@ -290,7 +415,7 @@ function showBanner() {
   else if (sys.throttled_now && sys.throttled_now.length) msg = { text: `Pi throttled now: ${sys.throttled_now.join(', ')}.`, kind: 'bad' };
   else if (sys.temp_c != null && sys.temp_c >= 78) msg = { text: `Pi is hot (${sys.temp_c.toFixed(0)} \u00b0C).`, kind: 'warn' };
   else if (relocalizing()) msg = { text: 'Localization lost. Regain position by driving the car or using Set pose.', kind: 'warn' };
-  else if (navigating() && !overrideOn) msg = { text: 'Hold RB or turn on safety override.', kind: 'warn' };
+  else if (ms() === 'running' && !overrideOn) msg = { text: 'Hold RB or turn on safety override.', kind: 'warn' };
   else if (mode() === 'localization' && !localized()) msg = { text: 'Drive slowly until localized.', kind: 'warn' };
   b.textContent = msg ? msg.text : '';
   b.className = msg ? `show ${msg.kind}` : '';
@@ -306,12 +431,13 @@ async function action(body) {
   poll();
   return r;
 }
-async function go(g) {
-  const r = await post('api/goal', { x: g[0], y: g[1], yaw: g[2] });
-  if (r.ok) { goal = null; preview = null; hint(''); } else report(r);
+async function go() {
+  if (tool) endTool();
+  const r = await post('api/run', { mission: plan });
+  if (r.ok) hint(''); else report(r);
   poll();
 }
-async function stop() { await post('api/stop', {}); poll(); }
+async function control(verb) { report(await post('api/control', { verb })); poll(); }
 
 // -- safety override: the banner and the keepalive are /ui/override.js --
 RcnOverride.onChange = (o) => {
@@ -339,28 +465,165 @@ function button(label, cls, onclick, disabled, glyph, small) {
 function render() {
   const f = $('controls'), running = jobRunning();
   f.replaceChildren();
+  if (tool === 'goal') { f.append(button('Done', 'primary', endTool, false, 'check')); return; }
   if (tool) { f.append(button('Cancel', '', endTool, false, 'cross')); return; }
   if (mode() === 'localization') {
-    if (active()) {
-      f.append(button('Stop', 'danger', stop, false, 'stop'));
-      if (relocalizing()) f.append(button('Set pose', '', () => startTool('pose'), running, 'map'));
+    if (underway()) {
+      if (paused()) f.append(button('Resume', 'primary', () => control('resume'), mission().stalled, 'play'));
+      else f.append(button('Pause', '', () => control('pause'), relocalizing(), 'stop'));
+      f.append(button('Skip', '', () => control('skip'), mission().stalled, 'chevron-down'));
+      f.append(button('Stop', 'danger', () => control('stop'), false, 'stop'));
+      f.append(button('Waypoints', wpsOpen ? 'quiet on' : '', toggleWps, false, 'tag'));
+      if (!moving()) f.append(button('Set pose', '', () => startTool('pose'), running, 'map'));
     } else {
-      const m = mission(), retry = m.state === 'failed' && m.goal && !goal;
-      const target = goal || (retry ? m.goal : null);
-      // A picked goal waits for its path; a retry has had one.
-      const planned = retry || (preview && preview.path);
-      f.append(button(retry ? 'Try again' : 'Go', 'primary', () => go(target), running || !target || !planned || !localized(), 'play'));
+      f.append(button('Go', 'primary', go, running || !planned() || !localized() || mission().stalled, 'play'));
       f.append(button('Set goal', '', () => startTool('goal'), running, 'target'));
+      f.append(button('Waypoints', wpsOpen ? 'quiet on' : '', toggleWps, false, 'tag'));
       f.append(button('Set pose', '', () => startTool('pose'), running, 'map'));
     }
   }
   f.append(button('Load map', mapsOpen ? 'quiet on' : '', toggleMaps, false, 'layers'));
 }
 
+// -- the Waypoints panel --
+function openWps() {
+  if (mapsOpen) closeMaps();
+  wpsOpen = true;
+  document.querySelector('main').classList.add('wps-open');
+  renderWps(); loadMissions(); renderKey = ''; render(); draw();
+}
+function closeWps() { wpsOpen = false; document.querySelector('main').classList.remove('wps-open'); renderKey = ''; render(); draw(); }
+function toggleWps() { if (wpsOpen) closeWps(); else openWps(); }
+$('wpsclose').onclick = closeWps;
+
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+function wpSummary(w) {
+  const bits = [w.heading_deg == null ? 'Any heading' : `${Math.round(w.heading_deg)} deg`, `${w.radius_m} m`];
+  bits.push(w.speed_mps == null ? 'Full speed' : `${w.speed_mps} m/s`);
+  if (w.dwell_sec) bits.push(`Wait ${w.dwell_sec} s`);
+  return bits.join(' \u00b7 ');
+}
+function field(label, f, value, attrs) {
+  return `<label>${esc(label)}<input type="number" class="rcn-input" data-f="${f}" value="${value == null ? '' : value}" ${attrs}></label>`;
+}
+function renderWps() {
+  if (!wpsOpen || $('wps').contains(document.activeElement)) return;
+  const forever = plan.loops === 0;
+  $('forever').checked = forever;
+  $('loops').disabled = forever;
+  $('loops').value = forever ? '' : plan.loops;
+  const list = $('wplist'), n = plan.waypoints.length, waiting = ms() === 'dwelling' ? mission().index : -1;
+  if (!n) { list.innerHTML = '<div class="rcn-small rcn-muted">No waypoints</div>'; }
+  else {
+    list.innerHTML = plan.waypoints.map((w, i) => {
+      const open = i === selected;
+      const head = `<div class="wphead"><span class="wpnum ${wpState(i)}">${i + 1}</span>
+        <span class="wpsum rcn-small">${esc(wpSummary(w))}${i === waiting ? ' \u00b7 <b>Waiting</b>' : ''}</span>
+        ${open ? `<button class="rcn-btn quiet small" data-act="up" ${i === 0 ? 'disabled' : ''} aria-label="Move up">&#9650;</button>
+        <button class="rcn-btn quiet small" data-act="down" ${i === n - 1 ? 'disabled' : ''} aria-label="Move down">&#9660;</button>
+        <button class="rcn-btn quiet small" data-act="remove" ${underway() && n === 1 ? 'disabled' : ''} aria-label="Remove">${icon('cross')}</button>` : ''}</div>`;
+      const grid = open ? `<div class="wpgrid">
+        ${field('Heading (deg)', 'heading_deg', w.heading_deg == null ? null : Math.round(w.heading_deg), `min="0" max="359" step="1" ${w.heading_deg == null ? 'disabled' : ''}`)}
+        <label class="inline"><input type="checkbox" data-f="any" ${w.heading_deg == null ? 'checked' : ''}> Any heading</label>
+        ${field('Radius (m)', 'radius_m', w.radius_m, 'min="0.25" max="3" step="0.05"')}
+        ${field('Speed (m/s)', 'speed_mps', w.speed_mps, 'min="0.5" max="1" step="0.05" placeholder="Full"')}
+        ${field('Wait (s)', 'dwell_sec', w.dwell_sec, 'min="0" max="600" step="1"')}
+        </div>` : '';
+      return `<div class="wp${open ? ' sel' : ''}" data-i="${i}">${head}${grid}</div>`;
+    }).join('');
+  }
+  $('wpclear').disabled = underway() || !n;
+  $('msave').disabled = !n || mode() !== 'localization';
+}
+// The colors follow the car even while a field holds the list still.
+function paintWps() {
+  document.querySelectorAll('#wplist .wpnum').forEach((el, i) => { el.className = `wpnum ${wpState(i)}`; });
+}
+$('wplist').addEventListener('click', (e) => {
+  const row = e.target.closest('.wp');
+  if (!row) return;
+  const i = +row.dataset.i, act = e.target.closest('[data-act]');
+  const wps = plan.waypoints;
+  if (act) {
+    const a = act.dataset.act;
+    if (a === 'remove') { wps.splice(i, 1); selected = Math.min(i, wps.length - 1); }
+    else {
+      const j = a === 'up' ? i - 1 : i + 1;
+      [wps[i], wps[j]] = [wps[j], wps[i]]; selected = j;
+    }
+    changed();
+    return;
+  }
+  if (i !== selected && !e.target.closest('input, label')) { selected = i; renderWps(); draw(); }
+});
+$('wplist').addEventListener('change', (e) => {
+  const f = e.target.dataset.f, row = e.target.closest('.wp');
+  if (!f || !row) return;
+  const w = plan.waypoints[+row.dataset.i], v = parseFloat(e.target.value);
+  if (f === 'any') w.heading_deg = e.target.checked ? null : 0;
+  else if (f === 'heading_deg') w.heading_deg = Number.isFinite(v) ? ((Math.round(v) % 360) + 360) % 360 : 0;
+  else if (f === 'radius_m') w.radius_m = Number.isFinite(v) ? +clamp(v, 0.25, 3).toFixed(2) : 0.25;
+  else if (f === 'speed_mps') w.speed_mps = Number.isFinite(v) ? +clamp(v, 0.5, 1).toFixed(2) : null;
+  else if (f === 'dwell_sec') w.dwell_sec = Number.isFinite(v) ? +clamp(v, 0, 600).toFixed(1) : 0;
+  e.target.blur();
+  changed();
+});
+$('loops').addEventListener('change', () => {
+  const v = parseInt($('loops').value, 10);
+  plan.loops = Number.isFinite(v) ? clamp(v, 1, 99) : 1;
+  $('loops').blur(); changed();
+});
+$('forever').addEventListener('change', () => { plan.loops = $('forever').checked ? 0 : 1; changed(); });
+$('wpclear').onclick = () => {
+  if (!confirm('Clear the waypoints?')) return;
+  plan.waypoints = []; selected = -1; hint(''); changed();
+};
+
+// -- saved missions, beside the loaded map --
+async function loadMissions() {
+  const list = $('missionlist');
+  let data = { missions: [] };
+  try { data = await (await fetch('api/missions', { cache: 'no-store' })).json(); } catch (err) { /* shown empty */ }
+  if (!data.missions.length) { list.innerHTML = '<div class="rcn-small rcn-muted">No saved missions</div>'; return; }
+  list.replaceChildren();
+  for (const m of data.missions) {
+    const row = document.createElement('div'); row.className = 'mrow';
+    const info = document.createElement('div'); info.className = 'info';
+    const count = m.waypoints === 1 ? '1 waypoint' : `${m.waypoints} waypoints`;
+    const loops = m.loops === 0 ? 'until Stop' : m.loops === 1 ? '' : `${m.loops} loops`;
+    info.innerHTML = `<div><b>${esc(m.name)}</b></div><div class="rcn-small rcn-muted">${esc([count, loops, m.saved].filter(Boolean).join(' \u00b7 '))}</div>`;
+    row.append(info, button('Open', '', () => openMission(m.name), underway(), null, true));
+    list.append(row);
+  }
+}
+async function openMission(name) {
+  if (plan.waypoints.length && !confirm(`Open ${name}?`)) return;
+  const r = await (await fetch(`api/missions/one?name=${encodeURIComponent(name)}`, { cache: 'no-store' })).json();
+  if (!r.ok) { report(r); return; }
+  plan = { loops: r.mission.loops, waypoints: r.mission.waypoints };
+  selected = -1;
+  changed();
+}
+$('msave').onclick = () => { $('savesheet').classList.add('show'); setTimeout(() => $('missionname').focus(), 50); };
+$('savecancel').onclick = () => $('savesheet').classList.remove('show');
+$('savego').onclick = async () => {
+  const name = $('missionname').value.trim();
+  if (!/^[A-Za-z0-9_-]+$/.test(name)) { alert('Mission names use letters, digits, - and _.'); return; }
+  $('savesheet').classList.remove('show');
+  let r = await post('api/missions/save', { name, mission: plan });
+  if (r.exists) {
+    if (!confirm(`Replace the mission ${name}?`)) return;
+    r = await post('api/missions/save', { name, mission: plan, replace: true });
+  }
+  report(r);
+  loadMissions();
+};
+
 // -- maps --
 function closeMaps() { mapsOpen = false; document.querySelector('main').classList.remove('maps-open'); render(); draw(); }
 function toggleMaps() { if (mapsOpen) closeMaps(); else openMaps(); }
 async function openMaps() {
+  if (wpsOpen) closeWps();
   mapsOpen = true;
   document.querySelector('main').classList.add('maps-open');
   render(); draw();
@@ -375,7 +638,7 @@ async function openMaps() {
     info.innerHTML = '<div class="name"></div><div class="rcn-small rcn-muted"></div><div class="acts"></div>';
     info.querySelector('.name').textContent = m.name + (m.note ? ` (${m.note})` : '');
     info.querySelector('.rcn-muted').textContent = [m.state[0].toUpperCase() + m.state.slice(1), m.saved, m.size].join(' \u00b7 ');
-    info.querySelector('.acts').append(button('Load', 'primary', () => openLoad(m.name), jobRunning() || active() || m.state === 'unsaved', null, true));
+    info.querySelector('.acts').append(button('Load', 'primary', () => openLoad(m.name), jobRunning() || underway() || m.state === 'unsaved', null, true));
     row.append(img, info); list.append(row);
   }
 }
@@ -389,7 +652,7 @@ function openLoad(name) {
 }
 $('loadcancel').onclick = () => $('loadsheet').classList.remove('show');
 function load(name, search) {
-  view.fitted = false; gridVersion = -1; goal = null; preview = null; hint('');
+  view.fitted = false; gridVersion = -1; preview = null; hint('');
   return action({ action: 'load', name, search });
 }
 $('loadgo').onclick = () => {
@@ -432,12 +695,22 @@ function showStatus() {
   $('mapname').textContent = active ? s.map || '' : '';
   if (mode() === 'mapping') setHtml('loc', pill('warn', 'Mapping'));
   else setHtml('loc', active ? (localized() ? pill('ok', 'Localized') : pill('err', 'Not localized')) : pill('off', 'No map loaded'));
+  const failed = m.state === 'paused' && m.reason === 'failed';
   const nav = active ? {
-    sending: pill('ok', 'Navigating'), driving: pill('ok', 'Navigating'), relocalizing: pill('warn', 'Relocalizing'),
-    arrived: pill('ok', 'Arrived'), failed: pill('err', 'Could not reach the goal'),
+    running: pill('ok', 'Navigating'), dwelling: pill('ok', 'Waiting'), relocalizing: pill('warn', 'Relocalizing'),
+    paused: failed ? pill('err', `Could not reach waypoint ${m.index + 1}`)
+      : m.reason === 'stalled' ? pill('err', `Car stalled at waypoint ${m.index + 1}`) : pill('off', 'Paused'),
+    arrived: pill('ok', 'Arrived'),
   }[m.state] || '' : '';
   setHtml('nav', nav);
-  $('left').textContent = active && m.state === 'driving' && m.left != null ? `${m.left.toFixed(1)} m left` : '';
+  const where = [];
+  // The pill already names the waypoint the car is stuck at.
+  const named = m.state === 'paused' && m.reason !== 'user';
+  if (active && underway() && m.count > 1 && !named) where.push(`Waypoint ${m.index + 1} of ${m.count}`);
+  if (active && underway() && m.loops !== 1) where.push(m.loops === 0 ? `Loop ${m.loop}` : `Loop ${m.loop} of ${m.loops}`);
+  if (active && m.state === 'running' && m.left != null) where.push(`${m.left.toFixed(1)} m left`);
+  if (active && m.state === 'dwelling' && m.dwell_left != null) where.push(`${Math.ceil(m.dwell_left)} s`);
+  $('left').textContent = where.join(' \u00b7 ');
   const parts = [];
   if (active && s.scan_fit) parts.push(`Fit ${(parseFloat(s.scan_fit) * 100).toFixed(0)}%`);
   if (state.pose) parts.push(`x ${state.pose[0].toFixed(2)} y ${state.pose[1].toFixed(2)} ${(state.pose[2] * 180 / Math.PI).toFixed(0)} deg`);
@@ -468,8 +741,8 @@ $('more').onclick = () => {
 const drive = { held: new Set(), joy: { active: false, fwd: 0, turn: 0 }, last: '' };
 const DRIVE_KEYS = { KeyW: ['fwd', 1], ArrowUp: ['fwd', 1], KeyS: ['fwd', -1], ArrowDown: ['fwd', -1],
   KeyA: ['turn', -1], ArrowLeft: ['turn', -1], KeyD: ['turn', 1], ArrowRight: ['turn', 1] };
-// Nav2 drives while a goal is in progress; the panel waits.
-const canDrive = () => mode() === 'localization' && !navigating();
+// Nav2 drives during a mission; the panel waits, except while paused or relocalizing.
+const canDrive = () => mode() === 'localization' && !moving();
 function driveCommand() {
   if (drive.joy.active) return { fwd: +drive.joy.fwd.toFixed(3), turn: +drive.joy.turn.toFixed(3) };
   const sum = (axis) => [...drive.held].filter((h) => h.startsWith(axis + ':')).reduce((a, h) => a + parseInt(h.split(':')[1]), 0);
@@ -543,9 +816,26 @@ async function poll() {
       costmapVersion = s.costmap_version;
       costmap = await fetchCostmap();
     }
-    showStatus(); showJob(); showDrive();
     const m = mission();
-    const key = [mode(), localized(), jobRunning(), tool, !!goal, !!preview, m.state].join('|');
+    if (m.mission && m.version !== planVersion && !editTimer) {
+      planVersion = m.version;
+      edited = false;
+      plan = { loops: m.mission.loops, waypoints: m.mission.waypoints };
+      if (selected >= plan.waypoints.length) selected = -1;
+      renderWps();
+    }
+    // The first leg starts at the car: plan again once it has moved half a meter.
+    const p0 = preview && preview.pose, p = s.pose;
+    if (!underway() && plan.waypoints.length && !previewTimer && !previewing && localized() && p
+        && (!preview || !p0 || Math.hypot(p[0] - p0[0], p[1] - p0[1]) > 0.5)) {
+      previewTimer = setTimeout(planPreview, 0);
+    }
+    showStatus(); showJob(); showDrive();
+    // Rebuilt only when the mission moves on, so a press on a row is not lost.
+    const wk = [m.state, m.index, m.version].join('|');
+    if (wpsOpen && wk !== wpsKey) { wpsKey = wk; renderWps(); }
+    if (wpsOpen) paintWps();
+    const key = [mode(), localized(), jobRunning(), tool, planned(), m.state, m.index, m.stalled].join('|');
     if (key !== renderKey) { renderKey = key; render(); }
     draw();
   } catch (err) {
