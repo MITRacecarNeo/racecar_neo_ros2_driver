@@ -162,6 +162,8 @@ def test_pages_lists_home_and_every_app(files, monkeypatch):
     assert pages[0]['id'] == 'home' and pages[0]['path'] == 'home'
     ids = [p['id'] for p in pages]
     assert 'files' in ids and 'mapview' in ids
+    conn = next(p for p in pages if p['id'] == 'connections')
+    assert (conn['route'], conn['sub'], conn['path']) == ('home', 'connections', 'home')
     assert {p['state'] for p in pages} == {'active'}
 
 

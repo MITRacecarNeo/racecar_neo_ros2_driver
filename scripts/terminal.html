@@ -24,6 +24,7 @@
   .pane .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
   .pane .bar button { font: 600 12px/18px var(--rcn-font-sans); padding: 1px 6px; border-radius: 4px; border: 1px solid var(--rcn-steel); background: transparent; color: var(--rcn-text); cursor: pointer; }
   .pane .bar button:hover { border-color: var(--rcn-orange); }
+  .pane .bar button:disabled { opacity: 0.4; cursor: default; border-color: var(--rcn-steel); }
   .presets { position: relative; }
   #preset-menu { position: absolute; right: 0; top: calc(100% + 8px); z-index: 20; min-width: 240px; background: var(--rcn-surface); border: 1px solid var(--rcn-steel); border-radius: var(--rcn-radius-md); padding: var(--rcn-space-2); }
   #preset-menu .group { font: 700 11px/18px var(--rcn-font-sans); text-transform: uppercase; color: var(--rcn-text-muted); padding: 6px 6px 2px; }
@@ -67,7 +68,7 @@
 // Layout: a tree of terminals and splits, saved on the car so a reload or another
 // device opens the same terminals. Terminals are placed absolutely from the tree and
 // never moved in the page: moving an iframe reloads it and reconnects.
-const { $, esc, store } = RcnUi;
+const { $, esc, store, icon } = RcnUi;
 const MAX_PANES = 8;
 const { LOST } = RcnApi;
 // Scroll bar inside each terminal in the theme's colors: steel thumb, orange on hover.
@@ -120,7 +121,7 @@ function makePane(id) {
   el.innerHTML = `<div class="bar"><span class="title"></span>
     <button data-act="row" title="Split right (Ctrl+Shift+E)">Split right</button>
     <button data-act="col" title="Split down (Ctrl+Shift+O)">Split down</button>
-    <button data-act="max" title="Maximize (Ctrl+Shift+X)">Max</button>
+    <button data-act="max" title="Maximize (Ctrl+Shift+X)">Maximize</button>
     <button data-act="export" title="Save the text to a file">Export</button>
     <button data-act="close" title="Close (Ctrl+Shift+W)">Close</button></div>`;
   const frame = document.createElement('iframe');
@@ -207,8 +208,11 @@ function render() {
     el.hidden = maximized !== null && maximized !== p.id;
     setRect(el, maximized === p.id ? [0, 0, 100, 100] : p.rect);
     el.querySelector('.title').textContent = p.node.title || `Terminal ${i + 1}`;
-    el.querySelector('[data-act="max"]').textContent = maximized === p.id ? 'Restore' : 'Max';
+    el.querySelector('[data-act="max"]').textContent = maximized === p.id ? 'Restore' : 'Maximize';
+    // The last terminal stays open: its Close is grayed out.
+    el.querySelector('[data-act="close"]').disabled = out.panes.length === 1;
   });
+  $('reset').disabled = out.panes.length === 1;
   document.querySelectorAll('.divider').forEach((d) => d.remove());
   if (maximized) return;
   for (const d of out.dividers) {
@@ -268,7 +272,7 @@ function split(id, dir) {
   save();
 }
 async function closePane(id) {
-  if (ids(layout).length === 1) { say('The last terminal stays open.'); return; }
+  if (ids(layout).length === 1) return;
   if (!confirm('Close this terminal?')) return;
   layout = removePane(layout, id);
   render();
@@ -277,7 +281,7 @@ async function closePane(id) {
 }
 async function reset() {
   const [keep, ...rest] = ids(layout);
-  if (!rest.length) { say('Only Terminal 1 is open.'); return; }
+  if (!rest.length) return;
   if (!confirm('Close every terminal except Terminal 1?')) return;
   const node = place(layout, 0, 0, 100, 100, { panes: [], dividers: [] }).panes[0].node;
   layout = { ...node, id: keep };
@@ -327,13 +331,13 @@ async function exportText(id) {
 // Presets: built-in layouts with start commands, and this car's own.
 let presets = { builtin: [], user: [] };
 function presetRow(p, kind) {
-  const del = kind === 'user' ? `<button class="delete" data-del="${esc(p.name)}" title="Delete">x</button>` : '';
+  const del = kind === 'user' ? `<button class="delete" data-del="${esc(p.name)}" title="Delete" aria-label="Delete">${icon('cross')}</button>` : '';
   return `<div class="row"><button data-apply="${esc(p.name)}" data-kind="${kind}">${esc(p.name)}</button>${del}</div>`;
 }
 function renderPresets() {
   const mine = presets.user.length
     ? `<div class="group">Your presets</div>${presets.user.map((p) => presetRow(p, 'user')).join('')}` : '';
-  $('preset-menu').innerHTML = `<div class="group">Built in</div>${presets.builtin.map((p) => presetRow(p, 'builtin')).join('')}${mine}
+  $('preset-menu').innerHTML = `<div class="group">Built-in</div>${presets.builtin.map((p) => presetRow(p, 'builtin')).join('')}${mine}
     <hr><div class="row"><button data-op="save">Save layout as preset</button></div>
     <div class="row"><button data-op="export">Export presets</button></div>
     <div class="row"><button data-op="import">Import presets</button></div>`;
@@ -375,10 +379,10 @@ async function savePreset() {
   toggleMenu(false);
   const name = prompt('Preset name');
   if (!name || !name.trim()) return;
-  if (presets.user.some((p) => p.name === name.trim()) && !confirm(`Replace ${name.trim()}?`)) return;
+  if (presets.user.some((p) => p.name === name.trim()) && !confirm(`Replace the preset ${name.trim()}?`)) return;
   try {
     const r = await post('api/presets/save', { name: name.trim(), layout });
-    if (r.ok) { presets = await r.json(); renderPresets(); say(`Saved ${name.trim()}.`); }
+    if (r.ok) { presets = await r.json(); renderPresets(); }
     else say((await r.json()).message);
   } catch (err) { say(LOST); }
 }
@@ -397,7 +401,7 @@ $('import-file').onchange = async () => {
     const list = JSON.parse(await file.text());
     const r = await post('api/presets/import', { presets: list });
     const o = await r.json();
-    if (r.ok) { presets = o; renderPresets(); say(`Imported ${o.imported} presets.`); } else say('That file has no presets.');
+    if (r.ok) { presets = o; renderPresets(); } else say('That file has no presets.');
   } catch (err) { say('That file has no presets.'); }
 };
 

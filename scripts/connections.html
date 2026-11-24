@@ -279,7 +279,8 @@ function renderPing(p) {
     rows.push(['Result', PING[p.result]]);
     if (p.result !== 'no-name') rows.push(['Received', `${p.received} of ${p.sent}`]);
     if (p.avg_ms != null) rows.push(['Average', `${p.avg_ms} ms`]);
-    if (p.device) rows.push(['Interface', p.device]);
+    const IFACE_WORDS = { wlan0: 'WiFi', wlan1: 'Access point', eth0: 'Ethernet' };
+    if (p.device) rows.push(['Interface', IFACE_WORDS[p.device] || p.device]);
   }
   $('pinginfo').innerHTML = dl(rows);
 }

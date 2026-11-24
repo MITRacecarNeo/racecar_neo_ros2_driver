@@ -544,3 +544,21 @@ class TestPresetApi:
         html = (Path(__file__).resolve().parent.parent / 'scripts' / 'terminal.html').read_text()
         assert 'id="presets"' in html and 'data-act="export"' in html
         assert 'Replace the open terminals with ${name}?' in html
+
+
+GONE_TERMINAL = (
+    "'The last terminal stays open.'", "'Only Terminal 1 is open.'", 'Saved ${name.trim()}.',
+    'Imported ${o.imported} presets.', '>Max<', 'Built in<', 'Wait a minute, then try again',
+    'title="Delete">x<',
+)  # fmt: skip
+
+
+def test_removed_wordings_stay_out():
+    scripts = Path(__file__).resolve().parent.parent / 'scripts'
+    for name in ('terminal.html', 'terminal_login.html'):
+        text = (scripts / name).read_text()
+        for gone in GONE_TERMINAL:
+            assert gone not in text, (name, gone)
+    server = (scripts / 'terminal.py').read_text()
+    for gone in ("'Bad request.'", "'Bad layout.'", "'Bad preset.'", 'The terminal is starting.'):
+        assert gone not in server, gone

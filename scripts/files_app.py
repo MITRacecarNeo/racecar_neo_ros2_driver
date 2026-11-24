@@ -192,6 +192,9 @@ def pages_view() -> list[dict[str, Any]]:
     home = apps.registry()['home']
     listed = [{'id': 'home', 'name': 'Home', 'group': 'core', 'unit': home['unit'],
                'path': home['path'], 'port': home['port']}]  # fmt: skip
+    # Connections is a page of the home server, not an app of its own.
+    listed.append({**listed[0], 'id': 'connections', 'name': 'Connections', 'route': 'home',
+                   'sub': 'connections'})  # fmt: skip
     listed += [
         {k: a[k] for k in ('id', 'name', 'group', 'unit', 'path', 'port')} for a in apps.all_apps()
     ]

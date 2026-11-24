@@ -62,7 +62,7 @@ pre.code .ln { display: inline-block; width: 3.5em; color: #6b6a7a; user-select:
   <button class="rcn-btn quiet small" id="pagestoggle" aria-label="Pages"></button>
 </header>
 <nav class="pages" aria-label="Pages">
-  <div class="top"><b>Pages</b><button class="rcn-btn quiet small pages-close" id="pagesclose" aria-label="Close"></button></div>
+  <div class="top"><b>Pages</b><button class="rcn-btn quiet small pages-close" id="pagesclose" aria-label="Close pages"></button></div>
   <div id="pages"></div>
 </nav>
 <main>
@@ -88,11 +88,12 @@ async function loadPages() {
   const { pages } = await (await fetch('api/pages')).json();
   const named = RcnRoute.named;
   $('pages').innerHTML = pages.map((p) => {
-    const addr = named ? `/${p.path}/` : `:${p.port}`;
+    const sub = p.sub ? `${p.sub}` : '';
+    const addr = named ? `/${p.path}/${sub}` : `:${p.port}${sub ? `/${sub}` : ''}`;
     const row = `<span class="dot ${p.state === 'active' ? 'active' : ''}"></span><span>${esc(p.name)}</span>
       <span class="addr">${esc(addr)}</span>`;
     if (p.state !== 'active') return `<div class="off">${row}</div>`;
-    return `<a href="${esc(RcnRoute.app(p.id))}" target="_blank" title="${esc(named ? `Port ${p.port}` : `/${p.path}/`)}">${row}</a>`;
+    return `<a href="${esc(RcnRoute.app(p.route || p.id, sub))}" target="_blank" title="${esc(named ? `Port ${p.port}` : `/${p.path}/${sub}`)}">${row}</a>`;
   }).join('');
 }
 

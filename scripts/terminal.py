@@ -595,7 +595,7 @@ def make_handler(ctx: Context) -> type[BaseHTTPRequestHandler]:
             try:
                 body = self.read_json()
             except ValueError:
-                self.send_json({'message': 'Bad request.'}, 400)
+                self.send_json({'message': 'Reload the page.'}, 400)
                 return
             if path == '/api/layout':
                 try:
@@ -603,7 +603,7 @@ def make_handler(ctx: Context) -> type[BaseHTTPRequestHandler]:
                         int(body.get('version', -1)), body.get('layout')
                     )
                 except (ValueError, TypeError):
-                    self.send_json({'message': 'Bad layout.'}, 400)
+                    self.send_json({'message': 'Reload the page.'}, 400)
                     return
                 self.send_json(state, 200 if saved else 409)
                 return
@@ -642,9 +642,9 @@ def make_handler(ctx: Context) -> type[BaseHTTPRequestHandler]:
                     ok = ctx.presets.delete(str(body.get('name', '')))
                     self.send_json(ctx.presets.listing(), 200 if ok else 404)
                 else:
-                    self.send_json({'message': 'Not found.'}, 404)
+                    self.send_json({'message': 'Reload the page.'}, 404)
             except (ValueError, TypeError):
-                self.send_json({'message': 'Bad preset.'}, 400)
+                self.send_json({'message': 'Reload the page.'}, 400)
 
         def _scrollback(self, body: dict[str, Any]) -> None:
             """Return a terminal's scrollback for download and keep a copy on the car."""
@@ -714,7 +714,7 @@ def make_handler(ctx: Context) -> type[BaseHTTPRequestHandler]:
                 upstream = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 upstream.connect(str(ctx.sock))
             except OSError:
-                self.send(503, b'The terminal is starting. Reload in a moment.', 'text/plain')
+                self.send(503, b'Reload in a moment.', 'text/plain')
                 return
             upstream.sendall(request)
             self.close_connection = True

@@ -31,7 +31,7 @@
 <script>
 const MESSAGES = {
   password: 'Wrong password.',
-  locked: 'Too many tries. Wait a minute, then try again.',
+  locked: 'Too many tries. Try again in a minute.',
 };
 const e = new URLSearchParams(location.search).get('e');
 document.getElementById('msg').textContent = MESSAGES[e] || '';
