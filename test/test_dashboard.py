@@ -332,19 +332,21 @@ class FakeRun:
 class TestHome:
     def test_apps_cover_every_dashboard(self, dashboard):
         ports = [a['port'] for a in dashboard.APPS]
-        assert ports == [8088, 8888, 8089, 8086, 8081, 8082, 8083, 8085, 8084]
+        assert ports == [8088, 8888, 8089, 8086, 8087, 8081, 8082, 8083, 8085, 8084]
         groups = {g: [a['id'] for a in dashboard.APPS if a['group'] == g]
                   for g in ('core', 'tools', 'autonomy')}  # fmt: skip
         assert groups == {
             'core': ['profile', 'jupyter', 'files'],
-            'tools': ['terminal', 'webteleop', 'linefollow', 'wallfollow', 'camlabel'],
+            'tools': ['terminal', 'browser', 'webteleop', 'linefollow', 'wallfollow', 'camlabel'],
             'autonomy': ['mapview'],
         }
         assert next(a for a in dashboard.APPS if a['id'] == 'mapview')['name'] == 'Mapper'
         exclusive = [a['id'] for a in dashboard.APPS if a['exclusive']]
         assert exclusive == ['webteleop', 'linefollow', 'wallfollow']
         startable = [a['id'] for a in dashboard.APPS if a['startable']]
-        assert startable == ['terminal', 'webteleop', 'linefollow', 'wallfollow', 'camlabel']
+        assert startable == [
+            'terminal', 'browser', 'webteleop', 'linefollow', 'wallfollow', 'camlabel'
+        ]
 
     def test_every_app_icon_exists(self, dashboard):
         scripts = Path(__file__).resolve().parent.parent / 'scripts'
@@ -1378,7 +1380,7 @@ def test_footer_names_the_car(dashboard):
 
 def test_planned_apps_show_as_placeholders(dashboard):
     html = (Path(dashboard.__file__).parent / 'dashboard.html').read_text()
-    for name in ('Files', 'Browser', 'Planner', 'Modules', 'Scripter'):
+    for name in ('Files', 'Planner', 'Modules', 'Scripter'):
         assert f"name: '{name}'" in html, name
     assert '.app.planned .glyph { border-style: dashed;' in html
     assert '!apps.some((a) => a.name === p.name)' in html
@@ -1433,8 +1435,8 @@ class TestConnectionJob:
 def test_connections_page_text(dashboard):
     html = (Path(dashboard.__file__).parent / 'connections.html').read_text()
     assert "'Sign-in needed'" in html
-    # No sign-in button until the Browser app; no eth0 or access point on/off.
-    assert 'portal' not in html.replace("portal: 'Sign-in needed'", '').replace('.chip.portal', '')
+    # Sign in opens the Browser, only while the WiFi row says Sign-in needed.
+    assert "state === 'portal'" in html and "RcnRoute.app('browser')" in html
     assert html.count('class="switch"') == 1
     # Confirms ask only the question; graying shows a running change.
     gone_text = (

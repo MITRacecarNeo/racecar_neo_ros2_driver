@@ -27,6 +27,7 @@ This package is the v2 successor to [`racecar-neo-ros2-backend`](https://github.
 - [Car Profile app](#car-profile-app)
 - [Files app](#files-app)
 - [Connections page](#connections-page)
+- [Browser app](#browser-app)
 - [Maps](#maps)
 - [Jupyter notebooks](#jupyter-notebooks)
   - [Student library and labs](#student-library-and-labs)
@@ -266,11 +267,13 @@ racecar service logs teleop # journalctl -u racecar-teleop -f
 racecar service start wallfollow  # a lab dashboard; stops the other /drive publishers
 racecar service enable wallfollow # enable one unit; bare `enable` covers the core six
 
-racecar setup all                       # run setup_all.sh, all 12 phases (--from N, --skip N,M)
+racecar setup all                       # run setup_all.sh, all 14 phases (--from N, --skip N,M)
 racecar setup services                  # install and enable the core units
 racecar setup networking --ssid=racecar-neo-2   # configure eth0 addressing + ALFA-dongle AP
 racecar setup networking --show         # print persisted overrides
 racecar setup dashboards                # install the lab dashboards' units
+racecar setup browser                   # install the Browser app (Xvfb, x11vnc, noVNC, Firefox policy)
+racecar setup web                       # the port-80 web server
 racecar setup realsense                 # offline D435i firmware flash
 
 racecar udev                        # re-install the udev rules
@@ -926,6 +929,24 @@ The Connections tile in Core, or Configure in the 8080 network menu, opens
   time, and the interface used.
 
 A change to the network the browser is on asks first.
+
+## Browser app
+
+The Browser tile in Tools opens `http://<robot>/browser/` (port 8087): Firefox
+running on the car, seen and used from the page. It signs the car in to a lab
+WiFi login page, which only works from the car itself. When the Connections
+page shows Sign-in needed, its Sign in button opens it.
+
+- Log in with the racecar password, from the car's access point, as for the
+  Terminal.
+- On a phone, Keyboard opens the phone's keyboard.
+- Firefox starts with the first viewer and stops 10 minutes after the last one
+  leaves. Clear apps stops it at once.
+- `racecar setup browser` installs it (phase 13 of `setup_all.sh`): Xvfb,
+  x11vnc, noVNC, websockify, and Firefox from Mozilla's APT repository (the
+  snap cannot open a display in a service). Firefox's policy file blocks
+  `file://` pages and `about:config` and turns off updates and telemetry, for
+  every Firefox on the car.
 
 ## Files app
 

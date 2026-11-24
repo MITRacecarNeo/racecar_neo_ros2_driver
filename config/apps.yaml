@@ -79,6 +79,17 @@ apps:
     startable: true
     desc: Command line on the car
 
+  - id: browser
+    name: Browser
+    icon: globe
+    port: 8087
+    path: browser
+    group: tools
+    unit: racecar-browser
+    exclusive: false
+    startable: true
+    desc: Web browser on the car
+
   - id: webteleop
     name: Web Teleop
     icon: gamepad

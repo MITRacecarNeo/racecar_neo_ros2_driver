@@ -60,6 +60,7 @@ LOCK_FAILURES = 5
 LOCK_SEC = 60.0
 # NetworkManager's shared (access point) subnet on the car.
 AP_NETWORK = ipaddress.ip_network('10.42.0.0/24')
+AP_DEVICE = 'wlan1'
 PANE_BASE = '/pane'
 TTYD_RESTART_SEC = 2.0
 IDLE_CHECK_SEC = 5.0
@@ -151,7 +152,18 @@ def client_allowed(ip: str, allow_lan: bool) -> bool:
         addr = ipaddress.ip_address(ip)
     except ValueError:
         return False
-    return addr.is_loopback or addr in AP_NETWORK
+    if addr.is_loopback or addr in AP_NETWORK:
+        return True
+    # A phone on the access point may reach the web server over IPv6 link-local:
+    # the neighbor table names the interface it came in on.
+    return addr.version == 6 and addr.is_link_local and via_interface(str(addr)) == AP_DEVICE
+
+
+def via_interface(ip: str) -> str:
+    """Return the interface the neighbor table holds `ip` on, or ''."""
+    import netconfig
+
+    return netconfig.via_device(ip, {})
 
 
 def pane_target(path: str) -> tuple[str, str] | None:

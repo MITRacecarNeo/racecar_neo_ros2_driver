@@ -109,6 +109,11 @@ All notable changes to this project will be documented in this file. The format 
   library and the data root; a workspace link elsewhere is refused. The racecar account may restart the access point
   (`49-racecar-network.rules`, `wifi.share.protected`). Passwords go to NetworkManager over D-Bus,
   never on a command line.
+- Browser app (`scripts/browser_app.py`, `racecar-browser.service`, port 8087,
+  Tools): Firefox on the car in a virtual screen, seen and used from a page
+  (noVNC), to sign the car in to a WiFi login page; the Connections page's
+  Sign in button opens it. `racecar setup browser` installs it (phase 13 of
+  `setup_all.sh`, now 14 phases) with Firefox from Mozilla's APT repository.
 - Files app (`scripts/files_app.py`, `racecar-files.service`, port 8089, Core
   group): the car's pages with their addresses and state, and a read-only
   browser of `~/jupyter_ws` (code highlighted, Markdown and notebooks
@@ -157,6 +162,8 @@ All notable changes to this project will be documented in this file. The format 
   (`racecar_neo_ros2_driver/check_words.py`).
 - `racecar setup networking` keeps the access point's password unless
   `RACECAR_AP_PSK` is set.
+- The Terminal (and the Browser) accept a phone on the access point that
+  reaches the car over IPv6 link-local.
 - Pages link relative to their own address (`<base href>`), so they work
   under a name path and on their port. JupyterLab serves under `/jupyter/`
   on port 8888 as well (`--ServerApp.base_url`); `:8888/` and `:8888/lab`

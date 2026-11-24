@@ -242,7 +242,7 @@ __RC_SVC_HELP__
             case "$phase" in
                 "")
                     echo "usage: racecar setup <phase>" >&2
-                    echo "  phases: all, car, services, networking, realsense, dashboards" >&2
+                    echo "  phases: all, car, services, networking, realsense, dashboards, browser, web" >&2
                     return 2
                     ;;
                 all)
@@ -256,8 +256,12 @@ __RC_SVC_HELP__
                     # The core units (phase 11 of setup_all.sh), e.g. after an upgrade.
                     bash "$pkg_dir/scripts/setup_services.sh" "$@"
                     ;;
+                browser)
+                    # The Browser app: Xvfb, x11vnc, noVNC, Firefox policy, unit (phase 13 of setup_all.sh).
+                    bash "$pkg_dir/scripts/setup_browser.sh" "$@"
+                    ;;
                 web)
-                    # The port-80 web server: every app at /<name>/ (phase 13 of setup_all.sh).
+                    # The port-80 web server: every app at /<name>/ (phase 14 of setup_all.sh).
                     bash "$pkg_dir/scripts/setup_web.sh" "$@"
                     ;;
                 dashboards)
@@ -395,7 +399,7 @@ __RC_NET_HELP__
                     ;;
                 *)
                     echo "racecar setup: unknown phase '$phase'" >&2
-                    echo "  phases: all, car, services, networking, realsense, dashboards" >&2
+                    echo "  phases: all, car, services, networking, realsense, dashboards, browser, web" >&2
                     return 2
                     ;;
             esac
@@ -1542,7 +1546,7 @@ _racecar_complete() {
             ;;
         setup)
             if [[ $COMP_CWORD -eq 2 ]]; then
-                COMPREPLY=( $(compgen -W "all car services networking realsense dashboards web" -- "$cur") )
+                COMPREPLY=( $(compgen -W "all car services networking realsense dashboards browser web" -- "$cur") )
             elif [[ "${COMP_WORDS[2]}" == "networking" ]]; then
                 COMPREPLY=( $(compgen -W "--ssid= --id= --psk= --channel= --ap-addr= --ap-iface= --eth-static= --eth-mode= --show --reset --help" -- "$cur") )
             elif [[ "${COMP_WORDS[2]}" == "dashboards" ]]; then

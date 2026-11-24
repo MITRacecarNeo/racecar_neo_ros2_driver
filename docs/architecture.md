@@ -265,6 +265,23 @@ connections.html ──GET /api/connections──▶ netconfig.view ──▶ nm
 `view` names the device the request arrives on (`via`) from the client
 address, so the page warns before a change to that link.
 
+### Browser app
+
+`scripts/browser_app.py` (`racecar-browser.service`, port 8087, tools group),
+pages `scripts/browser.html` and `scripts/browser_login.html`. Login, lockout
+and the access point rule come from `scripts/terminal.py`.
+
+```
+browser.html (noVNC core) ──WebSocket /websockify──▶ browser_app.py (session, Origin)
+   ──▶ websockify 127.0.0.1:6087 ──▶ x11vnc 127.0.0.1:5987 ──▶ Xvfb :87 ◀── Firefox (/usr/lib/firefox)
+```
+
+`Screen` starts Xvfb, Firefox, x11vnc and websockify with the first viewer
+and stops them IDLE_STOP_SEC (10 min) after the last one; Firefox restarts if
+it was closed. Its profile is `~/.cache/racecar-browser/firefox`, with a
+`user.js` that skips the first-run screens. `/novnc/` serves only noVNC's
+`core/` and `vendor/` files.
+
 ### Files app
 
 `scripts/files_app.py` (`racecar-files.service`, port 8089, core group),

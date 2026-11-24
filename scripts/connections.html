@@ -127,7 +127,7 @@ function render() {
   $('wifipower').checked = w.on;
   const state = w.connected ? w.internet : 'none';
   $('wifinow').innerHTML = w.connected
-    ? `<b>${esc(w.network)}</b>${w.signal != null ? bars(w.signal) : ''}<span class="chip ${state}">${INTERNET[state]}</span><span class="dim">${esc(w.address)}</span>`
+    ? `<b>${esc(w.network)}</b>${w.signal != null ? bars(w.signal) : ''}<span class="chip ${state}">${INTERNET[state]}</span>${state === 'portal' ? `<a class="rcn-btn small" href="${esc(RcnRoute.app('browser'))}" target="_blank">Sign in</a>` : ''}<span class="dim">${esc(w.address)}</span>`
     : (w.on ? '<span class="chip">Not connected</span>' : '');
   $('visible').innerHTML = w.visible.filter((n) => !n.in_use).map((n, i) => `<button class="net" data-i="${w.visible.indexOf(n)}">
       ${bars(n.signal)}<span class="nm">${esc(n.ssid)}</span><span class="dim">${n.saved ? 'Saved' : n.security === 'open' ? 'Open' : ''}</span></button>`).join('');

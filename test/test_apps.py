@@ -108,7 +108,7 @@ class TestCli:
         rows = _cli(
             'list', '--where', 'startable=true', '--where', 'exclusive=false', '--fields', 'unit'
         )
-        assert rows == ['racecar-terminal', 'racecar-camlabel']
+        assert rows == ['racecar-terminal', 'racecar-browser', 'racecar-camlabel']
 
     def test_runs_without_the_package_on_the_path(self, tmp_path):
         # The shell scripts call it by path, before the workspace is built.
