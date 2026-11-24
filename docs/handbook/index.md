@@ -30,7 +30,7 @@ Follow the steps in order on a new car.
 | Step | Task | Page |
 | ---- | ---- | ---- |
 | 1 | Operating system on the SD card | [Installation](installation.md#os-image) |
-| 2 | needrestart, upgrade, driver clone | [Installation](installation.md#driver-install) |
+| 2 | Driver install | [Installation](installation.md#driver-install) |
 | 3 | Hardware fitting | [Installation](installation.md#hardware-fitting) |
 | 4 | Car identity | [Installation](installation.md#identity) |
 | 5 | Hardware connection check | [Installation](installation.md#hardware) |

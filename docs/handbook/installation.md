@@ -30,13 +30,11 @@ The car runs Ubuntu Desktop 24.04 LTS (64-bit) on a Raspberry Pi 5.
 13. Put the SD card into the Pi.
 14. Connect the battery and turn on the power switch.
 
-Ubuntu Desktop can ignore the Imager settings. If the Pi shows a setup
-screen on first boot, connect a monitor, keyboard and mouse, and enter the
-same user name, password and WiFi network there.
+If the Pi shows a setup screen on first boot, connect a monitor, keyboard
+and mouse. Enter the same user name, password and WiFi network there.
 
-Find the car's address on your network from your router, or run
-`ip neigh` on another computer on the same network. Log in from the second
-computer:
+Find the car's address in your router's device list. Or run `ip neigh` on
+a computer on the same network. Log in from the second computer:
 
 ```sh
 ssh racecar@<address>
@@ -76,7 +74,7 @@ Pass: the setup ends with a request to reboot.
 
 Fail: the setup stops at the failed part and prints the command that
 resumes there, for example `bash scripts/setup_all.sh --from 5`. Fix the
-problem it names, then run that command.
+problem it names. Then run that command.
 
 ## Hardware fitting {#hardware-fitting}
 
@@ -119,11 +117,11 @@ to skip it, or q to stop. Every step checks the car first, so a step already
 done shows `[DONE]`. Stop at any point and run `racecar setup car` again
 later to continue.
 
-Run it over the WiFi network (`wlan0`) or at the car's own screen. The
-access point step changes the car's own network, and the eth0 change can
-drop a session that arrives over a cable.
+Run it over the lab WiFi (`wlan0`) or at the car's own screen. Do not run
+it over the car's access point or an Ethernet cable.
 
-Until every step is done, the 8080 home page keeps the utility apps closed.
+Until every step is done, the Tools and Autonomy apps on the 8080 home page
+stay locked.
 
 ### Car identity {#identity}
 
@@ -145,9 +143,12 @@ camera, the gamepad, the Coral card and the WiFi dongle.
 
 Pass: no device is missing.
 
-Fail: the detail names each missing device. Shut down the car, turn off the
-power switch, and check that part's cable. If the gamepad is missing,
-unplug its receiver and plug it back in.
+Fail: the detail names each missing device.
+
+1. Shut down the car.
+2. Turn off the power switch.
+3. Check the cable of each missing part.
+4. If the gamepad is missing, unplug its receiver and plug it back in.
 
 ### NVMe data drive {#nvme}
 
@@ -157,10 +158,14 @@ go there.
 
 Pass: the detail shows the data folder on the drive.
 
-Fail: `no drive found` means the drive is not seen. Shut down the car, turn
-off the power switch, and reseat the drive and its cable. A drive that
-holds other data is refused; `racecar disk format` erases it after you type
-its serial number.
+Fail: `no drive found` means the drive is not seen.
+
+1. Shut down the car.
+2. Turn off the power switch.
+3. Reseat the drive and its cable.
+
+A drive that holds other data is refused. To erase it, run
+`racecar disk format` and type the drive's serial number.
 
 ### Access point {#access_point}
 
@@ -171,7 +176,7 @@ eth0 port gets the address `192.168.52.(200 + number)`.
 Pass: the access point runs with this car's number.
 
 Fail: `not running` means the dongle is missing or the network did not
-start. Check the dongle, then run the step again.
+start. Check the dongle. Then run the step again.
 
 ### Reboot {#reboot}
 
@@ -191,14 +196,14 @@ driver needs (`config/firmware.yaml`).
 
 1. Connect the car to the internet.
 2. Connect the Teensy USB cable to the Pi.
-3. Run the step. It downloads the firmware release, checks the file, and
-   flashes it. The first try often fails. The step tries up to three times.
+3. Run the step. It downloads and flashes the firmware, with up to three
+   tries.
 
 Pass: the step prints `Firmware 0.9.2 is running.`, and the checklist shows
 the installed version.
 
 Fail: `no version read` means teleop is not running. Run
-`racecar service restart teleop` and wait 10 seconds. A failed download
+`racecar service restart teleop`. Wait 10 seconds. A failed download
 needs the internet. A failed flash needs the Teensy USB cable.
 
 ### ESC setup {#esc}
@@ -219,8 +224,8 @@ flashes the camera firmware when the version differs from
 
 Pass: the library is installed and the camera firmware matches.
 
-Fail: the library install needs the internet. Connect the car to WiFi and
-run the step again.
+Fail: the library install needs the internet. Connect the car to WiFi.
+Then run the step again.
 
 ### Car geometry {#measurements}
 
@@ -251,8 +256,8 @@ The step asks for the labels of the car's parts: the motor, the gears, the
 servo, the regulators and the battery. The fleet parts are the defaults.
 Press Enter to keep a default.
 
-The idle battery current is optional. Read it from the Current chip on the
-8080 home page with the car on a stand.
+The idle battery current is optional. Put the car on a stand. Read the
+current from the Current chip on the 8080 home page.
 
 Pass: every field but the idle current is filled.
 

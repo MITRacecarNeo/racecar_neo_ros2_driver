@@ -85,8 +85,8 @@ at.
 ## Loose contact checks {#loose-contact-checks}
 
 `shake` and `poke` look for a loose contact. Each asks for one movement at a
-time. Press Enter to start each movement. The test first records 5 seconds
-with the car still, then watches while you move.
+time. Press Enter to start each movement. Keep the car still for the
+first 5 seconds.
 
 Shake:
 
@@ -112,7 +112,7 @@ connector and run the check again.
 
 Each run saves a report to `health/<time>/` on the data drive:
 `report.md` to read, `report.json` for tools, and `samples.csv` with every
-5 V reading. The guided car setup reads the newest report.
+5 V reading.
 
 The gamepad sends about 15 messages a second, with short gaps. This is
 normal. See [Gamepad /joy rate](../troubleshooting.md#gamepad-joy-rate).

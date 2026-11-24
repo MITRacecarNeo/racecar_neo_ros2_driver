@@ -146,6 +146,9 @@ All notable changes to this project will be documented in this file. The format 
   names, whole words and plurals; no loading, waiting or success text where
   the page shows it; one Stop button on Calibration; setup questions without
   "(label)" notes. The command-line tools keep their wording.
+- Handbook wording: one instruction per sentence, no reasons attached to
+  steps, the 8080 names (Tools and Autonomy, Clear apps), "Car refit" and
+  "Rollback" sections.
 - `racecar setup networking` keeps the access point's password unless
   `RACECAR_AP_PSK` is set.
 - Pages link relative to their own address (`<base href>`), so they work

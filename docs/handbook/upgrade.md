@@ -29,7 +29,7 @@ Then:
    `bash scripts/setup_user_env.sh`.
 3. When the changelog says the services changed, run
    `sudo racecar setup dashboards`. This step asks for the password.
-4. Restart the services: `racecar service restart`. No password is needed.
+4. Restart the services: `racecar service restart`.
 5. When the changelog names a new student library, run
    `racecar library install`.
 6. Run `racecar setup car status`.
@@ -46,7 +46,7 @@ When the release needs new Teensy firmware, the `firmware` step shows
 `[OPEN]`. Flash it as the [Teensy firmware](installation.md#firmware) step
 shows.
 
-## Going back {#upgrade-back}
+## Rollback {#upgrade-back}
 
 1. Check out the previous tag: `git checkout vX.Y.Z`.
 2. Run `racecar build`.
