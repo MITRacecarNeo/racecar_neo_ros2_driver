@@ -1541,6 +1541,10 @@ def test_planned_apps_show_as_placeholders(dashboard):
     for name in ('Files', 'Modules', 'Scripter'):
         assert f"name: '{name}'" in html, name
     assert "name: 'Planner'" not in html
+    # Mapper, Planner, then these two in this order.
+    assert html.index("after: 'planner', name: 'Modules'") < html.index(
+        "after: 'planner', name: 'Scripter'"
+    )
     assert '.app.planned .glyph { border-style: dashed;' in html
     assert '!apps.some((a) => a.name === p.name)' in html
 
