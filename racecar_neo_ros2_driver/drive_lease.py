@@ -190,6 +190,11 @@ class DriveLease:
         found = self._fresh()
         return found is not None and found.owner == self.owner and found.pid != os.getpid()
 
+    def follows(self) -> bool:
+        """Return True while another process of this owner drives; always without the folder."""
+        found = self._fresh()
+        return not self.enforced or (self.joined() and found is not None and not found.share)
+
     def panel(self) -> DriveLease:
         """Return the lease a Drive panel takes while this one is shared."""
         return DriveLease(self.owner, self.name, self._where, self._clock, PANEL_RECORD)
@@ -216,8 +221,7 @@ class DriveGate:
     refused or cut off while moving stays off until its command is zero:
     trying again at every publish would start the car by itself the moment
     the other driver stopped. With `shared` (a Drive panel) it may also drive
-    under a lease whose holder waits for the operator, one panel at a time. It follows another
-    process of its own owner without taking the lease from it.
+    under a lease whose holder waits for the operator, one panel at a time.
     """
 
     def __init__(self, lease: DriveLease, keep: bool = True, shared: bool = False) -> None:
@@ -229,8 +233,6 @@ class DriveGate:
     def allow(self, moving: bool) -> bool:
         """Return True when this source may publish now."""
         started, self._moving = moving and not self._moving, moving
-        if self.lease.joined():
-            return True
         found = self.lease.holder()
         shared = self._panel is not None and found is not None and found.share
         lease = self._panel if shared and self._panel is not None else self.lease

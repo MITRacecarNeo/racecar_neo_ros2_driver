@@ -9,7 +9,9 @@ sends them and the car is localized; then stop_messages zeros, then nothing,
 so another /drive publisher is not fought while Nav2 is idle.
 
 Started with localization by launch/autonomy.launch.py; settings in
-config/nav_bridge.yaml.
+config/nav_bridge.yaml. It drives only while the navigator (nav_server_node)
+holds the drive lease and is not paused: a goal sent to Nav2 past it does not
+move the car.
 """
 
 from __future__ import annotations
@@ -21,7 +23,8 @@ from ackermann_msgs.msg import AckermannDriveStamped
 from diagnostic_msgs.msg import DiagnosticStatus
 from geometry_msgs.msg import Twist
 from racecar_neo_ros2_driver import car_profile, nav, steering
-from racecar_neo_ros2_driver.drive_lease import DriveGate, DriveLease
+from racecar_neo_ros2_driver.drive_lease import DriveLease
+from racecar_neo_ros2_driver.nav_runner import OWNER
 from racecar_neo_ros2_driver.params import declare_params
 from racecar_neo_ros2_driver.paths import config_dir
 from racecar_neo_ros2_driver.qos import LATCHED, SENSOR_LATEST
@@ -68,10 +71,10 @@ class Bridge:
     def on_command(self, mps: float, turn_rate: float, now: float) -> None:
         self.command, self.stamp = (mps, turn_rate), now
 
-    def tick(self, now: float) -> tuple[float, float] | None:
+    def tick(self, now: float, allowed: bool = True) -> tuple[float, float] | None:
         """Return (speed, steering) to publish, or None to stay quiet."""
         fresh = self.command is not None and now - self.stamp <= self.timeout
-        if fresh and self.localized:
+        if fresh and self.localized and allowed:
             self.zeros_left = self.stop_messages
             mps, turn_rate = self.command  # type: ignore[misc]
             return (
@@ -99,7 +102,7 @@ class NavBridgeNode(Node):
             int(params['stop_messages']),
         )
         self._pub = self.create_publisher(AckermannDriveStamped, '/drive', SENSOR_LATEST)
-        self.gate = DriveGate(DriveLease('nav', 'Navigation'), keep=False)
+        self.lease = DriveLease(OWNER, 'Navigation')
         self.create_subscription(Twist, '/nav/cmd_vel', self._cmd_cb, 10)
         self.create_subscription(DiagnosticStatus, '/autonomy/status', self._status_cb, LATCHED)
         self.create_timer(1.0 / float(params['rate_hz']), self._tick)
@@ -117,11 +120,10 @@ class NavBridgeNode(Node):
         self.bridge.localized = localized(msg)
 
     def _tick(self) -> None:
-        out = self.bridge.tick(time.monotonic())
-        if out is None:
-            self.gate.idle()
-            return
-        if not self.gate.allow(True):
+        allowed = self.lease.follows()
+        out = self.bridge.tick(time.monotonic(), allowed)
+        # The last zeros go out after the navigator has let go, unless another drives already.
+        if out is None or (not allowed and self.lease.holder() is not None):
             return
         msg = AckermannDriveStamped()
         msg.header.stamp = self.get_clock().now().to_msg()

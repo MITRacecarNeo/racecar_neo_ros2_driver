@@ -10,8 +10,10 @@ carries the actions out: ('send', number, x, y, yaw), ('cancel',),
 A command is a mapping: verb (start, check, pause, resume, skip, stop, edit,
 log), owner, name (who is driving, for the messages), and for start and edit a
 mission. A start while a mission runs, or while something else drives, is
-refused; check asks without starting. The other verbs are always taken. `log`
-(a key, '' for off) keeps the mission's events for the front end that sent it.
+refused; check asks without starting. The other verbs are always taken. Where
+the car fails or stalls, a mission started with `resumable` pauses; any other
+ends (failed, stalled) and gives the car back. `log` (a key, '' for off) keeps
+the mission's events for the front end that sent it.
 """
 
 from __future__ import annotations
@@ -30,6 +32,9 @@ YAW_TOLERANCE = 0.5  # rad, Nav2's yaw_goal_tolerance (config/nav2.yaml)
 ARRIVE_MARGIN_M = 0.15
 ARRIVE_MARGIN_RAD = 0.15
 RETRY_LIMIT = 10
+# Nav2 can end a goal sent right after a cancel together with the one canceled;
+# within this time of a cancel the goal is sent again.
+CANCEL_SETTLE_SEC = 2.0
 ACTIVE = ('running', 'dwelling', 'relocalizing')
 # The car is held for the operator: a Drive panel may move it meanwhile.
 SHARED = ('paused', 'relocalizing')
@@ -38,6 +43,7 @@ NO_MAP = 'Load a map first.'
 NOT_LOCALIZED = 'Wait until the car is localized.'
 STALLED = 'Car stalled.'
 UNKNOWN = 'Unknown command.'
+BAD_MISSION = 'Not a valid mission.'
 
 Pose = tuple[float, float, float]
 Action = tuple[Any, ...]
@@ -87,8 +93,9 @@ class Run:
     ('send', number, x, y, yaw), ('cancel',), ('limit', mps or None).
 
     States: idle, running, dwelling (waiting at a waypoint), relocalizing,
-    paused (reason 'user', 'failed' or 'stalled'), arrived, stopped. `number` counts the
-    goals sent to Nav2, so a late reply about an earlier one is ignored.
+    paused (reason 'user', 'failed' or 'stalled'), arrived, stopped, failed,
+    stalled. `number` counts the goals sent to Nav2, so a late reply about an
+    earlier one is ignored.
     """
 
     def __init__(self) -> None:
@@ -103,13 +110,19 @@ class Run:
         self.recoveries = 0
         self.number = 0
         self.dwell_until = 0.0
-        self.retries = 0  # resends of this waypoint after a success away from it
+        self.retries = 0  # resends of this waypoint
+        self._now = 0.0  # of the last tick
+        self._canceled = -1e9  # when a goal was last canceled
         self.stalled = False  # the motor's stall protection holds the car
         self.visited: set[int] = set()  # waypoints reached since the mission started
         self.log_on = False  # events are kept only while a recording runs
         self.events: list[dict[str, Any]] = []
 
     # -- helpers; the caller holds self.lock --
+
+    def _cancel(self) -> Action:
+        self._canceled = self._now
+        return ('cancel',)
 
     def _note(self, event: str, **fields: Any) -> None:
         if self.log_on:
@@ -146,7 +159,7 @@ class Run:
         self.number += 1
         self.state, self.reason, self.left = state, '', None
         self._note(state)
-        return [('cancel',), ('limit', None)]
+        return [self._cancel(), ('limit', None)]
 
     def _next(self, pose: Pose | None) -> list[Action]:
         assert self.mission is not None
@@ -177,7 +190,7 @@ class Run:
         if dwell > 0:
             self.number += 1
             self.state, self.left, self.dwell_until = 'dwelling', None, now + dwell
-            return [('cancel',)]
+            return [self._cancel()]
         return self._next(pose)
 
     # -- events --
@@ -194,7 +207,7 @@ class Run:
     ) -> list[Action]:
         """Advance on the car's pose, localization (None: not running) and stall protection."""
         with self.lock:
-            self.stalled = stalled
+            self.stalled, self._now = stalled, now
             if localized is None:
                 if self.state in ACTIVE or self.state == 'paused':
                     return self._end('stopped')
@@ -202,12 +215,12 @@ class Run:
             if self.state == 'running':
                 if stalled:
                     self._pause('stalled')
-                    return [('cancel',)]
+                    return [self._cancel()]
                 if not localized:
                     self.number += 1
                     self.state = 'relocalizing'
                     self._note('relocalizing')
-                    return [('cancel',)]
+                    return [self._cancel()]
                 if self._reached(pose):
                     return self._at_waypoint(now, pose)
             elif self.state == 'relocalizing':
@@ -228,14 +241,16 @@ class Run:
         with self.lock:
             if number != self.number or self.state != 'running':
                 return []
-            if status == 'succeeded':
-                if self._reached(pose, ARRIVE_MARGIN_M, ARRIVE_MARGIN_RAD):
-                    return self._at_waypoint(now, pose)
-                if self.retries < RETRY_LIMIT:
-                    self.retries += 1
-                    return self._leg(pose, again=True)
-            if status in ('succeeded', 'failed'):
-                self._pause('failed')
+            self._now = now
+            if status == 'succeeded' and self._reached(pose, ARRIVE_MARGIN_M, ARRIVE_MARGIN_RAD):
+                return self._at_waypoint(now, pose)
+            settling = now - self._canceled < CANCEL_SETTLE_SEC
+            if self.retries < RETRY_LIMIT and (status == 'succeeded' or settling):
+                self.retries += 1
+                return self._leg(pose, again=True)
+            if status == 'canceled':  # not by this runner, which has moved on from its own
+                return self._end('stopped')
+            self._pause('failed')
             return []
 
     def current(self, number: int) -> bool:
@@ -252,7 +267,7 @@ class Run:
             if self.state not in ACTIVE:
                 return []
             self._pause('user')
-            return [('cancel',)]
+            return [self._cancel()]
 
     def resume(self, pose: Pose | None) -> list[Action]:
         with self.lock:
@@ -273,6 +288,13 @@ class Run:
         with self.lock:
             if self.state in ACTIVE or self.state == 'paused':
                 return self._end('stopped')
+            return []
+
+    def give_up(self) -> list[Action]:
+        """End a mission that is paused because the car failed or stalled."""
+        with self.lock:
+            if self.state == 'paused' and self.reason in ('failed', 'stalled'):
+                return self._end(self.reason)
             return []
 
     def edit(self, mission: dict[str, Any], pose: Pose | None) -> list[Action]:
@@ -357,6 +379,7 @@ class Commander:
         self.name = ''
         self.message = ''  # why the last mission ended by itself, if it did
         self.log = ''
+        self.resumable = False
 
     def command(
         self,
@@ -403,6 +426,7 @@ class Commander:
         if not self.lease.take():
             return False, self.lease.refused(), []
         self.owner, self.name, self.message = str(raw.get('owner') or ''), self.lease.name, ''
+        self.resumable = bool(raw.get('resumable'))
         self.log = str(raw.get('log') or '')
         self.run.record_events(bool(self.log))
         return True, '', self.run.start(mission, pose)
@@ -424,6 +448,8 @@ class Commander:
     ) -> list[Action]:
         """Advance the mission, and keep the lease from its start to its end."""
         actions = self.run.tick(now, pose, localized, stalled)
+        if not self.resumable:
+            actions += self.run.give_up()
         if self.run.underway():
             self.lease.share = self.run.state in SHARED
             if not self.lease.hold():

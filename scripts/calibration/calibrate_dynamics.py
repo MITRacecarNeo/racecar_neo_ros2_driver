@@ -537,6 +537,7 @@ class Driver:
         self.pub = self.node.create_publisher(AckermannDriveStamped, '/drive', 10)
         self.lease = DriveLease('calibration', 'Calibration')
         self.rb = False
+        self.refused = False  # the last run: something else was driving
         self.node.create_subscription(Joy, '/joy', self._joy, 10)
 
     def _joy(self, msg: Any) -> None:
@@ -568,7 +569,8 @@ class Driver:
 
         `segments` defaults to RUNS[run]; the bag is named <time>_<prefix>_<run>.
         """
-        if not self.lease.take():
+        self.refused = not self.lease.take()
+        if self.refused:
             self.log.error(self.lease.refused())
             return None
         root = Path(resolve_log_root(load_config().get('DIR')))
@@ -610,6 +612,7 @@ class Driver:
             self.log.info('Done.')
             return bag_dir
         if lost:
+            self.refused = True
             self.log.error(f'Stopped: {self.lease.refused()} This run is not measured.')
             return None
         self.log.error('Stopped: RB was released. This run is not measured.')

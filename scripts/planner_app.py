@@ -258,7 +258,7 @@ class Navigator(mapview.Viewer):
                     return False, 'Stopped.'
             ok, problem = self.link.command(
                 'start', owner=NODE, name=apps.app(NODE)['name'], mission=mission,
-                log=self._log_key if self.recording else '',
+                resumable=True, log=self._log_key if self.recording else '',
             )  # fmt: skip
             if not ok:
                 self._end_recording(summary=False)

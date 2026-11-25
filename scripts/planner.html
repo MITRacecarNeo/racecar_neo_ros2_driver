@@ -213,6 +213,7 @@ let planName = '';         // the saved mission it came from or went to
 let groups = [];           // {id, name}: what can be recorded
 let summaryId = -1;        // the recording summary this page last took
 let starting = false;      // Go waits for the recorder
+let kept = null;           // this page's plan, while another front end's goal shows
 let planVersion = -1;      // the car's mission version this page last took
 let selected = -1;         // the waypoint open in the panel and ringed on the map
 let preview = null;        // {legs, pose} planned for `plan`; null until planned
@@ -774,7 +775,7 @@ function showStatus() {
     running: pill('ok', 'Navigating'), dwelling: pill('ok', 'Waiting'), relocalizing: pill('warn', 'Relocalizing'),
     paused: failed ? pill('err', `Could not reach waypoint ${m.index + 1}`)
       : m.reason === 'stalled' ? pill('err', `Car stalled at waypoint ${m.index + 1}`) : pill('off', 'Paused'),
-    arrived: pill('ok', 'Arrived'),
+    arrived: pill('ok', 'Arrived'), failed: pill('err', 'Could not reach the goal'), stalled: pill('err', 'Car stalled'),
   }[m.state] || '' : '';
   setHtml('nav', nav);
   setHtml('rec', active && m.recording ? '<span class="rcn-status err">&#9679; Recording</span>'
@@ -895,10 +896,20 @@ async function poll() {
     const m = mission();
     if (m.mission && m.version !== planVersion && !editTimer) {
       planVersion = m.version;
-      edited = false;
-      plan = { loops: m.mission.loops, waypoints: m.mission.waypoints, record: m.mission.record || noRecord() };
-      if (selected >= plan.waypoints.length) selected = -1;
-      renderWps();
+      // Another front end's goal shows while it runs; this page's own plan comes back after.
+      const other = !!m.owner && m.owner !== 'planner';
+      if (other && underway() && !kept) kept = plan;
+      if (!other) kept = null;
+      if (!other || underway()) {
+        edited = false;
+        plan = { loops: m.mission.loops, waypoints: m.mission.waypoints, record: m.mission.record || noRecord() };
+        if (selected >= plan.waypoints.length) selected = -1;
+        renderWps();
+      }
+    }
+    if (kept && !underway()) {
+      plan = kept; kept = null; edited = true; selected = -1; preview = null;
+      renderWps(); draw();
     }
     // The first leg starts at the car: plan again once it has moved half a meter.
     const p0 = preview && preview.pose, p = s.pose;

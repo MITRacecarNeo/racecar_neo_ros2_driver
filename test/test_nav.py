@@ -152,6 +152,14 @@ class TestBridge:
         bridge.tick(0.1)
         assert [bridge.tick(1.0 + i * 0.05) for i in range(4)] == [(0.0, 0.0)] * 3 + [None]
 
+    def test_without_the_navigator_it_stops_and_stays_quiet(self, bridge):
+        bridge.localized = True
+        bridge.on_command(0.8, 0.0, 0.0)
+        assert bridge.tick(0.1, allowed=False) is None
+        bridge.tick(0.1)
+        out = [bridge.tick(0.2, allowed=False) for _ in range(4)]
+        assert out == [(0.0, 0.0)] * 3 + [None]
+
     def test_lost_localization_stops(self, bridge):
         bridge.localized = True
         bridge.on_command(0.8, 0.0, 0.0)
@@ -220,10 +228,86 @@ class TestCli:
     def cli(self):
         return load_script('racecar_nav')
 
-    @pytest.mark.parametrize('deg, z, w', [(0, 0.0, 1.0), (90, 0.7071, 0.7071), (180, 1.0, 0.0)])
-    def test_heading_to_quaternion(self, cli, deg, z, w):
-        qz, qw = cli.quaternion_z_w(deg)
-        assert (qz, qw) == (pytest.approx(z, abs=1e-4), pytest.approx(w, abs=1e-4))
+    @pytest.mark.parametrize(
+        'state, text',
+        [
+            ('idle', 'no goal'),
+            ('arrived', 'no goal'),
+            ('running', 'Planner is driving'),
+            ('paused', 'Planner is paused'),
+            ('relocalizing', 'Planner is driving, localization lost'),
+        ],
+    )
+    def test_status(self, cli, state, text):
+        assert cli.describe({'state': state, 'name': 'Planner'}) == text
+
+    def test_goal_needs_numbers(self, cli, capsys):
+        assert cli.run_goal(None, float('nan'), 0.0, 0.0, True) == 2
+        assert 'Not a goal' in capsys.readouterr().err
+
+    def test_goal_endings_cover_the_runner(self, cli):
+        from racecar_neo_ros2_driver import nav_runner
+
+        assert set(cli.ENDINGS) == {'failed', 'stalled', 'stopped'}
+        assert set(cli.NOTES) - {'running'} == set(nav_runner.SHARED)
+
+    @pytest.fixture
+    def goal(self, cli, monkeypatch):
+        """Run a goal against views instead of the navigator; return (code, commands)."""
+        import sys
+        from types import SimpleNamespace
+
+        def run(views, start=(True, ''), interrupt=False):
+            owner = f'cli-{cli.os.getpid()}'
+            base = {'owner': owner, 'left': None, 'message': '', 'state': 'running'}
+            left = [{**base, **v} for v in views]
+            said = []
+
+            def spin(node, timeout_sec):
+                if len(left) > 1:
+                    left.pop(0)
+                elif interrupt:
+                    raise KeyboardInterrupt
+
+            link = SimpleNamespace(alive=True, view=lambda: left[0])
+            monkeypatch.setitem(sys.modules, 'rclpy', SimpleNamespace(spin_once=spin))
+            monkeypatch.setattr(cli, 'connect', lambda node: link)
+            monkeypatch.setattr(
+                cli, 'send', lambda n, lk, verb, **f: said.append((verb, f)) or start
+            )
+            return cli.run_goal(None, 1.0, 2.0, 90.0, True), said
+
+        return run
+
+    def test_goal_arrives(self, goal, capsys):
+        code, said = goal([{}, {'state': 'relocalizing'}, {}, {'state': 'arrived'}])
+        out = capsys.readouterr().out
+        assert code == 0 and out.rstrip().endswith('Arrived.') and 'Localization lost.' in out
+        fields = said[0][1]
+        assert fields['name'] == 'racecar nav' and 'resumable' not in fields
+        assert fields['mission']['waypoints'][0]['heading_deg'] == 90.0
+
+    @pytest.mark.parametrize(
+        'view, text',
+        [
+            ({'state': 'failed'}, 'Could not reach the goal.'),
+            ({'state': 'stalled'}, 'Car stalled.'),
+            ({'state': 'stopped', 'message': 'Web Teleop is driving.'}, 'Web Teleop is driving.'),
+            ({'owner': 'planner'}, 'Stopped before the goal.'),
+        ],
+    )
+    def test_goal_ends(self, goal, capsys, view, text):
+        assert goal([{}, view])[0] == 1
+        assert text in capsys.readouterr().out
+
+    def test_goal_refused(self, goal, capsys):
+        assert goal([{}], start=(False, 'Planner is driving.'))[0] == 1
+        assert capsys.readouterr().err == 'Planner is driving.\n'
+        assert goal([{}], start=(False, 'Load a map first.'))[0] == 2
+
+    def test_ctrl_c_stops_only_its_own_goal(self, goal):
+        code, said = goal([{}], interrupt=True)
+        assert code == 130 and [verb for verb, _ in said] == ['start', 'stop']
 
     def test_parse(self, cli):
         args = cli.parse(['goal', '1.5', '-2', '90', '--no-wait'])
@@ -259,8 +343,6 @@ class TestCli:
         assert out.startswith('loop') and '1 waypoint ' in out and 'until Stop' in out
         monkeypatch.setattr(cli, 'loaded_map', lambda: '')
         assert cli.main(['mission', 'run', 'loop']) == 2
-        monkeypatch.setattr(cli, 'planner_post', lambda path, body: (0, {}))
-        assert cli.main(['mission', 'stop']) == 1
 
     def test_in_the_racecar_tool(self):
         text = (ROOT / 'scripts' / 'racecar-tool.sh').read_text()

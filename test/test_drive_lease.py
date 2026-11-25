@@ -139,15 +139,20 @@ class TestRules:
 
     def test_following_another_process_of_the_owner(self, make, tmp_path, monkeypatch):
         navigator, bridge = make('nav'), make('nav')
-        gate = dl.DriveGate(bridge, keep=False)
+        assert not bridge.follows()
         navigator.take()
         with monkeypatch.context() as m:
             m.setattr(dl.os, 'getpid', lambda: 999999)
-            assert bridge.joined() and gate.allow(True) and gate.allow(True)
-            gate.idle()
-            gate.release()
-            assert not bridge.held
+            assert bridge.joined() and bridge.follows()
+            bridge.release()
         assert navigator.refresh() and not navigator.joined()
+        navigator.share = True
+        navigator.hold()
+        with monkeypatch.context() as m:
+            m.setattr(dl.os, 'getpid', lambda: 999999)
+            assert bridge.joined() and not bridge.follows()
+        navigator.release()
+        assert not bridge.follows()
 
     def test_hold_takes_when_free(self, make):
         a, b = make('a'), make('b')
@@ -265,7 +270,7 @@ class TestEveryPublisher:
         for path in found - retired:
             text = (ROOT / path).read_text()
             assert 'DriveGate(' in text or 'drive_gate' in text or 'DriveLease(' in text, path
-            assert re.search(r'gate\.allow\(|lease\.refresh\(', text), path
+            assert re.search(r'gate\.allow\(|lease\.refresh\(|lease\.follows\(', text), path
 
 
 class TestProcesses:

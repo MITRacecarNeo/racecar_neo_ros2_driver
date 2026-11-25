@@ -14,7 +14,9 @@ All notable changes to this project will be documented in this file. The format 
 - The navigator (`nav_server_node`, started with Nav2) runs missions for the
   Planner over `/nav/command` and `/nav/state`. A mission holds the lease
   through pauses, waits and lost localization, and a start while one runs is
-  refused.
+  refused. `racecar nav goal`, `move`, `cancel` and `status` go through it.
+- `racecar map start`, `load` and `resume` are refused while a mission, a goal,
+  a Drive panel or a calibration drives.
 - A stall banner on every page the car serves (`scripts/web/stall.js`,
   8080 `/api/stall`): yellow while the throttle is held after a stall or
   during the cooldown, red during a lockout, with the seconds left.

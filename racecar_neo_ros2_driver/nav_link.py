@@ -34,6 +34,7 @@ EVENT_TOPIC = '/nav/event'
 NO_ANSWER = 'The navigator did not answer.'
 STALE_SEC = 2.0
 ANSWER_SEC = 2.0
+RESEND_SEC = 0.5  # the navigator takes a command once, by its id
 # A recorder whose subscription connects late still gets the first events.
 EVENTS_KEPT = 200
 IDLE: dict[str, Any] = {
@@ -114,9 +115,15 @@ class NavLink:
         if not self.alive:
             return False, NO_MAP
         key = uuid.uuid4().hex
-        self._pub.publish(self._msg(data=json.dumps({'id': key, 'verb': verb, **fields})))
-        end = self._clock() + ANSWER_SEC
+        text = json.dumps({'id': key, 'verb': verb, **fields})
+        sent = self._clock()
+        end = sent + ANSWER_SEC
+        self._pub.publish(self._msg(data=text))
         while self._clock() < end:
+            if self._clock() - sent >= RESEND_SEC:
+                # A new program's first command can go out before the navigator listens to it.
+                sent = self._clock()
+                self._pub.publish(self._msg(data=text))
             with self._changed:
                 answer = (self._state.get('answers') or {}).get(key)
                 if answer is None and wait is None:

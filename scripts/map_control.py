@@ -30,7 +30,8 @@ import subprocess
 import time
 from typing import Any
 
-from racecar_neo_ros2_driver import apps, autonomy as au, data_root, fileio, ros_cli, units
+from racecar_neo_ros2_driver import apps, autonomy as au, data_root, drive_lease, fileio
+from racecar_neo_ros2_driver import ros_cli, units
 from racecar_neo_ros2_driver.geometry import yaw_of
 from racecar_neo_ros2_driver.maps import map_root, parse_pose, ROOT_ENV, valid_name
 
@@ -374,6 +375,13 @@ def stop_driving_apps(out: Out) -> None:
             out(f'Could not stop {name}. Stop it from the apps page.')
 
 
+def require_parked() -> None:
+    """Refuse while something drives; the driving apps are stopped first instead."""
+    found = drive_lease.holder()
+    if found is not None and found.owner not in [a['id'] for a in apps.manual_driving_apps()]:
+        raise MapError(drive_lease.refused(found))
+
+
 def require_teleop() -> None:
     if unit_state(TELEOP_UNIT) != 'active':
         raise MapError('teleop is not running. Start it with `racecar service start teleop`.')
@@ -513,6 +521,7 @@ def _change_mode(
         problem = data_root.session_problem()
         if problem:
             raise MapError(problem)
+    require_parked()
     stop_driving_apps(out)
     if unit_running():
         out('Stopping the current autonomy run.')
@@ -593,6 +602,7 @@ def resume(out: Out = print, timeout: float = READY_TIMEOUT_SEC) -> int:
             name, localizer=values.get('AUTONOMY_LOCALIZER') or 'amcl', out=out, timeout=timeout
         )
     require_teleop()
+    require_parked()
     stop_driving_apps(out)
     _control('start')
     code = _wait_ready(values, out, timeout)

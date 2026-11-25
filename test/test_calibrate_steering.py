@@ -396,6 +396,27 @@ class TestRunFlow:
             '1 runs need to be driven again: steering +0.75 at 0.25' in line for line in logged
         )
 
+    def test_a_refused_run_waits_for_the_operator(self, st, monkeypatch):
+        from types import SimpleNamespace
+
+        cal, _, _, logged = self._calibrator(st, monkeypatch, [], fail_first=set())
+        del cal.drive_pairs
+        cal.dynamics, cal.reverse_scale = {}, {}
+        monkeypatch.setattr(st, 'pair_segments', lambda *a: [])
+        prompts = []
+        monkeypatch.setattr(st, 'read_line', lambda prompt='': prompts.append(prompt) or '')
+        left = [(None, True), (None, False), ('bag', False)]
+        cal.driver = SimpleNamespace(refused=False)
+
+        def drive(*args, **kwargs):
+            bag, cal.driver.refused = left.pop(0)
+            return bag
+
+        cal.driver.drive = drive
+        assert cal.drive_pairs([(0.0, 0.25)]) == {(0.0, 0.25): 'bag'}
+        assert prompts == ['Press Enter to run it again: ']
+        assert logged.count('The run stopped before the end. It runs again.') == 1
+
     def test_operator_can_finish_without_them(self, st, monkeypatch):
         plan = [(0.0, 0.25), (0.75, 0.25)]
         cal, driven, _, _ = self._calibrator(st, monkeypatch, ['', 's'], fail_first={(0.75, 0.25)})

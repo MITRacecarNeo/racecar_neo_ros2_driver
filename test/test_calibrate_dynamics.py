@@ -165,6 +165,7 @@ class TestDriveGate:
         other.take()
         assert d.drive('straight05') is None and held == []
         assert d.log.lines == ['Planner is driving.'] and other.refresh()
+        assert d.refused
 
     def test_the_lease_is_given_back_after_a_run(self, md, monkeypatch, tmp_path):
         d, held = self._driver(md, monkeypatch, tmp_path, release_after_driving=True)

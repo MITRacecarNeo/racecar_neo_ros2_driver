@@ -5,17 +5,18 @@ racecar nav: send the car to a pose on the loaded map with Nav2.
 Usage:
     racecar nav goal X Y HEADING [--no-wait]   x, y in meters, heading in degrees (map frame)
     racecar nav move DIST [--no-wait]          DIST meters ahead of the car (negative: behind)
-    racecar nav cancel                         stop the goal that is running
-    racecar nav status                         whether Nav2 is up and has a goal
+    racecar nav cancel                         stop the goal or mission that is running
+    racecar nav status                         whether Nav2 is up and who drives
     racecar nav mission list [--map NAME]      saved Planner missions of the loaded map
     racecar nav mission run NAME               run a saved mission in the Planner
-    racecar nav mission stop                   stop the Planner's mission
+    racecar nav mission stop                   stop the mission that is running
 
 Nav2 runs with localization (`racecar map load NAME`). The car moves only
-while RB is held, or under the 8080 safety override. A goal reports the
-distance left until it ends; Ctrl+C cancels it. Missions run in the Planner
-(scripts/planner_app.py), which `mission run` starts when it is not running;
-they are saved from its page.
+while RB is held, or under the 8080 safety override. Goals go through the
+navigator (nav_server_node.py): one is refused while something else drives. A
+goal reports the distance left until it ends; Ctrl+C cancels it. Missions run
+in the Planner (scripts/planner_app.py), which records them; `mission run`
+starts it when it is not running. They are saved from its page.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import subprocess
 import sys
 import time
@@ -34,12 +36,14 @@ ACTION = 'navigate_to_pose'
 SERVER_WAIT_SEC = 5.0
 REPORT_SEC = 2.0
 PLANNER_WAIT_SEC = 20.0
-
-
-def quaternion_z_w(heading_deg: float) -> tuple[float, float]:
-    """Return the (z, w) of a yaw-only quaternion for a heading in degrees."""
-    half = math.radians(heading_deg) / 2.0
-    return math.sin(half), math.cos(half)
+NAME = 'racecar nav'
+NOT_RUNNING = 'Nav2 is not running. Load a map first: racecar map load NAME'
+ENDINGS = {
+    'failed': 'Could not reach the goal.',
+    'stalled': 'Car stalled.',
+    'stopped': 'Stopped before the goal.',
+}
+NOTES = {'relocalizing': 'Localization lost.', 'paused': 'Paused.', 'running': 'Driving.'}
 
 
 def parse(argv: list[str]) -> argparse.Namespace:
@@ -55,15 +59,15 @@ def parse(argv: list[str]) -> argparse.Namespace:
     )
     move.add_argument('dist', type=float)
     move.add_argument('--no-wait', action='store_true', help='send the goal and return')
-    sub.add_parser('cancel', help='stop the goal that is running')
-    sub.add_parser('status', help='whether Nav2 is up and has a goal')
+    sub.add_parser('cancel', help='stop the goal or mission that is running')
+    sub.add_parser('status', help='whether Nav2 is up and who drives')
     mission = sub.add_parser('mission', help='saved Planner missions')
     msub = mission.add_subparsers(dest='mission_command', required=True)
     listed = msub.add_parser('list', help='saved missions of the loaded map')
     listed.add_argument('--map', help='another saved map')
     run = msub.add_parser('run', help='run a saved mission in the Planner')
     run.add_argument('name')
-    msub.add_parser('stop', help="stop the Planner's mission")
+    msub.add_parser('stop', help='stop the mission that is running')
     return p.parse_args(argv)
 
 
@@ -140,10 +144,6 @@ def run_mission(args: argparse.Namespace) -> int:
             count = f"{m['waypoints']} waypoint" + ('s' if m['waypoints'] != 1 else '')
             print(f"{m['name']:<24} {count:<14} {loops:<12} {m['saved']}")
         return 0
-    if args.mission_command == 'stop':
-        code, _ = planner_post('api/control', {'verb': 'stop'})
-        print('Stopped.' if code == 200 else 'The Planner is not running.')
-        return 0 if code == 200 else 1
     if not loaded_map():
         print('No map loaded. Load one first: racecar map load NAME', file=sys.stderr)
         return 2
@@ -158,59 +158,72 @@ def run_mission(args: argparse.Namespace) -> int:
     return 0
 
 
+def connect(node: Any) -> Any:
+    """Return the link to the navigator, or None while it is not running."""
+    import rclpy
+    from racecar_neo_ros2_driver.nav_link import NavLink
+
+    link = NavLink(node)
+    deadline = time.monotonic() + SERVER_WAIT_SEC
+    while not link.alive and time.monotonic() < deadline:
+        rclpy.spin_once(node, timeout_sec=0.1)
+    return link if link.alive else None
+
+
+def send(node: Any, link: Any, verb: str, **fields: Any) -> tuple[bool, str]:
+    import rclpy
+
+    return link.command(verb, lambda sec: rclpy.spin_once(node, timeout_sec=sec), **fields)
+
+
 def run_goal(node: Any, x: float, y: float, heading: float, wait: bool) -> int:
     import rclpy
-    from nav2_msgs.action import NavigateToPose
-    from rclpy.action import ActionClient
+    from racecar_neo_ros2_driver import missions
+    from racecar_neo_ros2_driver.nav_runner import NO_MAP
 
-    client = ActionClient(node, NavigateToPose, ACTION)
-    if not client.wait_for_server(timeout_sec=SERVER_WAIT_SEC):
-        print('Nav2 is not running. Load a map first: racecar map load NAME', file=sys.stderr)
+    try:
+        mission = missions.parse({'waypoints': [{'x': x, 'y': y, 'heading_deg': heading}]})
+    except ValueError as exc:
+        print(f'Not a goal: {exc}', file=sys.stderr)
         return 2
-    goal = NavigateToPose.Goal()
-    goal.pose.header.frame_id = 'map'
-    goal.pose.header.stamp = node.get_clock().now().to_msg()
-    goal.pose.pose.position.x, goal.pose.pose.position.y = x, y
-    goal.pose.pose.orientation.z, goal.pose.pose.orientation.w = quaternion_z_w(heading)
-    left = {'m': None}
-
-    def feedback(msg: Any) -> None:
-        left['m'] = msg.feedback.distance_remaining
-
-    sent = client.send_goal_async(goal, feedback_callback=feedback)
-    rclpy.spin_until_future_complete(node, sent)
-    handle = sent.result()
-    if handle is None or not handle.accepted:
-        print('Nav2 refused the goal.', file=sys.stderr)
-        return 1
+    link = connect(node)
+    if link is None:
+        print(NOT_RUNNING, file=sys.stderr)
+        return 2
+    owner = f'cli-{os.getpid()}'
+    ok, message = send(node, link, 'start', owner=owner, name=NAME, mission=mission)
+    if not ok:
+        print(NOT_RUNNING if message == NO_MAP else message, file=sys.stderr)
+        return 2 if message == NO_MAP else 1
     print(f'Driving to x {x:.2f} m, y {y:.2f} m, heading {heading:.0f} deg. Hold RB.')
     if not wait:
         return 0
-    result = handle.get_result_async()
-    last = 0.0
+    last, shown = time.monotonic(), 'running'
     try:
-        while not result.done():
+        while True:
             rclpy.spin_once(node, timeout_sec=0.2)
-            if left['m'] is not None and time.monotonic() - last >= REPORT_SEC:
-                print(f'  {left["m"]:.2f} m left')
+            view = link.view()
+            if not link.alive or view['owner'] != owner:
+                print(ENDINGS['stopped'])
+                return 1
+            state = view['state']
+            if state == 'arrived':
+                print('Arrived.')
+                return 0
+            if state in ENDINGS:
+                print(ENDINGS[state], view['message'])
+                return 1
+            if state != shown and state in NOTES:
+                print(f'  {NOTES[state]}')
+                shown = state
+            if view['left'] is not None and time.monotonic() - last >= REPORT_SEC:
+                print(f'  {view["left"]:.2f} m left')
                 last = time.monotonic()
     except KeyboardInterrupt:
-        cancel = handle.cancel_goal_async()
-        rclpy.spin_until_future_complete(node, cancel, timeout_sec=3.0)
+        if link.view()['owner'] == owner:
+            send(node, link, 'stop')
         print('Canceled.')
         return 130
-    from action_msgs.msg import GoalStatus
-
-    status = result.result().status
-    if status == GoalStatus.STATUS_SUCCEEDED:
-        print('Arrived.')
-        return 0
-    print(
-        'Stopped before the goal.'
-        if status == GoalStatus.STATUS_CANCELED
-        else 'Could not reach the goal.'
-    )
-    return 1
 
 
 def ahead_of(x: float, y: float, heading_deg: float, dist: float) -> tuple[float, float]:
@@ -240,53 +253,64 @@ def car_pose(node: Any) -> tuple[float, float, float] | None:
     return None
 
 
-def run_cancel(node: Any) -> int:
+def run_stop(node: Any, done: str, none: str) -> int:
+    """Stop what the navigator runs, and any goal sent to Nav2 past it."""
     import rclpy
     from action_msgs.srv import CancelGoal
 
+    link = connect(node)
+    running = link is not None and link.underway()
+    ok = True
+    if running:
+        ok, message = send(node, link, 'stop')
+        if not ok:
+            print(message, file=sys.stderr)
     client = node.create_client(CancelGoal, f'{ACTION}/_action/cancel_goal')
-    if not client.wait_for_service(timeout_sec=SERVER_WAIT_SEC):
-        print('Nav2 is not running.', file=sys.stderr)
-        return 2
-    # A zero goal id and stamp cancel every goal.
-    future = client.call_async(CancelGoal.Request())
-    rclpy.spin_until_future_complete(node, future, timeout_sec=3.0)
-    canceling = len(future.result().goals_canceling) if future.result() else 0
-    print('Canceled.' if canceling else 'No goal was running.')
+    if not client.wait_for_service(timeout_sec=1.0):
+        if link is None:
+            print('Nav2 is not running.', file=sys.stderr)
+            return 2
+    else:
+        # A zero goal id and stamp cancel every goal.
+        future = client.call_async(CancelGoal.Request())
+        rclpy.spin_until_future_complete(node, future, timeout_sec=3.0)
+        if future.done() and future.result():
+            running = running or bool(future.result().goals_canceling)
+    if not ok:
+        return 1
+    print(done if running else none)
     return 0
 
 
-def run_status(node: Any) -> int:
-    import rclpy
-    from action_msgs.msg import GoalStatus, GoalStatusArray
-    from nav2_msgs.action import NavigateToPose
-    from rclpy.action import ActionClient
-    from rclpy.qos import DurabilityPolicy, QoSProfile
+def describe(view: dict[str, Any]) -> str:
+    """Return what the navigator does, for status."""
+    name = view['name']
+    return {
+        'running': f'{name} is driving',
+        'dwelling': f'{name} is waiting at a waypoint',
+        'relocalizing': f'{name} is driving, localization lost',
+        'paused': f'{name} is paused',
+    }.get(view['state'], 'no goal')
 
-    if not ActionClient(node, NavigateToPose, ACTION).wait_for_server(timeout_sec=SERVER_WAIT_SEC):
+
+def run_status(node: Any) -> int:
+    link = connect(node)
+    if link is None or not link.view()['ready']:
         print('Nav2: not running')
         return 1
-    statuses: list[Any] = []
-    qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
-    node.create_subscription(
-        GoalStatusArray, f'{ACTION}/_action/status', lambda m: statuses.append(m), qos
-    )
-    deadline = time.monotonic() + 1.0
-    while not statuses and time.monotonic() < deadline:
-        rclpy.spin_once(node, timeout_sec=0.1)
-    active = (GoalStatus.STATUS_ACCEPTED, GoalStatus.STATUS_EXECUTING, GoalStatus.STATUS_CANCELING)
-    running = statuses and any(s.status in active for s in statuses[-1].status_list)
-    print('Nav2: running, ' + ('driving to a goal' if running else 'no goal'))
+    print(f'Nav2: running, {describe(link.view())}')
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse(sys.argv[1:] if argv is None else argv)
-    if args.command == 'mission':
+    if args.command == 'mission' and args.mission_command != 'stop':
         return run_mission(args)
     import rclpy
+    from rclpy.signals import SignalHandlerOptions
 
-    rclpy.init()
+    # Ctrl+C must reach run_goal with ROS still up, to stop the car.
+    rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
     node = rclpy.create_node('racecar_nav')
     try:
         if args.command == 'goal':
@@ -300,7 +324,9 @@ def main(argv: list[str] | None = None) -> int:
             x, y = ahead_of(pose[0], pose[1], pose[2], args.dist)
             return run_goal(node, x, y, pose[2], not args.no_wait)
         if args.command == 'cancel':
-            return run_cancel(node)
+            return run_stop(node, 'Canceled.', 'No goal was running.')
+        if args.command == 'mission':
+            return run_stop(node, 'Stopped.', 'No mission was running.')
         return run_status(node)
     finally:
         node.destroy_node()

@@ -990,13 +990,17 @@ It moves only while RB is held, or under the 8080 safety override.
 ```sh
 racecar nav goal X Y HEADING      # x, y in meters, heading in degrees (map frame)
 racecar nav move 3                # 3 m ahead of the car, keeping its heading (-2: behind)
-racecar nav status                # whether Nav2 is up and has a goal
-racecar nav cancel                # stop the goal that is running
+racecar nav status                # whether Nav2 is up and who drives
+racecar nav cancel                # stop the goal or mission that is running
 racecar nav mission list          # saved Planner missions of the loaded map
 racecar nav mission run NAME      # run one in the Planner (started if needed)
-racecar nav mission stop          # stop the Planner's mission
+racecar nav mission stop          # stop the mission that is running
 ```
 
+- A goal is refused while something else drives ("Planner is driving."). A
+  goal the car cannot reach, or a stall, ends it.
+- Loading a map and starting to map are refused while a mission, a goal, a
+  Drive panel, or a calibration drives.
 - Speeds: 0.5 to 1.0 m/s forward and 0.5 to 0.6 m/s in reverse. The
   firmware holds nothing slower than 0.5 m/s, so Nav2 stops instead.
 - The car needs a steering table (`racecar calibrate steering`); without one,

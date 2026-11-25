@@ -25,7 +25,7 @@ from nav2_msgs.action import NavigateToPose
 from nav2_msgs.msg import SpeedLimit
 from racecar_neo_ros2_driver import nav_link
 from racecar_neo_ros2_driver.geometry import yaw_of
-from racecar_neo_ros2_driver.nav_runner import Action, Commander, Pose
+from racecar_neo_ros2_driver.nav_runner import Action, BAD_MISSION, Commander, Pose
 from racecar_neo_ros2_driver.qos import LATCHED
 from racecar_neo_ros2_driver.spin import run_node
 from rclpy.action import ActionClient
@@ -89,7 +89,7 @@ class NavServerNode(Node):
             )
         except (ValueError, KeyError, TypeError) as exc:
             self.get_logger().warn(f'Command refused: {exc}')
-            ok, message, actions = False, 'Reload the page.', []
+            ok, message, actions = False, BAD_MISSION, []
         self._answers[key] = (ok, message)
         while len(self._answers) > ANSWERS_KEPT:
             self._answers.popitem(last=False)

@@ -339,6 +339,44 @@ class TestChangeMode:
         assert systemd.states['racecar-linefollow.service'] == 'inactive'
         assert mc.running_driving_apps() == []
 
+    @pytest.fixture
+    def lease(self, mc, tmp_path, monkeypatch):
+        from racecar_neo_ros2_driver import drive_lease
+
+        where = tmp_path / 'lease'
+        where.mkdir()
+        monkeypatch.setenv(drive_lease.FOLDER_ENV, str(where))
+        return drive_lease.DriveLease
+
+    def test_refused_while_something_drives(self, mc, root, systemd, lease):
+        saved_map(root, 'room')
+        assert mc.load('room', out=lambda line: None) == 0
+        systemd.states['racecar-linefollow.service'] = 'active'
+        before = len(systemd.actions())
+        mission = lease('nav', 'Planner')
+        mission.take()
+        for call in (lambda: mc.start('hall'), lambda: mc.load('room')):
+            with pytest.raises(mc.MapError) as err:
+                call()
+            assert str(err.value) == 'Planner is driving.'
+        assert len(systemd.actions()) == before
+        mission.release()
+        assert mc.load('room', out=lambda line: None) == 0
+
+    def test_resume_refused_while_something_drives(self, mc, root, systemd, lease):
+        assert mc.start('hall', out=lambda line: None) == 0
+        mc.stop(out=lambda line: None)
+        lease('mapview', 'Mapper').take()
+        with pytest.raises(mc.MapError) as err:
+            mc.resume()
+        assert str(err.value) == 'Mapper is driving.'
+
+    def test_a_driving_app_is_stopped_instead(self, mc, root, systemd, lease):
+        systemd.states['racecar-webteleop.service'] = 'active'
+        lease('webteleop', 'Web Teleop').take()
+        assert mc.start('hall', out=lambda line: None) == 0
+        assert systemd.states['racecar-webteleop.service'] == 'inactive'
+
     def test_resume_mapping_restarts_the_same_session(self, mc, root, systemd):
         assert mc.start('room', out=lambda line: None) == 0
         session = mc.read_mode_file()['AUTONOMY_SESSION']

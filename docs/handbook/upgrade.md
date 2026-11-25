@@ -29,7 +29,7 @@ Then:
    `bash scripts/setup_user_env.sh`.
 3. When the changelog says the services changed, run
    `sudo racecar setup dashboards`. This step asks for the password.
-4. Restart the services: `racecar service restart`.
+4. Reboot the car: `sudo reboot`. Wait until the car is on the network again.
 5. When the changelog names a new student library, run
    `racecar library install`.
 6. Run `racecar setup car status`.
@@ -50,6 +50,6 @@ shows.
 
 1. Check out the previous tag: `git checkout vX.Y.Z`.
 2. Run `racecar build`.
-3. Run `racecar service restart`.
+3. Reboot the car: `sudo reboot`.
 4. If a setting is lost, restore the profile:
    `racecar profile import ~/profile-backup.tar.gz`.

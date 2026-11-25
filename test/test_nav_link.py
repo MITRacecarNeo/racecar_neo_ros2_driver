@@ -93,6 +93,20 @@ def test_command_without_a_spin_thread(node):
     assert link.command('stop', wait=spin) == (True, '')
 
 
+def test_a_command_is_sent_again_until_answered(node, monkeypatch):
+    monkeypatch.setattr(nav_link, 'RESEND_SEC', 0.05)
+    link = nav_link.NavLink(node)
+    link.on_state(state(state='idle'))
+
+    def hears_the_second(raw):
+        if len(node.pub.sent) == 2:
+            link.on_state(state(answers={raw['id']: [True, '']}))
+
+    node.pub.on_publish = hears_the_second
+    assert link.command('stop', wait=time.sleep) == (True, '')
+    assert node.pub.sent[0]['id'] == node.pub.sent[1]['id']
+
+
 def test_no_answer(node, monkeypatch):
     monkeypatch.setattr(nav_link, 'ANSWER_SEC', 0.1)
     link = nav_link.NavLink(node)

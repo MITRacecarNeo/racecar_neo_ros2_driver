@@ -155,11 +155,23 @@ class TestRun:
         assert run.stop() == [('cancel',), ('limit', None)]
         assert run.view(0)['state'] == 'stopped' and run.stop() == []
 
-    def test_canceled_reply_is_not_a_failure(self):
+    def test_canceled_from_outside_ends_the_mission(self):
         run = nav_runner.Run()
         run.start(mission(wp(1, 0)), (0.0, 0.0, 0.0))
-        assert run.result(run.number, 'canceled', 1.0, None) == []
-        assert run.view(0)['state'] == 'running'
+        assert ('cancel',) in run.result(run.number, 'canceled', 1.0, None)
+        assert run.view(0)['state'] == 'stopped'
+
+    @pytest.mark.parametrize('status', ['failed', 'canceled'])
+    def test_a_goal_ended_with_the_one_canceled_before_it_is_sent_again(self, status):
+        run = nav_runner.Run()
+        run.start(mission(wp(1, 0)), (0.0, 0.0, 0.0))
+        run.tick(10.0, (0.0, 0.0, 0.0), True)
+        run.pause()
+        run.resume((0.0, 0.0, 0.0))
+        again = run.result(run.number, status, 10.3, (0.0, 0.0, 0.0))
+        assert sends(again)[0][2:4] == (1, 0) and run.view(0)['state'] == 'running'
+        run.result(run.number, 'failed', 13.0, (0.0, 0.0, 0.0))
+        assert run.view(0)['state'] == 'paused'
 
     def test_user_pause(self):
         run = nav_runner.Run()
@@ -488,6 +500,23 @@ class TestCommander:
         say(commander, 'resume')
         commander.tick(clock.now, HERE, True, False)
         assert not panel.allow(True)
+
+    @pytest.mark.parametrize('why', ['failed', 'stalled'])
+    def test_a_goal_that_cannot_go_on_ends(self, commander, make, clock, why):
+        def happens():
+            if why == 'failed':
+                commander.run.refused(commander.run.number)
+            return commander.tick(clock.now, HERE, True, why == 'stalled')
+
+        start(commander, resumable=True)
+        happens()
+        assert commander.run.state == 'paused' and not make('b').take()
+        commander.tick(clock.now, HERE, True, False)
+        say(commander, 'stop')
+        commander.tick(clock.now, HERE, True, False)
+        start(commander, name='racecar nav')
+        assert ('cancel',) in happens()
+        assert commander.run.state == why and make('b').take()
 
     def test_events_are_kept_under_the_key_asked_for(self, commander):
         start(commander, log='k1')

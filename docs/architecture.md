@@ -277,9 +277,7 @@ radius from the steering table. Without a steering table, Nav2 is left out.
 
 ```
 Planner ──/nav/command──▶ nav_server_node ──NavigateToPose──▶ bt_navigator (config/nav2_bt.xml)
-   ◀──/nav/state, /nav/mission, /nav/event──┘                        ▲
-racecar nav goal, move ──NavigateToPose──────────────────────────────┘
-bt_navigator
+racecar nav ──┘   ◀──/nav/state, /nav/mission, /nav/event──┘
    ──▶ planner_server (Smac Hybrid-A*, Reeds-Shepp) ──▶ controller_server (Regulated Pure Pursuit)
    ──/nav/cmd_vel──▶ nav_bridge_node ──/drive──▶ mux_node (autonomy source: RB or override)
 ```
@@ -295,8 +293,8 @@ follows the same rule. The mux is unchanged.
 `racecar_neo_ros2_driver/drive_lease.py` lets one source at a time publish
 `/drive`: a record in `/run/racecar/drive_lease.json` with the holder and a
 heartbeat, free once the heartbeat is 1 s old. `DriveGate` is the check before
-every publish (Web Teleop, Line Follow, Wall Follow, the Drive panels,
-`nav_bridge_node`; dynamics calibration uses `DriveLease`). The first to take
+every publish (Web Teleop, Line Follow, Wall Follow, the Drive panels);
+dynamics calibration and `nav_bridge_node` use `DriveLease`. The first to take
 it holds it; the second is refused with the holder's name. A source refused or
 cut off while moving stays off until its command is zero. Without the folder
 nothing is enforced.
@@ -308,7 +306,11 @@ mission runs or something else drives, and holds the lease (owner `nav`, under
 the name of the front end) from a mission's start to its end. While the car
 waits for the operator (paused, or localization lost) the record is marked
 `share`, and one Drive panel may drive under it (`drive_panel.json`).
-`nav_bridge_node` drives under the navigator's lease. Front ends use
+`nav_bridge_node` drives only under the navigator's lease (`follows`), so a goal
+sent to Nav2 directly does not move the car. A mission that fails or stalls
+pauses when its front end can resume it (the Planner) and ends otherwise.
+`racecar map start`, `load` and `resume` are refused while something drives
+(`map_control.require_parked`; the driving apps are stopped instead). Front ends use
 `nav_link.NavLink`: a command on `/nav/command` (JSON, with an id), its answer
 in `/nav/state` (5 Hz, latched). Closing the Planner stops a mission started
 from it.
