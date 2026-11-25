@@ -22,7 +22,8 @@ import threading
 import time
 from typing import Any
 
-from racecar_neo_ros2_driver import car_profile, data_root
+from racecar_neo_ros2_driver import apps, car_profile, data_root
+from racecar_neo_ros2_driver.drive_lease import DriveGate, DriveLease
 import yaml
 
 T0 = time.monotonic()
@@ -227,6 +228,12 @@ class RunLog:
 
 
 # -- /drive --
+
+
+def drive_gate(app_id: str, keep: bool = True) -> DriveGate:
+    """Return the app's gate to /drive (drive_lease.py); keep: while it runs, not only driving."""
+    return DriveGate(DriveLease(app_id, apps.app(app_id)['name']), keep)
+
 
 # Hard throttle cap either way, as the student library's drive.set_max_speed.
 MAX_SPEED = 1.0

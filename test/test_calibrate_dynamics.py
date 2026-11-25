@@ -5,6 +5,7 @@ import math
 from conftest import load_script
 import numpy as np
 import pytest
+from racecar_neo_ros2_driver.drive_lease import DriveLease
 
 
 @pytest.fixture(scope='module')
@@ -139,6 +140,7 @@ class TestDriveGate:
         d = md.Driver.__new__(md.Driver)
         d.log = Log()
         d.rb = True
+        d.lease = DriveLease('calibration', 'Calibration', tmp_path / 'lease')
         held = []
 
         def hold(seconds, speed, steer, need_rb):
@@ -155,6 +157,33 @@ class TestDriveGate:
         assert d.drive('straight05') is not None
         assert 'You can release RB now.' in d.log.lines
         assert all(need for speed, need in held if speed != 0.0)
+
+    def test_refused_while_something_else_drives(self, md, monkeypatch, tmp_path):
+        d, held = self._driver(md, monkeypatch, tmp_path, release_after_driving=True)
+        (tmp_path / 'lease').mkdir()
+        other = DriveLease('planner', 'Planner', tmp_path / 'lease')
+        other.take()
+        assert d.drive('straight05') is None and held == []
+        assert d.log.lines == ['Planner is driving.'] and other.refresh()
+
+    def test_the_lease_is_given_back_after_a_run(self, md, monkeypatch, tmp_path):
+        d, held = self._driver(md, monkeypatch, tmp_path, release_after_driving=True)
+        (tmp_path / 'lease').mkdir()
+        assert d.drive('straight05') is not None
+        assert DriveLease('b', 'b', tmp_path / 'lease').take()
+
+    def test_losing_the_lease_stops_the_run_and_does_not_hang(self, md, monkeypatch, tmp_path):
+        d, held = self._driver(md, monkeypatch, tmp_path, release_after_driving=False)
+        (tmp_path / 'lease').mkdir()
+        d.rb = False  # still waiting for the operator
+
+        def hold(seconds, speed, steer, need_rb):
+            (tmp_path / 'lease' / 'drive_lease.json').unlink(missing_ok=True)
+            return d.lease.refresh()
+
+        d._hold = hold
+        assert d.drive('straight05') is None
+        assert 'This run is not measured.' in d.log.lines[-1] and 'RB was' not in d.log.lines[-1]
 
     def test_releasing_rb_while_driving_stops_the_run(self, md, monkeypatch, tmp_path):
         d, held = self._driver(md, monkeypatch, tmp_path, release_after_driving=False)

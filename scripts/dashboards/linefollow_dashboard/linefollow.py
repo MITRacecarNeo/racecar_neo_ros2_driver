@@ -172,6 +172,7 @@ class LineFollowNode(Node):
         with _lock:
             cam_topic = _params['camera_topic']
         self._pub = self.create_publisher(AckermannDriveStamped, '/drive', 1)
+        self.drive_gate = labkit.drive_gate('linefollow')
         self.create_subscription(Image, cam_topic, self._image_cb, qos_profile_sensor_data)
         self.create_subscription(Odometry, '/odom', self._odom_cb, qos_profile_sensor_data)
         # /drive is published at a fixed rate whether or not frames arrive,
@@ -308,7 +309,8 @@ class LineFollowNode(Node):
             )
 
     def _actuate(self) -> None:
-        self._pub.publish(labkit.drive_msg(self._speed_cmd, self._steer_cmd))
+        if self.drive_gate.allow(self._speed_cmd != 0.0):
+            self._pub.publish(labkit.drive_msg(self._speed_cmd, self._steer_cmd))
         with _lock:
             _state['enc_speed'] = round(self._enc, 3)
 

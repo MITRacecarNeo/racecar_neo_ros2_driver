@@ -221,6 +221,7 @@ class TeleopNode(Node):
             depth_topic = _params.get('depth_topic') or ''
             det_topic = _params.get('detections_topic') or ''
         self._pub = self.create_publisher(AckermannDriveStamped, '/drive', 1)
+        self.drive_gate = labkit.drive_gate('webteleop')
         self.create_subscription(Image, cam_topic, self._image_cb, qos_profile_sensor_data)
         # Depth is a separate stream on the same camera, and only the D435i
         # has one. An empty depth_topic is a car whose camera is color only;
@@ -453,7 +454,8 @@ class TeleopNode(Node):
         self._speed_cmd = labkit.clamp_speed(fwd * p['speed'], reverse=True)
         self._steer_cmd = max(-1.0, min(1.0, turn * p['angle']))
 
-        self._pub.publish(labkit.drive_msg(self._speed_cmd, self._steer_cmd, reverse=True))
+        if self.drive_gate.allow(self._speed_cmd != 0.0):
+            self._pub.publish(labkit.drive_msg(self._speed_cmd, self._steer_cmd, reverse=True))
 
         t = labkit.now()
         sensors = self._sample_sensors(t)

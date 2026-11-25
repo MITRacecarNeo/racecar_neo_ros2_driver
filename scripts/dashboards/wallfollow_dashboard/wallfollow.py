@@ -92,6 +92,7 @@ class WallFollowNode(Node):
     def __init__(self) -> None:
         super().__init__('wallfollow')
         self._pub = self.create_publisher(AckermannDriveStamped, '/drive', 1)
+        self.drive_gate = labkit.drive_gate('wallfollow')
         self.create_subscription(LaserScan, '/scan', self._scan_cb, qos_profile_sensor_data)
         self.create_subscription(Odometry, '/odom', self._odom_cb, qos_profile_sensor_data)
         self._last_error = 0.0
@@ -211,7 +212,8 @@ class WallFollowNode(Node):
             self._speed_cmd = max(0.0, min(1.0, p['speed'] + self._trim))
         self._last_speed_error = serr
 
-        self._pub.publish(labkit.drive_msg(self._speed_cmd, cmd))
+        if self.drive_gate.allow(self._speed_cmd != 0.0):
+            self._pub.publish(labkit.drive_msg(self._speed_cmd, cmd))
 
         t = labkit.now()
         LOG.rows.append(f'{t},{error:.4f},{cmd:.4f},{self._speed_cmd:.3f},{self._enc:.3f}\n')

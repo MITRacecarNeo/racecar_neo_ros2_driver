@@ -362,6 +362,7 @@ class Viewer:
         from ackermann_msgs.msg import AckermannDriveStamped
 
         self._drive_pub = self.node.create_publisher(AckermannDriveStamped, '/drive', 1)
+        self.drive_gate = labkit.drive_gate(name, keep=False)
         self.cmd = {'fwd': 0.0, 'turn': 0.0, 'stamp': 0.0}
         threading.Thread(target=self._watch, daemon=True).start()
         threading.Thread(target=self._drive_loop, daemon=True).start()
@@ -463,7 +464,9 @@ class Viewer:
         while True:
             time.sleep(1.0 / DRIVE_HZ)
             command = self.drive_command(time.monotonic())
-            if command is not None:
+            if command is None:
+                self.drive_gate.idle()
+            elif self.drive_gate.allow(command != (0.0, 0.0)):
                 self._drive_pub.publish(labkit.drive_msg(*command, reverse=True))
 
     def _on_status(self, msg: Any) -> None:

@@ -21,6 +21,7 @@ from ackermann_msgs.msg import AckermannDriveStamped
 from diagnostic_msgs.msg import DiagnosticStatus
 from geometry_msgs.msg import Twist
 from racecar_neo_ros2_driver import car_profile, nav, steering
+from racecar_neo_ros2_driver.drive_lease import DriveGate, DriveLease
 from racecar_neo_ros2_driver.params import declare_params
 from racecar_neo_ros2_driver.paths import config_dir
 from racecar_neo_ros2_driver.qos import LATCHED, SENSOR_LATEST
@@ -98,6 +99,7 @@ class NavBridgeNode(Node):
             int(params['stop_messages']),
         )
         self._pub = self.create_publisher(AckermannDriveStamped, '/drive', SENSOR_LATEST)
+        self.gate = DriveGate(DriveLease('nav', 'Navigation'), keep=False)
         self.create_subscription(Twist, '/nav/cmd_vel', self._cmd_cb, 10)
         self.create_subscription(DiagnosticStatus, '/autonomy/status', self._status_cb, LATCHED)
         self.create_timer(1.0 / float(params['rate_hz']), self._tick)
@@ -117,6 +119,9 @@ class NavBridgeNode(Node):
     def _tick(self) -> None:
         out = self.bridge.tick(time.monotonic())
         if out is None:
+            self.gate.idle()
+            return
+        if not self.gate.allow(True):
             return
         msg = AckermannDriveStamped()
         msg.header.stamp = self.get_clock().now().to_msg()

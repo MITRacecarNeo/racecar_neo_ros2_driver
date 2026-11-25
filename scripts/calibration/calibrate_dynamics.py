@@ -48,6 +48,7 @@ from typing import Any
 import numpy as np
 import progress
 from racecar_neo_ros2_driver.car_profile import param_path
+from racecar_neo_ros2_driver.drive_lease import DriveLease
 from racecar_neo_ros2_driver.geometry import stamp_sec, yaw_of
 import yaml
 
@@ -534,6 +535,7 @@ class Driver:
         self.node = rclpy.create_node('dynamics_calibrator')
         self.log = self.node.get_logger()
         self.pub = self.node.create_publisher(AckermannDriveStamped, '/drive', 10)
+        self.lease = DriveLease('calibration', 'Calibration')
         self.rb = False
         self.node.create_subscription(Joy, '/joy', self._joy, 10)
 
@@ -543,6 +545,8 @@ class Driver:
     def _hold(self, seconds: float, speed: float, steer: float, need_rb: bool) -> bool:
         end = time.monotonic() + seconds
         while time.monotonic() < end:
+            if not self.lease.refresh():
+                return False
             msg = self.msg_type()
             msg.header.stamp = self.node.get_clock().now().to_msg()
             msg.drive.speed = float(speed)
@@ -564,6 +568,9 @@ class Driver:
 
         `segments` defaults to RUNS[run]; the bag is named <time>_<prefix>_<run>.
         """
+        if not self.lease.take():
+            self.log.error(self.lease.refused())
+            return None
         root = Path(resolve_log_root(load_config().get('DIR')))
         bag_dir = root / build_bag_name(f'{prefix}_{run}', time.time())
         recorder = subprocess.Popen(
@@ -578,7 +585,7 @@ class Driver:
                 'Press and hold RB. The car starts driving 3 seconds after you press it.'
             )
             self.log.info('Release RB at any time to stop the car.')
-            while not self.rb:
+            while not self.rb and self.lease.held:
                 self._hold(0.1, 0.0, 0.0, need_rb=False)
             ok = self._hold(COUNTDOWN_SEC, 0.0, 0.0, need_rb=True)
             plan = segments or RUNS[run]
@@ -595,11 +602,16 @@ class Driver:
                     ok = False
                     break
         finally:
+            lost = not self.lease.held
+            self.lease.release()
             recorder.send_signal(signal.SIGINT)
             recorder.wait(timeout=15)
         if ok:
             self.log.info('Done.')
             return bag_dir
+        if lost:
+            self.log.error(f'Stopped: {self.lease.refused()} This run is not measured.')
+            return None
         self.log.error('Stopped: RB was released. This run is not measured.')
         return None
 
