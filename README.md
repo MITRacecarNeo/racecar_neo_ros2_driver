@@ -1032,6 +1032,8 @@ waypoints; a single goal is a mission of one.
 - A tap on a marker opens it in Waypoints; a drag moves it. Changes during a
   mission apply from the next waypoint; a change to the one being driven to
   sends it again.
+- Go is refused while something else drives ("Web Teleop is driving."). While
+  a mission is paused or the car is not localized, a Drive panel can move it.
 - A waypoint is reached within its radius, facing its heading if it has
   one. The car drives on to the next waypoint without stopping, unless the
   waypoint has a wait.

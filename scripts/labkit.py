@@ -230,9 +230,15 @@ class RunLog:
 # -- /drive --
 
 
-def drive_gate(app_id: str, keep: bool = True) -> DriveGate:
-    """Return the app's gate to /drive (drive_lease.py); keep: while it runs, not only driving."""
-    return DriveGate(DriveLease(app_id, apps.app(app_id)['name']), keep)
+def drive_gate(app_id: str, panel: bool = False) -> DriveGate:
+    """
+    Return the app's gate to /drive (drive_lease.py).
+
+    An app holds the lease while it runs. A Drive panel holds it only while
+    used, and may move a car that waits for the operator.
+    """
+    lease = DriveLease(app_id, apps.app(app_id)['name'])
+    return DriveGate(lease, keep=not panel, shared=panel)
 
 
 # Hard throttle cap either way, as the student library's drive.set_max_speed.

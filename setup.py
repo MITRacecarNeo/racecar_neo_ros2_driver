@@ -47,6 +47,7 @@ setup(
             'imu_fusion_node = racecar_neo_ros2_driver.imu_fusion_node:main',
             'mux_node = racecar_neo_ros2_driver.mux_node:main',
             'nav_bridge_node = racecar_neo_ros2_driver.nav_bridge_node:main',
+            'nav_server_node = racecar_neo_ros2_driver.nav_server_node:main',
             'throttle_node = racecar_neo_ros2_driver.throttle_node:main',
             'pit_node = racecar_neo_ros2_driver.pit_node:main',
         ],

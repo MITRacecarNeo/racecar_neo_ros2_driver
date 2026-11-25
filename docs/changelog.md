@@ -6,6 +6,15 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Added
 
+- One driver at a time (`racecar_neo_ros2_driver/drive_lease.py`): Web
+  Teleop, Line Follow, Wall Follow, the Drive panels, Nav2 and dynamics
+  calibration take a lease before they publish `/drive`. The second is
+  refused with the name of the first; a killed or suspended program frees
+  the car within a second.
+- The navigator (`nav_server_node`, started with Nav2) runs missions for the
+  Planner over `/nav/command` and `/nav/state`. A mission holds the lease
+  through pauses, waits and lost localization, and a start while one runs is
+  refused.
 - A stall banner on every page the car serves (`scripts/web/stall.js`,
   8080 `/api/stall`): yellow while the throttle is held after a stall or
   during the cooldown, red during a lockout, with the seconds left.

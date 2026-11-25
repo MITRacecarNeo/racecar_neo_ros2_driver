@@ -135,7 +135,7 @@ def nav2_param_file(config_dir: str, out_dir: str | None = None) -> str | None:
 
 
 def nav_specs(config_dir: str, params_file: str) -> list[dict[str, Any]]:
-    """Return Nav2's servers, their lifecycle manager and the drive bridge."""
+    """Return Nav2's servers, their lifecycle manager, the drive bridge and the navigator."""
     specs: list[dict[str, Any]] = []
     for name, package in NAV2_NODES.items():
         spec = {'package': package, 'executable': name, 'name': name, 'parameters': [params_file]}
@@ -150,6 +150,14 @@ def nav_specs(config_dir: str, params_file: str) -> list[dict[str, Any]]:
             'executable': 'nav_bridge_node',
             'name': 'nav_bridge_node',
             'parameters': _files(config_dir, 'nav_bridge.yaml'),
+        }
+    )
+    specs.append(
+        {
+            'package': 'racecar_neo_ros2_driver',
+            'executable': 'nav_server_node',
+            'name': 'nav_server_node',
+            'parameters': [],
         }
     )
     return specs

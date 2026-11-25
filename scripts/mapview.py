@@ -362,7 +362,7 @@ class Viewer:
         from ackermann_msgs.msg import AckermannDriveStamped
 
         self._drive_pub = self.node.create_publisher(AckermannDriveStamped, '/drive', 1)
-        self.drive_gate = labkit.drive_gate(name, keep=False)
+        self.drive_gate = labkit.drive_gate(name, panel=True)
         self.cmd = {'fwd': 0.0, 'turn': 0.0, 'stamp': 0.0}
         threading.Thread(target=self._watch, daemon=True).start()
         threading.Thread(target=self._drive_loop, daemon=True).start()

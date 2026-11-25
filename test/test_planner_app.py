@@ -1,10 +1,9 @@
-"""scripts/planner_app.py: the Planner server, its mission runner, and its page."""
+"""scripts/planner_app.py: the Planner server and its page."""
 
 import gzip
 import http.client
 from http.server import ThreadingHTTPServer
 import json
-import math
 from pathlib import Path
 import threading
 
@@ -30,314 +29,6 @@ def wp(x, y, heading=None, radius=0.25, speed=None, dwell=0):
 
 def mission(*points, loops=1):
     return missions.parse({'loops': loops, 'waypoints': list(points)})
-
-
-def sends(actions):
-    return [a for a in actions if a[0] == 'send']
-
-
-class TestRun:
-    def test_start_sends_the_first_waypoint_with_its_speed(self, pa):
-        run = pa.Run()
-        actions = run.start(mission(wp(2, 0, speed=0.6), wp(2, 2)), (0.0, 0.0, 0.0))
-        assert actions[0] == ('limit', 0.6)
-        kind, _, x, y, yaw = actions[1]
-        assert (kind, x, y) == ('send', 2.0, 0.0) and yaw == pytest.approx(0.0)
-        assert run.view(0)['state'] == 'running'
-
-    def test_any_heading_faces_the_way_it_is_approached(self, pa):
-        run = pa.Run()
-        run.start(mission(wp(0, 0), wp(0, 3)), (0.0, -1.0, 0.0))
-        actions = run.tick(1.0, (0.1, 0.0, 0.0), True)
-        assert sends(actions)[0][4] == pytest.approx(math.pi / 2)
-
-    def test_reached_within_radius_preempts_with_the_next(self, pa):
-        run = pa.Run()
-        run.start(mission(wp(2, 0, radius=1.0), wp(4, 0)), (0.0, 0.0, 0.0))
-        assert run.tick(1.0, (0.5, 0.0, 0.0), True) == []
-        actions = run.tick(1.1, (1.2, 0.0, 0.0), True)
-        assert ('cancel',) not in actions and sends(actions)[0][2:4] == (4.0, 0.0)
-        assert run.view(0)['index'] == 1
-
-    def test_heading_must_match(self, pa):
-        run = pa.Run()
-        run.start(mission(wp(1, 0, heading=90), wp(3, 0)), (0.0, 0.0, 0.0))
-        assert run.tick(1.0, (1.0, 0.0, 0.0), True) == []
-        assert sends(run.tick(1.1, (1.0, 0.0, math.radians(80)), True))
-
-    def test_last_waypoint_arrives_and_lifts_the_limit(self, pa):
-        run = pa.Run()
-        run.start(mission(wp(1, 0, speed=0.5)), (0.0, 0.0, 0.0))
-        assert run.tick(1.0, (1.0, 0.0, 0.0), True) == [('cancel',), ('limit', None)]
-        assert run.view(0)['state'] == 'arrived'
-
-    def test_dwell_stops_then_goes_on(self, pa):
-        run = pa.Run()
-        run.start(mission(wp(1, 0, dwell=5), wp(2, 0)), (0.0, 0.0, 0.0))
-        assert run.tick(10.0, (1.0, 0.0, 0.0), True) == [('cancel',)]
-        assert run.view(12.0)['dwell_left'] == 3.0
-        assert run.tick(14.0, (1.0, 0.0, 0.0), True) == []
-        assert sends(run.tick(15.0, (1.0, 0.0, 0.0), True))[0][2] == 2.0
-
-    def test_loops_return_to_the_first(self, pa):
-        run = pa.Run()
-        run.start(mission(wp(1, 0), wp(2, 0), loops=2), (0.0, 0.0, 0.0))
-        run.tick(1, (1.0, 0.0, 0.0), True)
-        actions = run.tick(2, (2.0, 0.0, 0.0), True)
-        assert sends(actions)[0][2] == 1.0 and run.view(0)['loop'] == 2
-        run.tick(3, (1.0, 0.0, 0.0), True)
-        run.tick(4, (2.0, 0.0, 0.0), True)
-        assert run.view(0)['state'] == 'arrived'
-
-    def test_until_stop_keeps_looping(self, pa):
-        run = pa.Run()
-        run.start(mission(wp(1, 0), wp(2, 0), loops=0), (0.0, 0.0, 0.0))
-        for i in range(10):
-            run.tick(i, (1.0 + i % 2, 0.0, 0.0), True)
-        assert run.view(0)['state'] == 'running' and run.view(0)['loop'] == 6
-
-    def test_nav2_success_near_the_waypoint_counts(self, pa):
-        run = pa.Run()
-        run.start(mission(wp(1, 0, heading=0), wp(2, 0)), (0.0, 0.0, 0.0))
-        # Outside the radius and heading, inside the margins.
-        number, near = run.number, (0.65, 0.0, 0.6)
-        assert run.tick(0.9, near, True) == []
-        assert run.result(number - 1, 'succeeded', 1.0, near) == []
-        assert sends(run.result(number, 'succeeded', 1.0, near))[0][2] == 2.0
-        assert run.view(0)['index'] == 1
-
-    @pytest.mark.parametrize(
-        'pose',
-        [(0.55, 0.0, 0.0), (1.0, 0.0, math.pi), None],
-        ids=['away', 'facing away', 'no pose'],
-    )
-    def test_nav2_success_away_from_the_waypoint_sends_it_again(self, pa, pose):
-        run = pa.Run()
-        run.start(mission(wp(1, 0, heading=0), wp(2, 0)), (0.0, 0.0, 0.0))
-        number = run.number
-        again = sends(run.result(number, 'succeeded', 1.0, pose))
-        assert again[0][1] == number + 1 and again[0][2] == 1.0
-        assert run.view(0)['state'] == 'running' and run.view(0)['index'] == 0
-
-    def test_hand_off_success_does_not_skip_the_last_waypoint(self, pa):
-        run = pa.Run()
-        run.start(mission(wp(1, 0), wp(3, 0)), (0.0, 0.0, 0.0))
-        here = (0.9, 0.0, 0.0)
-        run.tick(1.0, here, True)
-        assert sends(run.result(run.number, 'succeeded', 1.05, here))[0][2] == 3.0
-        assert run.view(0)['state'] == 'running'
-        run.tick(3.0, (2.9, 0.0, 0.0), True)
-        assert run.view(0)['state'] == 'arrived'
-
-    def test_hand_off_success_does_not_skip_in_a_loop(self, pa):
-        run = pa.Run()
-        run.start(mission(wp(1, 0), wp(3, 0), loops=2), (0.0, 0.0, 0.0))
-        for x in (1.0, 3.0, 1.0, 3.0):
-            here = (x, 0.0, 0.0)
-            run.tick(1.0, here, True)
-            if run.view(0)['state'] == 'running':
-                before = run.view(0)['index'], run.view(0)['loop']
-                run.result(run.number, 'succeeded', 1.1, here)
-                assert (run.view(0)['index'], run.view(0)['loop']) == before
-        assert run.view(0)['state'] == 'arrived' and run.view(0)['loop'] == 2
-
-    def test_ten_resends_then_the_mission_pauses(self, pa):
-        run = pa.Run()
-        run.start(mission(wp(5, 0)), (0.0, 0.0, 0.0))
-        for _ in range(10):
-            assert sends(run.result(run.number, 'succeeded', 1.0, (0.0, 0.0, 0.0)))
-        assert run.result(run.number, 'succeeded', 1.0, (0.0, 0.0, 0.0)) == []
-        view = run.view(0)
-        assert (view['state'], view['reason']) == ('paused', 'failed')
-        assert sends(run.resume(None)) and run.retries == 0
-
-    def test_resends_count_per_waypoint(self, pa):
-        run = pa.Run()
-        run.start(mission(wp(1, 0), wp(5, 0)), (0.0, 0.0, 0.0))
-        for _ in range(9):
-            run.result(run.number, 'succeeded', 1.0, (0.0, 0.0, 0.0))
-        run.tick(1.0, (1.0, 0.0, 0.0), True)
-        assert run.view(0)['index'] == 1 and run.retries == 0
-
-    def test_failed_waypoint_pauses_then_resume_skip_stop(self, pa):
-        run = pa.Run()
-        run.start(mission(wp(1, 0), wp(2, 0), wp(3, 0)), (0.0, 0.0, 0.0))
-        assert run.result(run.number, 'failed', 1.0, None) == []
-        view = run.view(0)
-        assert (view['state'], view['reason'], view['index']) == ('paused', 'failed', 0)
-        assert sends(run.resume(None))[0][2] == 1.0
-        run.result(run.number, 'failed', 1.0, None)
-        assert sends(run.skip(None))[0][2] == 2.0
-        assert run.stop() == [('cancel',), ('limit', None)]
-        assert run.view(0)['state'] == 'stopped' and run.stop() == []
-
-    def test_canceled_reply_is_not_a_failure(self, pa):
-        run = pa.Run()
-        run.start(mission(wp(1, 0)), (0.0, 0.0, 0.0))
-        assert run.result(run.number, 'canceled', 1.0, None) == []
-        assert run.view(0)['state'] == 'running'
-
-    def test_user_pause(self, pa):
-        run = pa.Run()
-        run.start(mission(wp(1, 0)), (0.0, 0.0, 0.0))
-        assert run.pause() == [('cancel',)]
-        assert run.view(0)['reason'] == 'user' and run.pause() == []
-        assert run.tick(1.0, (1.0, 0.0, 0.0), True) == []
-
-    def test_relocalizing_pauses_and_resends(self, pa):
-        run = pa.Run()
-        run.start(mission(wp(3, 0)), (0.0, 0.0, 0.0))
-        number = run.number
-        assert run.tick(1.0, (1.0, 0.0, 0.0), False) == [('cancel',)]
-        assert run.view(0)['state'] == 'relocalizing'
-        assert run.result(number, 'canceled', 1.0, None) == []
-        assert run.tick(1.5, None, False) == []
-        assert sends(run.tick(2.0, (1.0, 0.0, 0.0), True))[0][2] == 3.0
-
-    def test_localization_ending_stops_the_mission(self, pa):
-        run = pa.Run()
-        run.start(mission(wp(3, 0)), (0.0, 0.0, 0.0))
-        assert run.tick(1.0, None, None) == [('cancel',), ('limit', None)]
-        assert run.view(0)['state'] == 'stopped' and run.tick(2.0, None, None) == []
-
-    def test_a_stall_pauses_until_the_car_can_drive(self, pa):
-        run = pa.Run()
-        run.start(mission(wp(1, 0), wp(3, 0)), (0.0, 0.0, 0.0))
-        here = (0.2, 0.0, 0.0)
-        assert run.tick(1.0, here, True, stalled=True) == [('cancel',)]
-        view = run.view(0)
-        assert (view['state'], view['reason'], view['stalled']) == ('paused', 'stalled', True)
-        assert run.resume(here) == [] and run.skip(here) == []
-        assert run.tick(2.0, here, True, stalled=True) == []
-        assert run.tick(3.0, here, True, stalled=False) == []
-        assert run.view(0)['state'] == 'paused' and not run.view(0)['stalled']
-        assert sends(run.resume(here))[0][2] == 1.0
-
-    def test_stop_works_while_stalled(self, pa):
-        run = pa.Run()
-        run.start(mission(wp(1, 0)), (0.0, 0.0, 0.0))
-        run.tick(1.0, (0.2, 0.0, 0.0), True, stalled=True)
-        assert run.stop() and run.view(0)['state'] == 'stopped'
-
-    def test_a_stall_while_driving_by_hand_changes_nothing(self, pa):
-        run = pa.Run()
-        run.start(mission(wp(1, 0)), (0.0, 0.0, 0.0))
-        run.pause()
-        assert run.tick(1.0, (0.2, 0.0, 0.0), True, stalled=True) == []
-        assert run.view(0)['reason'] == 'user'
-
-    def test_marks_next_and_reached(self, pa):
-        def marks():
-            view = run.view(0)
-            return view['next'], view['visited']
-
-        run = pa.Run()
-        assert marks() == (None, [])
-        run.start(mission(wp(1, 0), wp(3, 0), wp(5, 0), loops=2), (0.0, 0.0, 0.0))
-        assert marks() == (0, [])
-        run.tick(1, (1.0, 0.0, 0.0), True)
-        assert marks() == (1, [0])
-        run.skip(None)
-        assert marks() == (2, [0])  # a skipped waypoint is not reached
-        run.tick(2, (5.0, 0.0, 0.0), True)
-        assert marks() == (0, [0, 2])  # the second loop keeps the marks
-        run.tick(3, (1.0, 0.0, 0.0), True)
-        run.tick(4, (3.0, 0.0, 0.0), True)
-        run.tick(5, (5.0, 0.0, 0.0), True)
-        assert marks() == (None, [0, 1, 2]) and run.view(0)['state'] == 'arrived'
-        run.start(mission(wp(1, 0)), None)
-        assert marks() == (0, [])
-
-    def test_next_while_waiting(self, pa):
-        run = pa.Run()
-        run.start(mission(wp(1, 0, dwell=5), wp(3, 0, dwell=5)), (0.0, 0.0, 0.0))
-        run.tick(0.0, (1.0, 0.0, 0.0), True)
-        assert (run.view(0)['next'], run.view(0)['visited']) == (1, [0])
-        run.tick(5.0, (1.0, 0.0, 0.0), True)
-        run.tick(6.0, (3.0, 0.0, 0.0), True)
-        assert run.view(6)['state'] == 'dwelling' and run.view(6)['next'] is None
-
-    def test_edit_keeps_the_mark_with_the_place(self, pa):
-        run = pa.Run()
-        run.start(mission(wp(1, 0), wp(3, 0), wp(5, 0)), (0.0, 0.0, 0.0))
-        run.tick(1, (1.0, 0.0, 0.0), True)
-        run.edit(mission(wp(9, 9), wp(1, 0, radius=1), wp(5, 0)), None)
-        assert run.view(0)['visited'] == [1]
-        run.edit(mission(wp(9, 9), wp(1, 2), wp(5, 0)), None)
-        assert run.view(0)['visited'] == []
-
-    def test_no_events_while_not_recording(self, pa):
-        run = pa.Run()
-        run.start(mission(wp(1, 0)), (0.0, 0.0, 0.0))
-        run.tick(1.0, (1.0, 0.0, 0.0), True)
-        assert run.view(0)['state'] == 'arrived' and run.take_events() == []
-
-    def test_events_of_a_mission(self, pa):
-        run = pa.Run()
-        run.record_events(True)
-        run.start(mission(wp(1, 0), wp(3, 0), wp(5, 0)), (0.0, 0.0, 0.0))
-        run.result(run.number, 'succeeded', 0.5, (0.2, 0.0, 0.0))
-        run.tick(1.0, (1.0, 0.0, 0.0), True)
-        run.tick(2.0, (1.5, 0.0, 0.0), False)
-        run.tick(3.0, (1.5, 0.0, 0.0), True)
-        run.tick(4.0, (1.5, 0.0, 0.0), True, stalled=True)
-        run.tick(5.0, (1.5, 0.0, 0.0), True)
-        run.resume(None)
-        run.pause()
-        run.skip(None)
-        run.edit(mission(wp(1, 0), wp(3, 0), wp(6, 0)), None)
-        run.stop()
-        got = run.take_events()
-        assert [e['event'] for e in got] == [
-            'start', 'sent', 'sent', 'reached', 'sent', 'relocalizing', 'localized', 'sent',
-            'paused', 'resumed', 'sent', 'paused', 'skipped', 'sent', 'edited', 'sent', 'stopped',
-        ]  # fmt: skip
-        assert [e.get('resend') for e in got if e['event'] == 'sent'] == [
-            False, True, False, False, False, False, False
-        ]  # fmt: skip
-        assert [e['reason'] for e in got if e['event'] == 'paused'] == ['stalled', 'user']
-        assert [e['waypoint'] for e in got][:5] == [1, 1, 1, 1, 2]
-        assert run.take_events() == []
-        run.record_events(False)
-        run.start(mission(wp(1, 0)), None)
-        assert run.take_events() == []
-
-    def test_events_from_the_middle_of_a_mission(self, pa):
-        run = pa.Run()
-        run.start(mission(wp(1, 0), wp(3, 0)), (0.0, 0.0, 0.0))
-        run.record_events(True, underway=True)
-        first = run.take_events()[0]
-        assert first['event'] == 'recording' and len(first['mission']['waypoints']) == 2
-
-    def test_refused_goal_pauses(self, pa):
-        run = pa.Run()
-        run.start(mission(wp(3, 0)), (0.0, 0.0, 0.0))
-        run.refused(run.number)
-        assert run.view(0)['reason'] == 'failed'
-
-    def test_edit_resends_only_a_changed_target(self, pa):
-        run = pa.Run()
-        run.start(mission(wp(1, 0), wp(2, 0)), (0.0, 0.0, 0.0))
-        version = run.view(0)['version']
-        assert run.edit(mission(wp(1, 0), wp(5, 0)), None) == []
-        assert sends(run.edit(mission(wp(1, 1), wp(5, 0)), None))[0][2:4] == (1.0, 1.0)
-        assert run.view(0)['version'] == version + 2
-        run.tick(1, (1.0, 1.0, 0.0), True)
-        assert run.view(0)['index'] == 1
-        # The waypoint being driven to is removed: the list ends, the last one is sent.
-        assert sends(run.edit(mission(wp(1, 1)), None))[0][2:4] == (1.0, 1.0)
-        assert run.view(0)['index'] == 0
-
-    def test_edit_before_a_mission_only_stores_it(self, pa):
-        run = pa.Run()
-        assert run.edit(mission(wp(1, 0)), None) == [] and run.view(0)['count'] == 1
-
-    def test_legs_for_the_preview(self, pa):
-        out = pa.legs(mission(wp(1, 0), wp(1, 1, heading=180), loops=2), (0.0, 0.0, 0.0))
-        assert [leg[0] is None for leg in out] == [True, False, False]
-        assert out[1][1] == (1.0, 1.0, pytest.approx(math.pi))
-        assert out[2][1][:2] == (1.0, 0.0) and len(out) == 3
-        assert len(pa.legs(mission(wp(1, 0)), None)) == 1
 
 
 class FakeNavigator:
@@ -367,9 +58,11 @@ class FakeNavigator:
 
     def control(self, verb):
         self.controls.append(verb)
+        return True, ''
 
     def edit(self, m):
         self.edits.append(m)
+        return (True, '') if self.ready else (False, 'Load a map first.')
 
     def preview(self, m):
         legs = [[[0.0, 0.0], [w['x'], w['y']]] if w['x'] < 5 else None for w in m['waypoints']]
@@ -451,6 +144,9 @@ class TestHttp:
         assert pa.Handler.viewer.controls == ['pause', 'resume', 'skip', 'stop', 'stop']
         assert request(server, 'POST', '/api/edit', {'mission': RAW})[0].status == 200
         assert len(pa.Handler.viewer.edits) == 1
+        pa.Handler.viewer.ready = False
+        res, data = request(server, 'POST', '/api/edit', {'mission': RAW})
+        assert res.status == 409 and data['message'] == 'Load a map first.'
 
     def test_preview(self, server):
         two = {'loops': 1, 'waypoints': [wp(1, 2), wp(9, 0)]}

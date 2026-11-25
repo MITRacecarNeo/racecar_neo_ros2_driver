@@ -137,6 +137,18 @@ class TestRules:
         bridge, navigator = make('nav', 'Navigation'), make('nav', 'Navigation')
         assert navigator.take() and bridge.take() and navigator.refresh()
 
+    def test_following_another_process_of_the_owner(self, make, tmp_path, monkeypatch):
+        navigator, bridge = make('nav'), make('nav')
+        gate = dl.DriveGate(bridge, keep=False)
+        navigator.take()
+        with monkeypatch.context() as m:
+            m.setattr(dl.os, 'getpid', lambda: 999999)
+            assert bridge.joined() and gate.allow(True) and gate.allow(True)
+            gate.idle()
+            gate.release()
+            assert not bridge.held
+        assert navigator.refresh() and not navigator.joined()
+
     def test_hold_takes_when_free(self, make):
         a, b = make('a'), make('b')
         assert a.hold() and a.hold() and not b.hold()

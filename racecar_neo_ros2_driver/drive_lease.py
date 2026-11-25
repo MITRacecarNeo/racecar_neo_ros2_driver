@@ -36,6 +36,7 @@ import time
 FOLDER = Path('/run/racecar')
 FOLDER_ENV = 'RACECAR_DRIVE_LEASE_DIR'
 RECORD = 'drive_lease.json'
+PANEL_RECORD = 'drive_panel.json'  # which panel drives under a shared lease
 LOCK = 'drive_lease.lock'
 STALE_SEC = 1.0
 REFRESH_SEC = 0.2
@@ -50,6 +51,7 @@ class Holder:
     name: str
     pid: int
     beat: float  # time.monotonic(), one clock for every process of a boot
+    share: bool = False  # the car waits: a Drive panel may move it under this lease
 
     def fresh(self, now: float) -> bool:
         return 0.0 <= now - self.beat <= STALE_SEC
@@ -59,11 +61,13 @@ def folder() -> Path:
     return Path(os.getenv(FOLDER_ENV) or FOLDER)
 
 
-def _read(where: Path) -> Holder | None:
+def _read(where: Path, record: str = RECORD) -> Holder | None:
     try:
-        raw = json.loads((where / RECORD).read_text())
-        return Holder(str(raw['owner']), str(raw['name']), int(raw['pid']), float(raw['beat']))
-    except (OSError, ValueError, KeyError, TypeError):
+        raw = json.loads((where / record).read_text())
+        share = bool(raw.get('share', False))
+        beat = float(raw['beat'])
+        return Holder(str(raw['owner']), str(raw['name']), int(raw['pid']), beat, share)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return None
 
 
@@ -109,12 +113,16 @@ class DriveLease:
         name: str,
         where: Path | None = None,
         clock: Callable[[], float] = time.monotonic,
+        record: str = RECORD,
     ) -> None:
         self.owner = owner
         self.name = name
+        self.share = False
         self._where = where or folder()
         self._clock = clock
+        self._record = record
         self._beat: float | None = None  # this object's last heartbeat while holding
+        self._shared = False  # what the record says
 
     @property
     def enforced(self) -> bool:
@@ -131,12 +139,12 @@ class DriveLease:
             return True
         with _locked(self._where) as got:
             now = self._clock()
-            found = _read(self._where)
+            found = _read(self._where, self._record)
             if not got or (found and found.fresh(now) and found.owner != self.owner):
                 self._beat = None
                 return False
-            self._write(Holder(self.owner, self.name, os.getpid(), now))
-            self._beat = now
+            self._write(Holder(self.owner, self.name, os.getpid(), now, self.share))
+            self._beat, self._shared = now, self.share
             return True
 
     def refresh(self) -> bool:
@@ -149,9 +157,9 @@ class DriveLease:
         if now - self._beat > STALE_SEC:
             self._beat = None
             return False
-        if now - self._beat >= REFRESH_SEC:
+        if now - self._beat >= REFRESH_SEC or self.share != self._shared:
             return self.take()
-        found = _read(self._where)
+        found = _read(self._where, self._record)
         if found is None or found.owner != self.owner:
             self._beat = None
             return False
@@ -167,22 +175,36 @@ class DriveLease:
         if not self.enforced:
             return
         with _locked(self._where) as got:
-            found = _read(self._where)
-            if got and found is not None and found.owner == self.owner:
-                (self._where / RECORD).unlink(missing_ok=True)
+            found = _read(self._where, self._record)
+            mine = found is not None and found.owner == self.owner and found.pid == os.getpid()
+            if got and mine:
+                (self._where / self._record).unlink(missing_ok=True)
 
     def holder(self) -> Holder | None:
         """Return the other holder, or None when it is free or this owner's."""
-        found = holder(self._where, self._clock())
+        found = self._fresh()
         return None if found is None or found.owner == self.owner else found
+
+    def joined(self) -> bool:
+        """Return True while another process of this owner holds the lease."""
+        found = self._fresh()
+        return found is not None and found.owner == self.owner and found.pid != os.getpid()
+
+    def panel(self) -> DriveLease:
+        """Return the lease a Drive panel takes while this one is shared."""
+        return DriveLease(self.owner, self.name, self._where, self._clock, PANEL_RECORD)
+
+    def _fresh(self) -> Holder | None:
+        found = _read(self._where, self._record)
+        return found if found is not None and found.fresh(self._clock()) else None
 
     def refused(self) -> str:
         return refused(self.holder())
 
     def _write(self, record: Holder) -> None:
-        tmp = self._where / f'.{RECORD}.tmp'
+        tmp = self._where / f'.{self._record}.tmp'
         tmp.write_text(json.dumps(asdict(record)))
-        tmp.replace(self._where / RECORD)
+        tmp.replace(self._where / self._record)
 
 
 class DriveGate:
@@ -193,35 +215,48 @@ class DriveGate:
     still with `keep` (an app that holds it as long as it runs). A source
     refused or cut off while moving stays off until its command is zero:
     trying again at every publish would start the car by itself the moment
-    the other driver stopped.
+    the other driver stopped. With `shared` (a Drive panel) it may also drive
+    under a lease whose holder waits for the operator, one panel at a time. It follows another
+    process of its own owner without taking the lease from it.
     """
 
-    def __init__(self, lease: DriveLease, keep: bool = True) -> None:
+    def __init__(self, lease: DriveLease, keep: bool = True, shared: bool = False) -> None:
         self.lease = lease
         self.keep = keep
+        self._panel = lease.panel() if shared else None
         self._moving = False
 
     def allow(self, moving: bool) -> bool:
         """Return True when this source may publish now."""
         started, self._moving = moving and not self._moving, moving
-        if self.lease.refresh():
+        if self.lease.joined():
+            return True
+        found = self.lease.holder()
+        shared = self._panel is not None and found is not None and found.share
+        lease = self._panel if shared and self._panel is not None else self.lease
+        if lease.refresh():
             return True
         if started or (self.keep and not moving):
-            return self.lease.take()
+            return lease.take()
         return False
 
     def release(self) -> None:
         self._moving = False
         self.lease.release()
+        if self._panel is not None:
+            self._panel.release()
 
     def idle(self) -> None:
         """Note that the source is quiet: it gives the lease back, and may start again."""
         self._moving = False
-        if self.lease.held:
-            self.lease.release()
+        for lease in (self.lease, self._panel):
+            if lease is not None and lease.held:
+                lease.release()
 
     @property
     def refused(self) -> str:
         """Return why this source may not drive, or ''."""
         found = self.lease.holder()
+        if self._panel is not None and found is not None and found.share:
+            found = self._panel.holder()
         return refused(found) if found is not None else ''

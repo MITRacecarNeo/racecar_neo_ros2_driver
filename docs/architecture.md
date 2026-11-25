@@ -269,13 +269,17 @@ address, so the page warns before a change to that link.
 
 Localization (`launch/autonomy.launch.py`, `mode:=localization`) also starts
 Nav2's controller, planner, behavior and navigator servers under
-`lifecycle_manager_navigation`, and `nav_bridge_node`. `nav2_param_file`
+`lifecycle_manager_navigation`, `nav_bridge_node`, and the navigator
+(`nav_server_node`). `nav2_param_file`
 writes one parameter file at launch: `config/nav2.yaml`, the car profile
 override, the footprint from `frames.yaml` and the planner's minimum turning
 radius from the steering table. Without a steering table, Nav2 is left out.
 
 ```
-racecar nav / Planner ──NavigateToPose──▶ bt_navigator (config/nav2_bt.xml)
+Planner ──/nav/command──▶ nav_server_node ──NavigateToPose──▶ bt_navigator (config/nav2_bt.xml)
+   ◀──/nav/state, /nav/mission, /nav/event──┘                        ▲
+racecar nav goal, move ──NavigateToPose──────────────────────────────┘
+bt_navigator
    ──▶ planner_server (Smac Hybrid-A*, Reeds-Shepp) ──▶ controller_server (Regulated Pure Pursuit)
    ──/nav/cmd_vel──▶ nav_bridge_node ──/drive──▶ mux_node (autonomy source: RB or override)
 ```
@@ -288,11 +292,31 @@ Nav2 commands and the car is localized, then a few zeros, then nothing, so
 it does not fight another `/drive` publisher; the Mapper's Drive panel
 follows the same rule. The mux is unchanged.
 
+`racecar_neo_ros2_driver/drive_lease.py` lets one source at a time publish
+`/drive`: a record in `/run/racecar/drive_lease.json` with the holder and a
+heartbeat, free once the heartbeat is 1 s old. `DriveGate` is the check before
+every publish (Web Teleop, Line Follow, Wall Follow, the Drive panels,
+`nav_bridge_node`; dynamics calibration uses `DriveLease`). The first to take
+it holds it; the second is refused with the holder's name. A source refused or
+cut off while moving stays off until its command is zero. Without the folder
+nothing is enforced.
+
+`nav_server_node` runs the missions of every front end.
+`racecar_neo_ros2_driver/nav_runner.py` holds it without ROS: `Run` steps
+through a mission, and `Commander` takes the commands, refuses a start while a
+mission runs or something else drives, and holds the lease (owner `nav`, under
+the name of the front end) from a mission's start to its end. While the car
+waits for the operator (paused, or localization lost) the record is marked
+`share`, and one Drive panel may drive under it (`drive_panel.json`).
+`nav_bridge_node` drives under the navigator's lease. Front ends use
+`nav_link.NavLink`: a command on `/nav/command` (JSON, with an id), its answer
+in `/nav/state` (5 Hz, latched). Closing the Planner stops a mission started
+from it.
+
 The Planner (`scripts/planner_app.py`, page `scripts/planner.html`, unit
 `racecar-planner.service`, port 8090) builds on the Mapper's server:
 `Navigator` subclasses `mapview.Viewer` under the node name `planner`, and
-its `Handler` subclasses `mapview.Handler`. It adds a `navigate_to_pose`
-action client (goal, cancel, feedback into `Mission`), a `/plan`
+its `Handler` subclasses `mapview.Handler`. It adds a `NavLink`, a `/plan`
 subscription (thinned to 400 points), and a `/global_costmap/costmap`
 subscription held only while the page has Costmap on. Map actions are
 limited to load, save, and stop. Every leg is previewed through
@@ -301,8 +325,9 @@ waypoint, and one back to the first when the mission loops.
 
 Missions (`racecar_neo_ros2_driver/missions.py`) are YAML files in
 `<map>/missions/`: loops, and per waypoint x, y, heading or any, radius,
-speed limit and wait. `planner_app.Run` steps through one without ROS: each
-call returns actions (send a waypoint, cancel, set the speed limit) that `Navigator._apply` carries out. A waypoint is one
+speed limit and wait. `nav_runner.Run` steps through one: each call returns
+actions (send a waypoint, cancel, set the speed limit) that
+`NavServerNode._apply` carries out. A waypoint is one
 `navigate_to_pose` goal; the next preempts it, so the car does not stop
 between waypoints. `Run.tick` (10 Hz, on `/autonomy/status` and
 `/autonomy/pose` subscriptions held for the whole run) accepts a waypoint
@@ -321,10 +346,11 @@ near the waypoint and otherwise sends it again (`RETRY_LIMIT`);
 (`GoalUpdatedController`), which makes this less frequent. With its Record toggle on (`record` in the mission, off by default), a
 mission records through `scripts/mission_recorder.py`, which runs `racecar
 log` as a child and only ever stops its own recording. `Run` keeps events
-only meanwhile; `Navigator` writes them to `events.jsonl` in the bag folder
+only meanwhile, under a key of that recording; `Navigator` gets them on
+`/nav/event` and writes them to `events.jsonl` in the bag folder
 (`mission_data.EventLog`) with the first `/plan` per waypoint, and
 `mission_data.summarize` is the mission part of `racecar log analyze`. The
-unit has `KillMode=mixed`, so stopping the Planner lets it cancel the goal
+unit has `KillMode=mixed`, so stopping the Planner lets it stop its mission
 and finish the bag. Speed limits go on `/speed_limit` (`nav2_msgs/SpeedLimit`,
 m/s; 0 lifts it at the end). `racecar nav mission run` posts to the Planner,
 starting its unit first. Both pages draw with
@@ -345,9 +371,8 @@ alone and any number of pages share that subscription; a frame over
 
 ```
 planner.html ──HTTP poll 10 Hz──▶ planner_app.py (Navigator) ──▶ /autonomy/*, /map, /scan, /plan
-     │                                   ├── compute_path_to_pose (preview), navigate_to_pose (one per waypoint)
-     │                                   ├── /speed_limit (per waypoint)
-     │                                   ├── /pit/stall (pauses the mission)
+     │                                   ├── compute_path_to_pose (preview)
+     │                                   ├── /nav/command ──▶ nav_server_node ──▶ navigate_to_pose, /speed_limit
      │                                   └── /global_costmap/costmap (Costmap on only)
      └── override.js ──keepalive 1 Hz──▶ 8080 /api/override
 ```

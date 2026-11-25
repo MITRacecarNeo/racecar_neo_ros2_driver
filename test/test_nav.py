@@ -186,9 +186,9 @@ class TestLaunch:
             'localization', 'amcl', 'room', '', str(CONFIG), nav_params='p.yaml'
         )
         names = [s['name'] for s in specs]
-        assert names[-6:] == ['controller_server', 'planner_server', 'behavior_server',
-                              'bt_navigator',
-                              'lifecycle_manager_navigation', 'nav_bridge_node']  # fmt: skip
+        assert names[-7:] == ['controller_server', 'planner_server', 'behavior_server',
+                              'bt_navigator', 'lifecycle_manager_navigation',
+                              'nav_bridge_node', 'nav_server_node']  # fmt: skip
         controller = next(s for s in specs if s['name'] == 'controller_server')
         assert controller['remappings'] == [('cmd_vel', '/nav/cmd_vel')]
         assert controller['parameters'] == ['p.yaml']
