@@ -445,6 +445,23 @@ def cmd_stop(args: argparse.Namespace) -> int:
     return 0
 
 
+def progress(state: Mapping[str, Any]) -> dict[str, Any]:
+    """Return how far a recording is: elapsed_sec, size_bytes, rate_bytes_per_sec, free_bytes."""
+    bag = Path(state['bag'])
+    size = dir_size(bag) if bag.exists() else 0
+    elapsed = time.time() - state['started']
+    try:
+        free = shutil.disk_usage(bag.parent).free
+    except OSError:
+        free = 0
+    return {
+        'elapsed_sec': elapsed,
+        'size_bytes': size,
+        'rate_bytes_per_sec': size / elapsed if elapsed > 0 else 0.0,
+        'free_bytes': free,
+    }
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     """Report on the running recording without attaching to it."""
     state = active_state()
@@ -456,13 +473,9 @@ def cmd_status(args: argparse.Namespace) -> int:
         return 0
 
     bag = Path(state['bag'])
-    size = dir_size(bag) if bag.exists() else 0
-    elapsed = time.time() - state['started']
-    rate = size / elapsed if elapsed > 0 else 0.0
-    try:
-        free = shutil.disk_usage(bag.parent).free
-    except OSError:
-        free = 0
+    now = progress(state)
+    size, elapsed = now['size_bytes'], now['elapsed_sec']
+    rate, free = now['rate_bytes_per_sec'], now['free_bytes']
     remaining = (free / rate) if rate > 0 else None
 
     if args.json:
@@ -554,6 +567,11 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     rows = summarize_topics(counts, duration)
     size = dir_size(bag)
 
+    from racecar_neo_ros2_driver import mission_data
+
+    events = mission_data.read_events(bag)
+    mission = mission_data.summarize(events) if events else None
+
     if args.json:
         print(
             json.dumps(
@@ -563,6 +581,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
                     'size_bytes': size,
                     'messages': meta.message_count,
                     'topics': rows,
+                    **({'mission': mission} if mission else {}),
                 },
                 indent=2,
             )
@@ -583,6 +602,9 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     empty = [r['topic'] for r in rows if r['count'] == 0]
     if empty:
         print(f'\n  {len(empty)} topic(s) recorded no messages: {", ".join(empty)}')
+    if mission:
+        print()
+        print('\n'.join(mission_data.summary_lines(mission)))
     return 0
 
 

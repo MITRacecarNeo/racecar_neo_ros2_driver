@@ -1,0 +1,42 @@
+# What a Planner mission can record (racecar_neo_ros2_driver/mission_data.py).
+#
+# Recording is off until the Record toggle of a mission is on. Each group is a
+# box in the Planner's Waypoints panel; a mission saves the ids it records.
+# The car profile's params/mission_data.yaml adds groups, or replaces one by id.
+
+mission_data:
+  # Recording stops under this much free space.
+  min_free_gb: 2.0
+  groups:
+    state:
+      name: Car state
+      topics:
+        - /odom
+        - /autonomy/pose
+        - /autonomy/status
+        - /encoder/speed
+        - /imu/fused
+        - /battery/voltage
+        - /battery/current
+        - /tf
+        - /tf_static
+        - /pit/stall
+        - /mux/override_active
+    commands:
+      name: Commands
+      topics: [/drive, /motor, /mux_out, /nav/cmd_vel, /joy, /speed_limit]
+    lidar:
+      name: Lidar
+      topics: [/scan]
+    navigation:
+      name: Navigation
+      topics:
+        - /plan
+        - /local_costmap/costmap
+        - /global_costmap/costmap
+        - /particle_cloud
+        - /amcl_pose
+        - /map
+    camera:
+      name: Camera
+      topics: [/camera/color/image_raw/compressed]

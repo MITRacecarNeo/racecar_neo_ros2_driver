@@ -318,7 +318,14 @@ preempted (`PipelineSequence` succeeds when FollowPath does, even with the
 planner still running), so `Run.result` counts a success only with the car
 near the waypoint and otherwise sends it again (`RETRY_LIMIT`);
 `config/nav2_bt.xml` plans again as soon as the goal changes
-(`GoalUpdatedController`), which makes this less frequent. Speed limits go on `/speed_limit` (`nav2_msgs/SpeedLimit`,
+(`GoalUpdatedController`), which makes this less frequent. With its Record toggle on (`record` in the mission, off by default), a
+mission records through `scripts/mission_recorder.py`, which runs `racecar
+log` as a child and only ever stops its own recording. `Run` keeps events
+only meanwhile; `Navigator` writes them to `events.jsonl` in the bag folder
+(`mission_data.EventLog`) with the first `/plan` per waypoint, and
+`mission_data.summarize` is the mission part of `racecar log analyze`. The
+unit has `KillMode=mixed`, so stopping the Planner lets it cancel the goal
+and finish the bag. Speed limits go on `/speed_limit` (`nav2_msgs/SpeedLimit`,
 m/s; 0 lifts it at the end). `racecar nav mission run` posts to the Planner,
 starting its unit first. Both pages draw with
 `scripts/web/mapview_core.js` (`RcnMapView`: view transform, pan, zoom,

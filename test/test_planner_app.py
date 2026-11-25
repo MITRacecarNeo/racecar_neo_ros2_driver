@@ -17,7 +17,8 @@ SCRIPTS = Path(__file__).resolve().parent.parent / 'scripts'
 
 @pytest.fixture(scope='module')
 def pa():
-    for name in ('sysinfo', 'map_control', 'webui', 'labkit', 'mapview'):
+    names = ('sysinfo', 'features', 'map_control', 'webui', 'labkit', 'mapview', 'racecar_log')
+    for name in (*names, 'mission_recorder'):
         load_script(name)
     return load_script('planner_app')
 
@@ -265,6 +266,49 @@ class TestRun:
         run.edit(mission(wp(9, 9), wp(1, 2), wp(5, 0)), None)
         assert run.view(0)['visited'] == []
 
+    def test_no_events_while_not_recording(self, pa):
+        run = pa.Run()
+        run.start(mission(wp(1, 0)), (0.0, 0.0, 0.0))
+        run.tick(1.0, (1.0, 0.0, 0.0), True)
+        assert run.view(0)['state'] == 'arrived' and run.take_events() == []
+
+    def test_events_of_a_mission(self, pa):
+        run = pa.Run()
+        run.record_events(True)
+        run.start(mission(wp(1, 0), wp(3, 0), wp(5, 0)), (0.0, 0.0, 0.0))
+        run.result(run.number, 'succeeded', 0.5, (0.2, 0.0, 0.0))
+        run.tick(1.0, (1.0, 0.0, 0.0), True)
+        run.tick(2.0, (1.5, 0.0, 0.0), False)
+        run.tick(3.0, (1.5, 0.0, 0.0), True)
+        run.tick(4.0, (1.5, 0.0, 0.0), True, stalled=True)
+        run.tick(5.0, (1.5, 0.0, 0.0), True)
+        run.resume(None)
+        run.pause()
+        run.skip(None)
+        run.edit(mission(wp(1, 0), wp(3, 0), wp(6, 0)), None)
+        run.stop()
+        got = run.take_events()
+        assert [e['event'] for e in got] == [
+            'start', 'sent', 'sent', 'reached', 'sent', 'relocalizing', 'localized', 'sent',
+            'paused', 'resumed', 'sent', 'paused', 'skipped', 'sent', 'edited', 'sent', 'stopped',
+        ]  # fmt: skip
+        assert [e.get('resend') for e in got if e['event'] == 'sent'] == [
+            False, True, False, False, False, False, False
+        ]  # fmt: skip
+        assert [e['reason'] for e in got if e['event'] == 'paused'] == ['stalled', 'user']
+        assert [e['waypoint'] for e in got][:5] == [1, 1, 1, 1, 2]
+        assert run.take_events() == []
+        run.record_events(False)
+        run.start(mission(wp(1, 0)), None)
+        assert run.take_events() == []
+
+    def test_events_from_the_middle_of_a_mission(self, pa):
+        run = pa.Run()
+        run.start(mission(wp(1, 0), wp(3, 0)), (0.0, 0.0, 0.0))
+        run.record_events(True, underway=True)
+        first = run.take_events()[0]
+        assert first['event'] == 'recording' and len(first['mission']['waypoints']) == 2
+
     def test_refused_goal_pauses(self, pa):
         run = pa.Run()
         run.start(mission(wp(3, 0)), (0.0, 0.0, 0.0))
@@ -300,10 +344,12 @@ class FakeNavigator:
     def __init__(self):
         self.touched = 0
         self.started = []
+        self.labels = []
         self.controls = []
         self.edits = []
         self.costmap = []
         self.ready = True
+        self.rec_summary = {'id': 2, 'text': 'bag'}
         self.map_name = 'hall'
 
     def touch(self):
@@ -312,9 +358,10 @@ class FakeNavigator:
     def snapshot(self, trail_from, trail_id):
         return {'status': {'mode': 'localization'}, 'mission': {'state': 'idle'}}
 
-    def start(self, m):
+    def start(self, m, label=''):
         if not self.ready:
             return False, 'Load a map first.'
+        self.labels.append(label)
         self.started.append(m)
         return True, ''
 
@@ -386,6 +433,9 @@ class TestHttp:
         res, data = request(server, 'POST', '/api/run', {'mission': RAW})
         assert res.status == 200 and data['ok']
         assert pa.Handler.viewer.started == [missions.parse(RAW)]
+        request(server, 'POST', '/api/run', {'mission': RAW, 'name': 'loop5'})
+        request(server, 'POST', '/api/run', {'mission': RAW, 'name': '../x'})
+        assert pa.Handler.viewer.labels == ['', 'loop5', '']
         bad = {'loops': 1, 'waypoints': [wp(1, 2, speed=2.0)]}
         res, data = request(server, 'POST', '/api/run', {'mission': bad})
         assert res.status == 400 and data['message'] == 'Reload the page.'
@@ -418,6 +468,7 @@ class TestHttp:
         assert len(list((tmp_path / 'hall' / 'missions' / 'previous').iterdir())) == 1
         res, data = request(server, 'GET', '/api/missions')
         assert data['map'] == 'hall' and [m['name'] for m in data['missions']] == ['loop']
+        assert all(set(g) == {'id', 'name'} for g in data['groups'])
         res, data = request(server, 'GET', '/api/missions/one?name=loop')
         assert data['mission'] == missions.parse(RAW)
         assert request(server, 'GET', '/api/missions/one?name=none')[0].status == 404
@@ -431,6 +482,9 @@ class TestHttp:
         assert request(server, 'GET', '/api/missions')[1]['missions'] == []
         res, data = request(server, 'POST', '/api/missions/save', {'name': 'x', 'mission': RAW})
         assert res.status == 409 and data['message'] == 'Load a map first.'
+
+    def test_recording_summary(self, server):
+        assert request(server, 'GET', '/api/recording')[1] == {'id': 2, 'text': 'bag'}
 
     def test_costmap_on_request(self, pa, server):
         assert request(server, 'GET', '/api/costmap')[0].status == 204
@@ -491,6 +545,11 @@ class TestPage:
                      'Localization lost. Regain position by driving the car or using Set pose.'):
             assert text in self.html, text
         assert self.html.index('id="override"') < self.html.index('id="more"')
+
+    def test_recording_is_off_until_its_toggle_is_on(self):
+        assert 'noRecord = () => ({ on: false' in self.html
+        assert '<input type="checkbox" id="recon"> Record' in self.html
+        assert 'Recording</span>' in self.html and "pill('warn', 'Not recording')" in self.html
 
     def test_colors_replace_the_next_text(self):
         assert "'Next'" not in self.html and 'map-goal' not in self.html

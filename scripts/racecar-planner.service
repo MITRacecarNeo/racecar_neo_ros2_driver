@@ -12,7 +12,10 @@ Group=racecar
 ExecStart=/home/racecar/ros2_ws/src/racecar_neo_ros2_driver/scripts/ros_exec.sh python3 /home/racecar/ros2_ws/src/racecar_neo_ros2_driver/scripts/planner_app.py
 Restart=on-failure
 RestartSec=5
-TimeoutStopSec=10
+# The server alone gets the signal: it ends a mission's recording itself, with
+# the SIGINT rosbag2 needs to finish a bag.
+KillMode=mixed
+TimeoutStopSec=25
 Environment=HOME=/home/racecar
 # RACECAR_DATA_DIR, from racecar-data.service.
 EnvironmentFile=-/run/racecar/environment

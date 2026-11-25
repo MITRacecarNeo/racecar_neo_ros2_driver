@@ -72,9 +72,12 @@ main.maps-open #hint { left: calc(min(340px, 80%) + var(--rcn-space-3)); }
 .dpad button.down { background: var(--rcn-orange); border-color: var(--rcn-orange); color: var(--rcn-ink); }
 .dpad[hidden], #djoy[hidden], #djoytoggle[hidden] { display: none; }
 #djoy { margin-top: var(--rcn-space-2); }
-#wps { position: absolute; top: 0; left: 0; bottom: 0; width: min(360px, 88%); display: none; overflow: auto; background: var(--rcn-surface); padding: var(--rcn-space-3) var(--rcn-space-4); z-index: 5; }
+/* Wider while it shows a recording summary, which is 63 columns. */
+main { --wps-w: min(360px, 88%); }
+main.summary { --wps-w: min(540px, 88%); }
+#wps { position: absolute; top: 0; left: 0; bottom: 0; width: var(--wps-w); scrollbar-width: thin; scrollbar-color: var(--rcn-border) transparent; display: none; overflow: auto; background: var(--rcn-surface); padding: var(--rcn-space-3) var(--rcn-space-4); z-index: 5; }
 main.wps-open #wps { display: block; }
-main.wps-open #hint { left: calc(min(360px, 88%) + var(--rcn-space-3)); }
+main.wps-open #hint { left: calc(var(--wps-w) + var(--rcn-space-3)); }
 #wps .top { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--rcn-space-2); }
 #wps h2 { font-size: 20px; line-height: 28px; }
 #wps h3 { font-size: 16px; margin-top: var(--rcn-space-4); }
@@ -89,6 +92,10 @@ main.wps-open #hint { left: calc(min(360px, 88%) + var(--rcn-space-3)); }
 .wp .wpgrid { display: grid; grid-template-columns: auto auto; gap: var(--rcn-space-2) var(--rcn-space-3); align-items: center; margin-top: var(--rcn-space-2); }
 .wp .wpgrid label { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
 .wp .wpgrid label.inline { flex-direction: row; align-items: center; gap: var(--rcn-space-2); }
+#recgroups.off { opacity: 0.4; }
+#recstatus { display: grid; grid-template-columns: auto 1fr; gap: 2px var(--rcn-space-3); margin: var(--rcn-space-2) 0; font-size: 14px; }
+#recstatus:empty { display: none; }
+#recsummary { font-size: 12px; line-height: 18px; margin-top: var(--rcn-space-2); padding: var(--rcn-space-3); overflow-x: auto; white-space: pre; scrollbar-width: thin; scrollbar-color: var(--rcn-border) transparent; }
 .mrow { display: flex; align-items: center; gap: var(--rcn-space-2); padding: var(--rcn-space-2) 0; border-top: 1px solid var(--rcn-border); }
 .mrow .info { flex: 1; min-width: 0; }
 #override[aria-pressed="true"] { border-color: var(--rcn-crimson); background: var(--rcn-crimson-deep); color: var(--rcn-paper); }
@@ -103,6 +110,7 @@ main.wps-open #hint { left: calc(min(360px, 88%) + var(--rcn-space-3)); }
   <span id="mapname"></span>
   <span id="loc"></span>
   <span id="nav"></span>
+  <span id="rec"></span>
   <span id="left" class="rcn-num"></span>
   <span class="rcn-spacer"></span>
   <button class="rcn-btn quiet small" id="override" aria-pressed="false"
@@ -137,6 +145,11 @@ main.wps-open #hint { left: calc(min(360px, 88%) + var(--rcn-space-3)); }
     <div id="wplist"></div>
     <div class="row"><button class="rcn-btn quiet small" id="wpclear">Clear</button>
       <button class="rcn-btn quiet small" id="msave">Save</button></div>
+    <h3>Recording</h3>
+    <div class="row"><label><input type="checkbox" id="recon"> Record</label></div>
+    <div class="row" id="recgroups"></div>
+    <div id="recstatus" class="rcn-num"></div>
+    <pre id="recsummary" class="rcn-code" hidden></pre>
     <h3>Saved missions</h3>
     <div id="missionlist"></div>
   </aside>
@@ -193,7 +206,13 @@ let mapsOpen = false;
 let tool = null;           // 'goal' | 'pose' while a drag tool is active
 // The mission on this page, in the format of racecar_neo_ros2_driver/missions.py:
 // loops (0: until Stop) and waypoints {x, y, heading_deg | null, radius_m, speed_mps | null, dwell_sec}.
-let plan = { loops: 1, waypoints: [] };
+// record: off until its toggle is on, then the topic groups.
+const noRecord = () => ({ on: false, groups: ['state', 'commands', 'lidar', 'navigation'] });
+let plan = { loops: 1, waypoints: [], record: noRecord() };
+let planName = '';         // the saved mission it came from or went to
+let groups = [];           // {id, name}: what can be recorded
+let summaryId = -1;        // the recording summary this page last took
+let starting = false;      // Go waits for the recorder
 let planVersion = -1;      // the car's mission version this page last took
 let selected = -1;         // the waypoint open in the panel and ringed on the map
 let preview = null;        // {legs, pose} planned for `plan`; null until planned
@@ -373,6 +392,49 @@ function addWaypoint(x, y, yaw) {
   selected = plan.waypoints.length - 1;
   changed();
 }
+// What to record does not change the path or the colors.
+function recordChanged() {
+  if (underway()) { clearTimeout(editTimer); editTimer = setTimeout(sendEdit, 100); }
+  renderRecord();
+}
+function renderRecord() {
+  const r = plan.record, live = !!mission().recording;
+  $('recon').checked = r.on;
+  $('recgroups').classList.toggle('off', !r.on || live);
+  const html = groups.map((g) => `<label><input type="checkbox" data-g="${esc(g.id)}" ${r.groups.includes(g.id) ? 'checked' : ''} ${!r.on || live ? 'disabled' : ''}> ${esc(g.name)}</label>`).join('');
+  setHtml('recgroups', html);
+}
+function renderRecStatus() {
+  const s = mission().rec_status;
+  const rows = !s ? [] : [['Time', s.time], ['Size', `${s.size} (${s.rate})`],
+    ['Free', s.left ? `${s.free} (${s.left} left)` : s.free], ['Topics', `${s.topics[0]} of ${s.topics[1]}`]];
+  setHtml('recstatus', rows.map(([k, v]) => `<span class="rcn-muted">${k}</span><span>${esc(v)}</span>`).join(''));
+}
+function showSummary(text) {
+  $('recsummary').textContent = text;
+  $('recsummary').hidden = !text;
+  document.querySelector('main').classList.toggle('summary', !!text);
+}
+// The finished recording, as racecar log analyze prints it. The panel opens for it once the mission is over.
+async function takeSummary(id) {
+  const first = summaryId < 0;
+  summaryId = id;
+  if (!id) return;
+  const r = await (await fetch('api/recording', { cache: 'no-store' })).json();
+  showSummary(r.text);
+  if (first || underway() || tool) return;
+  openWps();
+  $('recsummary').scrollIntoView({ block: 'nearest' });
+}
+$('recon').addEventListener('change', () => { plan.record.on = $('recon').checked; $('recon').blur(); recordChanged(); });
+$('recgroups').addEventListener('change', (e) => {
+  const id = e.target.dataset.g, r = plan.record;
+  if (!id) return;
+  r.groups = groups.map((g) => g.id).filter((g) => (g === id ? e.target.checked : r.groups.includes(g)));
+  e.target.blur();
+  recordChanged();
+});
+
 // Every change: plan again, send it to the car while a mission runs, redraw.
 function changed() {
   preview = null;
@@ -436,7 +498,9 @@ async function action(body) {
 }
 async function go() {
   if (tool) endTool();
-  const r = await post('api/run', { mission: plan });
+  starting = true; renderKey = ''; render();
+  const r = await post('api/run', { mission: plan, name: planName });
+  starting = false; renderKey = '';
   if (r.ok) hint(''); else report(r);
   poll();
 }
@@ -479,7 +543,7 @@ function render() {
       f.append(button('Waypoints', wpsOpen ? 'quiet on' : '', toggleWps, false, 'tag'));
       if (!moving()) f.append(button('Set pose', '', () => startTool('pose'), running, 'map'));
     } else {
-      f.append(button('Go', 'primary', go, running || !planned() || !localized() || mission().stalled, 'play'));
+      f.append(button('Go', 'primary', go, running || starting || !planned() || !localized() || mission().stalled, 'play'));
       f.append(button('Set goal', '', () => startTool('goal'), running, 'target'));
       f.append(button('Waypoints', wpsOpen ? 'quiet on' : '', toggleWps, false, 'tag'));
       f.append(button('Set pose', '', () => startTool('pose'), running, 'map'));
@@ -538,6 +602,7 @@ function renderWps() {
     }).join('');
   }
   $('wpclear').disabled = underway() || !n;
+  renderRecord();
   $('msave').disabled = !n || mode() !== 'localization';
 }
 // The colors follow the car even while a field holds the list still.
@@ -581,7 +646,7 @@ $('loops').addEventListener('change', () => {
 $('forever').addEventListener('change', () => { plan.loops = $('forever').checked ? 0 : 1; changed(); });
 $('wpclear').onclick = () => {
   if (!confirm('Clear the waypoints?')) return;
-  plan.waypoints = []; selected = -1; hint(''); changed();
+  plan.waypoints = []; planName = ''; selected = -1; hint(''); changed();
 };
 
 // -- saved missions, beside the loaded map --
@@ -589,6 +654,8 @@ async function loadMissions() {
   const list = $('missionlist');
   let data = { missions: [] };
   try { data = await (await fetch('api/missions', { cache: 'no-store' })).json(); } catch (err) { /* shown empty */ }
+  groups = data.groups || [];
+  renderRecord();
   if (!data.missions.length) { list.innerHTML = '<div class="rcn-small rcn-muted">No saved missions</div>'; return; }
   list.replaceChildren();
   for (const m of data.missions) {
@@ -605,7 +672,8 @@ async function openMission(name) {
   if (plan.waypoints.length && !confirm(`Open ${name}?`)) return;
   const r = await (await fetch(`api/missions/one?name=${encodeURIComponent(name)}`, { cache: 'no-store' })).json();
   if (!r.ok) { report(r); return; }
-  plan = { loops: r.mission.loops, waypoints: r.mission.waypoints };
+  plan = { loops: r.mission.loops, waypoints: r.mission.waypoints, record: r.mission.record || noRecord() };
+  planName = name;
   selected = -1;
   changed();
 }
@@ -621,6 +689,7 @@ $('savego').onclick = async () => {
     r = await post('api/missions/save', { name, mission: plan, replace: true });
   }
   report(r);
+  if (r.ok) planName = name;
   loadMissions();
 };
 
@@ -708,6 +777,8 @@ function showStatus() {
     arrived: pill('ok', 'Arrived'),
   }[m.state] || '' : '';
   setHtml('nav', nav);
+  setHtml('rec', active && m.recording ? '<span class="rcn-status err">&#9679; Recording</span>'
+    : active && m.not_recording && underway() && plan.record.on ? pill('warn', 'Not recording') : '');
   const where = [];
   // The pill already names the waypoint the car is stuck at.
   const named = m.state === 'paused' && m.reason !== 'user';
@@ -825,7 +896,7 @@ async function poll() {
     if (m.mission && m.version !== planVersion && !editTimer) {
       planVersion = m.version;
       edited = false;
-      plan = { loops: m.mission.loops, waypoints: m.mission.waypoints };
+      plan = { loops: m.mission.loops, waypoints: m.mission.waypoints, record: m.mission.record || noRecord() };
       if (selected >= plan.waypoints.length) selected = -1;
       renderWps();
     }
@@ -838,9 +909,11 @@ async function poll() {
     showStatus(); showJob(); showDrive();
     camera.setEnabled((s.sys || {}).camera !== false);
     // Rebuilt only when the mission moves on, so a press on a row is not lost.
-    const wk = [m.state, m.index, m.version].join('|');
+    const wk = [m.state, m.index, m.version, m.recording].join('|');
     if (wpsOpen && wk !== wpsKey) { wpsKey = wk; renderWps(); }
-    if (wpsOpen) paintWps();
+    if (wpsOpen) { paintWps(); renderRecord(); renderRecStatus(); }
+    if (m.recording && !$('recsummary').hidden) showSummary('');
+    if (m.rec_summary !== undefined && m.rec_summary !== summaryId) takeSummary(m.rec_summary).catch(() => {});
     const key = [mode(), localized(), jobRunning(), tool, planned(), m.state, m.index, m.stalled].join('|');
     if (key !== renderKey) { renderKey = key; render(); }
     draw();

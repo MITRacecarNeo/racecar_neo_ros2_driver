@@ -8,6 +8,9 @@ replaced or extended in place. Saving over a mission moves the old file to
 
     version: 1
     loops: 1            # 1 to 99; 0 runs until Stop
+    record:             # off unless on is true (mission_data.py)
+      on: false
+      groups: [state, commands, lidar, navigation]
     waypoints:
       - x: 1.2          # m, map frame
         y: 3.4
@@ -39,6 +42,8 @@ RADIUS_M = (0.25, 3.0)  # 0.25 is Nav2's goal tolerance (config/nav2.yaml)
 SPEED_MPS = (0.5, 1.0)  # the firmware's speed band
 DWELL_SEC = (0.0, 600.0)
 DEFAULT_RADIUS_M = 0.25
+RECORD_GROUPS = ('state', 'commands', 'lidar', 'navigation')
+MAX_GROUPS = 30
 
 
 def _number(value: Any, low: float, high: float, what: str) -> float:
@@ -73,6 +78,20 @@ def parse_waypoint(raw: Any) -> dict[str, Any]:
     }
 
 
+def parse_record(raw: Any) -> dict[str, Any]:
+    """Return what the mission records; off when the mission does not say."""
+    if raw is None:
+        return {'on': False, 'groups': list(RECORD_GROUPS)}
+    if not isinstance(raw, dict) or not isinstance(raw.get('on', False), bool):
+        raise ValueError('record is a mapping with on and groups')
+    groups = raw.get('groups', list(RECORD_GROUPS))
+    if not isinstance(groups, list) or len(groups) > MAX_GROUPS:
+        raise ValueError('groups is a list')
+    if not all(isinstance(g, str) and valid_name(g) for g in groups):
+        raise ValueError('a group is a name')
+    return {'on': raw.get('on', False), 'groups': list(dict.fromkeys(groups))}
+
+
 def parse(raw: Any) -> dict[str, Any]:
     """Return a mission with every field, checked against the limits; ValueError if not."""
     if not isinstance(raw, dict):
@@ -83,7 +102,12 @@ def parse(raw: Any) -> dict[str, Any]:
     points = raw.get('waypoints')
     if not isinstance(points, list) or not 1 <= len(points) <= MAX_WAYPOINTS:
         raise ValueError(f'a mission has 1 to {MAX_WAYPOINTS} waypoints')
-    return {'version': VERSION, 'loops': loops, 'waypoints': [parse_waypoint(p) for p in points]}
+    return {
+        'version': VERSION,
+        'loops': loops,
+        'record': parse_record(raw.get('record')),
+        'waypoints': [parse_waypoint(p) for p in points],
+    }
 
 
 def folder(map_name: str, root: Path | None = None) -> Path:

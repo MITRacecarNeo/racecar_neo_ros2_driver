@@ -21,6 +21,12 @@ goal is canceled (the bridge has already stopped the car), and the waypoint
 is sent again once the car is localized. The speed limit goes to Nav2 on
 /speed_limit.
 
+A mission records only while its Record toggle is on (mission_data.py,
+mission_recorder.py): a bag through `racecar log` and an event log beside it,
+from Go, or from the moment the toggle goes on, until the mission ends or the
+toggle goes off. With it off nothing is started, subscribed or written. A
+recording problem never stops the mission.
+
 The preview plans every leg with compute_path_to_pose before Go. The costmap
 view subscribes to /global_costmap/costmap only while the page has it on.
 
@@ -41,8 +47,9 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import mapview
+import mission_recorder
 import numpy as np
-from racecar_neo_ros2_driver import apps, missions
+from racecar_neo_ros2_driver import apps, mission_data, missions
 from racecar_neo_ros2_driver.maps import valid_name
 import webui
 
@@ -67,8 +74,16 @@ ARRIVE_MARGIN_M = 0.15
 ARRIVE_MARGIN_RAD = 0.15
 RETRY_LIMIT = 10
 NO_MAP = 'Load a map first.'
+NO_SUMMARY = 'Could not read the recording.'
 NOT_LOCALIZED = 'Wait until the car is localized.'
 STALLED = 'Car stalled.'
+BUSY = 'Another change is running.'
+WATCH_SEC = 0.5
+STATUS_SEC = 1.0
+FREE_CHECK_SEC = 5.0
+STEP_M = (0.005, 0.5)  # pose steps that count as driving, not noise or a new pose
+PLAN_POINTS = 100
+PLAN_END_M = 0.5
 MISSION_NAME_RULE = 'Mission names use letters, digits, - and _.'
 RELOAD_TEXT = mapview.RELOAD
 ACTIVE = ('running', 'dwelling', 'relocalizing')
@@ -153,8 +168,21 @@ class Run:
         self.retries = 0  # resends of this waypoint after a success away from it
         self.stalled = False  # the motor's stall protection holds the car
         self.visited: set[int] = set()  # waypoints reached since the mission started
+        self.log_on = False  # events are kept only while a recording runs
+        self.events: list[dict[str, Any]] = []
 
     # -- helpers; the caller holds self.lock --
+
+    def _note(self, event: str, **fields: Any) -> None:
+        if self.log_on:
+            self.events.append(
+                {'event': event, 'loop': self.loop, 'waypoint': self.index + 1, **fields}
+            )
+
+    def _pause(self, reason: str) -> None:
+        self.number += 1
+        self.state, self.reason, self.left = 'paused', reason, None
+        self._note('paused', reason=reason)
 
     def _waypoints(self) -> list[dict[str, Any]]:
         assert self.mission is not None
@@ -168,16 +196,18 @@ class Run:
             return wps[-1]['x'], wps[-1]['y']
         return pose[:2] if pose else None
 
-    def _leg(self, pose: Pose | None) -> list[Action]:
+    def _leg(self, pose: Pose | None, again: bool = False) -> list[Action]:
         wp = self._waypoints()[self.index]
         yaw = goal_yaw(wp, self._previous(pose), pose[2] if pose else 0.0)
         self.number += 1
         self.state, self.reason, self.left, self.recoveries = 'running', '', None, 0
+        self._note('sent', x=wp['x'], y=wp['y'], yaw=round(yaw, 4), resend=again)
         return [('limit', wp['speed_mps']), ('send', self.number, wp['x'], wp['y'], yaw)]
 
     def _end(self, state: str) -> list[Action]:
         self.number += 1
         self.state, self.reason, self.left = state, '', None
+        self._note(state)
         return [('cancel',), ('limit', None)]
 
     def _next(self, pose: Pose | None) -> list[Action]:
@@ -204,6 +234,7 @@ class Run:
 
     def _at_waypoint(self, now: float, pose: Pose | None) -> list[Action]:
         self.visited.add(self.index)
+        self._note('reached')
         dwell = self._waypoints()[self.index]['dwell_sec']
         if dwell > 0:
             self.number += 1
@@ -217,6 +248,7 @@ class Run:
         with self.lock:
             self.mission, self.version = mission, self.version + 1
             self.index, self.loop, self.retries, self.visited = 0, 1, 0, set()
+            self._note('start', mission=mission)
             return self._leg(pose)
 
     def tick(
@@ -231,17 +263,18 @@ class Run:
                 return []
             if self.state == 'running':
                 if stalled:
-                    self.number += 1
-                    self.state, self.reason, self.left = 'paused', 'stalled', None
+                    self._pause('stalled')
                     return [('cancel',)]
                 if not localized:
                     self.number += 1
                     self.state = 'relocalizing'
+                    self._note('relocalizing')
                     return [('cancel',)]
                 if self._reached(pose):
                     return self._at_waypoint(now, pose)
             elif self.state == 'relocalizing':
                 if localized:
+                    self._note('localized')
                     return self._leg(pose)
             elif self.state == 'dwelling' and now >= self.dwell_until:
                 return self._next(pose)
@@ -250,8 +283,7 @@ class Run:
     def refused(self, number: int) -> None:
         with self.lock:
             if number == self.number and self.state == 'running':
-                self.number += 1
-                self.state, self.reason = 'paused', 'failed'
+                self._pause('failed')
 
     def result(self, number: int, status: str, now: float, pose: Pose | None) -> list[Action]:
         """Nav2's result for a goal: 'succeeded', 'canceled' or 'failed'."""
@@ -263,10 +295,9 @@ class Run:
                     return self._at_waypoint(now, pose)
                 if self.retries < RETRY_LIMIT:
                     self.retries += 1
-                    return self._leg(pose)
+                    return self._leg(pose, again=True)
             if status in ('succeeded', 'failed'):
-                self.number += 1
-                self.state, self.reason = 'paused', 'failed'
+                self._pause('failed')
             return []
 
     def current(self, number: int) -> bool:
@@ -282,8 +313,7 @@ class Run:
         with self.lock:
             if self.state not in ACTIVE:
                 return []
-            self.number += 1
-            self.state, self.reason, self.left = 'paused', 'user', None
+            self._pause('user')
             return [('cancel',)]
 
     def resume(self, pose: Pose | None) -> list[Action]:
@@ -291,11 +321,13 @@ class Run:
             if self.state != 'paused' or self.stalled:
                 return []
             self.retries = 0
+            self._note('resumed')
             return self._leg(pose)
 
     def skip(self, pose: Pose | None) -> list[Action]:
         with self.lock:
             if (self.state in ACTIVE or self.state == 'paused') and not self.stalled:
+                self._note('skipped')
                 return self._next(pose)
             return []
 
@@ -324,11 +356,28 @@ class Run:
             self.mission, self.version = mission, self.version + 1
             if not busy:
                 return []
+            self._note('edited', mission=mission)
             self.index = min(self.index, len(mission['waypoints']) - 1)
             if self.state == 'running' and mission['waypoints'][self.index] != before:
                 self.retries = 0
                 return self._leg(pose)
             return []
+
+    def underway(self) -> bool:
+        with self.lock:
+            return self.state in ACTIVE or self.state == 'paused'
+
+    def record_events(self, on: bool, underway: bool = False) -> None:
+        """Keep events from here on, or drop them; `underway` notes where the mission is."""
+        with self.lock:
+            self.log_on, self.events = on, []
+            if on and underway:
+                self._note('recording', mission=self.mission)
+
+    def take_events(self) -> list[dict[str, Any]]:
+        with self.lock:
+            out, self.events = self.events, []
+            return out
 
     def _heading_for(self) -> int | None:
         """Return the waypoint the car goes to next, or None."""
@@ -375,6 +424,20 @@ class Navigator(mapview.Viewer):
         from rclpy.action import ActionClient
 
         self.run = Run()
+        self.recorder = mission_recorder.Recorder()
+        self.recording = False
+        self.not_recording = False  # wanted, but it could not start or ended early
+        self._events: mission_data.EventLog | None = None
+        self.rec_status: dict[str, Any] | None = None  # once a second while recording
+        self.rec_summary: dict[str, Any] = {'id': 0, 'text': ''}  # the last one recorded
+        self._label = ''
+        self._dist = 0.0
+        self._plan_sub: Any = None
+        self._want_plan: tuple[float, float, int, int] | None = None  # x, y, loop, waypoint
+        self._rec_lock = threading.Lock()  # one recording change at a time
+        self._start_lock = threading.Lock()
+        self._abort = False
+        self._events_lock = threading.Lock()
         self.path: list[list[float]] = []
         self.path_version = 0
         self._goal_handle: Any = None
@@ -565,19 +628,159 @@ class Navigator(mapview.Viewer):
         if handle is not None:
             handle.cancel_goal_async()
 
-    def start(self, mission: dict[str, Any]) -> tuple[bool, str]:
+    def _cannot_drive(self) -> str:
+        if not self._localized:
+            return NOT_LOCALIZED
+        return STALLED if self._stalled else ''
+
+    def start(self, mission: dict[str, Any], label: str = '') -> tuple[bool, str]:
+        """Run a mission; with its Record toggle on, once the recorder is ready."""
         if not self._action.wait_for_server(timeout_sec=GOAL_WAIT_SEC):
             return False, NO_MAP
-        if not self._localized:
-            return False, NOT_LOCALIZED
-        if self._stalled:
-            return False, STALLED
-        self._apply(self.run.start(mission, self._pose))
-        return True, ''
+        if not self._start_lock.acquire(blocking=False):
+            return False, BUSY
+        try:
+            self._abort, self.not_recording = False, False
+            problem = self._cannot_drive()
+            if problem:
+                return False, problem
+            self._label = label or self.map_name
+            self._end_recording()
+            if mission['record']['on']:
+                self._begin_recording(mission)
+                # Up to a few seconds have passed.
+                problem = self._cannot_drive()
+                if problem or self._abort:
+                    self._end_recording(summary=False)
+                    return False, problem or 'Stopped.'
+            self._apply(self.run.start(mission, self._pose))
+            if self.recording:
+                threading.Thread(target=self._watch_recording, daemon=True).start()
+            return True, ''
+        finally:
+            self._start_lock.release()
+
+    # -- recording: only while a mission's Record toggle is on --
+
+    def _begin_recording(self, mission: dict[str, Any], underway: bool = False) -> None:
+        with self._rec_lock:
+            if self.recording:
+                return
+            config = mission_data.load_config()
+            wanted = mission_data.topics(config, mission['record']['groups'])
+            name = mission_data.bag_name(self._label, time.time())
+            if not self.recorder.start(name, wanted, mission_data.min_free_bytes(config)):
+                self.not_recording = True
+                return
+            folder = self.recorder.folder
+            assert folder is not None
+            from nav_msgs.msg import Path as PathMsg
+
+            self._dist, self._want_plan = 0.0, None
+            with self._events_lock:
+                self._events = mission_data.EventLog(folder, mission)
+            self.run.record_events(True, underway)
+            with self._lock:
+                self._plan_sub = self.node.create_subscription(
+                    PathMsg, '/plan', self._on_leg_plan, 10
+                )
+            self.recording = True
+            if not underway:
+                live = {t for t, _ in self.node.get_topic_names_and_types()}
+                ready = [t for t in wanted if t in live]
+                self.recorder.wait_ready(ready, lambda: self._abort)
+
+    def _end_recording(self, summary: bool = True) -> None:
+        with self._rec_lock:
+            if not self.recording:
+                return
+            self._write_events()
+            self.run.record_events(False)
+            with self._lock:
+                if self._plan_sub is not None:
+                    self.node.destroy_subscription(self._plan_sub)
+                    self._plan_sub = None
+            self.recorder.stop()
+            with self._events_lock:
+                if self._events is not None:
+                    self._events.flush()
+                    self._events = None
+            self.recording, self.rec_status = False, None
+            folder = self.recorder.folder
+        if folder is not None and summary:
+            threading.Thread(target=self._summarize, args=(folder,), daemon=True).start()
+
+    def _summarize(self, folder: Path) -> None:
+        text = self.recorder.analyze(folder) or NO_SUMMARY
+        self.rec_summary = {'id': self.rec_summary['id'] + 1, 'text': text}
+
+    def _watch_recording(self) -> None:
+        """End the recording with the mission, with its toggle, or on a problem."""
+        config = mission_data.load_config()
+        checked = shown = time.monotonic()
+        while self.recording:
+            time.sleep(WATCH_SEC)
+            if time.monotonic() - shown >= STATUS_SEC:
+                shown = time.monotonic()
+                self.rec_status = self.recorder.status(mission_data.min_free_bytes(config))
+            mission = self.run.mission
+            wanted = mission is not None and mission['record']['on']
+            if not self.run.underway() or not wanted:
+                self._end_recording()
+                return
+            if time.monotonic() - checked >= FREE_CHECK_SEC:
+                checked = time.monotonic()
+                if (
+                    not self.recorder.running()
+                    or self.recorder.free_bytes() < mission_data.min_free_bytes(config)
+                ):
+                    self.not_recording = True
+                    self._end_recording()
+                    return
+
+    def _write_events(self) -> None:
+        events = self.run.take_events()
+        with self._events_lock:
+            if self._events is None:
+                return
+            pose = None if self._pose is None else [round(v, 3) for v in self._pose]
+            for e in events:
+                if e['event'] == 'sent':
+                    self._want_plan = (e['x'], e['y'], e['loop'], e['waypoint'])
+                fields = {k: v for k, v in e.items() if k != 'event'}
+                self._events.add(
+                    e['event'], time.time(), **fields, pose=pose, dist_m=round(self._dist, 2)
+                )
+            self._events.flush()
+
+    def _on_leg_plan(self, msg: Any) -> None:
+        """Log the first path Nav2 plans to the waypoint just sent."""
+        want, points = self._want_plan, path_points(msg)
+        if want is None or not points:
+            return
+        if math.hypot(points[-1][0] - want[0], points[-1][1] - want[1]) > PLAN_END_M:
+            return  # still the path to the waypoint before
+        self._want_plan = None
+        with self._events_lock:
+            if self._events is not None:
+                self._events.add(
+                    'planned', time.time(), loop=want[2], waypoint=want[3],
+                    path=thin(points, PLAN_POINTS), dist_m=round(self._dist, 2),
+                )  # fmt: skip
+
+    def shutdown(self) -> None:
+        """Stop the car's goal and finish the bag before the node goes."""
+        if self.run.underway():
+            self.control('stop')
+            time.sleep(0.3)  # the cancel goes out on the executor
+        self._end_recording(summary=False)
+        super().shutdown()
 
     def control(self, verb: str) -> None:
         """Pause, resume, skip or stop the mission."""
         pose = self._pose
+        if verb == 'stop':
+            self._abort = True  # also a start still waiting for the recorder
         actions = {
             'pause': self.run.pause,
             'resume': lambda: self.run.resume(pose),
@@ -588,6 +791,13 @@ class Navigator(mapview.Viewer):
 
     def edit(self, mission: dict[str, Any]) -> None:
         self._apply(self.run.edit(mission, self._pose))
+        if mission['record']['on'] and self.run.underway() and not self.recording:
+            threading.Thread(target=self._record_from_here, args=(mission,), daemon=True).start()
+
+    def _record_from_here(self, mission: dict[str, Any]) -> None:
+        self.not_recording = False
+        self._begin_recording(mission, underway=True)
+        self._watch_recording()
 
     def _on_mission_status(self, msg: Any) -> None:
         values = {kv.key: kv.value for kv in msg.values}
@@ -602,13 +812,19 @@ class Navigator(mapview.Viewer):
     def _on_mission_pose(self, msg: Any) -> None:
         p = msg.pose.pose
         yaw = 2.0 * math.atan2(p.orientation.z, p.orientation.w)
-        self._pose = (p.position.x, p.position.y, yaw)
+        before, self._pose = self._pose, (p.position.x, p.position.y, yaw)
+        if self.recording and before is not None:
+            step = math.hypot(self._pose[0] - before[0], self._pose[1] - before[1])
+            if STEP_M[0] <= step <= STEP_M[1]:
+                self._dist += step
 
     def _mission_loop(self) -> None:
         while True:
             time.sleep(TICK_SEC)
             now = time.monotonic()
             self._apply(self.run.tick(now, self._pose, self._localized, self._stalled))
+            if self.recording:
+                self._write_events()
 
     def snapshot(self, trail_from: int, trail_id: int) -> dict[str, Any]:
         out = super().snapshot(trail_from, trail_id)
@@ -617,7 +833,13 @@ class Navigator(mapview.Viewer):
             out['path'] = self.path
             out['path_version'] = self.path_version
             out['costmap_version'] = self.costmap_version if self.costmap_info else 0
-        out['mission'] = self.run.view(time.monotonic())
+        out['mission'] = {
+            **self.run.view(time.monotonic()),
+            'recording': self.recording,
+            'not_recording': self.not_recording,
+            'rec_status': self.rec_status,
+            'rec_summary': self.rec_summary['id'],
+        }
         return out
 
 
@@ -649,7 +871,10 @@ class Handler(mapview.Handler):
         elif url.path == '/api/missions':
             name = self.viewer.map_name
             found = missions.listing(name) if name else []
-            self.send_json({'map': name, 'missions': found})
+            groups = mission_data.groups_view(mission_data.load_config())
+            self.send_json({'map': name, 'missions': found, 'groups': groups})
+        elif url.path == '/api/recording':
+            self.send_json(self.viewer.rec_summary)
         elif url.path == '/api/missions/one':
             try:
                 mission = missions.load(self.viewer.map_name, q['name'])
@@ -671,8 +896,10 @@ class Handler(mapview.Handler):
             body = self.read_json()
             if path in ('/api/run', '/api/run_saved'):
                 v.touch()
+                label = str(body.get('name') or '')
                 if path == '/api/run':
                     mission = missions.parse(body.get('mission'))
+                    label = label if valid_name(label) else ''
                 elif not v.map_name:
                     self.send_json({'ok': False, 'message': NO_MAP}, 409)
                     return
@@ -682,7 +909,7 @@ class Handler(mapview.Handler):
                     except FileNotFoundError:
                         self.send_json({'ok': False, 'message': 'No such mission.'}, 404)
                         return
-                ok, message = v.start(mission)
+                ok, message = v.start(mission, label)
                 self.send_json({'ok': ok, 'message': message}, 200 if ok else 409)
             elif path == '/api/edit':
                 v.edit(missions.parse(body.get('mission')))
@@ -721,7 +948,7 @@ class Handler(mapview.Handler):
                     raise ValueError('not a Planner action')
                 argv = mapview.action_argv(body)
                 if not self.job.start(argv):
-                    self.send_json({'ok': False, 'message': 'Another change is running.'}, 409)
+                    self.send_json({'ok': False, 'message': BUSY}, 409)
                     return
                 self.send_json({'ok': True, 'argv': argv})
         except (ValueError, KeyError, TypeError) as exc:

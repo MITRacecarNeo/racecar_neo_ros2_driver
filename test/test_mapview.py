@@ -22,6 +22,7 @@ import yaml
 @pytest.fixture(scope='module')
 def mv():
     load_script('sysinfo')
+    load_script('features')
     load_script('map_control')
     load_script('webui')
     load_script('labkit')

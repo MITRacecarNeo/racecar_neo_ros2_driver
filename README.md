@@ -892,7 +892,7 @@ racecar log start lap3 --topics /scan /odom
 racecar log status                         # size, rate, time until full
 racecar log stop                           # SIGINT, so rosbag2 finalizes
 racecar log list
-racecar log analyze                        # newest bag: duration, per-topic rates
+racecar log analyze                        # newest bag: duration, per-topic rates, mission
 racecar log config --storage=mcap        # saved defaults; --dir sets a fixed bag folder
 ```
 
@@ -1044,6 +1044,17 @@ waypoints; a single goal is a mission of one.
   Resume and Skip work once the car can drive again.
 - Waypoints are red, yellow for the next one, and green once reached. They
   stay green on later loops, except the next one.
+- Record (in Waypoints) is off until you turn it on, and can be turned on and
+  off during a mission. It records a bag and an event log until the mission
+  ends, for the groups checked: Car state, Commands, Lidar, Navigation, and
+  Camera. The choice is saved with the mission. Go waits up to 3 s for the
+  recorder. The header shows Recording, or Not recording when it cannot; the
+  mission goes on. Waypoints shows the time, size, rate, free space, and
+  topics once a second, and the `racecar log analyze` output at the end.
+- The bag is `bags/<time>_mission_<name>` under the [data root](#car-data),
+  with `events.jsonl` and `mission.yaml` in it; `racecar log analyze` reads
+  both. Groups: `config/mission_data.yaml`, and the car profile's
+  `params/mission_data.yaml`.
 - Missions are saved beside the map, in `<map>/missions/NAME.yaml`; saving
   over one moves the old file to `missions/previous/`.
 - Loading a map while the Mapper is mapping asks to save the map first.

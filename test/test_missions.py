@@ -11,10 +11,13 @@ def raw(**over):
     return {'loops': 2, 'waypoints': [{**point, **over}]}
 
 
+OFF = {'on': False, 'groups': ['state', 'commands', 'lidar', 'navigation']}
+
+
 class TestParse:
     def test_fills_and_normalizes(self):
         m = missions.parse({'waypoints': [{'x': 1.23456, 'y': 2}]})
-        assert m == {'version': 1, 'loops': 1, 'waypoints': [
+        assert m == {'version': 1, 'loops': 1, 'record': OFF, 'waypoints': [
             {'x': 1.235, 'y': 2.0, 'heading_deg': None, 'radius_m': 0.25,
              'speed_mps': None, 'dwell_sec': 0.0}]}  # fmt: skip
         assert missions.parse(raw())['waypoints'][0]['heading_deg'] == 270.0
@@ -34,6 +37,21 @@ class TestParse:
     def test_refuses_out_of_range(self, bad):
         with pytest.raises((ValueError, KeyError, TypeError)):
             missions.parse(bad)
+
+    def test_recording_is_off_unless_the_mission_says_so(self):
+        assert missions.parse(raw())['record'] == OFF
+        assert missions.parse({**raw(), 'record': {}})['record'] == OFF
+        own = {'on': True, 'groups': ['lidar', 'camera', 'lidar']}
+        assert missions.parse({**raw(), 'record': own})['record'] == {
+            'on': True, 'groups': ['lidar', 'camera']}  # fmt: skip
+
+    @pytest.mark.parametrize(
+        'bad', [[], {'on': 1}, {'on': 'yes'}, {'groups': 'lidar'}, {'groups': ['../x']},
+                {'groups': [1]}, {'groups': ['a'] * 31}],
+    )  # fmt: skip
+    def test_refuses_a_bad_record(self, bad):
+        with pytest.raises(ValueError):
+            missions.parse({**raw(), 'record': bad})
 
     def test_until_stop_is_zero_loops(self):
         assert missions.parse({**raw(), 'loops': 0})['loops'] == 0

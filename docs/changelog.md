@@ -136,6 +136,11 @@ All notable changes to this project will be documented in this file. The format 
 - Mapper and Planner: a Camera panel with the color camera
   (`scripts/web/camera_panel.js`, 8080 `/api/camera.jpg`, one feed for every
   page, only while a panel is open). Mapper: a Safety override button.
+- Mission recording: a Record toggle in the Planner's Waypoints panel, off by
+  default, with topic groups (`config/mission_data.yaml`); a bag and an event
+  log per mission (`mission_data.py`, `mission_recorder.py`); the mission in
+  `racecar log analyze`. Stopping the Planner stops the car's goal and
+  finishes the bag.
 - `scripts/web/mapview_core.js` (`RcnMapView`): the map view shared by the
   Mapper and the Planner.
 - `apps.manual_driving_apps()`: the driving apps that `racecar map` closes;
