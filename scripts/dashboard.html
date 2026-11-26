@@ -115,6 +115,7 @@
   <span class="host" id="host"></span>
   <span id="clock" aria-label="Car time"></span>
   <span class="rcn-spacer"></span>
+  <span class="rcn-status ok" id="driver" hidden></span>
   <span class="net">
     <span class="rcn-status off" id="net-pill" role="button" tabindex="0" aria-haspopup="true" aria-expanded="false" hidden></span>
     <div id="net-menu" hidden><table id="net-table"></table><a class="rcn-btn small" id="net-configure" href="connections" target="_blank">Configure</a></div>
@@ -247,6 +248,7 @@
 
 <script src="ui/battery.js?v={{asset}}"></script>
 <script src="ui/stall.js?v={{asset}}"></script>
+<script src="ui/driving.js?v={{asset}}"></script>
 <script src="ui/override.js?v={{asset}}"></script>
 <script>
 'use strict';

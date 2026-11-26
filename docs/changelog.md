@@ -17,6 +17,11 @@ All notable changes to this project will be documented in this file. The format 
   refused. `racecar nav goal`, `move`, `cancel` and `status` go through it.
 - `racecar map start`, `load` and `resume` are refused while a mission, a goal,
   a Drive panel or a calibration drives.
+- Who drives: in the 8080 header, in a `racecar status` row, and as "X is
+  driving." on the driving pages, whose Drive panels gray out. 8080 does not
+  open a driving app while a program, a goal or a calibration drives. A
+  student program holds the car from its start to its end, and a notebook
+  until its kernel is shut down.
 - A stall banner on every page the car serves (`scripts/web/stall.js`,
   8080 `/api/stall`): yellow while the throttle is held after a stall or
   during the cooldown, red during a lockout, with the seconds left.

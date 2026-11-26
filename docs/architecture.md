@@ -297,7 +297,13 @@ every publish (Web Teleop, Line Follow, Wall Follow, the Drive panels);
 dynamics calibration and `nav_bridge_node` use `DriveLease`. The first to take
 it holds it; the second is refused with the holder's name. A source refused or
 cut off while moving stays off until its command is zero. Without the folder
-nothing is enforced.
+nothing is enforced. 8080 reads the record for `/api/driver` (the header pill
+and `scripts/web/driving.js`, which shows "X is driving." and grays the Drive
+panels on the driving pages), `racecar status` for its `driving` row, and
+`open_app` to refuse a driving app over a holder that is not an app. Its
+sampler also holds the lease for a student program whose library takes none
+(`drive_lease.ProgramWatch`) while its `drive_pub` node publishes `/drive`:
+from `create_racecar()` until the process ends.
 
 `nav_server_node` runs the missions of every front end.
 `racecar_neo_ros2_driver/nav_runner.py` holds it without ROS: `Run` steps

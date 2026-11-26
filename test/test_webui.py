@@ -72,6 +72,7 @@ SHARED = (
     'override.js',
     'battery.js',
     'stall.js',
+    'driving.js',
     'ui.js',
     'api.js',
     'tune.js',
@@ -150,6 +151,26 @@ def test_every_page_shows_the_stall_banner():
         assert 'ui/stall.js?v=' in (scripts / page).read_text(), page
 
 
+def test_driving_pages_show_who_drives():
+    scripts = Path(__file__).resolve().parent.parent / 'scripts'
+    driving = {
+        'dashboard.html': '',
+        'mapview.html': 'Mapper',
+        'planner.html': 'Planner',
+        'dashboards/teleop_dashboard/teleop.html': 'Web Teleop',
+        'dashboards/linefollow_dashboard/linefollow.html': 'Line Follow',
+        'dashboards/wallfollow_dashboard/wallfollow.html': 'Wall Follow',
+    }
+    for page in PAGES:
+        text = (scripts / page).read_text()
+        assert ('ui/driving.js?v=' in text) == (page in driving), page
+        if driving.get(page):
+            assert f'<html lang="en" data-app="{driving[page]}">' in text, page
+    for page in ('mapview.html', 'planner.html'):
+        text = (scripts / page).read_text()
+        assert 'canDrive() && !(window.RcnDriving && RcnDriving.blocked())' in text
+
+
 def test_override_banner_only_on_8080_and_driving_pages():
     # Every page that loads override.js keeps the override alive.
     scripts = Path(__file__).resolve().parent.parent / 'scripts'
@@ -210,7 +231,9 @@ class TestFill:
         assert f'Driver {webui.driver_version()}' in text
         assert 'racecar OS' in text and 'Copyright' not in text
 
-    @pytest.mark.parametrize('name', ['battery.js', 'override.js', 'lost.js', 'stall.js'])
+    @pytest.mark.parametrize(
+        'name', ['battery.js', 'override.js', 'lost.js', 'stall.js', 'driving.js']
+    )
     def test_shared_scripts_reach_the_home_page(self, webui, name):
         raw = (webui.WEB_DIR / name).read_text()
         assert "RcnRoute.app('home'" in raw and ':8080/' not in raw

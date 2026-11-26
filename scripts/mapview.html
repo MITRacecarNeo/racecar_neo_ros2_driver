@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-app="Mapper">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
@@ -12,6 +12,7 @@
 <script src="ui/camera_panel.js?v={{asset}}"></script>
 <script src="ui/battery.js?v={{asset}}" defer></script>
 <script src="ui/stall.js?v={{asset}}" defer></script>
+<script src="ui/driving.js?v={{asset}}" defer></script>
 <link rel="icon" href="ui/brand/app-icon-32.png">
 <link rel="apple-touch-icon" href="ui/brand/app-icon-180.png">
 <style>
@@ -592,7 +593,7 @@ function setFolded(folded) {
 $('dfold').onclick = () => setFolded(!$('drivebox').classList.contains('folded'));
 setFolded(store.get(DFOLD_KEY) === '1');
 function showDrive() {
-  const on = canDrive();
+  const on = canDrive() && !(window.RcnDriving && RcnDriving.blocked());
   if (!on && !$('drivebox').classList.contains('off')) driveRelease();
   $('drivebox').classList.toggle('off', !on);
 }

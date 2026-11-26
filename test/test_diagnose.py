@@ -647,6 +647,14 @@ class TestWatchdogCheck:
     def test_no_state_file(self, diag):
         assert diag.watchdog_check(None).status == diag.SKIP
 
+    def test_driving_row(self, diag):
+        from racecar_neo_ros2_driver.drive_lease import Holder
+
+        assert diag.driver_check(None).detail == 'nothing'
+        row = diag.driver_check(Holder('nav', 'Planner', 1, 0.0))
+        assert (row.group, row.name, row.detail) == ('services', 'driving', 'Planner')
+        assert row.status == diag.OK
+
     def test_stale_state_warns(self, diag):
         assert diag.watchdog_check(_wd_state(stale=True, pit='healthy')).status == diag.WARN
 

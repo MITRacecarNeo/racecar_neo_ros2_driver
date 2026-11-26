@@ -478,6 +478,15 @@ does. A white border means the app is running.
   which start when opened. Clear apps stops them.
 - Autonomy: Mapper (the map viewer), which starts at boot, and the
   Planner, which starts when opened. Clear apps stops the Planner.
+
+**Driving.** One source drives the car at a time: an app, a mission or goal,
+a Drive panel, a calibration drive, or a student program. The header shows
+which ("Driving: Planner"), and `racecar status` has a `driving` row. The
+driving pages show "X is driving." while another source drives, and their
+Drive panels gray out. A driving app does not open while a program, a
+`racecar nav` goal or a calibration drives. A student program holds the car
+from its start to its end, moving or not; a notebook holds it until its kernel
+is shut down.
 - Tap a tile to open the app in a new tab. A stopped app is started
   first, and the tab shows a loading bar until the app is ready. Cancel
   closes that tab without opening the app.

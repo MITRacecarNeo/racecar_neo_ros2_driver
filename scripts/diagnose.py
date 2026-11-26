@@ -35,7 +35,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import features  # noqa: E402, I100  sibling script, after the path insert
-from racecar_neo_ros2_driver import units  # noqa: E402
+from racecar_neo_ros2_driver import drive_lease, units  # noqa: E402
 from racecar_neo_ros2_driver.geometry import yaw_of  # noqa: E402
 from racecar_neo_ros2_driver.term import paint, use_color  # noqa: E402, F401  used by health
 import sysinfo  # noqa: E402
@@ -522,7 +522,13 @@ def check_services() -> list[Check]:
     active = terminal.get('active', '') if terminal and terminal['load'] != 'not-found' else ''
     out.append(terminal_check(active, _run(['tmux', '-L', 'racecar-terminal', 'ls', '-F', '#S'])))
     out.append(watchdog_check(sysinfo.read_watchdog_state()))
+    out.append(driver_check(drive_lease.holder()))
     return out
+
+
+def driver_check(found: drive_lease.Holder | None) -> Check:
+    """Report who holds the drive lease."""
+    return Check('services', 'driving', OK, found.name if found else 'nothing')
 
 
 def terminal_check(active: str, sessions: str) -> Check:

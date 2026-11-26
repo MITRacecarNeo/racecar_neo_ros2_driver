@@ -19,7 +19,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
-from racecar_neo_ros2_driver import apps, car_profile, fileio, units
+from racecar_neo_ros2_driver import apps, car_profile, drive_lease, fileio, units
 from racecar_neo_ros2_driver.qos import LATCHED, SENSOR_LATEST
 import rclpy
 from rclpy.node import Node
@@ -233,6 +233,8 @@ _system = History()
 OVERRIDE_KEEPALIVE_SEC = 2.0
 OVERRIDE_CONFIRM_SEC = 3.0
 OVERRIDE_PUBLISH_SEC = 0.2
+PROGRAM_TICK_SEC = drive_lease.REFRESH_SEC
+PROGRAM_GRAPH_SEC = 1.0
 
 
 class OverrideSession:
@@ -551,6 +553,18 @@ class _RateSampler(Node):
             Bool, '/mux/override_active', self._record_override, latched
         )
         self.create_timer(OVERRIDE_PUBLISH_SEC, self._publish_override)
+        # Programs on a library that takes no lease (drive_lease.ProgramWatch).
+        self._program = drive_lease.ProgramWatch()
+        self._program_seen = False
+        self.create_timer(PROGRAM_TICK_SEC, self._watch_program)
+        self.create_timer(PROGRAM_GRAPH_SEC, self._find_program)
+
+    def _find_program(self) -> None:
+        found = self.get_publishers_info_by_topic('/drive')
+        self._program_seen = any(i.node_name == drive_lease.PROGRAM_NODE for i in found)
+
+    def _watch_program(self) -> None:
+        self._program.tick(self._program_seen)
 
     def _publish_override(self) -> None:
         self._override_pub.publish(UInt32(data=_override.session(time.monotonic())))
@@ -1130,6 +1144,19 @@ def setup_view() -> dict[str, Any]:
     return {'complete': car_setup.setup_complete(info), 'open': car_setup.open_steps(info)}
 
 
+def driver_view() -> dict[str, Any] | None:
+    """Return who holds the drive lease (name, share), or None."""
+    found = drive_lease.holder()
+    return None if found is None else {'name': found.name, 'share': found.share}
+
+
+def program_driving() -> str:
+    """Return why a driving app may not open: something that is not an app drives, or ''."""
+    found = drive_lease.holder()
+    names = {a['name'] for a in APPS}
+    return drive_lease.refused(found) if found and found.name not in names else ''
+
+
 def open_app(target: str, run: Callable[..., Any] = subprocess.run) -> tuple[bool, str]:
     """
     Start `target` if it is not running.
@@ -1147,6 +1174,9 @@ def open_app(target: str, run: Callable[..., Any] = subprocess.run) -> tuple[boo
         return False, SETUP_NEEDED
     if app['exclusive']:
         live = ('active', 'activating')
+        busy = program_driving()
+        if busy and unit_states([app['unit']], run)[app['unit']] not in live:
+            return False, busy
         # An Autonomy app drives through the autonomy run; the other driving apps stop it.
         if (
             app['group'] != 'autonomy'
@@ -1609,6 +1639,10 @@ class DashboardHandler(webui.AppHandler):
             origin = lab_origin(self.headers.get('Origin'), self.headers.get('Host'))
             cors = {'Access-Control-Allow-Origin': origin, 'Vary': 'Origin'} if origin else {}
             self.send_json({'battery': current_battery()}, 200, cors)
+        elif url.path == '/api/driver':
+            origin = lab_origin(self.headers.get('Origin'), self.headers.get('Host'))
+            cors = {'Access-Control-Allow-Origin': origin, 'Vary': 'Origin'} if origin else {}
+            self.send_json({'driver': driver_view()}, 200, cors)
         elif url.path == '/api/stall':
             origin = lab_origin(self.headers.get('Origin'), self.headers.get('Host'))
             cors = {'Access-Control-Allow-Origin': origin, 'Vary': 'Origin'} if origin else {}

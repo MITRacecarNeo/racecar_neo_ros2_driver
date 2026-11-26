@@ -374,6 +374,28 @@ class TestHome:
         verbs = [(c[-2], c[-1]) for c in run.calls if c[1] == '--no-ask-password']
         assert verbs == [('stop', 'racecar-webteleop'), ('start', 'racecar-linefollow')]
 
+    @pytest.fixture
+    def lease(self, tmp_path, monkeypatch):
+        from racecar_neo_ros2_driver import drive_lease
+
+        monkeypatch.setenv(drive_lease.FOLDER_ENV, str(tmp_path))
+        return lambda owner, name: drive_lease.DriveLease(owner, name, tmp_path)
+
+    @pytest.mark.parametrize('owner, name', [('program', 'Program'), ('nav', 'racecar nav'),
+                                             ('calibration', 'Calibration')])  # fmt: skip
+    def test_a_driving_app_does_not_open_over_a_program(self, dashboard, lease, owner, name):
+        lease(owner, name).take()
+        run = FakeRun({'racecar-webteleop': 'active'})
+        assert dashboard.open_app('linefollow', run) == (False, f'{name} is driving.')
+        assert run.states['racecar-webteleop'] == 'active'
+        assert dashboard.open_app('webteleop', run)[0]
+        assert dashboard.open_app('camlabel', run)[0]
+
+    def test_between_apps_the_page_asks_instead(self, dashboard, lease):
+        lease('nav', 'Planner').take()
+        assert dashboard.open_app('linefollow', FakeRun({}))[0]
+        assert dashboard.driver_view() == {'name': 'Planner', 'share': False}
+
     def test_open_running_exclusive_does_nothing(self, dashboard):
         run = FakeRun({'racecar-wallfollow': 'active'})
         assert dashboard.open_app('wallfollow', run)[0]
@@ -1246,6 +1268,19 @@ class TestBatteryEndpoints:
         status, body = server('GET', '/api/stall', {'Origin': 'http://127.0.0.1:8084'})
         assert status == 200 and server.cors == 'http://127.0.0.1:8084'
         assert body['stall'] == {'state': 'cooldown', 'seconds_left': 1.5}
+
+    def test_driver_nobody(self, dashboard, server):
+        status, body = server('GET', '/api/driver', {'Origin': 'http://127.0.0.1:8084'})
+        assert status == 200 and body == {'driver': None}
+        assert server.cors == 'http://127.0.0.1:8084'
+
+
+class TestDriver:
+    def test_pill_in_the_header(self, dashboard):
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
+        where = [html.index(f'id="{name}"') for name in ('driver', 'net-pill', 'batt-time')]
+        assert where == sorted(where)
+        assert 'ui/driving.js?v=' in html
 
 
 class TestBatteryPage:

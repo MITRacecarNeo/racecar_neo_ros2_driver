@@ -273,6 +273,30 @@ class TestEveryPublisher:
             assert re.search(r'gate\.allow\(|lease\.refresh\(|lease\.follows\(', text), path
 
 
+class TestProgramWatch:
+    @pytest.fixture
+    def watch(self, make):
+        return dl.ProgramWatch(make('program', 'Program'))
+
+    def test_holds_from_start_to_end_moving_or_not(self, watch, make, clock):
+        other = make('webteleop')
+        for _ in range(20):
+            watch.tick(present=True)
+            clock.now += 0.2
+            assert not other.take() and other.refused() == 'Program is driving.'
+        watch.tick(present=False)
+        assert other.take()
+
+    def test_a_holder_before_it_keeps_the_car_until_it_lets_go(self, watch, make):
+        first = make('webteleop', 'Web Teleop')
+        first.take()
+        watch.tick(present=True)
+        assert first.refresh() and not watch.lease.held
+        first.release()
+        watch.tick(present=True)
+        assert watch.lease.held and not first.take()
+
+
 class TestProcesses:
     def test_a_killed_holder_frees_the_car(self, spawn, tmp_path):
         p, b = spawn('program'), dl.DriveLease('b', 'b', tmp_path)

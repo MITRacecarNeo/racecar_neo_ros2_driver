@@ -212,6 +212,31 @@ class DriveLease:
         tmp.replace(self._where / self._record)
 
 
+# The student library's /drive node, there from create_racecar() until the process ends.
+PROGRAM_NODE = 'drive_pub'
+
+
+class ProgramWatch:
+    """
+    The lease for a student program whose library does not take it.
+
+    A program holds the car while the library's node publishes /drive: from
+    the start of the program to its end, and in a notebook until its kernel is
+    shut down. Others are refused meanwhile. A program started while
+    something else holds the car takes it once that one lets go.
+    """
+
+    def __init__(self, lease: DriveLease | None = None) -> None:
+        self.lease = lease or DriveLease('program', 'Program')
+
+    def tick(self, present: bool) -> None:
+        """Hold the lease, take it when free, or give it back; `present`: the node publishes."""
+        if present:
+            self.lease.hold()
+        elif self.lease.enforced and self.lease.held:
+            self.lease.release()
+
+
 class DriveGate:
     """
     The check before every publish, for a source that repeats its command.
