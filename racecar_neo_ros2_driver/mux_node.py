@@ -16,6 +16,10 @@ session number on /mux/override several times a second, and the override
 lapses override_timeout_sec after the last one. LB still selects the gamepad;
 any other gamepad button ends the session, which stays ended until a new
 session number arrives. /mux/override_active (latched) reports the state.
+
+A student program's /drive commands are dropped while another source holds
+the drive lease (drive_lease.ProgramFilter), so a program started second does
+not drive against it.
 """
 
 from collections.abc import Sequence
@@ -24,6 +28,7 @@ import time
 from typing import Any
 
 from ackermann_msgs.msg import AckermannDriveStamped
+from racecar_neo_ros2_driver.drive_lease import ProgramFilter
 from racecar_neo_ros2_driver.params import declare_params
 from racecar_neo_ros2_driver.qos import LATCHED, SENSOR_LATEST
 from racecar_neo_ros2_driver.spin import run_node
@@ -293,6 +298,7 @@ class MuxNode(Node):
         self._gamepad_stamp = 0.0
 
         self._latest_auto: AckermannDriveStamped | None = None
+        self._programs = ProgramFilter()
         self._auto_stamp = 0.0
 
         self._last_mode = MuxMode.IDLE
@@ -361,6 +367,8 @@ class MuxNode(Node):
         self._gamepad_stamp = time.monotonic()
 
     def _auto_cb(self, msg: AckermannDriveStamped) -> None:
+        if not self._programs.allows(msg.header.frame_id):
+            return
         self._latest_auto = msg
         self._auto_stamp = time.monotonic()
 

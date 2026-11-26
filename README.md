@@ -486,7 +486,8 @@ driving pages show "X is driving." while another source drives, and their
 Drive panels gray out. A driving app does not open while a program, a
 `racecar nav` goal or a calibration drives. A student program holds the car
 from its start to its end, moving or not; a notebook holds it until its kernel
-is shut down.
+is shut down. A program started while something else holds the car does not
+move it: the safety controller drops its commands.
 - Tap a tile to open the app in a new tab. A stopped app is started
   first, and the tab shows a loading bar until the app is ready. Cancel
   closes that tab without opening the app.

@@ -417,6 +417,24 @@ class TestPressed:
         assert pressed([], _btns(ao=1), GAMEPAD)
 
 
+class TestPrograms:
+    def test_a_program_command_is_dropped_while_another_holds(self, tmp_path, monkeypatch):
+        from racecar_neo_ros2_driver import drive_lease
+
+        monkeypatch.setenv(drive_lease.FOLDER_ENV, str(tmp_path))
+        mux = SimpleNamespace(_programs=drive_lease.ProgramFilter(), _latest_auto=None)
+
+        def send(frame):
+            msg = SimpleNamespace(header=SimpleNamespace(frame_id=frame))
+            MuxNode._auto_cb(mux, msg)
+            return mux._latest_auto is msg
+
+        assert send('base_link')
+        drive_lease.DriveLease('linefollow', 'Line Follow', tmp_path).take()
+        mux._programs = drive_lease.ProgramFilter()
+        assert not send('base_link') and send('')
+
+
 class TestOverrideMode:
     def test_off_defers_to_the_gamepad(self):
         assert _Mux()._override_mode(5.0) is None

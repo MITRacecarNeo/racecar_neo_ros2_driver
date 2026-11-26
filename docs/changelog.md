@@ -21,7 +21,8 @@ All notable changes to this project will be documented in this file. The format 
   driving." on the driving pages, whose Drive panels gray out. 8080 does not
   open a driving app while a program, a goal or a calibration drives. A
   student program holds the car from its start to its end, and a notebook
-  until its kernel is shut down.
+  until its kernel is shut down. The safety controller drops a program's
+  commands while something else holds the car.
 - A stall banner on every page the car serves (`scripts/web/stall.js`,
   8080 `/api/stall`): yellow while the throttle is held after a stall or
   during the cooldown, red during a lockout, with the seconds left.

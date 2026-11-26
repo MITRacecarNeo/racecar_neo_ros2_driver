@@ -212,8 +212,12 @@ class DriveLease:
         tmp.replace(self._where / self._record)
 
 
-# The student library's /drive node, there from create_racecar() until the process ends.
+# The student library's /drive node, there from create_racecar() until the process ends,
+# and the frame its commands carry; no driver source uses it.
 PROGRAM_NODE = 'drive_pub'
+PROGRAM_OWNER = 'program'
+PROGRAM_FRAME = 'base_link'
+PROGRAM_CHECK_SEC = 0.1
 
 
 class ProgramWatch:
@@ -227,7 +231,7 @@ class ProgramWatch:
     """
 
     def __init__(self, lease: DriveLease | None = None) -> None:
-        self.lease = lease or DriveLease('program', 'Program')
+        self.lease = lease or DriveLease(PROGRAM_OWNER, 'Program')
 
     def tick(self, present: bool) -> None:
         """Hold the lease, take it when free, or give it back; `present`: the node publishes."""
@@ -235,6 +239,33 @@ class ProgramWatch:
             self.lease.hold()
         elif self.lease.enforced and self.lease.held:
             self.lease.release()
+
+
+class ProgramFilter:
+    """
+    The mux's check on /drive.
+
+    A student program's commands pass only while no other source holds the
+    car. The library does not ask the lease, so it is told apart by the
+    frame its commands carry.
+    """
+
+    def __init__(
+        self, where: Path | None = None, clock: Callable[[], float] = time.monotonic
+    ) -> None:
+        self._where = where
+        self._clock = clock
+        self._checked = -1e9
+        self._other = False
+
+    def allows(self, frame: str) -> bool:
+        if frame != PROGRAM_FRAME:
+            return True
+        now = self._clock()
+        if now - self._checked >= PROGRAM_CHECK_SEC:
+            found = holder(self._where, now)
+            self._checked, self._other = now, found is not None and found.owner != PROGRAM_OWNER
+        return not self._other
 
 
 class DriveGate:

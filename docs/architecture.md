@@ -303,7 +303,10 @@ panels on the driving pages), `racecar status` for its `driving` row, and
 `open_app` to refuse a driving app over a holder that is not an app. Its
 sampler also holds the lease for a student program whose library takes none
 (`drive_lease.ProgramWatch`) while its `drive_pub` node publishes `/drive`:
-from `create_racecar()` until the process ends.
+from `create_racecar()` until the process ends. `mux_node` drops `/drive`
+messages with frame `base_link` (the library's; no driver source uses it)
+while another source holds the lease (`drive_lease.ProgramFilter`, read at most
+every 0.1 s), so a program started second does not drive against the holder.
 
 `nav_server_node` runs the missions of every front end.
 `racecar_neo_ros2_driver/nav_runner.py` holds it without ROS: `Run` steps

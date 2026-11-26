@@ -297,6 +297,40 @@ class TestProgramWatch:
         assert watch.lease.held and not first.take()
 
 
+class TestProgramFilter:
+    @pytest.fixture
+    def filt(self, tmp_path, clock):
+        return dl.ProgramFilter(tmp_path, clock)
+
+    def test_a_program_passes_while_the_car_is_free_or_its_own(self, filt, make, clock):
+        assert filt.allows('base_link')
+        make('program', 'Program').take()
+        clock.now += 0.2
+        assert filt.allows('base_link')
+
+    def test_a_program_is_dropped_while_another_holds(self, filt, make, clock):
+        other = make('linefollow', 'Line Follow')
+        other.take()
+        clock.now += 0.2
+        assert not filt.allows('base_link') and filt.allows('') and filt.allows('map')
+        other.release()
+        assert not filt.allows('base_link')  # read again after PROGRAM_CHECK_SEC
+        clock.now += 0.2
+        assert filt.allows('base_link')
+
+    def test_without_the_folder_everything_passes(self, clock, tmp_path):
+        assert dl.ProgramFilter(tmp_path / 'none', clock).allows('base_link')
+
+    def test_every_driver_source_has_another_frame(self):
+        # A /drive publisher stamped base_link would be taken for a program.
+        for path in ROOT.rglob('*.py'):
+            if 'test' in path.parts or 'build' in path.parts:
+                continue
+            text = path.read_text(errors='replace')
+            stamped = re.search(r"frame_id\s*=\s*['\"]base_link['\"]", text)
+            assert not stamped or '/drive' not in text, path
+
+
 class TestProcesses:
     def test_a_killed_holder_frees_the_car(self, spawn, tmp_path):
         p, b = spawn('program'), dl.DriveLease('b', 'b', tmp_path)
