@@ -28,6 +28,7 @@ import logging
 from pathlib import Path
 import re
 import signal
+import socket
 import threading
 import time
 from types import FrameType
@@ -162,6 +163,54 @@ def same_origin(origin: str | None, host: str | None, allow_missing: bool = Fals
     return bool(host) and urlparse(origin).netloc == host
 
 
+def host_name(host: str) -> str:
+    """Return the name or address of a Host header, without its port."""
+    host = host.strip().lower()
+    if host.startswith('['):
+        return host[1:].split(']', 1)[0]
+    if host.count(':') == 1:
+        host = host.rsplit(':', 1)[0]
+    return host.rstrip('.')
+
+
+@cache
+def car_names() -> frozenset[str]:
+    """
+    Return the names this car answers to.
+
+    They are localhost, its hostname, the hostname with .local, and car.yaml's
+    web_hosts, read at the app's start.
+    """
+    name = socket.gethostname().lower()
+    names = {'localhost', name, f'{name}.local'}
+    try:
+        from racecar_neo_ros2_driver import car_profile
+
+        extra = car_profile.car_info().get('web_hosts') or []
+    except (OSError, ValueError, ImportError):
+        extra = []
+    names.update(str(n).lower().rstrip('.') for n in extra if isinstance(n, str))
+    return frozenset(names)
+
+
+def own_host(host: str | None) -> bool:
+    """
+    Return True for a request addressed to this car: an IP address or one of its names.
+
+    A page on another name pointed at the car (DNS rebinding) sends that name,
+    so its Origin and Host match and would pass same_origin. No Host at all
+    is not a browser page.
+    """
+    if not host:
+        return True
+    name = host_name(host)
+    try:
+        ipaddress.ip_address(name)
+        return True
+    except ValueError:
+        return name in car_names()
+
+
 def sibling_origin(origin: str | None, host: str | None, ports: Iterable[int]) -> str | None:
     """Return `origin` when it is a page on this car on one of `ports`, for a CORS reply."""
     if not origin or not host:
@@ -190,6 +239,10 @@ class AppHandler(BaseHTTPRequestHandler):
 
     def parse_request(self) -> bool:
         if not super().parse_request():
+            return False
+        if not own_host(self.headers.get('Host')):
+            self.close_connection = True
+            self.send(421, b'Not allowed from this address.', 'text/plain')
             return False
         try:
             length = int(self.headers.get('Content-Length') or 0)

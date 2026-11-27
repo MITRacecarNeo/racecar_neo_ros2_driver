@@ -767,6 +767,11 @@ class TestOverrideEndpoint:
 
 class TestCrossSitePosts:
     HOST = 'car.local:8080'
+
+    @pytest.fixture(autouse=True)
+    def names(self, dashboard, monkeypatch):
+        names = frozenset({'localhost', 'car', 'car.local'})
+        monkeypatch.setattr(dashboard.webui, 'car_names', lambda: names)
     POSTS = (
         ('/api/override', {'action': 'start'}),
         ('/api/open', {'app': 'webteleop'}),
@@ -856,7 +861,7 @@ class TestCrossSitePosts:
             status, acted = post('/api/override', {'action': 'start'}, origin)
             assert status == 200 and 'start' in acted, origin
             other = post('/api/override', {'action': 'start'}, origin, 'other.local:8080')
-            assert other == (403, []), origin
+            assert other == (421, []), origin  # not the car's own address
 
     @pytest.mark.parametrize(
         'origin, host',

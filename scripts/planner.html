@@ -482,7 +482,7 @@ function showBanner() {
   else if (sys.throttled_now && sys.throttled_now.length) msg = { text: `Pi throttled now: ${sys.throttled_now.join(', ')}.`, kind: 'bad' };
   else if (sys.temp_c != null && sys.temp_c >= 78) msg = { text: `Pi is hot (${sys.temp_c.toFixed(0)} \u00b0C).`, kind: 'warn' };
   else if (relocalizing()) msg = { text: 'Localization lost. Regain position by driving the car or using Set pose.', kind: 'warn' };
-  else if (ms() === 'running' && !overrideOn) msg = { text: 'Hold RB or turn on safety override.', kind: 'warn' };
+  else if (ms() === 'running' && !overrideOn) msg = { text: 'Hold RB or turn on the safety override.', kind: 'warn' };
   else if (mode() === 'localization' && !localized()) msg = { text: 'Drive slowly until localized.', kind: 'warn' };
   b.textContent = msg ? msg.text : '';
   b.className = msg ? `show ${msg.kind}` : '';
@@ -773,7 +773,8 @@ function showStatus() {
   else setHtml('loc', active ? (localized() ? pill('ok', 'Localized') : pill('err', 'Not localized')) : pill('off', 'No map loaded'));
   const failed = m.state === 'paused' && m.reason === 'failed';
   const nav = active ? {
-    running: pill('ok', 'Navigating'), dwelling: pill('ok', 'Waiting'), relocalizing: pill('warn', 'Relocalizing'),
+    // While localization is lost, the Not localized pill and the banner say so.
+    running: pill('ok', 'Navigating'), dwelling: pill('ok', 'Waiting'),
     paused: failed ? pill('err', `Could not reach waypoint ${m.index + 1}`)
       : m.reason === 'stalled' ? pill('err', `Car stalled at waypoint ${m.index + 1}`) : pill('off', 'Paused'),
     arrived: pill('ok', 'Arrived'), failed: pill('err', 'Could not reach the goal'), stalled: pill('err', 'Car stalled'),

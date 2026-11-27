@@ -179,6 +179,11 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Fixed
 
+- Every app on the car refuses a request not addressed to the car itself (an
+  IP address, its hostname, `.local`, or `car.yaml` `web_hosts`). A website
+  whose name was pointed at the car could otherwise pass the cross-site
+  checks.
+- The Planner no longer shows a Relocalizing pill beside Not localized.
 - The dot matrix shows SHUT for its full second at a battery shutdown; it
   could show 0 and skip to DOWN. Every countdown frame lasts a full second.
 - Web teleop, line follow, wall follow, camera label and the map viewer

@@ -469,6 +469,15 @@ through each of these addresses.
 from the `path` field of `config/apps.yaml`; `racecar setup web` writes the
 nginx site after an app is added.
 
+The apps answer only to the car's own addresses: an IP address, `localhost`,
+the car's hostname, and the hostname with `.local`. To reach the car by
+another name, such as one in your own DNS, list it in the car profile's
+`car.yaml` and restart the car:
+
+```yaml
+web_hosts: [lab-car-7.school.edu]
+```
+
 **Apps.** One tile per app, in three groups. Hover over a tile for what it
 does. A white border means the app is running.
 
@@ -1503,7 +1512,7 @@ driver update, re-clone, or delete leaves them in place. It lives in
 
 | File | Holds |
 |---|---|
-| `car.yaml` | car name, nickname and number, profile version, the car record and the setup checklist (`racecar setup car`) |
+| `car.yaml` | car name, nickname and number, profile version, the car record and the setup checklist (`racecar setup car`), extra names for the apps (`web_hosts`) |
 | `params/<name>.yaml` | ROS parameter overrides for `config/<name>.yaml`; calibration writes here |
 | `dashboards/<name>.yaml` | lab dashboard tuning |
 | `autonomy.conf`, `features.conf`, `networking.env` | autonomy mode, camera and detections choice, network settings |

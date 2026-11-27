@@ -241,6 +241,83 @@ class TestFill:
         assert b'{{' not in body
 
 
+class TestOwnHost:
+    @pytest.fixture(autouse=True)
+    def names(self, webui, monkeypatch):
+        names = frozenset({'localhost', 'car', 'car.local'})
+        monkeypatch.setattr(webui, 'car_names', lambda: names)
+
+    @pytest.mark.parametrize(
+        'host, ok',
+        [
+            ('10.42.0.1:8080', True),
+            ('10.0.0.198', True),
+            ('[fe80::1]:8090', True),
+            ('localhost:8084', True),
+            ('car.local:8090', True),
+            ('CAR.LOCAL.:8090', True),
+            ('car', True),
+            (None, True),
+            ('evil.example:8080', False),
+            ('car.local.evil.example', False),
+            ('10.42.0.1.nip.io:8080', False),
+        ],
+    )
+    def test_own_host(self, webui, host, ok):
+        assert webui.own_host(host) is ok
+
+    def test_a_foreign_host_is_refused_before_any_route(self, webui):
+        import http.client
+        from http.server import ThreadingHTTPServer
+        import threading
+
+        hits = []
+
+        class Handler(webui.AppHandler):
+            def do_GET(self):  # noqa: N802
+                hits.append(self.path)
+                self.send(200, b'ok', 'text/plain')
+
+            do_POST = do_GET  # noqa: N815
+
+            def log_message(self, *args):
+                pass
+
+        srv = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            port = srv.server_address[1]
+            evil, car = 'evil.example:8080', 'car.local:8080'
+            cases = [('GET', evil, 421), ('POST', evil, 421), ('GET', car, 200),
+                     ('GET', f'127.0.0.1:{port}', 200)]  # fmt: skip
+            for method, host, code in cases:
+                conn = http.client.HTTPConnection('127.0.0.1', port, timeout=5)
+                conn.request(method, '/x', body=b'{}', headers={'Host': host})
+                res = conn.getresponse()
+                assert res.status == code, (method, host)
+                res.read()
+                conn.close()
+        finally:
+            srv.shutdown()
+            srv.server_close()
+        assert len(hits) == 2
+
+    def test_names_from_the_car_profile(self, webui, monkeypatch):
+        from racecar_neo_ros2_driver import car_profile
+
+        monkeypatch.undo()
+        webui.car_names.cache_clear()
+        monkeypatch.setattr(webui.socket, 'gethostname', lambda: 'Racecar-Neo-7')
+        extra = {'web_hosts': ['lab-car-7.school.edu.', 3]}
+        monkeypatch.setattr(car_profile, 'car_info', lambda: extra)
+        try:
+            names = webui.car_names()
+        finally:
+            webui.car_names.cache_clear()
+        want = {'localhost', 'racecar-neo-7', 'racecar-neo-7.local', 'lab-car-7.school.edu'}
+        assert names == want
+
+
 class TestOrigins:
     @pytest.mark.parametrize(
         'origin, host, allow_missing, ok',
