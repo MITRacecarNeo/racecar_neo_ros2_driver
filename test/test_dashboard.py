@@ -1578,13 +1578,10 @@ def test_footer_names_the_car(dashboard):
 
 def test_planned_apps_show_as_placeholders(dashboard):
     html = (Path(dashboard.__file__).parent / 'dashboard.html').read_text()
-    for name in ('Files', 'Modules', 'Scripter'):
-        assert f"name: '{name}'" in html, name
-    assert "name: 'Planner'" not in html
-    # Mapper, Planner, then these two in this order.
-    assert html.index("after: 'planner', name: 'Modules'") < html.index(
-        "after: 'planner', name: 'Scripter'"
-    )
+    assert "name: 'Files'" in html
+    # No placeholder ships for an app that is not built.
+    for name in ('Modules', 'Scripter', 'Planner'):
+        assert f"name: '{name}'" not in html, name
     assert '.app.planned .glyph { border-style: dashed;' in html
     assert '!apps.some((a) => a.name === p.name)' in html
 

@@ -1651,6 +1651,20 @@ switch it to slow mode before mapping.
 
 Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
 
+- **0.9.3** (2026-11-27): every car on v0.9.2 should upgrade (re-run
+  `setup_all.sh`, then reboot): the apps now answer only to the car's own
+  addresses, which closes a DNS rebinding gap in their cross-site checks.
+  Navigation with Nav2: the Planner app (goals and saved missions with
+  waypoints, loops, waits and recording), `racecar nav`, and `rc.nav` in the
+  student library. One driver at a time: apps, missions, Drive panels,
+  calibration and student programs share one hold on the car, shown on 8080
+  and in `racecar status`. The Car Profile app (the car in 3D, setup,
+  calibration, checks, the handbook pages), the guided `racecar setup car`,
+  the Connections, Files, Terminal and Browser apps, and every app by name on
+  port 80. Battery guard: SHUT always shows at a shutdown, and
+  `battery_display.py --preview` plays the sequence. The safety override's
+  LED flash shows the battery level. Pairs with firmware v0.9.2 and student
+  library v0.9.3-bot.
 - **0.9.2** (2026-11-07): one app registry (`config/apps.yaml`) for the
   8080 tiles, `racecar service` and the unit install; every app on one
   server base (`scripts/webui.py`) and one page kit (`scripts/web/`); lab

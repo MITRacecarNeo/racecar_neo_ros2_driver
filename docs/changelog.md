@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-11-27
+
+Every car on v0.9.2 should upgrade: v0.9.3 closes a gap that let a website
+whose name was pointed at the car pass the apps' cross-site checks.
+
+### Upgrade
+
+From v0.9.2, as the Handbook's Upgrade page shows:
+
+1. Get the release: `git fetch --tags` and `git checkout v0.9.3` in the
+   driver folder.
+2. Run `bash scripts/setup_all.sh` from the driver folder. It installs the
+   new packages (Nav2, the web server, the Browser), services and
+   permissions, rebuilds the driver, and installs the v0.9.3 student library.
+3. Reboot the car: `sudo reboot`.
+4. Run `racecar setup car status`.
+
 ### Added
 
 - `python3 scripts/battery_display.py --preview` plays the low-battery
