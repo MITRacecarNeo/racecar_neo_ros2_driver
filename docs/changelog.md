@@ -203,6 +203,8 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Changed
 
+- The LED strip's amber flash during the safety override covers only the
+  battery meter's length, as the red meter does with the override off.
 - The map viewer is named Mapper; the Turn Off tile is Shut Down.
 - 8080 wording: confirms ask only the question; no progress or success
   text where the tiles show it (the tiles gray out while a change runs);

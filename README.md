@@ -532,7 +532,8 @@ dashboards drive with no controller in hand. It asks first. While it is on,
 the tile turns red and:
 
 - A red banner shows on this page and on web teleop, line follow, and wall
-  follow. The dot matrix shows AUTO, and the LED strip flashes amber.
+  follow. The dot matrix shows AUTO, and the LED strip flashes amber over
+  the battery meter's length.
 - Holding LB drives from the controller.
 - Any other controller button turns it off.
 - Turn off in any banner turns it off.

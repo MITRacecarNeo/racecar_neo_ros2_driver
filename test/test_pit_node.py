@@ -112,6 +112,7 @@ class _Pit:
     """PitNode._build_display over plain attributes, without rclpy or a serial port."""
 
     _build_display = PitNode._build_display
+    _charge = PitNode._charge
 
     def __init__(self, start=0.0) -> None:
         self._joy_buttons = []
@@ -129,6 +130,10 @@ class _Pit:
         self._start_time = start
         self._led_startup = 10.0
         self._override = False
+        self._pack_volts = None
+        from racecar_neo_ros2_driver.battery import BatteryConfig
+
+        self._battery = BatteryConfig()
 
 
 class _Serial:
@@ -330,6 +335,28 @@ class TestOverrideDisplay:
         state, _, led = pit._build_display(100.0)
         assert state == SYS_MODE_AUTO | SYS_LED_ACTIVE
         assert led == bytes(OVERRIDE_LED_RGB) * 84
+
+    def lit(self, frame):
+        leds = [frame[i:i + 3] for i in range(0, len(frame), 3)]
+        return [i for i, rgb in enumerate(leds) if rgb == bytes(OVERRIDE_LED_RGB)]
+
+    @pytest.mark.parametrize('soc, side', [(100, 42), (50, 21), (99.9, 41), (2, 0), (0, 0)])
+    def test_flash_covers_the_battery_meter(self, soc, side):
+        lit = self.lit(override_led_frame(100.0, soc))
+        assert lit == [*range(side), *range(84 - side, 84)]
+
+    def test_without_a_reading_the_whole_strip(self):
+        assert self.lit(override_led_frame(100.0, None)) == list(range(84))
+
+    def test_the_flash_follows_the_battery(self):
+        pit = _Pit()
+        pit._override = True
+        pit._pack_volts = 7545 / 1000  # 50% on the 2S curve
+        assert len(self.lit(pit._build_display(100.0)[2])) == 2 * 21
+        pit._pack_volts = 8.4
+        assert len(self.lit(pit._build_display(100.0)[2])) == 84
+        pit._pack_volts = 3.0  # no cell count fits: the whole strip
+        assert len(self.lit(pit._build_display(100.0)[2])) == 84
 
     def test_flash_goes_dark_between_beats(self):
         assert override_led_frame(100.25) == b'\x00' * 252

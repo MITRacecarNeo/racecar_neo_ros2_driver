@@ -41,6 +41,7 @@ import serial
 from std_msgs.msg import Bool, Float32, Float32MultiArray, String, UInt8MultiArray
 from tf2_ros import TransformBroadcaster
 
+from . import battery as batt
 from . import pit_info
 from . import pit_link
 from . import pit_protocol as pit
@@ -147,10 +148,22 @@ OVERRIDE_LED_RGB = (255, 110, 0)
 OVERRIDE_LED_HZ = 2.0
 
 
-def override_led_frame(now: float) -> bytes:
-    """Flash the whole strip amber while the safety override is on."""
-    lit = int(now * OVERRIDE_LED_HZ * 2) % 2 == 0
-    return bytes(OVERRIDE_LED_RGB if lit else (0, 0, 0)) * (LED_FRAME_LEN // 3)
+def override_led_frame(now: float, soc: float | None = None) -> bytes:
+    """
+    Flash amber while the safety override is on, over the battery meter's length.
+
+    As the firmware's meter (batteryMeter, pit-firmware src/led_patterns.cpp):
+    soc * 42 / 100 LEDs from each end toward the middle. Without a charge
+    reading, the whole strip.
+    """
+    n = LED_FRAME_LEN // 3
+    if int(now * OVERRIDE_LED_HZ * 2) % 2 != 0:
+        return bytes(LED_FRAME_LEN)
+    if soc is None:
+        return bytes(OVERRIDE_LED_RGB) * n
+    side = int(min(max(soc, 0.0), 100.0)) * (n // 2) // 100
+    dark = bytes(3 * (n - 2 * side))
+    return bytes(OVERRIDE_LED_RGB) * side + dark + bytes(OVERRIDE_LED_RGB) * side
 
 
 def remap_axes(
@@ -382,6 +395,8 @@ class PitNode(Node):
         self._pub_current = self.create_publisher(Float32, self._current_topic, qos)
         self._pub_battery = self.create_publisher(BatteryState, self._battery_state_topic, 10)
         self._power_avg = PowerAverage()
+        self._battery = batt.load_config()  # the curve of the firmware's meter
+        self._pack_volts: float | None = None
         self._pub_rc = self.create_publisher(Float32MultiArray, self._rc_topic, qos)
         self._pub_rc_link = self.create_publisher(Bool, self._rc_link_topic, qos)
         self.create_subscription(AckermannDriveStamped, '/motor', self._motor_cb, qos)
@@ -496,6 +511,14 @@ class PitNode(Node):
     def _override_cb(self, msg: Bool) -> None:
         self._override = bool(msg.data)
 
+    def _charge(self) -> float | None:
+        """Return the battery's charge (%) for the override flash, or None before a reading."""
+        volts = self._pack_volts
+        if volts is None:
+            return None
+        cells = self._battery.cells or batt.detect_cells(volts)
+        return batt.battery_soc(volts, cells, self._battery) if cells else None
+
     def _build_display(self, now: float) -> tuple[int, bytes | None, bytes | None]:
         """Build the SystemState byte + dot-matrix/LED payloads for this frame."""
         mode = shown_mode(
@@ -523,7 +546,7 @@ class PitNode(Node):
             led = self._led_frame
             state |= SYS_LED_ACTIVE
         elif self._override:
-            led = override_led_frame(now)
+            led = override_led_frame(now, self._charge())
             state |= SYS_LED_ACTIVE
 
         if (now - self._start_time) < self._led_startup:
@@ -846,6 +869,7 @@ class PitNode(Node):
             self._pub_current.publish(Float32(data=float(telem.current_a)))
         means = self._power_avg.add(time.monotonic(), telem.voltage_v, telem.current_a)
         if means is not None:
+            self._pack_volts = means[0]
             battery = build_battery_state(*means)
             battery.header.stamp = stamp
             self._pub_battery.publish(battery)

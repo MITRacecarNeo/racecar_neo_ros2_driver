@@ -182,7 +182,9 @@ override back on. `mux_node` reports the state on `/mux/override_active`
 (latched). The dashboard ends its side when the mux reports off, and when the
 mux never confirms within 3 s. `dotmatrix_node` shows the AUTO glyph and
 `pit_node` sets the auto mode bits and flashes the LED strip amber at 2 Hz
-unless a program frame is fresh. Nothing is persisted; a teleop restart ends
+over the firmware battery meter's length (`override_led_frame`: the charge from
+the 1 s mean voltage on the curve in `config/battery.yaml`; the whole strip
+before a reading) unless a program frame is fresh. Nothing is persisted; a teleop restart ends
 it. No extra speed cap applies.
 
 ### Features
