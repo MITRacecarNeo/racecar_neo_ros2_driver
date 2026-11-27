@@ -67,7 +67,7 @@ class FakeRun:
 
 PIN = {
     'library_repo': 'https://github.com/MITRacecarNeo/racecar-neo-library',
-    'tag': 'v0.9.2-bot',
+    'tag': 'v0.9.3-bot',
     'labs_repo': 'https://github.com/MITRacecarNeo/racecar-neo-outreach-labs',
     'branch': 'main',
 }
@@ -106,9 +106,9 @@ class TestInstall:
     def test_library_cloned_read_only_and_linked(self, sl, tmp_path):
         run, root, jws = FakeRun(), tmp_path / 'opt', tmp_path / 'jws'
         lib = sl.install_library(PIN, root, run, quiet)
-        assert lib == root / 'library-v0.9.2-bot' / 'library'
+        assert lib == root / 'library-v0.9.3-bot' / 'library'
         clone = [c for c in run.calls if 'clone' in c][0]
-        assert clone[0] == 'sudo' and '--branch' in clone and 'v0.9.2-bot' in clone
+        assert clone[0] == 'sudo' and '--branch' in clone and 'v0.9.3-bot' in clone
         assert any('compileall' in c for c in run.calls)
         sl.link_library(lib, jws, tmp_path / 'backups', 0, run, quiet)
         assert (jws / 'library').is_symlink() and (jws / 'library').resolve() == lib
@@ -122,7 +122,7 @@ class TestInstall:
 
     def test_leftover_temp_is_refused_not_deleted(self, sl, tmp_path):
         root = tmp_path / 'opt'
-        (root / '.library-v0.9.2-bot.new').mkdir(parents=True)
+        (root / '.library-v0.9.3-bot.new').mkdir(parents=True)
         with pytest.raises(RuntimeError, match='left from an earlier run'):
             sl.install_library(PIN, root, FakeRun(), quiet)
 
@@ -211,8 +211,8 @@ class TestCommand:
         assert sl.cmd_install(self._args(), FakeRun()) == 0
         jws = tmp_path / 'jupyter_ws' / 'racecar-neo'
         lines = sl.status_lines(sl.load_pin(), tmp_path / 'opt', jws, FakeRun())
-        assert 'installed v0.9.2-bot' in lines[1]
-        assert lines[2].endswith('library-v0.9.2-bot/library')
+        assert 'installed v0.9.3-bot' in lines[1]
+        assert lines[2].endswith('library-v0.9.3-bot/library')
         assert (tmp_path / 'site' / 'racecar_student.pth').is_file()
 
 
@@ -222,7 +222,7 @@ class TestDriverLookup:
 
         monkeypatch.setattr(paths, 'config_dir', lambda: ROOT / 'config')
 
-        folder = tmp_path / 'library-v0.9.2-bot' / 'library'
+        folder = tmp_path / 'library-v0.9.3-bot' / 'library'
         folder.mkdir(parents=True)
         assert paths.student_library(tmp_path) is None
         (folder / 'racecar_core.py').write_text('')
