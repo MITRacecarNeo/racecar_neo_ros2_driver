@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Added
 
+- `python3 scripts/battery_display.py --preview` plays the low-battery
+  sequence on the dot matrix and LED strip without shutting down.
 - One driver at a time (`racecar_neo_ros2_driver/drive_lease.py`): Web
   Teleop, Line Follow, Wall Follow, the Drive panels, Nav2 and dynamics
   calibration take a lease before they publish `/drive`. The second is
@@ -177,6 +179,8 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Fixed
 
+- The dot matrix shows SHUT for its full second at a battery shutdown; it
+  could show 0 and skip to DOWN. Every countdown frame lasts a full second.
 - Web teleop, line follow, wall follow, camera label and the map viewer
   refuse POST requests from another site's page (Origin check,
   `webui.AppHandler.refuse_cross_site`).

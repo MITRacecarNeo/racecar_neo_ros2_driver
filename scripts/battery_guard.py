@@ -35,6 +35,7 @@ import csv
 from dataclasses import dataclass, field, replace
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import queue
@@ -223,7 +224,9 @@ class Guard:
         return now - self._recover_since >= RECOVER_HOLD_SEC
 
     def _start_countdown(self, now: float, trigger: str) -> list[str]:
-        self.level, self.trigger, self.shutdown_at = 'countdown', trigger, now + COUNTDOWN_SEC
+        # On a whole second: the dot matrix changes frames on the clock's seconds.
+        self.level, self.trigger = 'countdown', trigger
+        self.shutdown_at = math.ceil(now) + COUNTDOWN_SEC
         self._recover_since = None
         return [f'countdown {trigger}']
 

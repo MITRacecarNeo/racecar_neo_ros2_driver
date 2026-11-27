@@ -657,6 +657,10 @@ teleop.
 | Battery at 7.1 V (3.55 V per cell) | A 60 s countdown: "Shutting down in 30 s." on terminals and pages, the seconds left on the dot matrix from 20 s, faster LED flashing. |
 | 0 s | "Turning the car off now. Turn off the power switch." SHUT and DOWN on the dot matrix. The guard stops a `racecar log` recording, the driving apps, autonomy (saving a map being built), and teleop, then powers off. |
 
+To see the dot matrix and LED strip sequence without shutting down, run
+`python3 scripts/battery_display.py --preview` from the driver folder
+(about 70 s).
+
 After a shutdown, turn off the power switch. The PIT board and the halted Pi
 still draw about 100 to 200 mA until the switch is off, so the battery keeps
 draining. Do not leave the car unattended on battery.

@@ -82,6 +82,33 @@ class TestDotMatrix:
     def test_nothing_when_ok(self):
         assert bd.dot_frame('ok', None, 0.0) is None
 
+    @pytest.mark.parametrize('late', [0.01, 0.5, 0.99])
+    def test_shut_shows_at_the_shutdown_time_whatever_the_guards_check(self, late):
+        # The guard turns off at its next 1 s check: until then its level is still countdown.
+        assert _rows(bd.dot_frame('countdown', 100.0, 100.0 + late)) == bd.large_rows('SHUT')
+        assert _rows(bd.dot_frame('off', 100.0, 101.0 + late)) == bd.large_rows('DOWN')
+        now = 100.0 + late
+        assert bd.led_frame('countdown', 100.0, now) == bd.led_frame('off', 100.0, now)
+
+    def test_no_zero_is_drawn(self):
+        for now in [99.5 + i * 0.05 for i in range(40)]:
+            assert _rows(bd.dot_frame('countdown', 100.0, now)) != bd.number_rows(0)
+
+    def test_every_frame_lasts_a_full_second(self):
+        # Warning, then a countdown that ends on a whole second, as the guard starts it.
+        shutdown_at = 70.0
+        frames, step = [], 0.05
+        for i in range(int(round(72.0 / step))):
+            now = i * step
+            level = 'warn' if now < 10.0 else ('off' if now >= shutdown_at + 0.7 else 'countdown')
+            frame = bd.dot_frame(level, None if level == 'warn' else shutdown_at, now)
+            if frames and frames[-1][0] == frame:
+                frames[-1][1] += 1
+            else:
+                frames.append([frame, 1])
+        # The first and the last frames are cut by the window; every other one lasts 1 s or more.
+        assert all(count * step >= 0.99 for _, count in frames[1:-1])
+
 
 class TestLed:
     def test_frame_format(self):
