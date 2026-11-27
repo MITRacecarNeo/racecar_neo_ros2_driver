@@ -20,6 +20,17 @@
 
 set -eo pipefail
 
+# Status marks as in racecar status; colored on a terminal unless NO_COLOR is set.
+if [ -t 1 ] && [ -z "${NO_COLOR+x}" ]; then
+    M_OK=$'\033[32m[ OK ]\033[0m'
+    M_WARN=$'\033[33m[WARN]\033[0m'
+    M_FAIL=$'\033[31m[FAIL]\033[0m'
+else
+    M_OK='[ OK ]'
+    M_WARN='[WARN]'
+    M_FAIL='[FAIL]'
+fi
+
 IFACE="${RACECAR_ETH_IFACE:-eth0}"
 NETPLAN_PATH="${RACECAR_ETH_NETPLAN:-/etc/netplan/99-racecar-eth0.yaml}"
 DRY_RUN="${RACECAR_ETH_DRY_RUN:-0}"
@@ -44,13 +55,14 @@ if [ -f "$CONFIG_FILE" ]; then
     done < "$CONFIG_FILE"
 fi
 
-STATIC_ADDR="${RACECAR_ETH_STATIC:-192.168.52.200/24}"
+source "$(dirname "${BASH_SOURCE[0]}")/setup_lib.sh"
+STATIC_ADDR="${RACECAR_ETH_STATIC:-$(eth_static_default "${RACECAR_AP_ID:-}")}"
 
 usage() {
     cat <<'USAGE'
 usage: setup_eth.sh <static|dynamic|status> [--addr=CIDR] [--force]
 
-  static    one fixed address (default 192.168.52.200/24), no gateway,
+  static    one fixed address (default 192.168.52.(200 + car ID)/24), no gateway,
             no IPv6 default route. The shipped default.
   dynamic   address and default route from DHCP.
   status    configured mode, live addresses, routes, and conflict checks.
@@ -199,7 +211,7 @@ print_status() {
     echo "=== $IFACE addressing ==="
     case "$cfg" in
         unreadable)
-            echo "  configured mode:  unreadable (netplan is root-only; re-run with sudo to check)"
+            echo "  configured mode:  unreadable. Run with sudo."
             ;;
         absent)
             echo "  configured mode:  no racecar netplan file yet"
@@ -241,31 +253,30 @@ print_status() {
     count="$(grep -c . <<<"$live_v4" || true)"
     [ -z "$live_v4" ] && count=0
     if [ "$count" -gt 1 ]; then
-        echo "  [FAIL] $count global IPv4 addresses on $IFACE; expected exactly one."
-        echo "         This is the dual-address state that drops the static."
+        echo "  $M_FAIL $count global IPv4 addresses on $IFACE; expected exactly one."
         echo "         Fix with: racecar eth static   (or: racecar eth dynamic)"
         rc=1
     elif [ "$count" -eq 0 ]; then
-        echo "  [WARN] no global IPv4 address on $IFACE (cable unplugged?)"
+        echo "  $M_WARN no global IPv4 address on $IFACE (cable unplugged?)"
     else
-        echo "  [ OK ] exactly one global IPv4 address"
+        echo "  $M_OK exactly one global IPv4 address"
     fi
 
     if [ "$cfg" = "static" ] && [ -n "$v6def" ]; then
-        echo "  [FAIL] static mode, but $IFACE holds an IPv6 default route."
-        echo "         ipv6.never-default did not take. Re-apply: racecar eth static"
+        echo "  $M_FAIL static mode, but $IFACE holds an IPv6 default route."
+        echo "         Re-apply: racecar eth static"
         rc=1
     fi
 
     competing_netplan
     if [ -n "$COMPETING" ]; then
-        echo "  [WARN] other netplan files also configure $IFACE:"
+        echo "  $M_WARN other netplan files also configure $IFACE:"
         grep . <<<"$COMPETING" | sed 's/^/           /'
         rc=1
     elif [ "$COMPETING_SCANNED" -eq 0 ]; then
-        echo "  [INFO] could not read other netplan files; competing-config scan skipped"
+        echo "  [SKIP] could not read other netplan files"
     else
-        echo "  [ OK ] no other netplan file configures $IFACE"
+        echo "  $M_OK no other netplan file configures $IFACE"
     fi
 
     return $rc
@@ -377,31 +388,31 @@ COUNT="$(grep -c . <<<"$LIVE" || true)"
 RC=0
 
 if [ "$COUNT" -ne 1 ]; then
-    echo "  [FAIL] expected exactly one global IPv4 address, found $COUNT"
+    echo "  $M_FAIL expected exactly one global IPv4 address, found $COUNT"
     [ -n "$LIVE" ] && sed 's/^/           /' <<<"$LIVE"
     RC=1
 elif [ "$MODE" = "static" ]; then
     if [ "$LIVE" = "$STATIC_ADDR" ]; then
-        echo "  [ OK ] $IFACE holds $LIVE"
+        echo "  $M_OK $IFACE holds $LIVE"
     else
-        echo "  [FAIL] expected $STATIC_ADDR, found $LIVE"
+        echo "  $M_FAIL expected $STATIC_ADDR, found $LIVE"
         RC=1
     fi
 else
     if [ "$LIVE" = "$STATIC_ADDR" ]; then
-        echo "  [FAIL] dynamic mode, but $IFACE still holds the static $LIVE"
+        echo "  $M_FAIL dynamic mode, but $IFACE still holds the static $LIVE"
         RC=1
     else
-        echo "  [ OK ] $IFACE holds $LIVE from DHCP"
+        echo "  $M_OK $IFACE holds $LIVE from DHCP"
     fi
 fi
 
 if [ "$MODE" = "static" ]; then
     if [ -n "$(v6_default_route)" ]; then
-        echo "  [FAIL] $IFACE still has an IPv6 default route"
+        echo "  $M_FAIL $IFACE still has an IPv6 default route"
         RC=1
     else
-        echo "  [ OK ] no IPv6 default route via $IFACE"
+        echo "  $M_OK no IPv6 default route via $IFACE"
     fi
 fi
 

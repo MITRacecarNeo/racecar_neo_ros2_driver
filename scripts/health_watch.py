@@ -37,6 +37,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from diagnose import Check, FAIL, OK  # noqa: E402, I100  sibling scripts
+from racecar_neo_ros2_driver.geometry import stamp_sec  # noqa: E402
 import sysinfo  # noqa: E402
 
 LINK_GAP_SEC = 0.05
@@ -200,7 +201,7 @@ class Watch:
         last = [0.0]
 
         def on_imu(msg: Any) -> None:
-            stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+            stamp = stamp_sec(msg.header.stamp)
             self.link_count += 1
             if last[0] and stamp - last[0] > LINK_GAP_SEC:
                 self.add('PIT link', f'{(stamp - last[0]) * 1000:.0f} ms without a frame')

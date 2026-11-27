@@ -23,6 +23,7 @@ import argparse
 import sys
 
 import map_control as mc
+from racecar_neo_ros2_driver.maps import valid_name
 
 POSE_HELP = 'x,y,yaw in the map frame: meters, meters, radians (e.g. 1.5,-0.4,1.57)'
 
@@ -44,8 +45,7 @@ def join_pose(argv: list[str]) -> list[str]:
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog='racecar map',
-        description='Build, save, and load maps. Teleop must be running; the car is driven '
-        'with the gamepad as usual.',
+        description='Build, save, and load maps. Start teleop first. Drive with the gamepad.',
     )
     sub = p.add_subparsers(dest='action', required=True, metavar='ACTION')
 
@@ -56,8 +56,13 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument(
         '--force', action='store_true', help='replace an existing NAME (the old one is kept)'
     )
+    s.add_argument(
+        '--skip-checks',
+        action='store_true',
+        help='start without the parked checks (racecar check)',
+    )
 
-    sub.add_parser('save', help='save the map being built; returns when the files are written')
+    sub.add_parser('save', help='save the map being built')
     sub.add_parser('stop', help='stop mapping or localization (a mapping run is autosaved)')
     sub.add_parser('resume', help='start the last mapping or localization run again')
 
@@ -81,9 +86,20 @@ def parser() -> argparse.ArgumentParser:
     return p
 
 
+def checks_pass() -> bool:
+    """Return whether the parked checks pass (racecar_check.py; run now unless a pass stands)."""
+    import racecar_check
+
+    return racecar_check.require_pass()
+
+
 def run(args: argparse.Namespace) -> int:
     action = args.action
     if action == 'start':
+        # A bad name fails first, without the checks' 5 seconds.
+        if valid_name(args.name) and not args.skip_checks and not checks_pass():
+            print('Mapping not started: a check failed. Repair it, then start again.')
+            return 1
         return mc.start(args.name, args.source, args.pose, args.force)
     if action == 'load':
         return mc.load(args.name, args.pose, args.search, args.localizer)

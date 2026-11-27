@@ -242,3 +242,21 @@ class TestCli:
         rl.write_state({'pid': 999999, 'bag': str(tmp_path / 'b'), 'started': 0})
         assert rl.active_state() is None
         assert rl.read_state(path) is None
+
+
+class TestFindBag:
+    def test_name_under_the_root_path_or_newest(self, tmp_path):
+        rl = load_script('racecar_log')
+        old, new = tmp_path / '20261101_a', tmp_path / '20261102_b'
+        old.mkdir()
+        new.mkdir()
+        os.utime(old, (1, 1))
+        assert rl.find_bag('20261101_a', root=tmp_path) == old
+        assert rl.find_bag(str(new), root=tmp_path) == new
+        assert rl.find_bag(None, root=tmp_path) == new
+        assert rl.find_bag('/no/such/bag', root=tmp_path) == rl.Path('/no/such/bag')
+
+    def test_no_bags(self, tmp_path):
+        rl = load_script('racecar_log')
+        with pytest.raises(FileNotFoundError, match='no bags'):
+            rl.find_bag(None, root=tmp_path / 'empty')

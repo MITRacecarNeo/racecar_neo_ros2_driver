@@ -128,12 +128,15 @@ code, pre, .rcn-mono { font-family: var(--rcn-font-mono); }
   text-decoration: none;
 }
 .rcn-btn.primary { background: var(--rcn-accent); color: var(--rcn-on-accent); }
-.rcn-btn.primary:hover { background: var(--rcn-accent-hover); border-color: var(--rcn-accent-hover); }
-.rcn-btn:not(.primary):hover { border-color: var(--rcn-accent-hover); color: var(--rcn-accent-hover); }
 .rcn-btn.danger { background: var(--rcn-crimson); border-color: var(--rcn-crimson); color: var(--rcn-paper); }
-.rcn-btn.danger:hover { background: var(--rcn-red); border-color: var(--rcn-red); color: var(--rcn-paper); }
 .rcn-btn.quiet { border-color: var(--rcn-border); color: var(--rcn-text); }
 .rcn-btn.small { font-size: 14px; line-height: 20px; padding: 6px 12px; }
+/* Hover only where a pointer hovers: a touch screen would keep it after a tap. */
+@media (hover: hover) {
+  .rcn-btn.primary:hover { background: var(--rcn-accent-hover); border-color: var(--rcn-accent-hover); }
+  .rcn-btn:not(.primary):hover { border-color: var(--rcn-accent-hover); color: var(--rcn-accent-hover); }
+  .rcn-btn.danger:hover { background: var(--rcn-red); border-color: var(--rcn-red); color: var(--rcn-paper); }
+}
 .rcn-btn[aria-pressed="true"], .rcn-btn.on { background: var(--rcn-surface); border-color: var(--rcn-accent); color: var(--rcn-text); }
 .rcn-btn:disabled { opacity: 0.45; cursor: default; pointer-events: none; }
 .rcn-btn svg { width: 20px; height: 20px; flex: none; }
@@ -162,7 +165,27 @@ code, pre, .rcn-mono { font-family: var(--rcn-font-mono); }
 .rcn-override .rcn-icon { width: 24px; height: 24px; flex: none; }
 .rcn-override span { flex: 1; min-width: 180px; }
 .rcn-override .rcn-btn { background: var(--rcn-paper); border-color: var(--rcn-paper); color: var(--rcn-crimson-deep); }
+.rcn-override.warn { background: var(--rcn-gold); color: var(--rcn-ink); }
 .rcn-status.info, .rcn-status.off { background: var(--rcn-steel); color: var(--rcn-paper); }
+
+/* Above a map the banner spans the page, under the header. */
+#override-slot .rcn-override { border-radius: 0; margin-bottom: 0; }
+
+/* Camera panel beside a map (web/camera_panel.js), left of the map tools, and no taller than the
+   map: main is the size container (cqh). On a phone it is at the top, clear of the Drive panel. */
+.rcn-camera { position: absolute; right: calc(44px + 2 * var(--rcn-space-3)); bottom: var(--rcn-space-3); width: min(360px, calc((100cqh - 90px) * 4 / 3)); z-index: 3; background: var(--rcn-surface); border: 1px solid var(--rcn-border); border-radius: var(--rcn-radius-lg); padding: var(--rcn-space-2) var(--rcn-space-3); }
+.rcn-camera .chead { display: flex; align-items: center; justify-content: space-between; gap: var(--rcn-space-2); }
+.rcn-camera .cpic { margin-top: var(--rcn-space-2); aspect-ratio: 4 / 3; background: var(--rcn-ink); border-radius: var(--rcn-radius-md); overflow: hidden; cursor: pointer; }
+.rcn-camera .cpic img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.rcn-camera.folded { width: auto; }
+.rcn-camera.folded .cpic { display: none; }
+.rcn-camera.stale .cpic img { opacity: 0.25; filter: grayscale(1); }
+.rcn-camera.off { opacity: 0.4; }
+.rcn-camera.off .cpic { pointer-events: none; }
+.rcn-camera.big { width: min(720px, calc(100% - 44px - 3 * var(--rcn-space-3)), calc((100cqh - 90px) * 4 / 3)); }
+@media (max-width: 700px) {
+  .rcn-camera { top: var(--rcn-space-3); bottom: auto; width: min(45vw, calc((100cqh - 90px) * 4 / 3)); }
+}
 
 /* Badge: parallelogram, text upright. */
 .rcn-badge { display: inline-block; transform: skewX(var(--rcn-skew-badge)); background: var(--rcn-gold); padding: 2px 10px; }

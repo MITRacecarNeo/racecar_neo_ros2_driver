@@ -9,10 +9,7 @@ User=racecar
 Group=racecar
 # Give the teleop nodes time to come up before supervising them.
 ExecStartPre=/bin/sleep 15
-ExecStart=/bin/bash -c '\
-    source /opt/ros/jazzy/setup.bash && \
-    source /home/racecar/ros2_ws/install/setup.bash && \
-    exec python3 /home/racecar/ros2_ws/src/racecar_neo_ros2_driver/scripts/watchdog.py'
+ExecStart=/home/racecar/ros2_ws/src/racecar_neo_ros2_driver/scripts/ros_exec.sh python3 /home/racecar/ros2_ws/src/racecar_neo_ros2_driver/scripts/watchdog.py
 Restart=on-failure
 RestartSec=5
 Environment=HOME=/home/racecar

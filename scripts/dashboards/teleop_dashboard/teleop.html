@@ -1,20 +1,23 @@
 <!DOCTYPE html>
-<html lang="en" data-app="Web teleop">
+<html lang="en" data-app="Web Teleop">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Web teleop - RACECAR Neo</title>
-<link rel="stylesheet" href="/ui/rcn.css?v={{asset}}">
-<script src="/ui/battery.js?v={{asset}}" defer></script>
-<link rel="icon" href="/ui/brand/app-icon-32.png">
-<script src="/ui/lost.js?v={{asset}}" defer></script>
-<script src="/ui/override.js?v={{asset}}" defer></script>
-<script src="/ui/charts.js?v={{asset}}"></script>
-<script src="/ui/ui.js?v={{asset}}"></script>
-<script src="/ui/api.js?v={{asset}}"></script>
-<script src="/ui/tune.js?v={{asset}}"></script>
-<script src="/ui/logs.js?v={{asset}}"></script>
-<script src="/ui/lidar.js?v={{asset}}"></script>
+<title>Web Teleop - RACECAR Neo</title>
+<link rel="stylesheet" href="ui/rcn.css?v={{asset}}">
+<script src="ui/battery.js?v={{asset}}" defer></script>
+<script src="ui/stall.js?v={{asset}}" defer></script>
+<script src="ui/driving.js?v={{asset}}" defer></script>
+<link rel="icon" href="ui/brand/app-icon-32.png">
+<script src="ui/lost.js?v={{asset}}" defer></script>
+<script src="ui/override.js?v={{asset}}" defer></script>
+<script src="ui/charts.js?v={{asset}}"></script>
+<script src="ui/ui.js?v={{asset}}"></script>
+<script src="ui/api.js?v={{asset}}"></script>
+<script src="ui/tune.js?v={{asset}}"></script>
+<script src="ui/logs.js?v={{asset}}"></script>
+<script src="ui/lidar.js?v={{asset}}"></script>
+<script src="ui/joystick.js?v={{asset}}"></script>
 <style>
   .grid { display: grid; grid-template-columns: minmax(300px, 400px) minmax(320px, 1fr) minmax(320px, 1fr); gap: var(--rcn-space-4); align-items: stretch; }
   .column { display: grid; gap: var(--rcn-space-4); align-content: start; }
@@ -47,6 +50,8 @@
   .rcn-input { width: 100%; max-width: 420px; }
   input[type=color] { width: 44px; height: 36px; border: 1px solid var(--rcn-border); border-radius: var(--rcn-radius-sm); background: var(--rcn-bg); padding: 2px; }
   .pad { display: grid; grid-template-columns: repeat(3, 84px); grid-template-rows: repeat(3, 84px); gap: 8px; justify-content: center; margin: var(--rcn-space-3) auto; touch-action: none; user-select: none; }
+  .pad[hidden], #joystick[hidden], #joytoggle[hidden] { display: none; }
+  #joystick { margin: var(--rcn-space-3) auto; }
   .pad button { font: 700 28px/1 var(--rcn-font-sans); border-radius: var(--rcn-radius-lg); border: 2px solid var(--rcn-border); background: var(--rcn-bg); color: var(--rcn-text); cursor: pointer; touch-action: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; }
   .pad button .key { font: 600 12px/1 var(--rcn-font-sans); color: var(--rcn-text-muted); }
   .pad button.down { background: var(--rcn-orange); border-color: var(--rcn-orange); color: var(--rcn-ink); }
@@ -56,9 +61,9 @@
 </head>
 <body>
 <header class="rcn-header">
-  <img class="rcn-mark" src="/ui/brand/mark.png" alt="RACECAR Neo">
+  <img class="rcn-mark" src="ui/brand/mark.png" alt="RACECAR Neo">
   <div class="rcn-heading">
-    <span class="rcn-title">Web teleop</span>
+    <span class="rcn-title">Web Teleop</span>
     <span class="rcn-meta">throttle <b id="thr">-</b> &middot; steer <b id="steer">-</b> &middot; encoder <b id="enc">-</b> m/s &middot; camera <b id="fps">-</b> fps &middot; depth <b id="dfps">-</b> fps &middot; frame <b id="res">-</b></span>
   </div>
   <span class="rcn-spacer"></span>
@@ -89,8 +94,8 @@
     <div class="rcn-zoombox">
       <canvas id="lidar" class="rcn-canvas" width="560" height="560" title="Nose up. Scroll to zoom"></canvas>
       <div class="rcn-zoom">
-        <button class="rcn-btn quiet" onclick="lidar.zoom(1 / 1.25)" aria-label="Zoom in"><svg class="rcn-icon"><use href="/ui/icons.svg#plus"/></svg></button>
-        <button class="rcn-btn quiet" onclick="lidar.zoom(1.25)" aria-label="Zoom out"><svg class="rcn-icon"><use href="/ui/icons.svg#minus"/></svg></button>
+        <button class="rcn-btn quiet" onclick="lidar.zoom(1 / 1.25)" aria-label="Zoom in"><svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#plus"/></svg></button>
+        <button class="rcn-btn quiet" onclick="lidar.zoom(1.25)" aria-label="Zoom out"><svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#minus"/></svg></button>
       </div>
     </div>
     <div class="rcn-caption">Range <span id="lidarRange">4.0</span> m</div>
@@ -99,7 +104,7 @@
   <div class="column">
     <div class="rcn-section">
       <h2>Encoder</h2>
-      <div class="rcn-state" id="state">STOPPED</div>
+      <div class="rcn-state" id="state">Stopped</div>
       <div class="rcn-chart" id="encChart"></div>
       <div class="rcn-legend" id="encLegend"></div>
     </div>
@@ -114,13 +119,15 @@
   </div>
 
   <div class="rcn-section span2">
-    <h2>Drive</h2>
+    <div class="rcn-head"><h2>Drive</h2>
+      <label class="rcn-small" id="joytoggle"><input type="checkbox" id="joymode"> Joystick mode</label></div>
+    <div id="joystick" hidden></div>
     <div class="pad" id="pad">
       <div></div>
       <button data-axis="fwd" data-val="1" title="Forward (W)">&#9650;<span class="key">W</span></button>
       <div></div>
       <button data-axis="turn" data-val="-1" title="Left (A)">&#9664;<span class="key">A</span></button>
-      <div class="mid">WASD<br>or arrows</div>
+      <div class="mid"></div>
       <button data-axis="turn" data-val="1" title="Right (D)">&#9654;<span class="key">D</span></button>
       <div></div>
       <button data-axis="fwd" data-val="-1" title="Back (S)">&#9660;<span class="key">S</span></button>
@@ -129,7 +136,7 @@
   </div>
 
   <div class="rcn-section">
-    <h2>Tune</h2>
+    <h2>Settings</h2>
     <div id="tuneform"></div>
     <div class="rcn-tools">
       <button class="rcn-btn primary small" onclick="saveTune()">Save</button>
@@ -162,16 +169,16 @@
     <div class="rcn-head"><h2>Dot matrix</h2><button class="rcn-btn quiet small" onclick="release()">Stop sending</button></div>
     <div class="matrixrow">
       <div>
-        <div class="scroll"><div class="matrix" id="matrixEdit" title="Click or drag dots, then Send"></div></div>
+        <div class="scroll"><div class="matrix" id="matrixEdit" title="Click or drag dots"></div></div>
         <div class="rcn-tools">
-          <button class="rcn-btn primary small" onclick="sendMatrix()">Send (set_matrix)</button>
+          <button class="rcn-btn primary small" onclick="sendMatrix()">Send</button>
           <button class="rcn-btn quiet small" onclick="editMatrix(() => 0)">Clear</button>
           <button class="rcn-btn quiet small" onclick="editMatrix((v) => 1 - v)">Invert</button>
           <button class="rcn-btn quiet small" onclick="editMatrix((v, i) => (Math.floor(i / 24) + i % 24) % 2)">Checkerboard</button>
         </div>
       </div>
       <div>
-        <label class="rcn-caption" for="matrixText">Text (show_text)</label>
+        <label class="rcn-caption" for="matrixText">Text</label>
         <input type="text" class="rcn-input" id="matrixText" maxlength="255" value="Hello, RACECAR!">
         <div class="rcn-tools"><button class="rcn-btn primary small" onclick="sendText()">Show text</button></div>
         <div class="rcn-caption" style="margin-top: var(--rcn-space-4)">Showing now</div>
@@ -182,11 +189,10 @@
 
   <div class="rcn-section span3">
     <div class="rcn-head"><h2>LED strip</h2><button class="rcn-btn quiet small" onclick="release()">Stop sending</button></div>
-    <div class="rcn-caption">Click LEDs to paint them, then Send. LED 0: front left. LED 83: front right.</div>
     <div class="scroll" style="margin-top: var(--rcn-space-2)"><div class="ledbar" id="ledEdit"></div></div>
     <div class="rcn-tools">
       <input type="color" id="ledColor" value="#00a0ff" aria-label="LED color">
-      <button class="rcn-btn primary small" onclick="sendLeds()">Send (set_pixels)</button>
+      <button class="rcn-btn primary small" onclick="sendLeds()">Send</button>
       <button class="rcn-btn quiet small" onclick="editLeds(() => hexColor())">Fill</button>
       <button class="rcn-btn quiet small" onclick="editLeds((c, i) => hueColor(i))">Rainbow</button>
       <button class="rcn-btn quiet small" onclick="editLeds(() => [0, 0, 0])">Clear</button>
@@ -205,8 +211,8 @@ const { $, token, font } = RcnUi;
 const { post } = RcnApi;
 const { timeChart, legendHtml, recentTicks } = RcnCharts;
 const SLIDERS = [
-  { key: 'speed', tip: 'Throttle, 0 to 1', min: 0, max: 1, step: 0.01 },
-  { key: 'angle', tip: 'Steering, 0 to 1. 1 is full lock', min: 0, max: 1, step: 0.01 },
+  { key: 'speed', label: 'Speed', tip: 'Throttle, 0 to 1', min: 0, max: 1, step: 0.01 },
+  { key: 'angle', label: 'Angle', tip: 'Steering, 0 to 1. 1 is full lock', min: 0, max: 1, step: 0.01 },
 ];
 const KEYS = {
   KeyW: ['fwd', 1], ArrowUp: ['fwd', 1], KeyS: ['fwd', -1], ArrowDown: ['fwd', -1],
@@ -217,21 +223,54 @@ const XYZ = [['x', 'a'], ['y', 'b'], ['z', 'c']];
 // ---- driving: whatever is held right now, from any source ----
 // Two holds on different axes give a diagonal; two on one axis cancel to 0.
 const held = new Set();
+// The joystick, while touched, sends its own values instead of the keys'.
+const joy = { active: false, fwd: 0, turn: 0 };
 function command() {
+  if (joy.active) return { fwd: +joy.fwd.toFixed(3), turn: +joy.turn.toFixed(3) };
   const sum = (axis) => [...held].filter((h) => h.startsWith(axis + ':')).reduce((a, h) => a + parseInt(h.split(':')[1]), 0);
   return { fwd: Math.sign(sum('fwd')), turn: Math.sign(sum('turn')) };
 }
 let lastSent = '';
 function sendCmd(force) {
   const c = command(), s = JSON.stringify(c);
-  if (s !== lastSent || force) { lastSent = s; post('/cmd', c); }
+  if (s !== lastSent || force) { lastSent = s; post('cmd', c); }
   for (const b of document.querySelectorAll('#pad button')) b.classList.toggle('down', held.has(`${b.dataset.axis}:${b.dataset.val}`));
 }
 function press(axis, val) { held.add(`${axis}:${val}`); sendCmd(false); }
 function release_(axis, val) { held.delete(`${axis}:${val}`); sendCmd(false); }
 function releaseAll() { held.clear(); sendCmd(true); }
 // The service drops a command older than cmd_timeout, so repeat while held.
-setInterval(() => { if (held.size) sendCmd(true); }, 100);
+setInterval(() => { if (held.size || joy.active) sendCmd(true); }, 100);
+
+// Touch-first screens get the joystick only; others the pad, with a toggle.
+const JOY_KEY = 'rcn-teleop-joystick';
+const touchFirst = window.matchMedia('(pointer: coarse)').matches;
+const joystick = RcnJoystick.mount($('joystick'), {
+  size: 180,
+  onMove: (x, y) => {
+    joy.active = x !== 0 || y !== 0;
+    joy.fwd = y;
+    joy.turn = x;
+    sendCmd(!joy.active);
+  },
+});
+function setJoystickMode(on) {
+  joystick.stop();
+  $('joystick').hidden = !on;
+  $('pad').hidden = on;
+  try { localStorage.setItem(JOY_KEY, on ? '1' : '0'); } catch (e) { /* private window */ }
+}
+if (touchFirst) {
+  $('joytoggle').hidden = true;
+  $('joystick').hidden = false;
+  $('pad').hidden = true;
+} else {
+  let saved = '0';
+  try { saved = localStorage.getItem(JOY_KEY) || '0'; } catch (e) { /* private window */ }
+  $('joymode').checked = saved === '1';
+  setJoystickMode(saved === '1');
+  $('joymode').addEventListener('change', () => setJoystickMode($('joymode').checked));
+}
 const typing = (e) => ['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName);
 document.addEventListener('keydown', (e) => {
   if (e.repeat || !(e.code in KEYS) || typing(e)) return;
@@ -250,17 +289,17 @@ for (const b of document.querySelectorAll('#pad button')) {
   for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) b.addEventListener(ev, () => release_(axis, val));
   b.addEventListener('contextmenu', (e) => e.preventDefault());
 }
-function stopCar() { releaseAll(); post('/params', { speed: 0 }); }
-function reset() { post('/load'); }
-function saveTune() { post('/save').then(() => RcnUi.toast('Saved.')); }
-function loadTune() { post('/load').then(() => RcnUi.toast('Loaded.')); }
+function stopCar() { releaseAll(); post('params', { speed: 0 }); }
+function reset() { post('load'); }
+function saveTune() { post('save').then(() => RcnUi.toast('Saved.')); }
+function loadTune() { post('load'); }
 
 // ---- tune ----
 const form = RcnTune.sliders($('tuneform'), SLIDERS);
 
 // ---- camera ----
-RcnUi.frames($('color'), '/frame', 120);
-RcnUi.frames($('depth'), '/depth', 120);
+RcnUi.frames($('color'), 'frame', 120);
+RcnUi.frames($('depth'), 'depth', 120);
 
 // ---- detections: boxes arrive as fractions of the frame ----
 const detToggle = $('dettoggle');
@@ -324,9 +363,9 @@ function buildMatrix(id, editable) {
 }
 function setCell(i, v) { matrixCells[i] = v; $('matrixEdit').children[i].classList.toggle('on', !!v); }
 function editMatrix(f) { for (let i = 0; i < 192; i++) setCell(i, f(matrixCells[i], i)); }
-function sendMatrix() { post('/matrix', { pixels: matrixCells }); }
-function sendText() { post('/text', { text: $('matrixText').value }); }
-function release() { post('/display/release'); }
+function sendMatrix() { post('matrix', { pixels: matrixCells }); }
+function sendText() { post('text', { text: $('matrixText').value }); }
+function release() { post('display/release'); }
 function showMatrix(pixels) {
   const dots = $('matrixState').children;
   for (let i = 0; i < 192; i++) dots[i].classList.toggle('on', !!(pixels && pixels[i]));
@@ -346,12 +385,12 @@ function hueColor(i) {
 }
 function setLed(i, c) { ledColors[i] = c; $('ledEdit').children[i].style.background = rgb(c); }
 function editLeds(f) { for (let i = 0; i < 84; i++) setLed(i, f(ledColors[i], i)); }
-function sendLeds() { post('/leds', { colors: ledColors }); }
+function sendLeds() { post('leds', { colors: ledColors }); }
 function buildLeds(id, editable) {
   const el = $(id);
   for (let i = 0; i < 84; i++) {
     const led = document.createElement('span');
-    led.title = `LED ${i}`;
+    led.title = i === 0 ? 'LED 0, front left' : i === 83 ? 'LED 83, front right' : `LED ${i}`;
     if (editable) {
       led.addEventListener('pointerdown', (e) => { e.preventDefault(); ledDrag = true; setLed(i, hexColor()); });
       led.addEventListener('pointerenter', () => { if (ledDrag) setLed(i, hexColor()); });
@@ -384,12 +423,12 @@ function drawCharts(d) {
   ];
   timeChart($('encChart'), t0, now, enc, ticks, { ...opts, fixed: { r: [-1, 1] }, marks: d.marks });
   setLegend('encLegend', [{ name: 'Encoder (m/s, left)', style: 'a' }, { name: 'Throttle (-1 to 1, right)', style: 'b' }]);
-  timeChart($('accChart'), t0, now, xyzSeries(sense, 1, 'm/s2', 2), ticks, opts);
-  setLegend('accLegend', [{ name: 'Linear acceleration (m/s2):', style: null }, ...XYZ.map(([n, s]) => ({ name: n, style: s }))]);
+  timeChart($('accChart'), t0, now, xyzSeries(sense, 1, 'm/s\u00b2', 2), ticks, opts);
+  setLegend('accLegend', [{ name: 'Linear acceleration (m/s\u00b2):', style: null }, ...XYZ.map(([n, s]) => ({ name: n, style: s }))]);
   timeChart($('gyroChart'), t0, now, xyzSeries(sense, 4, 'rad/s', 3), ticks, opts);
   setLegend('gyroLegend', [{ name: 'Angular velocity (rad/s):', style: null }, ...XYZ.map(([n, s]) => ({ name: n, style: s }))]);
-  timeChart($('magChart'), t0, now, xyzSeries(sense, 7, 'uT', 1), ticks, opts);
-  setLegend('magLegend', [{ name: 'Magnetic field (uT):', style: null }, ...XYZ.map(([n, s]) => ({ name: n, style: s }))]);
+  timeChart($('magChart'), t0, now, xyzSeries(sense, 7, '\u00b5T', 1), ticks, opts);
+  setLegend('magLegend', [{ name: 'Magnetic field (\u00b5T):', style: null }, ...XYZ.map(([n, s]) => ({ name: n, style: s }))]);
   if (d.volts !== undefined && (!battery.length || battery[battery.length - 1][0] < now - 0.9)) {
     battery.push([now, d.volts, d.amps]);
     while (battery.length && battery[0][0] < now - BATTERY_S) battery.shift();
@@ -407,40 +446,41 @@ function setLegend(id, items) {
 }
 
 // ---- state ----
-const WORDS = { '1': 'FORWARD', '-1': 'BACK' }, TURNS = { '1': 'RIGHT', '-1': 'LEFT' };
+const WORDS = { '1': 'forward', '-1': 'back' }, TURNS = { '1': 'right', '-1': 'left' };
 const fmt = (v) => v.map((n) => (n >= 0 ? ' ' : '') + n.toFixed(3)).join('  ');
-RcnApi.poll('/state', 120, (d) => {
+RcnApi.poll('state', 120, (d) => {
     $('thr').textContent = d.speed_cmd;
     $('steer').textContent = d.steer;
     $('enc').textContent = d.enc_speed;
     $('fps').textContent = d.cam_fps;
     $('dfps').textContent = d.depth_fps;
-    $('res').textContent = d.res[0] ? `${d.res[0]}x${d.res[1]}` : 'none';
+    $('res').textContent = d.res[0] ? `${d.res[0]}x${d.res[1]}` : '-';
 
     DET.boxes = d.dets || [];
     detToggle.disabled = !d.params.detections_topic;
     $('detswitch').title = !d.params.detections_topic
       ? 'No detector set up'
-      : !d.det_ok ? 'No detections. Is the detector running?'
-        : `${d.dets.length} detection(s) at ${d.det_fps} Hz`;
+      : !d.det_ok ? 'No detections'
+        : `${d.dets.length} detection${d.dets.length === 1 ? '' : 's'} at ${d.det_fps} Hz`;
     drawOverlay();
     $('depthfig').hidden = !d.params.depth_topic;
 
     const box = $('state');
-    const words = [WORDS[d.fwd], TURNS[d.turn]].filter(Boolean).join(' ');
-    box.textContent = d.timed_out ? 'TIMED OUT' : (words || 'STOPPED');
+    let words = [WORDS[d.fwd], TURNS[d.turn]].filter(Boolean).join(' ');
+    words = words && words[0].toUpperCase() + words.slice(1);
+    box.textContent = d.timed_out ? 'Timed out' : (words || 'Stopped');
     box.className = 'rcn-state' + (d.timed_out ? ' err' : (words ? ' accent' : ''));
-    box.title = d.timed_out ? `No command for ${d.params.cmd_timeout} s. Driving zero`
+    box.title = d.timed_out ? `No command for ${d.params.cmd_timeout} s`
       : d.params.speed === 0 ? 'Speed is 0' : `Measured ${d.enc_speed} m/s`;
 
     form.sync(d.params);
     drawLidar(d.scan);
     drawCharts(d);
-    $('battery').textContent = d.volts !== undefined ? `${d.volts.toFixed(2)} V · ${d.amps.toFixed(2)} A` : 'No battery reading';
+    $('battery').textContent = d.volts !== undefined ? `${d.volts.toFixed(2)} V · ${d.amps.toFixed(2)} A` : 'No reading';
     if (d.accel) $('imu').textContent = `accel ${fmt(d.accel)}\ngyro  ${fmt(d.gyro)}`;
     if (d.mag) {
       const norm = Math.hypot(...d.mag);
-      $('mag').textContent = `field ${d.mag.map((v) => v.toFixed(2)).join('  ')} uT  |B| ${norm.toFixed(2)}\nheading ${d.heading.toFixed(1)} deg`;
+      $('mag').textContent = `field ${d.mag.map((v) => v.toFixed(2)).join('  ')} \u00b5T  |B| ${norm.toFixed(2)}\nheading ${d.heading.toFixed(1)} deg`;
       drawCompass(d.heading);
     }
     showMatrix(d.matrix);

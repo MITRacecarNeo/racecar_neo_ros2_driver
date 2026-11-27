@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RACECAR Neo files</title>
+<link rel="stylesheet" href="ui/rcn.css?v={{asset}}">
+<script src="ui/ui.js?v={{asset}}"></script>
+<script src="ui/battery.js?v={{asset}}" defer></script>
+<script src="ui/stall.js?v={{asset}}" defer></script>
+<link rel="icon" href="ui/brand/app-icon-32.png">
+<link rel="apple-touch-icon" href="ui/brand/app-icon-180.png">
+<style>
+main { max-width: 1100px; margin: 0 auto; padding: var(--rcn-space-4); }
+main > .rcn-override { margin: 0 0 var(--rcn-space-3); }
+section { background: var(--rcn-surface); border-radius: var(--rcn-radius-lg); padding: var(--rcn-space-3); min-width: 0; }
+.pages { position: fixed; top: 0; bottom: 0; right: 0; width: 280px; z-index: 20; background: var(--rcn-surface);
+         border-left: 1px solid var(--rcn-border); transform: translateX(100%); transition: transform 0.15s;
+         overflow-y: auto; padding: var(--rcn-space-4) var(--rcn-space-3); }
+body.pages-open .pages { transform: none; }
+.pages .top { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--rcn-space-3); }
+@media (min-width: 900px) { body.pages-open { padding-right: 280px; } body.pages-open .pages-close { display: none; } }
+.pages a { display: grid; grid-template-columns: 10px 1fr auto; gap: var(--rcn-space-2); align-items: center; padding: 6px 8px;
+           border-radius: var(--rcn-radius-md); color: var(--rcn-text); text-decoration: none; }
+.pages a:hover { background: var(--rcn-steel); }
+.pages .off { display: grid; grid-template-columns: 10px 1fr auto; gap: var(--rcn-space-2); align-items: center;
+              padding: 6px 8px; opacity: 0.45; cursor: default; }
+.pages .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--rcn-steel); }
+.pages .dot.active { background: #6fd08c; }
+.pages .addr { font: 500 13px/18px var(--rcn-font-mono); color: var(--rcn-text-muted); }
+.crumbs { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; font-weight: 600; margin-bottom: var(--rcn-space-2); }
+.crumbs a { color: var(--rcn-link); text-decoration: none; cursor: pointer; }
+.list { display: grid; grid-template-columns: 1fr auto auto; font-size: 14px; }
+.list a { display: contents; color: var(--rcn-text); text-decoration: none; cursor: pointer; }
+.list a > span { padding: 5px 4px; border-bottom: 1px solid var(--rcn-border); display: flex; align-items: center; gap: var(--rcn-space-2); min-width: 0; }
+.list a:hover > span { background: var(--rcn-steel); }
+.list a.on > span { background: var(--rcn-steel); }
+.list .rcn-icon { width: 18px; height: 18px; flex: none; color: var(--rcn-orange); }
+.list .meta { color: var(--rcn-text-muted); font-variant-numeric: tabular-nums; justify-content: flex-end; white-space: nowrap; padding-left: var(--rcn-space-3); }
+.list .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#viewer { margin-top: var(--rcn-space-3); }
+#viewer .vhead { display: flex; align-items: center; justify-content: space-between; gap: var(--rcn-space-2); margin-bottom: var(--rcn-space-2); }
+#viewer .vhead b { overflow-wrap: anywhere; }
+pre.code { background: var(--rcn-code-bg); color: var(--rcn-code-text); border-radius: var(--rcn-radius-md); padding: var(--rcn-space-3);
+           overflow: auto; max-height: 75vh; font: 13px/1.5 var(--rcn-font-mono); counter-reset: line; margin: 0; }
+pre.code .ln { display: inline-block; width: 3.5em; color: #6b6a7a; user-select: none; }
+.k { color: #f49a4b; } .s { color: #9ed58a; } .c { color: #7d7a90; font-style: italic; } .n { color: #5fb3ff; }
+.doc { line-height: 1.55; overflow-wrap: anywhere; }
+.doc table { border-collapse: collapse; display: block; overflow-x: auto; }
+.doc th, .doc td { border: 1px solid var(--rcn-border); padding: 4px 8px; }
+.doc pre { background: var(--rcn-code-bg); padding: var(--rcn-space-2); border-radius: var(--rcn-radius-md); overflow-x: auto; }
+.doc pre.out { background: none; border-left: 3px solid var(--rcn-border); }
+.doc pre.err { border-left-color: var(--rcn-led-red); }
+.doc img, #viewer img.full { max-width: 100%; border-radius: var(--rcn-radius-md); }
+</style>
+</head>
+<body>
+<header class="rcn-header">
+  <img class="rcn-mark" src="ui/brand/mark.png" alt="RACECAR Neo">
+  <span class="rcn-title">Files</span>
+  <span class="rcn-spacer"></span>
+  <button class="rcn-btn quiet small" id="pagestoggle" aria-label="Pages"></button>
+</header>
+<nav class="pages" aria-label="Pages">
+  <div class="top"><b>Pages</b><button class="rcn-btn quiet small pages-close" id="pagesclose" aria-label="Close pages"></button></div>
+  <div id="pages"></div>
+</nav>
+<main>
+  <section>
+    <div class="crumbs" id="crumbs"></div>
+    <div class="list" id="list"></div>
+    <div id="viewer"></div>
+  </section>
+</main>
+<script>
+'use strict';
+const { $, esc, icon } = RcnUi;
+let folder = '', current = '';
+
+function size(n) {
+  if (n === null || n === undefined) return '';
+  return n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
+}
+function day(t) { return new Date(t * 1000).toLocaleDateString(); }
+const join = (a, b) => (a ? `${a}/${b}` : b);
+
+async function loadPages() {
+  const { pages } = await (await fetch('api/pages')).json();
+  const named = RcnRoute.named;
+  $('pages').innerHTML = pages.map((p) => {
+    const sub = p.sub ? `${p.sub}` : '';
+    const addr = named ? `/${p.path}/${sub}` : `:${p.port}${sub ? `/${sub}` : ''}`;
+    const row = `<span class="dot ${p.state === 'active' ? 'active' : ''}"></span><span>${esc(p.name)}</span>
+      <span class="addr">${esc(addr)}</span>`;
+    if (p.state !== 'active') return `<div class="off">${row}</div>`;
+    return `<a href="${esc(RcnRoute.app(p.route || p.id, sub))}" target="_blank" title="${esc(named ? `Port ${p.port}` : `/${p.path}/${sub}`)}">${row}</a>`;
+  }).join('');
+}
+
+function crumbs() {
+  const parts = folder ? folder.split('/') : [];
+  const links = [`<a data-to="">jupyter_ws</a>`];
+  parts.forEach((p, i) => links.push(`<a data-to="${esc(parts.slice(0, i + 1).join('/'))}">${esc(p)}</a>`));
+  $('crumbs').innerHTML = links.join('<span>/</span>');
+  for (const a of $('crumbs').querySelectorAll('a')) a.onclick = () => go(a.dataset.to, '');
+}
+
+async function openFolder(path) {
+  const r = await fetch(`api/list?path=${encodeURIComponent(path)}`);
+  if (!r.ok) { folder = ''; return openFolder(''); }
+  const d = await r.json();
+  folder = d.path;
+  crumbs();
+  $('list').innerHTML = d.entries.map((e) =>
+    `<a data-name="${esc(e.name)}" data-dir="${e.dir ? 1 : ''}" class="${join(folder, e.name) === current ? 'on' : ''}">
+      <span class="nm">${icon(e.dir ? 'folder' : 'notebook')}${esc(e.name)}</span>
+      <span class="meta">${e.dir ? '' : size(e.size)}</span><span class="meta">${day(e.mtime)}</span></a>`).join('');
+  for (const a of $('list').querySelectorAll('a')) {
+    a.onclick = () => (a.dataset.dir ? go(join(folder, a.dataset.name), '') : go(folder, join(folder, a.dataset.name)));
+  }
+}
+
+const PY = /(#[^\n]*)|("""[\s\S]*?"""|'''[\s\S]*?'''|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*')|\b(def|class|return|if|elif|else|for|while|in|not|and|or|import|from|as|with|try|except|finally|raise|pass|break|continue|lambda|yield|None|True|False|self|is|global|async|await)\b|\b(\d+(?:\.\d+)?)\b/g;
+function highlight(text, language) {
+  const safe = (s) => esc(s);
+  if (language !== 'python') return safe(text);
+  let out = '', pos = 0;
+  for (const m of text.matchAll(PY)) {
+    out += safe(text.slice(pos, m.index));
+    const cls = m[1] ? 'c' : m[2] ? 's' : m[3] ? 'k' : 'n';
+    out += `<span class="${cls}">${safe(m[0])}</span>`;
+    pos = m.index + m[0].length;
+  }
+  return out + safe(text.slice(pos));
+}
+function numbered(html) {
+  return html.split('\n').map((l, i) => `<span class="ln">${i + 1}</span>${l}`).join('\n');
+}
+
+async function openFile(path) {
+  const v = $('viewer');
+  if (!path) { v.innerHTML = ''; return; }
+  const r = await fetch(`api/view?path=${encodeURIComponent(path)}`);
+  if (!r.ok) { v.innerHTML = ''; return; }
+  const f = await r.json();
+  const raw = `api/raw?path=${encodeURIComponent(path)}`;
+  let body = '';
+  if (f.kind === 'image') body = `<img class="full" src="${esc(raw)}" alt="${esc(f.name)}">`;
+  else if (f.kind === 'text') body = `<pre class="code">${numbered(highlight(f.text, f.language))}</pre>`;
+  else if (f.html !== undefined) body = `<div class="doc">${f.html}</div>`;
+  v.innerHTML = `<div class="vhead"><b>${esc(f.name)}</b><span class="meta">${size(f.size)}</span>
+    <a class="rcn-btn quiet small" href="${esc(raw)}&download=1" title="Download">${icon('save')}</a></div>${body}`;
+}
+
+function go(dir, file) {
+  const next = `#${encodeURIComponent(dir)}${file ? `|${encodeURIComponent(file)}` : ''}`;
+  if (location.hash !== next) history.pushState(null, '', next);
+  show();
+}
+async function show() {
+  const [d, f] = location.hash.slice(1).split('|').map((s) => decodeURIComponent(s || ''));
+  current = f || '';
+  await openFolder(d || '');
+  await openFile(current);
+}
+const PAGES_KEY = 'rcn-files-pages';
+function setPages(open) {
+  document.body.classList.toggle('pages-open', open);
+  try { localStorage.setItem(PAGES_KEY, open ? 'open' : 'closed'); } catch (e) { /* private window */ }
+}
+$('pagestoggle').innerHTML = icon('menu');
+$('pagesclose').innerHTML = icon('cross');
+$('pagestoggle').onclick = () => setPages(!document.body.classList.contains('pages-open'));
+$('pagesclose').onclick = () => setPages(false);
+let pagesSaved = null;
+try { pagesSaved = localStorage.getItem(PAGES_KEY); } catch (e) { /* private window */ }
+document.body.classList.toggle('pages-open',
+  pagesSaved === null ? window.matchMedia('(min-width: 900px)').matches : pagesSaved === 'open');
+
+window.addEventListener('popstate', show);
+loadPages();
+setInterval(() => loadPages().catch(() => {}), 5000);
+show();
+</script>
+</body>
+</html>

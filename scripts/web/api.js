@@ -9,7 +9,7 @@
    RcnApi.LOST                   the words for a page that cannot reach the car */
 (function () {
   'use strict';
-  const LOST = 'Lost contact with the car.';
+  const LOST = 'No contact';
 
   function post(path, body) {
     return fetch(path, {

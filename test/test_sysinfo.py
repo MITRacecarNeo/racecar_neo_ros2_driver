@@ -70,7 +70,7 @@ class TestClassifyRtc:
     def test_between_low_and_ok_is_stale(self):
         status, label = sysinfo.classify_rtc(2.75)
         assert status == 'stale'
-        assert 'recharge soon' in label
+        assert 'Recharge soon' in label
 
     def test_low_line_is_stale(self):
         assert sysinfo.classify_rtc(sysinfo.RTC_LOW_VOLTS)[0] == 'stale'
@@ -78,10 +78,10 @@ class TestClassifyRtc:
     def test_below_low_is_dead(self):
         status, label = sysinfo.classify_rtc(2.6999)
         assert status == 'dead'
-        assert 'RECHARGE NOW' in label
+        assert 'Recharge now' in label
 
     def test_no_reading_is_dead(self):
-        assert sysinfo.classify_rtc(None) == ('dead', 'NO READING')
+        assert sysinfo.classify_rtc(None) == ('dead', 'No reading')
 
 
 class TestRtcVoltage:

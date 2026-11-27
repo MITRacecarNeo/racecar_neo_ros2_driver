@@ -22,8 +22,10 @@ import yaml
 @pytest.fixture(scope='module')
 def mv():
     load_script('sysinfo')
+    load_script('features')
     load_script('map_control')
     load_script('webui')
+    load_script('labkit')
     return load_script('mapview')
 
 
@@ -217,6 +219,12 @@ class FakeViewer:
     def find_me(self):
         return True, 'searching the whole map; drive slowly'
 
+    def set_cmd(self, fwd, turn):
+        self.cmd = (fwd, turn)
+
+    def can_drive(self):
+        return False
+
 
 class BusyJob:
     def start(self, argv):
@@ -231,6 +239,7 @@ class BusyJob:
 def server(mv, root):
     mv.Handler.viewer = FakeViewer()
     mv.Handler.job = BusyJob()
+    mv.Handler.checks = BusyJob()
     srv = ThreadingHTTPServer(('127.0.0.1', 0), mv.Handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     yield srv
@@ -282,7 +291,9 @@ class TestHttp:
         res, _ = request(server, 'POST', '/api/action', {'action': 'save'})
         assert res.status == 409
         res, data = request(server, 'POST', '/api/action', {'action': 'rm'})
-        assert res.status == 400 and 'unknown action' in json.loads(data)['message']
+        assert res.status == 400 and json.loads(data)['message'] == 'Reload the page.'
+        res, data = request(server, 'POST', '/api/action', {'action': 'start', 'name': 'a b'})
+        assert json.loads(data)['message'] == 'Map names use letters, digits, - and _.'
 
     def test_pose_and_find(self, mv, server):
         res, _ = request(server, 'POST', '/api/pose', {'x': 1, 'y': 2, 'yaw': 0.5})
@@ -327,3 +338,74 @@ def test_viewer_subscribes_only_while_polled(mv, monkeypatch):
         viewer.shutdown()
     finally:
         rclpy.try_shutdown()
+
+
+class TestDriveAndChecks:
+    def test_axis(self, mv):
+        assert mv.axis(0.5) == 0.5 and mv.axis(7) == 1.0 and mv.axis(-3) == -1.0
+        assert mv.axis('x') == 0.0 and mv.axis(float('nan')) == 0.0
+
+    def test_drive_command(self, mv, monkeypatch):
+        viewer = mv.Viewer.__new__(mv.Viewer)
+        viewer._lock = threading.Lock()
+        viewer.gate = mv.webui.IdleGate(10.0)
+        viewer.status = {'mode': 'off'}
+        viewer.cmd = {'fwd': 0.0, 'turn': 0.0, 'stamp': 0.0}
+        viewer.set_cmd(0.5, -0.25, now=100.0)
+        assert viewer.drive_command(100.1) is None  # no page open
+        viewer.gate.touch()
+        assert viewer.drive_command(100.1) is None  # not mapping
+        viewer.status = {'mode': 'mapping'}
+        assert viewer.drive_command(100.1) == (0.5, -0.25)
+        assert viewer.drive_command(100.0 + mv.CMD_TIMEOUT_SEC + 0.1) == (0.0, 0.0)
+        # An open page that stopped driving goes quiet, leaving /drive to Nav2.
+        assert viewer.drive_command(100.0 + mv.CMD_TIMEOUT_SEC + mv.STOP_SEC + 0.1) is None
+        assert viewer.can_drive()
+
+    def test_idle_page_never_publishes(self, mv):
+        viewer = mv.Viewer.__new__(mv.Viewer)
+        viewer._lock = threading.Lock()
+        viewer.gate = mv.webui.IdleGate(10.0)
+        viewer.gate.touch()
+        viewer.status = {'mode': 'localization'}
+        viewer.cmd = {'fwd': 0.0, 'turn': 0.0, 'stamp': 0.0}
+        assert viewer.drive_command(500.0) is None
+
+    def test_cmd_route_and_origin(self, mv, server):
+        conn = http.client.HTTPConnection('127.0.0.1', server.server_address[1], timeout=5)
+        conn.request('POST', '/cmd', body=json.dumps({'fwd': 1, 'turn': 0}),
+                     headers={'Origin': 'http://evil.example'})  # fmt: skip
+        res = conn.getresponse()
+        res.read()
+        assert res.status == 403
+        res, data = request(server, 'POST', '/cmd', {'fwd': 0.3, 'turn': 0.1})
+        assert res.status == 200 and json.loads(data) == {'ok': True, 'drive': False}
+        assert mv.Handler.viewer.cmd == (0.3, 0.1)
+
+    def test_checks_routes(self, mv, server, monkeypatch):
+        monkeypatch.setattr(mv, 'checks_view', lambda: {'passed': True, 'rows': []})
+
+        class Checks:
+            started = 0
+
+            def start(self, argv):
+                self.started += 1
+                return True
+
+            def state(self):
+                return {'running': False}
+
+        monkeypatch.setattr(mv.Handler, 'checks', Checks())
+        res, data = request(server, 'GET', '/api/checks')
+        assert json.loads(data)['passed'] is True
+        res, data = request(server, 'POST', '/api/checks/run', {})
+        assert res.status == 200 and mv.Handler.checks.started == 1
+
+    def test_page_has_the_gate_and_drive_panel(self):
+        page = (Path(__file__).resolve().parent.parent / 'scripts' / 'mapview.html').read_text()
+        assert "'To start mapping, run checks first'" in page
+        assert 'ui/override.js' in page and "confirm('Turn on safety override?')" in page
+        assert page.index('id="override"') < page.index('id="more"')
+        assert "key: 'rcn-mapper-camera'" in page and 'id="override-slot"' in page
+        assert 'Run checks' in page and 'id="drivebox"' in page and 'ui/joystick.js' in page
+        assert 'drivenote' not in page

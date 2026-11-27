@@ -19,10 +19,10 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
-from racecar_neo_ros2_driver import apps, fileio
+from racecar_neo_ros2_driver import apps, car_profile, drive_lease, fileio, units
+from racecar_neo_ros2_driver.qos import LATCHED, SENSOR_LATEST
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import BatteryState
 from std_msgs.msg import Bool, Empty, UInt32
 
@@ -31,7 +31,9 @@ from std_msgs.msg import Bool, Empty, UInt32
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from battery_alert import Announcer, final_message  # noqa: E402, I100  sibling scripts
+import car_setup  # noqa: E402
 import features  # noqa: E402
+import netconfig  # noqa: E402
 from safe_shutdown import shutdown_sequence  # noqa: E402
 from sysinfo import (  # noqa: E402
     classify_ext5v,
@@ -77,18 +79,18 @@ FEATURES: list[dict[str, Any]] = [
         'id': 'camera',
         'name': 'Camera',
         'icon': 'camera',
-        'desc': 'Turn on/off the color and depth camera',
+        'desc': 'Color and depth camera',
     },
     {
         'id': 'detections',
         'name': 'Detections',
         'icon': 'target',
-        'desc': 'Turn on/off the detection node',
+        'desc': 'Object detection',
     },
     {'id': 'autonomy', 'name': 'Autonomy', 'icon': 'radar', 'desc': 'Mapping or localization'},
 ]
-TELEOP_UNIT = 'racecar-teleop.service'
-AUTONOMY_UNIT = 'racecar-autonomy.service'
+TELEOP_UNIT = units.service(units.TELEOP)
+AUTONOMY_UNIT = units.service(units.AUTONOMY)
 MAP_TOOL = [sys.executable, str(Path(__file__).resolve().parent / 'racecar_map.py')]
 MAP_TOOL_TIMEOUT_SEC = 180.0
 # Time for the sensors to come up after a teleop restart before autonomy resumes.
@@ -124,9 +126,9 @@ FINAL_MESSAGE = 'Turning the car off now. Turn off the power switch.'
 # supervised: the watchdog restarts this node. An unsupervised card that loses
 # its topic shows gray instead of red.
 MONITORED = {
-    'pit': {'topic': '/imu/lsm9ds1', 'label': 'PIT board (drive + IMU)', 'supervised': True},
-    'throttle': {'topic': '/motor', 'label': 'Throttle (clamping)', 'supervised': True},
-    'mux': {'topic': '/mux_out', 'label': 'Mux (arbitrator)', 'supervised': True},
+    'pit': {'topic': '/imu/lsm9ds1', 'label': 'PIT board', 'supervised': True},
+    'throttle': {'topic': '/motor', 'label': 'Throttle', 'supervised': True},
+    'mux': {'topic': '/mux_out', 'label': 'Mux', 'supervised': True},
     'gamepad': {'topic': '/gamepad_drive', 'label': 'Gamepad', 'supervised': True},
     'imu_fusion': {'topic': '/imu/fused', 'label': 'IMU fusion', 'supervised': True},
     'lidar': {'topic': '/scan', 'label': 'RPLIDAR', 'supervised': True},
@@ -231,6 +233,8 @@ _system = History()
 OVERRIDE_KEEPALIVE_SEC = 2.0
 OVERRIDE_CONFIRM_SEC = 3.0
 OVERRIDE_PUBLISH_SEC = 0.2
+PROGRAM_TICK_SEC = drive_lease.REFRESH_SEC
+PROGRAM_GRAPH_SEC = 1.0
 
 
 class OverrideSession:
@@ -298,12 +302,13 @@ _override = OverrideSession()
 
 def override_origin(origin: str | None, host: str | None) -> str | None:
     """
-    Return `origin` when a driving lab page on this car may call /api/override.
+    Return `origin` when a page that drives the car may call /api/override.
 
-    The lab pages (scripts/web/override.js) run on their own ports, so the
-    browser needs a CORS header to read the reply.
+    The driving apps and the Autonomy apps (scripts/web/override.js) run on
+    their own ports, so the browser needs a CORS header to read the reply.
     """
-    return webui.sibling_origin(origin, host, (a['port'] for a in APPS if a['exclusive']))
+    ports = (a['port'] for a in APPS if a['exclusive'] or a['group'] == 'autonomy')
+    return webui.sibling_origin(origin, host, ports)
 
 
 def estimate_view(values: dict[str, str] | None, age: float | None) -> dict[str, Any] | None:
@@ -351,7 +356,7 @@ def current_battery() -> dict[str, Any] | None:
     return battery_view(time.time(), estimate)
 
 
-NETWORK_KINDS = {'ethernet': 'Ethernet', 'wifi': 'Wi-Fi'}
+NETWORK_KINDS = {'ethernet': 'Ethernet', 'wifi': 'WiFi'}
 
 
 def _cmd(argv: list[str], run: Callable[..., Any]) -> str:
@@ -415,14 +420,73 @@ def clock_view(now: float) -> dict[str, Any]:
     return {'epoch': now, 'utc_offset': float(local.tm_gmtoff), 'zone': local.tm_zone}
 
 
+RELOAD = 'Reload the page.'
+
+
+def connection_job(
+    action: str, body: dict[str, Any], jobs: netconfig.Jobs | None = None
+) -> tuple[Callable[[], tuple[bool, str]], str] | str:
+    """
+    Return the change a Connections request asks for and its failure message.
+
+    A refusal is returned as a str. A request the page cannot send (no
+    network, a malformed list, an unknown action) is answered with RELOAD.
+    """
+    jobs = jobs or _net_jobs
+    text = lambda key: str(body.get(key) or '')  # noqa: E731
+    ssid = text('ssid')
+    if action == 'join':
+        security = text('security')
+        if not ssid or security not in ('open', 'psk', 'sae', 'enterprise'):
+            return RELOAD
+        saved = bool(body.get('saved'))
+        problem = netconfig.check_join(security, text('password'), text('identity'), saved)
+        if problem:
+            return problem
+        return (
+            lambda: jobs.join(ssid, security, text('password'), text('identity')),
+            f'Could not join {ssid}.',
+        )
+    if action == 'forget':
+        if not text('uuid'):
+            return RELOAD
+        return (lambda: jobs.forget(text('uuid'))), f'Could not forget {ssid or "the network"}.'
+    if action == 'order':
+        uuids = body.get('uuids')
+        if not isinstance(uuids, list) or not all(isinstance(u, str) for u in uuids):
+            return RELOAD
+        return (lambda: jobs.order(uuids)), 'Could not save the order.'
+    if action == 'wifi':
+        on = bool(body.get('on'))
+        return (lambda: jobs.wifi_power(on)), f'Could not turn {"on" if on else "off"} WiFi.'
+    if action == 'ap-password':
+        problem = netconfig.check_ap_password(text('password'))
+        if problem:
+            return problem
+        return (lambda: jobs.ap_password(text('password'))), 'Could not change the password.'
+    return RELOAD
+
+
 def page_origin(origin: str | None, host: str | None) -> bool:
     """Return True for a request from this page (same host and port) or not from a browser."""
     return webui.same_origin(origin, host, allow_missing=True)
 
 
 def lab_origin(origin: str | None, host: str | None) -> str | None:
-    """Return `origin` when an app page on this car (its own port) may read /api/battery."""
+    """Return `origin` when an app page on this car (its own port) may read 8080 state."""
     return webui.sibling_origin(origin, host, (a['port'] for a in APPS))
+
+
+def may_post(path: str, origin: str | None, host: str | None) -> bool:
+    """
+    Return True when a POST to `path` from `origin` may act.
+
+    This page, or no browser page at all. The pages that drive the car, on
+    their own ports, may call /api/override and nothing else.
+    """
+    if page_origin(origin, host):
+        return True
+    return path == '/api/override' and override_origin(origin, host) is not None
 
 
 def turn_off(run: Callable[..., Any] = subprocess.run) -> list[str]:
@@ -453,12 +517,7 @@ class _RateSampler(Node):
         self._lock = threading.Lock()
         # Subscriptions need a concrete message type, so attach_subscriptions()
         # creates each one once the topic and its type appear on the graph.
-        self._qos = QoSProfile(
-            depth=1,
-            history=QoSHistoryPolicy.KEEP_LAST,
-            reliability=QoSReliabilityPolicy.BEST_EFFORT,
-            durability=QoSDurabilityPolicy.VOLATILE,
-        )
+        self._qos = SENSOR_LATEST
         self._topics = list(topics)
         self._subs: dict[str, Any] = {}
         self.attached_at: float | None = None
@@ -477,11 +536,7 @@ class _RateSampler(Node):
         self._firmware: tuple[dict[str, Any], float] | None = None
         self._stall: tuple[dict[str, Any], float] | None = None
         self._estimate: tuple[dict[str, str], float] | None = None
-        latched = QoSProfile(
-            depth=1,
-            reliability=QoSReliabilityPolicy.RELIABLE,
-            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
-        )
+        latched = LATCHED
         self._autonomy_sub = self.create_subscription(
             DiagnosticStatus, '/autonomy/status', self._record_autonomy, latched
         )
@@ -498,6 +553,18 @@ class _RateSampler(Node):
             Bool, '/mux/override_active', self._record_override, latched
         )
         self.create_timer(OVERRIDE_PUBLISH_SEC, self._publish_override)
+        # Programs on a library that takes no lease (drive_lease.ProgramWatch).
+        self._program = drive_lease.ProgramWatch()
+        self._program_seen = False
+        self.create_timer(PROGRAM_TICK_SEC, self._watch_program)
+        self.create_timer(PROGRAM_GRAPH_SEC, self._find_program)
+
+    def _find_program(self) -> None:
+        found = self.get_publishers_info_by_topic('/drive')
+        self._program_seen = any(i.node_name == drive_lease.PROGRAM_NODE for i in found)
+
+    def _watch_program(self) -> None:
+        self._program.tick(self._program_seen)
 
     def _publish_override(self) -> None:
         self._override_pub.publish(UInt32(data=_override.session(time.monotonic())))
@@ -750,7 +817,7 @@ def data_root_health(temp: float | None = None) -> dict[str, str]:
     except OSError:
         free = None
     if free is None:
-        return {'label': 'Data drive', 'status': 'dead', 'detail': f'{root} missing'}
+        return {'label': 'Data drive', 'status': 'dead', 'detail': 'Data drive missing'}
     where = 'NVMe' if data_root.on_nvme(root) else 'SD card'
     detail = f'{root} ({where}), {free:.0f} GB free'
     status = 'healthy' if free >= 10 else 'stale'
@@ -758,7 +825,7 @@ def data_root_health(temp: float | None = None) -> dict[str, str]:
         detail = f'{warning} {free:.0f} GB free'
         status = 'stale'
     if temp is not None:
-        detail += f', {temp:.0f} C'
+        detail += f', {temp:.0f} \u00b0C'
         if temp >= NVME_TEMP_FAIL_C:
             status, detail = 'dead', f'{detail}. Drive too hot'
         elif temp >= NVME_TEMP_WARN_C:
@@ -847,15 +914,15 @@ def link_view(
     Teensy reset; red with no report or no frames.
     """
     if report is None or age is None or age > LINK_STALE_SEC:
-        return {'label': 'Teensy link', 'status': 'dead', 'detail': 'No report'}
+        return {'label': 'Teensy link', 'status': 'dead', 'detail': 'No reading'}
     rate = report.get('rate_hz', 0.0)
     totals = [
-        (int(report.get('dropped_frames', 0)), 'lost frames'),
-        (int(report.get('crc_failures', 0)), 'CRC errors'),
-        (int(report.get('reconnects', 0)), 'reconnects'),
-        (int(report.get('resets', 0)), 'Teensy resets'),
+        (int(report.get('dropped_frames', 0)), 'lost frame'),
+        (int(report.get('crc_failures', 0)), 'CRC error'),
+        (int(report.get('reconnects', 0)), 'reconnect'),
+        (int(report.get('resets', 0)), 'Teensy reset'),
     ]
-    seen = [f'{n} {what}' for n, what in totals if n]
+    seen = [f'{n} {what}{"" if n == 1 else "s"}' for n, what in totals if n]
     detail = f'{rate:.0f} Hz. ' + (
         f'Since teleop started: {", ".join(seen)}' if seen else 'No lost frames'
     )
@@ -869,10 +936,7 @@ def link_view(
 
 
 # fw.speed_control values of the firmware test builds, as the chip names them.
-FIRMWARE_TEST_BUILDS = {
-    'raw_pwm': 'Open-loop PWM test build. Drive commands set raw PWM, not speed',
-    'esc_cal': 'ESC calibration build. Not for driving',
-}
+TEST_BUILD = 'Test build. Not for driving'
 
 
 def firmware_view(report: dict[str, Any] | None, age: float | None) -> dict[str, Any]:
@@ -884,22 +948,21 @@ def firmware_view(report: dict[str, Any] | None, age: float | None) -> dict[str,
     """
     label = 'Firmware'
     if report is None or age is None or age > LINK_STALE_SEC:
-        return {'label': label, 'status': 'unsupervised', 'detail': 'No report'}
+        return {'label': label, 'status': 'unsupervised', 'detail': 'No reading'}
     values = report.get('values', {})
     state = values.get('state')
     if state == 'pending':
-        return {'label': label, 'status': 'unsupervised', 'detail': 'Reading'}
+        return {'label': label, 'status': 'unsupervised', 'detail': 'Measuring'}
     if state != 'known':
         return {'label': label, 'status': 'stale', 'detail': 'No reply. Firmware older than 0.9.0'}
     build = ', '.join(v for v in (values.get('fw.label'), values.get('fw.git')) if v)
     detail = values.get('fw.version', '?') + (f' ({build})' if build else '')
     control = values.get('fw.speed_control', 'closed_loop')
     if control != 'closed_loop':
-        test = FIRMWARE_TEST_BUILDS.get(control, f'Speed control {control}')
-        return {'label': label, 'status': 'stale', 'detail': f'{detail}. {test}'}
+        return {'label': label, 'status': 'stale', 'detail': f'{detail}. {TEST_BUILD}'}
     detail += dips_note(values)
     if values.get('fw.git_dirty') == '1':
-        return {'label': label, 'status': 'stale', 'detail': f'{detail}. Uncommitted build'}
+        return {'label': label, 'status': 'stale', 'detail': f'{detail}. Development build'}
     return {'label': label, 'status': 'healthy', 'detail': detail}
 
 
@@ -912,17 +975,40 @@ def stall_view(report: dict[str, Any] | None, age: float | None) -> dict[str, An
     """
     label = 'Stall'
     if report is None or age is None or age > LINK_STALE_SEC:
-        return {'label': label, 'status': 'unsupervised', 'detail': 'No report'}
+        return {'label': label, 'status': 'unsupervised', 'detail': 'No reading'}
     values = report.get('values', {})
     supported = values.get('supported')
     if supported == '0':
         return {'label': label, 'status': 'unsupervised', 'detail': 'Not in this firmware'}
     if supported != '1':
-        return {'label': label, 'status': 'unsupervised', 'detail': 'Reading'}
+        return {'label': label, 'status': 'unsupervised', 'detail': 'Measuring'}
     status = {'0': 'healthy', '1': 'stale', '2': 'stale', '3': 'dead'}.get(
         values.get('state', '0'), 'stale'
     )
     return {'label': label, 'status': status, 'detail': report.get('message', '')}
+
+
+def stall_banner(report: dict[str, Any] | None, age: float | None) -> dict[str, Any]:
+    """
+    Return the stall banner state for every page: tripped, cooldown, lockout or none.
+
+    None with no fresh report, on firmware without stall protection, or while
+    driving is normal. `seconds_left` counts down the cooldown or lockout.
+    """
+    none: dict[str, Any] = {'state': None, 'seconds_left': None}
+    if report is None or age is None or age > LINK_STALE_SEC:
+        return none
+    values = report.get('values', {})
+    if values.get('supported') != '1':
+        return none
+    state = {'1': 'tripped', '2': 'cooldown', '3': 'lockout'}.get(values.get('state', '0'))
+    if state is None:
+        return none
+    try:
+        seconds = max(0.0, float(values.get('seconds_left', '0')) - age)
+    except ValueError:
+        seconds = 0.0
+    return {'state': state, 'seconds_left': None if state == 'tripped' else round(seconds, 1)}
 
 
 def dips_note(values: dict[str, str]) -> str:
@@ -938,14 +1024,24 @@ def dips_note(values: dict[str, str]) -> str:
     return note + (f', lowest {lowest / 1000:.2f} V' if lowest > 0 else '')
 
 
+def car_label(host: str, nickname: str) -> str:
+    """Return the car as the footer names it: `racecar-neo-0 (Bill)`, or the hostname alone."""
+    return f'{host} ({nickname})' if nickname else host
+
+
 def about_view(report: dict[str, Any] | None, age: float | None) -> dict[str, Any]:
-    """Return the page footer's versions: the driver, and the firmware pit_node read."""
+    """Return the page footer's car and versions: the driver, and the firmware pit_node read."""
     firmware = None
     if report is not None and age is not None and age <= LINK_STALE_SEC:
         values = report.get('values', {})
         if values.get('state') == 'known':
             firmware = values.get('fw.version')
-    return {'driver': webui.driver_version(), 'firmware': firmware}
+    nickname = str(car_profile.car_info().get('nickname') or '').strip()
+    return {
+        'driver': webui.driver_version(),
+        'firmware': firmware,
+        'car': car_label(socket.gethostname(), nickname),
+    }
 
 
 def _ext5v_loop() -> None:
@@ -958,10 +1054,10 @@ def _ext5v_loop() -> None:
 # Watchdog states that change a card; healthy and starting leave the
 # topic-based status alone.
 WATCHDOG_VIEW = {
-    'gave_up': ('dead', 'watchdog gave up; replug the device or restart teleop'),
-    'no_device': ('stale', 'device not connected'),
-    'restarting': ('stale', 'watchdog restarting'),
-    'disabled': ('unsupervised', 'turned off'),
+    'gave_up': ('dead', 'Watchdog gave up. Replug the device or restart teleop'),
+    'no_device': ('stale', 'Device not connected'),
+    'restarting': ('stale', 'Watchdog restarting'),
+    'disabled': ('unsupervised', 'Turned off'),
 }
 
 
@@ -971,7 +1067,7 @@ def watchdog_view(status: str, watched: dict[str, Any] | None) -> tuple[str, str
         return status, ''
     view_status, detail = WATCHDOG_VIEW[watched['state']]
     if watched['state'] == 'restarting':
-        detail += f" ({watched.get('restarts', 0)} so far)"
+        detail += f" ({watched.get('restarts', 0)})"
     return view_status, detail
 
 
@@ -986,18 +1082,18 @@ def autonomy_view(values: dict[str, str] | None, age: float | None) -> dict[str,
         return {
             'status': 'unsupervised',
             'headline': 'Stopped',
-            'lines': ['Start mapping or load a map in the map viewer.'],
+            'lines': ['Start mapping or load a map in the Mapper.'],
             'port': MAPVIEW_PORT,
         }
-    mode, name = values.get('mode', ''), values.get('map') or '(no map)'
-    headline = f'{mode.capitalize()} on {name}'
+    mode, name = values.get('mode', ''), values.get('map')
+    headline = f'{mode.capitalize()} on {name}' if name else f'{mode.capitalize()}. No map'
     if mode == 'localization' and values.get('localizer'):
         headline += f" ({values['localizer']})"
     if age is not None and age > AUTONOMY_STALE_SEC:
         return {
             'status': 'dead',
             'headline': headline,
-            'lines': [f'No status for {age:.0f} s. The autonomy service may have stopped.'],
+            'lines': [f'No status for {age:.0f} s.'],
             'port': MAPVIEW_PORT,
         }
     localized = values.get('localized') == 'true'
@@ -1008,7 +1104,8 @@ def autonomy_view(values: dict[str, str] | None, age: float | None) -> dict[str,
         sd = f"{float(values['pose_sd_m']):.2f} m, {float(values.get('pose_sd_deg') or 0):.0f} deg"
         lines.append(f'Spread {sd}')
     if mode == 'mapping':
-        lines.append(f"Saved {values.get('last_save') or 'not yet'}")
+        last = values.get('last_save')
+        lines.append(f'Saved {last}' if last else 'Not saved')
     return {
         'status': 'healthy' if localized else 'stale',
         'headline': headline,
@@ -1038,6 +1135,28 @@ def _app_units() -> list[str]:
     return [a['unit'] for a in APPS if a['unit']]
 
 
+SETUP_NEEDED = 'Finish setup to unlock'
+
+
+def setup_view() -> dict[str, Any]:
+    """Return whether `racecar setup car` is complete and its open steps (car.yaml)."""
+    info = car_profile.car_info()
+    return {'complete': car_setup.setup_complete(info), 'open': car_setup.open_steps(info)}
+
+
+def driver_view() -> dict[str, Any] | None:
+    """Return who holds the drive lease (name, share), or None."""
+    found = drive_lease.holder()
+    return None if found is None else {'name': found.name, 'share': found.share}
+
+
+def program_driving() -> str:
+    """Return why a driving app may not open: something that is not an app drives, or ''."""
+    found = drive_lease.holder()
+    names = {a['name'] for a in APPS}
+    return drive_lease.refused(found) if found and found.name not in names else ''
+
+
 def open_app(target: str, run: Callable[..., Any] = subprocess.run) -> tuple[bool, str]:
     """
     Start `target` if it is not running.
@@ -1048,45 +1167,55 @@ def open_app(target: str, run: Callable[..., Any] = subprocess.run) -> tuple[boo
     """
     app = next((a for a in APPS if a['id'] == target), None)
     if app is None:
-        return False, f'Unknown app: {target}'
+        return False, RELOAD
     if app['unit'] is None:
         return False, f'{app["name"]} is not available.'
+    if app['group'] != 'core' and not setup_view()['complete']:
+        return False, SETUP_NEEDED
     if app['exclusive']:
         live = ('active', 'activating')
+        busy = program_driving()
+        if busy and unit_states([app['unit']], run)[app['unit']] not in live:
+            return False, busy
+        # An Autonomy app drives through the autonomy run; the other driving apps stop it.
         if (
-            unit_states([app['unit']], run)[app['unit']] not in live
+            app['group'] != 'autonomy'
+            and unit_states([app['unit']], run)[app['unit']] not in live
             and unit_states([AUTONOMY_UNIT], run)[AUTONOMY_UNIT] in live
         ):
             mapping = last_run().get('mode') == 'mapping'
-            message = autonomy_action('save-stop' if mapping else 'stop', run)
+            autonomy_action('save-stop' if mapping else 'stop', run)
             if unit_states([AUTONOMY_UNIT], run)[AUTONOMY_UNIT] in live:
-                return False, f'Autonomy is still running. {message}'
+                return False, 'Could not stop autonomy.'
         return activate(target, run)
     if unit_states([app['unit']], run)[app['unit']] in ('active', 'activating'):
         return True, f'{app["name"]} is running.'
     if not app['startable']:
-        return False, f'{app["name"]} is stopped. Run: racecar service start {target}'
+        return False, f'Could not start {app["name"]}.'
     error = _systemctl('start', app['unit'], run)
     if error:
-        return False, error
+        log.warning('Starting %s: %s', app['unit'], error)
+        return False, f'Could not start {app["name"]}.'
     return True, f'{app["name"]} started.'
 
 
+# Units started at boot (racecar_neo_ros2_driver/units.py); Clear apps leaves them running.
+CORE_UNITS = frozenset(units.CORE)
+
+
 def clear_apps(run: Callable[..., Any] = subprocess.run) -> tuple[bool, str]:
-    """Stop every running utility to free CPU; core apps and the dashboard keep running."""
-    units = [a['unit'] for a in APPS if a['group'] == 'utilities']
+    """Stop every running app not started at boot to free CPU; the boot apps keep running."""
+    units = [a['unit'] for a in APPS if a['unit'] and a['unit'] not in CORE_UNITS]
     states = unit_states(units, run)
-    stopped, errors = 0, []
+    failed = False
     for unit in units:
         if states.get(unit) in ('active', 'activating'):
             error = _systemctl('stop', unit, run)
             if error:
-                errors.append(error)
-            else:
-                stopped += 1
-    if errors:
-        return False, ' '.join(errors)
-    return True, 'Utilities stopped.' if stopped else 'No utilities running.'
+                log.warning('Stopping %s: %s', unit, error)
+                failed = True
+    # The tiles show the result; only a failure has words.
+    return (False, 'Could not stop the apps.') if failed else (True, '')
 
 
 def _systemctl(verb: str, unit: str, run: Callable[..., Any]) -> str:
@@ -1124,22 +1253,24 @@ def activate(target: str, run: Callable[..., Any] = subprocess.run) -> tuple[boo
     """Make `target` the one running exclusive app, or stop them all for 'none'."""
     labs = {a['id']: a['unit'] for a in APPS if a['exclusive']}
     if target != 'none' and target not in labs:
-        return False, f'Unknown dashboard: {target}'
+        return False, RELOAD
+    names = {a['id']: a['name'] for a in APPS}
     states = unit_states(list(labs.values()), run)
 
     for lab_id, unit in labs.items():
         if lab_id != target and states.get(unit) in ('active', 'activating'):
             error = _systemctl('stop', unit, run)
             if error:
-                return False, error
+                log.warning('Stopping %s: %s', unit, error)
+                return False, f'Could not stop {names[lab_id]}.'
     if target == 'none':
         return True, 'Lab dashboards stopped.'
     if states.get(labs[target]) not in ('active', 'activating'):
         error = _systemctl('start', labs[target], run)
         if error:
-            return False, error
-    name = next(a['name'] for a in APPS if a['id'] == target)
-    return True, f'{name} active.'
+            log.warning('Starting %s: %s', labs[target], error)
+            return False, f'Could not start {names[target]}.'
+    return True, f'{names[target]} active.'
 
 
 def last_run(path: Path | None = None) -> dict[str, str]:
@@ -1195,18 +1326,24 @@ def map_tool(*argv: str, run: Callable[..., Any] = subprocess.run) -> tuple[int,
     return r.returncode, lines[-1] if lines else ''
 
 
-def describe(values: dict[str, bool]) -> str:
-    names = {f['id']: f['name'] for f in FEATURES}
-    return ' '.join(f'{names[k]} {"on" if v else "off"}.' for k, v in values.items())
+FEATURE_WORDS = {'camera': 'the camera', 'detections': 'detections'}
+
+
+def feature_failure(name: str, on: bool) -> str:
+    """Return the line shown when turning feature `name` on or off fails."""
+    return f'Could not turn {"on" if on else "off"} {FEATURE_WORDS.get(name, name)}.'
 
 
 def apply_features(
     values: dict[str, bool],
     run: Callable[..., Any] = subprocess.run,
     sleep: Callable[[float], None] = time.sleep,
+    failure: str = 'Could not restart teleop.',
 ) -> str:
     """
     Restart teleop with `values`; a running autonomy run is stopped first and resumed after.
+
+    Return '' when it worked (the tiles show it), else the line for the page.
 
     Stopping it first lets a localization run start again from the car's last
     pose rather than from where that run began.
@@ -1216,28 +1353,37 @@ def apply_features(
     if resume:
         code, line = map_tool('stop', run=run)
         if code != 0:
-            return f'Could not stop autonomy: {line}'
+            log.warning('Stopping autonomy: %s', line)
+            return 'Could not stop autonomy.'
     error = _systemctl('restart', TELEOP_UNIT, run)
     if error:
-        return error
-    message = describe(values)
+        log.warning('Restarting teleop: %s', error)
+        return failure
     if resume:
         sleep(TELEOP_SETTLE_SEC)
         code, line = map_tool('resume', run=run)
-        message += f' {line}' if code == 0 else f' Autonomy did not resume: {line}'
-    return message
+        if code != 0:
+            log.warning('Resuming autonomy: %s', line)
+            return 'Could not resume autonomy.'
+    return ''
 
 
 def autonomy_action(action: str, run: Callable[..., Any] = subprocess.run) -> str:
+    """Resume, stop, or save and stop autonomy; return '' when it worked, else the line to show."""
     if action == 'resume':
-        return map_tool('resume', run=run)[1]
-    if action == 'save-stop':
-        code, line = map_tool('save', run=run)
+        code, line = map_tool('resume', run=run)
         if code != 0:
-            return f'Not stopped. {line}'
-    if action in ('stop', 'save-stop'):
-        return map_tool('stop', run=run)[1]
-    raise ValueError(f'unknown autonomy action {action!r}')
+            log.warning('Resuming autonomy: %s', line)
+            return 'Could not resume autonomy.'
+        return ''
+    if action not in ('stop', 'save-stop'):
+        raise ValueError(f'unknown autonomy action {action!r}')
+    for step in ('save', 'stop') if action == 'save-stop' else ('stop',):
+        code, line = map_tool(step, run=run)
+        if code != 0:
+            log.warning('Autonomy %s: %s', step, line)
+            return 'Could not stop autonomy.'
+    return ''
 
 
 class FeatureJob:
@@ -1248,21 +1394,22 @@ class FeatureJob:
         self.busy = False
         self.message = ''
 
-    def start(self, label: str, work: Callable[[], str]) -> bool:
+    def start(self, work: Callable[[], str], failure: str) -> bool:
+        """Run `work` in a thread; it returns '' or the line to show, `failure` if it raises."""
         with self._lock:
             if self.busy:
                 return False
-            self.busy, self.message = True, label
-        threading.Thread(target=self._run, args=(work,), daemon=True).start()
+            self.busy, self.message = True, ''
+        threading.Thread(target=self._run, args=(work, failure), daemon=True).start()
         return True
 
-    def _run(self, work: Callable[[], str]) -> None:
+    def _run(self, work: Callable[[], str], failure: str) -> None:
         try:
             message = work()
-        except Exception as exc:  # noqa: BLE001  shown to the user, not raised in a thread
+        except Exception:  # noqa: BLE001  the page shows `failure`, the log the cause
             log.exception('feature change failed')
-            message = f'Failed: {exc}'
-        log.info('features: %s', message)
+            message = failure
+        log.info('features: %s', message or 'done')
         with self._lock:
             self.busy, self.message = False, message
 
@@ -1290,19 +1437,21 @@ def change_feature(name: str, on: bool, action: str = '') -> tuple[bool, str]:
     """Start a feature change in the background; return whether it started."""
     if name == 'autonomy':
         if action not in ('resume', 'stop', 'save-stop'):
-            return False, 'Unknown action.'
-        label = 'Starting autonomy...' if action == 'resume' else 'Stopping autonomy...'
+            return False, RELOAD
+        verb = 'resume' if action == 'resume' else 'stop'
+        failure = f'Could not {verb} autonomy.'
         work: Callable[[], str] = lambda: autonomy_action(action)  # noqa: E731
     else:
         try:
             values = features.change(features.read(), name, on)
-        except ValueError as exc:
-            return False, str(exc)
-        label = 'Restarting teleop...'
-        work = lambda: apply_features(values)  # noqa: E731
-    if not _features_job.start(label, work):
+        except ValueError:
+            return False, RELOAD
+        failure = feature_failure(name, on)
+        work = lambda: apply_features(values, failure=failure)  # noqa: E731
+    if not _features_job.start(work, failure):
         return False, 'Another change is running.'
-    return True, label
+    # The tiles gray out while it runs; only a failure has words.
+    return True, ''
 
 
 def _refresh_apps() -> None:
@@ -1445,6 +1594,8 @@ def get_status() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 _HTML_PATH = Path(__file__).resolve().parent / 'dashboard.html'
+_CONNECTIONS_PATH = Path(__file__).resolve().parent / 'connections.html'
+_net_jobs = netconfig.Jobs()
 _LAUNCH_PATH = Path(__file__).resolve().parent / 'dashboard_launch.html'
 
 
@@ -1460,6 +1611,14 @@ class DashboardHandler(webui.AppHandler):
             self.page(_HTML_PATH)
         elif url.path == '/launch':
             self.page(_LAUNCH_PATH)
+        elif url.path == '/connections':
+            self.page(_CONNECTIONS_PATH)
+        elif url.path == '/api/connections':
+            rescan = query.get('rescan', [''])[0] == '1'
+            view = netconfig.view(self.client_ip(), rescan=rescan)
+            self.send_json({**view, 'job': _net_jobs.view()}, 200)
+        elif url.path == '/api/connections/job':
+            self.send_json(_net_jobs.view(), 200)
         elif url.path == '/api/status':
             if note_view():
                 # The cached snapshot may be minutes old; refresh what is cheap.
@@ -1473,12 +1632,25 @@ class DashboardHandler(webui.AppHandler):
                     'clock': clock_view(time.time()),
                     'override': _override.view(time.monotonic()),
                     'features': features_view(),
+                    'setup': setup_view(),
                 },
             )
         elif url.path == '/api/battery':
             origin = lab_origin(self.headers.get('Origin'), self.headers.get('Host'))
             cors = {'Access-Control-Allow-Origin': origin, 'Vary': 'Origin'} if origin else {}
             self.send_json({'battery': current_battery()}, 200, cors)
+        elif url.path == '/api/driver':
+            origin = lab_origin(self.headers.get('Origin'), self.headers.get('Host'))
+            cors = {'Access-Control-Allow-Origin': origin, 'Vary': 'Origin'} if origin else {}
+            self.send_json({'driver': driver_view()}, 200, cors)
+        elif url.path == '/api/stall':
+            origin = lab_origin(self.headers.get('Origin'), self.headers.get('Host'))
+            cors = {'Access-Control-Allow-Origin': origin, 'Vary': 'Origin'} if origin else {}
+            self.send_json(
+                {'stall': stall_banner(*(_sampler.stall() if _sampler else (None, None)))},
+                200,
+                cors,
+            )
         elif url.path == '/api/about':
             origin = lab_origin(self.headers.get('Origin'), self.headers.get('Host'))
             cors = {'Access-Control-Allow-Origin': origin, 'Vary': 'Origin'} if origin else {}
@@ -1503,13 +1675,10 @@ class DashboardHandler(webui.AppHandler):
                 self.send_json(_overview.state(), 200)
         elif url.path in ('/api/overview/color.jpg', '/api/overview/depth.jpg'):
             name = url.path.rsplit('/', 1)[1].split('.')[0]
-            if _overview is not None:
-                _overview.touch_cameras()
-            frame = _overview.jpeg(name) if _overview is not None else None
-            if frame is None:
-                self.send_error(404)
-            else:
-                self.send(200, frame, 'image/jpeg', cache='no-store')
+            self._camera(name)
+        elif url.path == '/api/camera.jpg':
+            # The camera panel of the Mapper and the Planner.
+            self._camera('color', panel=True)
         elif url.path == '/api/ready':
             app = next((a for a in APPS if a['id'] == query.get('app', [''])[0]), None)
             if app is None:
@@ -1520,6 +1689,9 @@ class DashboardHandler(webui.AppHandler):
             self.send_error(404)
 
     def do_POST(self) -> None:  # noqa: N802
+        if not may_post(self.path, self.headers.get('Origin'), self.headers.get('Host')):
+            self.send_json({'ok': False, 'message': 'Not allowed from this page.'}, 403)
+            return
         if self.path == '/api/clear-apps':
             ok, message = clear_apps()
             _refresh_apps()
@@ -1537,12 +1709,21 @@ class DashboardHandler(webui.AppHandler):
             if self.path == '/api/battery/cancel':
                 if _sampler is not None:
                     _sampler.cancel_shutdown()
-                log.warning('Shutdown cancel requested from %s', self.client_address[0])
+                log.warning('Shutdown cancel requested from %s', self.client_ip())
                 self.send_json({'ok': True, 'message': 'Shutdown canceled.'}, 200)
                 return
-            log.warning('Turn off requested from %s', self.client_address[0])
+            log.warning('Shut down requested from %s', self.client_ip())
             self.send_json({'ok': True, 'message': FINAL_MESSAGE}, 200)
             threading.Thread(target=turn_off, daemon=True).start()
+            return
+        if self.path == '/api/connections':
+            self._connections()
+            return
+        if self.path == '/api/connections/ping':
+            if not page_origin(self.headers.get('Origin'), self.headers.get('Host')):
+                self.send_json({'ok': False, 'message': 'Not allowed from this page.'}, 403)
+                return
+            self.send_json(netconfig.ping_test(), 200)
             return
         if self.path not in ('/api/open', '/api/override', '/api/feature'):
             self.send_error(404)
@@ -1567,13 +1748,63 @@ class DashboardHandler(webui.AppHandler):
         log.info('open %s: %s', target, message)
         self.send_json({'ok': ok, 'message': message}, 200 if ok else 400)
 
+    def _camera(self, name: str, panel: bool = False) -> None:
+        frame = None
+        if _overview is not None:
+            _overview.touch_camera(name)
+            frame = _overview.panel_jpeg() if panel else _overview.jpeg(name)
+        if frame is None:
+            self.send_error(404)
+        else:
+            self.send(200, frame, 'image/jpeg', cache='no-store')
+
+    def _connections(self) -> None:
+        if not page_origin(self.headers.get('Origin'), self.headers.get('Host')):
+            self.send_json({'ok': False, 'message': 'Not allowed from this page.'}, 403)
+            return
+        try:
+            body = self.read_json()
+            action = str(body.get('action', ''))
+        except (ValueError, AttributeError):
+            self.send_json({'ok': False, 'message': RELOAD}, 400)
+            return
+        if action == 'names':
+            self._device_names(body.get('names'))
+            return
+        job = connection_job(action, body)
+        if isinstance(job, str):
+            self.send_json({'ok': False, 'message': job}, 400)
+            return
+        target, failure = job
+        if not _net_jobs.start(action, target, failure):
+            self.send_json({'ok': False, 'message': 'Another change is running.'}, 409)
+            return
+        # Names only; passwords are never logged.
+        log.info('Connections %s from %s', action, self.client_ip())
+        self.send_json({'ok': True, 'job': _net_jobs.view()}, 202)
+
+    def _device_names(self, names: Any) -> None:
+        if not isinstance(names, dict) or not all(isinstance(v, str) for v in names.values()):
+            self.send_json({'ok': False, 'message': RELOAD}, 400)
+            return
+        try:
+            netconfig.save_names(names)
+        except ValueError:
+            self.send_json({'ok': False, 'message': RELOAD}, 400)
+            return
+        except OSError:
+            log.exception('Saving device names failed')
+            self.send_json({'ok': False, 'message': 'Could not save the names.'}, 500)
+            return
+        self.send_json({'ok': True}, 200)
+
     def _override(self, action: str) -> None:
         now = time.monotonic()
         origin = override_origin(self.headers.get('Origin'), self.headers.get('Host'))
         cors = {'Access-Control-Allow-Origin': origin, 'Vary': 'Origin'} if origin else {}
         if action == 'start':
             _override.start(now)
-            log.warning('Safety override turned on from %s', self.client_address[0])
+            log.warning('Safety override turned on from %s', self.client_ip())
         elif action == 'keep':
             _override.keep(now)
         elif action == 'stop':

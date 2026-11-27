@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Low-battery frames for the dot matrix and the LED strip.
 
@@ -12,8 +13,14 @@ Dot matrix, one frame per second:
 - warn, and the countdown above 20 s: LOW, BATT, then "!" inside the
   battery outline.
 - countdown from 20 s: the seconds left, with LOW and BATT at 12 and 11 s.
-- off (shutting down): SHUT, then DOWN; the guard waits SHUTDOWN_FRAMES_SEC
-  for them before it stops anything.
+- off (shutting down): SHUT, then DOWN, from the shutdown time itself; the
+  guard waits SHUTDOWN_FRAMES_SEC for them before it stops anything.
+
+The countdown ends on a whole second (battery_guard.py), so every frame
+changes on the clock's seconds and none is shown for less than one.
+
+`python3 battery_display.py --preview` plays the whole sequence on the car's
+displays (the warning, the countdown, SHUT and DOWN) and shuts nothing down.
 
 LED strip: orange on the even segments, then red on the odd ones, one color
 at a time; 1 swap a second while warning, 2 in the countdown, 4 from 10 s
@@ -22,8 +29,11 @@ and while shutting down.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import argparse
+from collections.abc import Mapping, Sequence
 import math
+import sys
+import time
 
 ROWS, COLS = 8, 24
 LED_COUNT = 84
@@ -128,8 +138,16 @@ def seconds_left(shutdown_at: float | None, now: float) -> int:
     return 0 if shutdown_at is None else max(0, math.ceil(shutdown_at - now))
 
 
+def shown_level(level: str, shutdown_at: float | None, now: float) -> str:
+    """Return the level to draw: a countdown past its shutdown time is already off."""
+    if level == 'countdown' and shutdown_at is not None and now >= shutdown_at:
+        return 'off'
+    return level
+
+
 def dot_frame(level: str, shutdown_at: float | None, now: float) -> bytes | None:
     """Return the dot matrix frame for `level` at `now`, or None when there is no alert."""
+    level = shown_level(level, shutdown_at, now)
     warn_word = WARN_CYCLE[math.floor(now / FRAME_SEC) % len(WARN_CYCLE)]
     if level == 'warn':
         return rows_to_frame(battery_rows(warn_word))
@@ -149,6 +167,7 @@ def dot_frame(level: str, shutdown_at: float | None, now: float) -> bytes | None
 
 def led_frame(level: str, shutdown_at: float | None, now: float) -> bytes | None:
     """Return the LED frame for `level` at `now`, or None when there is no alert."""
+    level = shown_level(level, shutdown_at, now)
     if level not in LED_SWAPS_PER_SEC:
         return None
     rate = LED_SWAPS_PER_SEC[level]
@@ -158,3 +177,61 @@ def led_frame(level: str, shutdown_at: float | None, now: float) -> bytes | None
     color = bytes(ORANGE if phase == 0 else RED)
     dark = b'\x00\x00\x00'
     return b''.join(color if (i // SEGMENT) % 2 == phase else dark for i in range(LED_COUNT))
+
+
+# -- preview: the sequence on the car's displays, nothing shut down --
+
+PREVIEW_WARN_SEC = 6.0
+PREVIEW_COUNTDOWN_SEC = 60.0
+PREVIEW_PUBLISH_SEC = 0.05
+
+
+def preview_level(now: float, warn_until: float, shutdown_at: float, checked: float) -> str:
+    """Return the guard's level at `now`; it turns off at its first 1 s check past shutdown_at."""
+    if now < warn_until:
+        return 'warn'
+    return 'off' if checked >= shutdown_at else 'countdown'
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog='battery_display.py', description='Play the low-battery sequence on the displays.'
+    )
+    parser.add_argument('--preview', action='store_true', help='play it; nothing shuts down')
+    args = parser.parse_args(argv)
+    if not args.preview:
+        parser.print_help()
+        return 2
+    import rclpy
+    from std_msgs.msg import UInt8MultiArray
+
+    rclpy.init()
+    node = rclpy.create_node('battery_display_preview')
+    dot = node.create_publisher(UInt8MultiArray, '/dotmatrix/alert', 1)
+    led = node.create_publisher(UInt8MultiArray, '/led/alert', 1)
+    time.sleep(1.0)  # the publishers find pit_node
+    start = time.time()
+    warn_until = start + PREVIEW_WARN_SEC
+    # As the guard: the countdown starts at a 1 s check and ends on a whole second.
+    shutdown_at = math.ceil(warn_until) + PREVIEW_COUNTDOWN_SEC
+    end = shutdown_at + SHUTDOWN_FRAMES_SEC + 1.0
+    print('Playing the low-battery sequence. Nothing shuts down.', flush=True)
+    try:
+        while (now := time.time()) < end:
+            checked = start + math.floor(now - start)  # the guard checks once a second
+            level = preview_level(now, warn_until, shutdown_at, checked)
+            at = None if level == 'warn' else shutdown_at
+            dot.publish(UInt8MultiArray(data=list(dot_frame(level, at, now) or b'')))
+            led.publish(UInt8MultiArray(data=list(led_frame(level, at, now) or b'')))
+            time.sleep(PREVIEW_PUBLISH_SEC)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.try_shutdown()
+    print('Done.')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

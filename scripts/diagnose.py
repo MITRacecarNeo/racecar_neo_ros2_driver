@@ -35,6 +35,9 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import features  # noqa: E402, I100  sibling script, after the path insert
+from racecar_neo_ros2_driver import drive_lease, units  # noqa: E402
+from racecar_neo_ros2_driver.geometry import yaw_of  # noqa: E402
+from racecar_neo_ros2_driver.term import paint, use_color  # noqa: E402, F401  used by health
 import sysinfo  # noqa: E402
 
 OK, WARN, FAIL, SKIP = 'OK', 'WARN', 'FAIL', 'SKIP'
@@ -136,23 +139,15 @@ USB_DEVICES = [
     ('8086:0b3a', 'RealSense D435i'),
     ('0e8d:7612', 'ALFA AP dongle'),
     ('10c4:ea60', 'CP2102 (lidar)'),
-    ('045e:028e', 'Gamepad'),
 ]
 
-SERVICE_UNITS = (
-    'racecar-teleop',
-    'racecar-watchdog',
-    'racecar-dashboard',
-    'racecar-jupyter',
-    'racecar-mapview',
-    'racecar-battery-guard',
-)
+SERVICE_UNITS = units.CORE
 # Started from the 8080 Terminal tile, not at boot, so stopped is fine.
-TERMINAL_UNIT = 'racecar-terminal'
+TERMINAL_UNIT = units.TERMINAL
 
 # Started by `racecar map` or the map viewer, never at boot, so it is not a
 # service row; the autonomy section samples these while it runs.
-AUTONOMY_UNIT = 'racecar-autonomy'
+AUTONOMY_UNIT = units.AUTONOMY
 AUTONOMY_TOPICS = [
     TopicSpec('/autonomy/pose', 'pose rate', 20.0),
     TopicSpec('/autonomy/status', 'status rate', 1.0, 0.5),
@@ -207,6 +202,10 @@ def check_devices() -> list[Check]:
     else:
         for _ident, label in USB_DEVICES:
             out.append(Check(g, label, SKIP, 'lsusb unavailable'))
+    out.append(gamepad_check(sorted(glob.glob('/dev/input/js*'))))
+    out.append(
+        realsense_library_check(_package_version(LIBREALSENSE), _package_version(REALSENSE_CAMERA))
+    )
 
     for pattern, label in (
         ('/dev/gpiochip*', 'gpiochip'),
@@ -451,29 +450,85 @@ def check_profile() -> Check:
     return Check('system', 'car profile', OK, detail)
 
 
+LIBREALSENSE = 'ros-jazzy-librealsense2'
+REALSENSE_CAMERA = 'ros-jazzy-realsense2-camera'
+REALSENSE_FIX = f'sudo apt install {LIBREALSENSE} {REALSENSE_CAMERA}'
+
+
+def _package_version(name: str) -> str:
+    return _run(['dpkg-query', '-W', '-f=${Version}', name]).strip()
+
+
+def upstream(version: str) -> tuple[int, ...]:
+    """Return the leading numbers of a Debian version ('2.58.1-1noble.x' -> (2, 58, 1))."""
+    head = version.split('-', 1)[0]
+    parts = []
+    for piece in head.split('.'):
+        if not piece.isdigit():
+            break
+        parts.append(int(piece))
+    return tuple(parts)
+
+
+def realsense_library_check(library: str, camera: str) -> Check:
+    """
+    Check the RealSense library against the camera package built for it.
+
+    The camera package 4.X.Y is built against library 2.X.Y; a different
+    library prints a version warning at every teleop start.
+    """
+    name = 'realsense library'
+    if not library or not camera:
+        return Check('devices', name, SKIP, 'not installed')
+    lib, cam = upstream(library), upstream(camera)
+    shown = '.'.join(map(str, lib))
+    if lib[1:3] != cam[1:3]:
+        built = '.'.join(map(str, (2, *cam[1:3])))
+        return Check(
+            'devices', name, WARN, f'{shown}, camera package needs {built}. Run: {REALSENSE_FIX}'
+        )
+    return Check('devices', name, OK, shown)
+
+
+def gamepad_check(nodes: list[str]) -> Check:
+    """Report the first joystick device and its name; any USB ID counts."""
+    if not nodes:
+        return Check('devices', 'Gamepad', FAIL, 'no /dev/input/js* (plug in the receiver)')
+    name = ''
+    try:
+        dev = Path(nodes[0]).name
+        name = (Path('/sys/class/input') / dev / 'device' / 'name').read_text().strip()
+    except OSError:
+        pass
+    return Check('devices', 'Gamepad', OK, f'{nodes[0]} {name}'.strip())
+
+
+def service_check(unit: str, state: dict[str, str] | None) -> Check:
+    """One services row from `sysinfo.unit_state`: active and enabled, or what differs."""
+    if state is None:
+        return Check('services', unit, SKIP, 'systemctl unavailable')
+    if state['load'] == 'not-found':
+        return Check('services', unit, SKIP, 'unit not installed')
+    active, enabled = state.get('active', ''), state.get('enabled', '')
+    if active == 'active' and enabled == 'enabled':
+        return Check('services', unit, OK, 'active, enabled')
+    return Check('services', unit, WARN, f'active={active or "?"} enabled={enabled or "?"}')
+
+
 def check_services() -> list[Check]:
     """Report the systemd units that make up the running car."""
-    out: list[Check] = []
-    for unit in SERVICE_UNITS:
-        active = _run(['systemctl', 'is-active', unit]).strip()
-        enabled = _run(['systemctl', 'is-enabled', unit]).strip()
-        if not active and not enabled:
-            out.append(Check('services', unit, SKIP, 'unit not installed'))
-            continue
-        if active == 'active' and enabled == 'enabled':
-            out.append(Check('services', unit, OK, 'active, enabled'))
-        else:
-            out.append(
-                Check('services', unit, WARN, f'active={active or "?"} enabled={enabled or "?"}')
-            )
-    out.append(
-        terminal_check(
-            _run(['systemctl', 'is-active', TERMINAL_UNIT]).strip(),
-            _run(['tmux', '-L', 'racecar-terminal', 'ls', '-F', '#S']),
-        )
-    )
+    out = [service_check(unit, sysinfo.unit_state(unit)) for unit in SERVICE_UNITS]
+    terminal = sysinfo.unit_state(TERMINAL_UNIT)
+    active = terminal.get('active', '') if terminal and terminal['load'] != 'not-found' else ''
+    out.append(terminal_check(active, _run(['tmux', '-L', 'racecar-terminal', 'ls', '-F', '#S'])))
     out.append(watchdog_check(sysinfo.read_watchdog_state()))
+    out.append(driver_check(drive_lease.holder()))
     return out
+
+
+def driver_check(found: drive_lease.Holder | None) -> Check:
+    """Report who holds the drive lease."""
+    return Check('services', 'driving', OK, found.name if found else 'nothing')
 
 
 def terminal_check(active: str, sessions: str) -> Check:
@@ -522,6 +577,14 @@ def _iface_v4(iface: str) -> list[str]:
     return [ln.split()[3] for ln in out.splitlines() if len(ln.split()) > 3]
 
 
+def eth_cable(path: Path = Path('/sys/class/net/eth0/carrier')) -> bool:
+    """Return True when a cable with a live link is plugged into eth0."""
+    try:
+        return path.read_text().strip() == '1'
+    except OSError:
+        return False
+
+
 def check_network() -> list[Check]:
     """eth0 addressing, the client radio, the AP, and the desktop target."""
     out: list[Check] = []
@@ -530,8 +593,11 @@ def check_network() -> list[Check]:
     # Static plus DHCP on eth0 is what `racecar eth static` clears, but a
     # dual-mode eth0 can be deliberate, so it warns rather than fails.
     eth = _iface_v4('eth0')
-    if not eth:
-        out.append(Check(g, 'eth0 address', WARN, 'no global IPv4 (cable out?)'))
+    if not eth and not eth_cable():
+        # Cars run without a cable; that is the normal state.
+        out.append(Check(g, 'eth0 address', OK, 'no cable'))
+    elif not eth:
+        out.append(Check(g, 'eth0 address', WARN, 'cable in, no address'))
     elif len(eth) > 1:
         out.append(Check(g, 'eth0 address', WARN, f'{", ".join(eth)} (dual mode)'))
     else:
@@ -608,7 +674,7 @@ def read_mag(msg: Any) -> tuple[str, str]:
 
 def read_fused(msg: Any) -> tuple[str, str]:
     q = msg.orientation
-    yaw = math.degrees(math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y**2 + q.z**2)))
+    yaw = math.degrees(yaw_of(q))
     return OK, f'yaw {yaw:+.1f} deg, gyro z {msg.angular_velocity.z:+.2f} rad/s'
 
 
@@ -692,7 +758,7 @@ def read_drive(msg: Any) -> tuple[str, str]:
 
 def read_autonomy_pose(msg: Any) -> tuple[str, str]:
     p, q = msg.pose.pose.position, msg.pose.pose.orientation
-    yaw = math.degrees(math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z)))
+    yaw = math.degrees(yaw_of(q))
     return OK, f'x {p.x:+.2f} m, y {p.y:+.2f} m, heading {yaw:+.0f} deg'
 
 
@@ -1005,7 +1071,7 @@ def firmware_check(ros: RosResult) -> Check:
         return Check(g, name, FAIL, f'no report on {DIAGNOSTICS_TOPIC} from pit_node')
     values = ros.firmware['values']
     if values.get('state') == 'pending':
-        return Check(g, name, WARN, 'still reading the firmware info; run again')
+        return Check(g, name, WARN, 'still reading the firmware info. Run again')
     build = ', '.join(v for v in (values.get('fw.label'), values.get('fw.git')) if v)
     detail = ros.firmware['message'] + (f' ({build})' if build else '')
     try:
@@ -1035,7 +1101,7 @@ def stall_check(ros: RosResult) -> Check:
     if values.get('supported') == '0':
         return Check(g, name, SKIP, 'not in this firmware')
     if values.get('supported') != '1':
-        return Check(g, name, WARN, 'still reading the firmware info; run again')
+        return Check(g, name, WARN, 'still reading the firmware info. Run again')
     status = {0: OK, 1: WARN, 2: FAIL}.get(int(ros.stall['level']), WARN)
     return Check(g, name, status, ros.stall['message'])
 
@@ -1052,7 +1118,7 @@ def actuator_checks(ros: RosResult) -> list[Check]:
 
     pit_running = bool(_run(['pgrep', '-f', 'pit_node']).strip())
     if pit_running:
-        out.append(Check('actuators', 'LED strip', OK, 'pit_node running (owns the strip)'))
+        out.append(Check('actuators', 'LED strip', OK, 'pit_node running'))
     else:
         out.append(Check('actuators', 'LED strip', WARN, 'pit_node not running'))
 
@@ -1102,7 +1168,7 @@ def autonomy_checks(unit_state: str, ros: RosResult, sampled: bool) -> list[Chec
     """
     g = 'autonomy'
     if unit_state == 'failed':
-        return [Check(g, 'unit', WARN, f'{AUTONOMY_UNIT} failed; journalctl -u {AUTONOMY_UNIT}')]
+        return [Check(g, 'unit', WARN, f'failed. See journalctl -u {AUTONOMY_UNIT}')]
     if unit_state != 'active':
         return [Check(g, 'unit', OK, 'stopped')]
     out = [Check(g, 'unit', OK, 'active')]
@@ -1125,7 +1191,7 @@ def autonomy_checks(unit_state: str, ros: RosResult, sampled: bool) -> list[Chec
     if localized:
         out.append(Check(g, 'localized', OK, 'yes'))
     elif mode == 'localization':
-        hint = 'drive slowly, or Set pose / Find me in the map viewer (port 8084)'
+        hint = 'drive slowly, or Set pose / Find me in the Mapper (port 8084)'
         out.append(Check(g, 'localized', WARN, f'no; {hint}'))
     else:
         out.append(Check(g, 'localized', WARN, 'no; is the lidar running?'))
@@ -1149,7 +1215,6 @@ def autonomy_checks(unit_state: str, ros: RosResult, sampled: bool) -> list[Chec
 # ---------------------------------------------------------------------------
 
 MARK = {OK: '[ OK ]', WARN: '[WARN]', FAIL: '[FAIL]', SKIP: '[SKIP]'}
-ANSI = {OK: '32', WARN: '33', FAIL: '31'}
 
 
 def overall(checks: list[Check]) -> str:
@@ -1170,22 +1235,6 @@ def exit_code_for(checks: list[Check], strict: bool = False) -> int:
     if strict:
         return 0 if all(c.status == OK for c in checks) else 1
     return 1 if any(c.status == FAIL for c in checks) else 0
-
-
-def use_color() -> bool:
-    """Color only an interactive terminal; NO_COLOR (no-color.org) opts out."""
-    return (
-        sys.stdout.isatty()
-        and 'NO_COLOR' not in os.environ
-        and os.environ.get('TERM', '') != 'dumb'
-    )
-
-
-def paint(text: str, status: str, color: bool, bold: bool = False) -> str:
-    code = ANSI.get(status)
-    if not color or code is None:
-        return text
-    return f'\033[{"1;" if bold else ""}{code}m{text}\033[0m'
 
 
 def render(

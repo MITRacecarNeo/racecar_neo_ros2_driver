@@ -1,0 +1,944 @@
+<!doctype html>
+<html lang="en" data-app="Planner">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>RACECAR Neo Planner</title>
+<link rel="stylesheet" href="ui/rcn.css?v={{asset}}">
+<script src="ui/ui.js?v={{asset}}"></script>
+<script src="ui/api.js?v={{asset}}"></script>
+<script src="ui/joystick.js?v={{asset}}"></script>
+<script src="ui/mapview_core.js?v={{asset}}"></script>
+<script src="ui/camera_panel.js?v={{asset}}"></script>
+<script src="ui/battery.js?v={{asset}}" defer></script>
+<script src="ui/stall.js?v={{asset}}" defer></script>
+<script src="ui/driving.js?v={{asset}}" defer></script>
+<link rel="icon" href="ui/brand/app-icon-32.png">
+<link rel="apple-touch-icon" href="ui/brand/app-icon-180.png">
+<style>
+:root {
+  /* Canvas colors, read by the script. */
+  --map-free: #423f52; --map-wall: #ffffff; --map-unknown: #232228;
+  --map-car: #f49a4b; --map-trail: #ffb84a; --map-scan: #f63c47;
+  --map-x: #f63c47; --map-y: #ffb84a; --map-outline: #231f20;
+  --map-path: #4ab3ff; --map-cost: #c050ff;
+  --wp-todo: #f63c47; --wp-next: #ffd93d; --wp-done: #6fd08c;
+}
+html, body { height: 100%; }
+body { display: flex; flex-direction: column; overflow: hidden; }
+.rcn-header { flex-wrap: wrap; row-gap: var(--rcn-space-2); }
+#mapname { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#details { display: none; width: 100%; gap: var(--rcn-space-1) var(--rcn-space-4); }
+header.open #details { display: flex; flex-wrap: wrap; }
+#banner { display: none; padding: 6px var(--rcn-space-4); font-weight: 700; text-align: center; }
+#banner.show { display: block; }
+#banner.warn { background: var(--rcn-gold); color: var(--rcn-ink); }
+#banner.bad { background: var(--rcn-crimson); color: var(--rcn-paper); }
+main { position: relative; flex: 1; min-height: 0; container-type: size; }
+canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+#tools { position: absolute; right: var(--rcn-space-3); top: var(--rcn-space-3); z-index: 4; display: flex; flex-direction: column; gap: var(--rcn-space-2); }
+#tools .rcn-btn { width: 44px; height: 44px; padding: 0; justify-content: center; background: var(--rcn-bg); }
+#hint { position: absolute; left: var(--rcn-space-3); top: var(--rcn-space-3); max-width: 70%; z-index: 4; display: none; }
+#hint.show { display: block; }
+footer { display: flex; flex-wrap: wrap; gap: var(--rcn-space-2); padding: var(--rcn-space-3) var(--rcn-space-4); border-top: 1px solid var(--rcn-border); }
+#job { display: none; padding: var(--rcn-space-2) var(--rcn-space-4); background: var(--rcn-surface); max-height: 30vh; overflow: auto; }
+#job.show { display: block; }
+#job pre { margin-top: var(--rcn-space-2); display: none; }
+#job.open pre { display: block; }
+#jobmore { margin-left: var(--rcn-space-2); display: none; }
+#job.failed #jobmore { display: inline-flex; }
+.sheet { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); display: none; align-items: flex-end; justify-content: center; z-index: 10; }
+.sheet.show { display: flex; }
+.sheet > div { width: 100%; max-width: 560px; max-height: 85vh; overflow: auto; background: var(--rcn-bg); border: 1px solid var(--rcn-border); border-bottom: 0; border-radius: var(--rcn-radius-lg) var(--rcn-radius-lg) 0 0; padding: var(--rcn-space-4) var(--rcn-space-4) var(--rcn-space-6); }
+.sheet h2 { font-size: 20px; line-height: 28px; margin-bottom: var(--rcn-space-2); }
+.row { display: flex; gap: var(--rcn-space-2); align-items: center; margin: var(--rcn-space-2) 0; flex-wrap: wrap; }
+.row label { display: flex; gap: var(--rcn-space-2); align-items: center; cursor: pointer; }
+#maps { position: absolute; top: 0; left: 0; bottom: 0; width: min(340px, 80%); display: none; overflow: auto; background: var(--rcn-surface); padding: var(--rcn-space-3) var(--rcn-space-4); z-index: 5; }
+main.maps-open #maps { display: block; }
+main.maps-open #hint { left: calc(min(340px, 80%) + var(--rcn-space-3)); }
+#maps .top { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--rcn-space-2); }
+#maps h2 { font-size: 20px; line-height: 28px; }
+.map { display: flex; gap: var(--rcn-space-3); padding: var(--rcn-space-3) 0; border-top: 1px solid var(--rcn-border); }
+.map img { width: 72px; height: 72px; object-fit: contain; background: var(--map-unknown); border-radius: var(--rcn-radius-sm); flex: none; }
+.map .info { flex: 1; min-width: 0; }
+.map .name { font-weight: 600; word-break: break-all; }
+.map .acts { display: flex; gap: var(--rcn-space-2); flex-wrap: wrap; margin-top: var(--rcn-space-2); }
+#drivebox { position: absolute; left: var(--rcn-space-3); bottom: var(--rcn-space-3); background: var(--rcn-surface);
+            border: 1px solid var(--rcn-border); border-radius: var(--rcn-radius-lg); padding: var(--rcn-space-2) var(--rcn-space-3); z-index: 4; }
+#drivebox .dhead { display: flex; align-items: center; gap: var(--rcn-space-2); justify-content: space-between; }
+#drivebox.off #drivebody { opacity: 0.4; pointer-events: none; }
+#drivebox.folded #drivebody { display: none; }
+.dpad { display: grid; grid-template-columns: repeat(3, 56px); grid-template-rows: repeat(3, 56px); gap: 6px; justify-content: center; margin-top: var(--rcn-space-2); touch-action: none; user-select: none; }
+.dpad button { font: 700 22px/1 var(--rcn-font-sans); border-radius: var(--rcn-radius-md); border: 2px solid var(--rcn-border); background: var(--rcn-bg); color: var(--rcn-text); }
+.dpad button.down { background: var(--rcn-orange); border-color: var(--rcn-orange); color: var(--rcn-ink); }
+.dpad[hidden], #djoy[hidden], #djoytoggle[hidden] { display: none; }
+#djoy { margin-top: var(--rcn-space-2); }
+/* Wider while it shows a recording summary, which is 63 columns. */
+main { --wps-w: min(360px, 88%); }
+main.summary { --wps-w: min(540px, 88%); }
+#wps { position: absolute; top: 0; left: 0; bottom: 0; width: var(--wps-w); scrollbar-width: thin; scrollbar-color: var(--rcn-border) transparent; display: none; overflow: auto; background: var(--rcn-surface); padding: var(--rcn-space-3) var(--rcn-space-4); z-index: 5; }
+main.wps-open #wps { display: block; }
+main.wps-open #hint { left: calc(var(--wps-w) + var(--rcn-space-3)); }
+#wps .top { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--rcn-space-2); }
+#wps h2 { font-size: 20px; line-height: 28px; }
+#wps h3 { font-size: 16px; margin-top: var(--rcn-space-4); }
+#wps input[type=number] { width: 84px; }
+.wp { border-top: 1px solid var(--rcn-border); padding: var(--rcn-space-2) 0; cursor: pointer; }
+.wp.sel { background: var(--rcn-bg); margin: 0 calc(-1 * var(--rcn-space-2)); padding: var(--rcn-space-2); border-radius: var(--rcn-radius-md); cursor: default; }
+.wp .wphead { display: flex; align-items: center; gap: var(--rcn-space-2); }
+.wp .wpnum { font: 700 14px/24px var(--rcn-font-sans); width: 24px; height: 24px; border-radius: 12px; text-align: center; background: var(--wp-todo); color: var(--rcn-ink); flex: none; }
+.wp .wpnum.next { background: var(--wp-next); }
+.wp .wpnum.done { background: var(--wp-done); }
+.wp .wpsum { flex: 1; min-width: 0; }
+.wp .wpgrid { display: grid; grid-template-columns: auto auto; gap: var(--rcn-space-2) var(--rcn-space-3); align-items: center; margin-top: var(--rcn-space-2); }
+.wp .wpgrid label { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.wp .wpgrid label.inline { flex-direction: row; align-items: center; gap: var(--rcn-space-2); }
+#recgroups.off { opacity: 0.4; }
+#recstatus { display: grid; grid-template-columns: auto 1fr; gap: 2px var(--rcn-space-3); margin: var(--rcn-space-2) 0; font-size: 14px; }
+#recstatus:empty { display: none; }
+#recsummary { font-size: 12px; line-height: 18px; margin-top: var(--rcn-space-2); padding: var(--rcn-space-3); overflow-x: auto; white-space: pre; scrollbar-width: thin; scrollbar-color: var(--rcn-border) transparent; }
+.mrow { display: flex; align-items: center; gap: var(--rcn-space-2); padding: var(--rcn-space-2) 0; border-top: 1px solid var(--rcn-border); }
+.mrow .info { flex: 1; min-width: 0; }
+#override[aria-pressed="true"] { border-color: var(--rcn-crimson); background: var(--rcn-crimson-deep); color: var(--rcn-paper); }
+#override.waiting { opacity: 0.5; pointer-events: none; }
+@media (max-width: 700px) { .dpad { grid-template-columns: repeat(3, 48px); grid-template-rows: repeat(3, 48px); } }
+</style>
+</head>
+<body>
+<header class="rcn-header" id="head">
+  <img class="rcn-mark" src="ui/brand/mark.png" alt="RACECAR Neo">
+  <span class="rcn-title">Planner</span>
+  <span id="mapname"></span>
+  <span id="loc"></span>
+  <span id="nav"></span>
+  <span id="rec"></span>
+  <span id="left" class="rcn-num"></span>
+  <span class="rcn-spacer"></span>
+  <button class="rcn-btn quiet small" id="override" aria-pressed="false"
+    title="Drive without a controller. Press any controller button except LB to stop"><svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#alert"/></svg>Safety override</button>
+  <button class="rcn-btn quiet small" id="more" aria-expanded="false">Details</button>
+  <div id="details"><span id="detail" class="rcn-small rcn-muted rcn-num"></span><span id="sys" class="rcn-small rcn-muted rcn-num"></span></div>
+</header>
+<div id="override-slot"></div>
+<div id="banner"></div>
+<main>
+  <canvas id="view"></canvas>
+  <div id="hint" class="rcn-panel rcn-small"></div>
+  <div id="drivebox" class="off">
+    <div class="dhead"><b>Drive</b>
+      <label class="rcn-small" id="djoytoggle"><input type="checkbox" id="djoymode"> Joystick</label>
+      <button class="rcn-btn quiet small" id="dfold" aria-label="Show or hide the drive controls">Hide</button></div>
+    <div id="drivebody">
+      <div id="djoy" hidden></div>
+      <div class="dpad" id="dpad">
+        <div></div><button data-axis="fwd" data-val="1" aria-label="Forward (W)">&#9650;</button><div></div>
+        <button data-axis="turn" data-val="-1" aria-label="Left (A)">&#9664;</button><div></div>
+        <button data-axis="turn" data-val="1" aria-label="Right (D)">&#9654;</button>
+        <div></div><button data-axis="fwd" data-val="-1" aria-label="Back (S)">&#9660;</button><div></div>
+      </div>
+    </div>
+  </div>
+  <div id="camera"></div>
+  <aside id="wps">
+    <div class="top"><h2>Waypoints</h2><button class="rcn-btn quiet small" id="wpsclose">Close</button></div>
+    <div class="row"><label>Loops <input type="number" class="rcn-input" id="loops" min="1" max="99" step="1"></label>
+      <label><input type="checkbox" id="forever"> Until Stop</label></div>
+    <div id="wplist"></div>
+    <div class="row"><button class="rcn-btn quiet small" id="wpclear">Clear</button>
+      <button class="rcn-btn quiet small" id="msave">Save</button></div>
+    <h3>Recording</h3>
+    <div class="row"><label><input type="checkbox" id="recon"> Record</label></div>
+    <div class="row" id="recgroups"></div>
+    <div id="recstatus" class="rcn-num"></div>
+    <pre id="recsummary" class="rcn-code" hidden></pre>
+    <h3>Saved missions</h3>
+    <div id="missionlist"></div>
+  </aside>
+  <aside id="maps"><div class="top"><h2>Maps</h2><button class="rcn-btn quiet small" id="mapsclose">Close</button></div><div id="maplist"></div></aside>
+  <div id="tools">
+    <button class="rcn-btn quiet" id="zin" title="Zoom in" aria-label="Zoom in"><svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#plus"/></svg></button>
+    <button class="rcn-btn quiet" id="zout" title="Zoom out" aria-label="Zoom out"><svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#minus"/></svg></button>
+    <button class="rcn-btn quiet" id="center" title="Center on the car" aria-label="Center on the car"><svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#target"/></svg></button>
+    <button class="rcn-btn quiet" id="rotl" title="Rotate the map left" aria-label="Rotate the map left"><svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#rotate-left"/></svg></button>
+    <button class="rcn-btn quiet" id="rotr" title="Rotate the map right" aria-label="Rotate the map right"><svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#rotate-right"/></svg></button>
+    <button class="rcn-btn quiet" id="carup" title="Keep the car pointing up" aria-label="Keep the car pointing up" aria-pressed="false"><svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#navigate"/></svg></button>
+    <button class="rcn-btn quiet" id="costmap" title="Costmap" aria-label="Costmap" aria-pressed="false"><svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#grid"/></svg></button>
+  </div>
+</main>
+<div id="job"><span id="jobtitle"></span><button class="rcn-btn quiet small" id="jobmore">Show output</button><pre class="rcn-code" id="joblines"></pre></div>
+<footer id="controls"></footer>
+
+<div class="sheet" id="loadsheet"><div>
+  <h2 id="loadtitle">Map to load</h2>
+  <div class="row"><label><input type="radio" name="from" value="last" checked> Start from the last saved position</label></div>
+  <div class="row"><label><input type="radio" name="from" value="global"> Search the whole map while driving</label></div>
+  <div class="row"><button class="rcn-btn primary" id="loadgo">Load</button><button class="rcn-btn quiet" id="loadcancel">Cancel</button></div>
+</div></div>
+
+<div class="sheet" id="savesheet"><div>
+  <h2>Save mission</h2>
+  <div class="row"><input type="text" class="rcn-input" id="missionname" placeholder="Letters, digits, - and _"
+    autocomplete="off" autocapitalize="off" spellcheck="false"></div>
+  <div class="row"><button class="rcn-btn primary" id="savego">Save</button><button class="rcn-btn quiet" id="savecancel">Cancel</button></div>
+</div></div>
+
+<div class="sheet" id="unsavedsheet"><div>
+  <h2>Unsaved map</h2>
+  <div id="unsavednote">Save the map before loading?</div>
+  <div class="row"><button class="rcn-btn primary" id="unsavedsave">Save and load</button>
+    <button class="rcn-btn danger" id="unsavednosave">Load without saving</button>
+    <button class="rcn-btn quiet" id="unsavedcancel">Cancel</button></div>
+</div></div>
+
+<script src="ui/override.js?v={{asset}}"></script>
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+const css = RcnUi.token;
+const { esc, icon, pill, setHtml, store } = RcnUi;
+// The map view (pan, zoom, rotate, car-up, drags) is web/mapview_core.js, shared with the Mapper.
+const mv = RcnMapView.create($('view'), { draw: () => draw() });
+const view = mv.view;
+let state = {};
+let grid = null, gridVersion = -1;
+let costmap = null, costmapVersion = -1, costmapOn = false;
+let renderKey = '';
+let mapsOpen = false;
+let tool = null;           // 'goal' | 'pose' while a drag tool is active
+// The mission on this page, in the format of racecar_neo_ros2_driver/missions.py:
+// loops (0: until Stop) and waypoints {x, y, heading_deg | null, radius_m, speed_mps | null, dwell_sec}.
+// record: off until its toggle is on, then the topic groups.
+const noRecord = () => ({ on: false, groups: ['state', 'commands', 'lidar', 'navigation'] });
+let plan = { loops: 1, waypoints: [], record: noRecord() };
+let planName = '';         // the saved mission it came from or went to
+let groups = [];           // {id, name}: what can be recorded
+let summaryId = -1;        // the recording summary this page last took
+let starting = false;      // Go waits for the recorder
+let kept = null;           // this page's plan, while another front end's goal shows
+let planVersion = -1;      // the car's mission version this page last took
+let selected = -1;         // the waypoint open in the panel and ringed on the map
+let preview = null;        // {legs, pose} planned for `plan`; null until planned
+let previewing = false;
+let editTimer = null, previewTimer = null;
+let edited = false;        // changed since the last mission: every waypoint is red again
+let wpsKey = '';
+let wpsOpen = false;
+let busy = false;
+let lostContact = false;
+let overrideOn = false;
+
+const mission = () => state.mission || { state: 'idle' };
+const ms = () => mission().state;
+// Nav2 drives toward a waypoint, or the car waits at one.
+const moving = () => ['running', 'dwelling'].includes(ms());
+// Paused while localization is lost; the car sends the waypoint again once localized.
+const relocalizing = () => ms() === 'relocalizing';
+const paused = () => ms() === 'paused';
+const active = () => moving() || relocalizing();
+const underway = () => active() || paused();
+const localized = () => (state.status || {}).localized === 'true';
+const mode = () => (state.status || {}).mode || 'off';
+const jobRunning = () => !!(state.job && state.job.running);
+const deg = (rad) => rad * 180 / Math.PI;
+const rad = (d) => d * Math.PI / 180;
+
+mv.scaleLeft = () => (mapsOpen ? $('maps').offsetWidth : wpsOpen ? $('wps').offsetWidth : 0);
+
+// Red: not reached. Yellow: next. Green: reached.
+function wpState(i) {
+  const m = mission();
+  if (edited) return 'todo';
+  if (underway() && i === m.next) return 'next';
+  return (m.visited || []).includes(i) ? 'done' : 'todo';
+}
+
+function drawWaypoints(ctx) {
+  const d = devicePixelRatio, wps = plan.waypoints;
+  ctx.save();
+  wps.forEach((w, i) => {
+    const [px, py] = mv.toScreen(w.x, w.y), mark = wpState(i), color = css(`--wp-${mark}`);
+    // The reach circle, then the heading, then the numbered marker kept upright.
+    ctx.strokeStyle = color; ctx.globalAlpha = 0.35; ctx.lineWidth = 1.5 * d;
+    ctx.beginPath(); ctx.arc(px, py, Math.max(w.radius_m * view.scale * d, 4 * d), 0, 2 * Math.PI); ctx.stroke();
+    ctx.globalAlpha = 1;
+    if (w.heading_deg != null) {
+      const a = rad(w.heading_deg), l = 22 * d;
+      ctx.lineWidth = 3 * d; ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px + Math.cos(a) * l, py - Math.sin(a) * l); ctx.stroke();
+    }
+    const r = (mark === 'next' ? 13 : 11) * d;
+    ctx.save(); ctx.translate(px, py); ctx.rotate(-view.rot);
+    ctx.fillStyle = color; ctx.beginPath(); ctx.arc(0, 0, r, 0, 2 * Math.PI); ctx.fill();
+    ctx.lineWidth = 2 * d; ctx.strokeStyle = i === selected ? css('--map-wall') : css('--map-outline'); ctx.stroke();
+    ctx.fillStyle = css('--map-outline'); ctx.font = RcnUi.font(12 * d, 700); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(String(i + 1), 0, 0.5 * d);
+    ctx.restore();
+  });
+  ctx.restore();
+}
+
+function draw() {
+  mv.carPose = state.pose || null;
+  mv.frame((ctx) => {
+    if (grid) mv.drawGrid(grid);
+    if (costmap && costmapOn) mv.drawGrid(costmap);
+    mv.drawOrigin();
+    if (active()) mv.drawLine(state.path, css('--map-path'), 3);
+    else if (preview) {
+      ctx.setLineDash([8 * devicePixelRatio, 6 * devicePixelRatio]);
+      for (const leg of preview.legs) if (leg) mv.drawLine(leg, css('--map-path'), 3);
+      ctx.setLineDash([]);
+    }
+    mv.drawDots(state.scan, css('--map-scan'));
+    drawWaypoints(ctx);
+    if (state.pose) mv.drawCar(state.pose[0], state.pose[1], state.pose[2], css('--map-car'), localized() ? 1 : 0.45);
+    const dr = mv.dragging();
+    if (tool && dr && dr.end) {
+      const [a, b] = dr.start, [c, e] = dr.end;
+      mv.drawCar(a, b, Math.atan2(e - b, c - a), css(tool === 'goal' ? '--wp-todo' : '--map-trail'), 0.9);
+    }
+  });
+}
+
+mv.bindButtons({ zin: $('zin'), zout: $('zout'), center: $('center'), rotl: $('rotl'), rotr: $('rotr'), carup: $('carup') },
+  () => (state.pose ? [state.pose[0], state.pose[1]] : null), () => grid);
+
+// -- costmap: subscribed on the car only while this is on --
+// Cost 1-98 fades in with the cost; 99 and up (inside an obstacle's reach) is solid.
+function buildCostmap(info, data) {
+  const off = document.createElement('canvas');
+  off.width = info.width; off.height = info.height;
+  const octx = off.getContext('2d');
+  const img = octx.createImageData(info.width, info.height);
+  const c = css('--map-cost'), rgb = [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16));
+  for (let r = 0; r < info.height; r++) {
+    const dst = (info.height - 1 - r) * info.width;
+    for (let col = 0; col < info.width; col++) {
+      const v = data[r * info.width + col];
+      if (v <= 0) continue;
+      const i = (dst + col) * 4;
+      img.data[i] = rgb[0]; img.data[i + 1] = rgb[1]; img.data[i + 2] = rgb[2];
+      img.data[i + 3] = v >= 99 ? 200 : 40 + v;
+    }
+  }
+  octx.putImageData(img, 0, 0);
+  return { info, image: off };
+}
+async function fetchCostmap() {
+  const res = await fetch('api/costmap', { cache: 'no-store' });
+  if (res.status !== 200) return null;
+  const info = JSON.parse(res.headers.get('X-Map-Info'));
+  return buildCostmap(info, new Int8Array(await res.arrayBuffer()));
+}
+function setCostmap(on) {
+  costmapOn = on;
+  $('costmap').classList.toggle('on', on);
+  $('costmap').setAttribute('aria-pressed', String(on));
+  if (!on) { costmap = null; costmapVersion = -1; }
+  post('api/costmap', { on }).catch(() => {});
+  draw();
+}
+$('override').onclick = toggleOverride;
+$('costmap').onclick = () => setCostmap(!costmapOn);
+
+// -- drag tools: waypoints (Set goal), and Set pose --
+function hint(text) { $('hint').textContent = text; $('hint').classList.toggle('show', !!text); }
+const DRAG_HINT = {
+  goal: 'Tap to add a waypoint. Drag to set its heading.',
+  pose: 'Tap where the car is. Drag toward the way it faces.',
+};
+function startTool(kind) {
+  tool = kind;
+  mv.tool = {
+    end: (a, b) => {
+      const yaw = b ? Math.atan2(b[1] - a[1], b[0] - a[0]) : null;
+      if (kind === 'goal') addWaypoint(a[0], a[1], yaw);
+      else if (yaw == null) hint(DRAG_HINT.pose);
+      else finishPose(a[0], a[1], yaw);
+    },
+  };
+  hint(DRAG_HINT[kind]);
+  render();
+}
+function endTool() { tool = null; mv.tool = null; hint(''); render(); draw(); }
+
+// A press on a marker: a tap opens it in the panel, a drag moves it.
+mv.pick = (w) => {
+  if (tool) return null;
+  const reach = 22 / view.scale;
+  let best = -1, bestDist = reach;
+  plan.waypoints.forEach((p, i) => {
+    const dist = Math.hypot(p.x - w[0], p.y - w[1]);
+    if (dist < bestDist) { best = i; bestDist = dist; }
+  });
+  if (best < 0) return null;
+  return {
+    move: (s, e) => { plan.waypoints[best].x = +e[0].toFixed(3); plan.waypoints[best].y = +e[1].toFixed(3); draw(); },
+    end: (s, e) => { selected = best; if (e) changed(); else { openWps(); renderWps(); draw(); } },
+  };
+};
+
+async function finishPose(x, y, yaw) {
+  const text = `x ${x.toFixed(2)} m, y ${y.toFixed(2)} m, heading ${deg(yaw).toFixed(0)} deg`;
+  if (!confirm(`Set the car's pose to ${text}?`)) { draw(); return; }
+  endTool();
+  report(await post('api/pose', { x, y, yaw }));
+}
+
+// -- the waypoints --
+function addWaypoint(x, y, yaw) {
+  plan.waypoints.push({
+    x: +x.toFixed(3), y: +y.toFixed(3),
+    heading_deg: yaw == null ? null : +(((deg(yaw) % 360) + 360) % 360).toFixed(1),
+    radius_m: 0.25, speed_mps: null, dwell_sec: 0,
+  });
+  selected = plan.waypoints.length - 1;
+  changed();
+}
+// What to record does not change the path or the colors.
+function recordChanged() {
+  if (underway()) { clearTimeout(editTimer); editTimer = setTimeout(sendEdit, 100); }
+  renderRecord();
+}
+function renderRecord() {
+  const r = plan.record, live = !!mission().recording;
+  $('recon').checked = r.on;
+  $('recgroups').classList.toggle('off', !r.on || live);
+  const html = groups.map((g) => `<label><input type="checkbox" data-g="${esc(g.id)}" ${r.groups.includes(g.id) ? 'checked' : ''} ${!r.on || live ? 'disabled' : ''}> ${esc(g.name)}</label>`).join('');
+  setHtml('recgroups', html);
+}
+function renderRecStatus() {
+  const s = mission().rec_status;
+  const rows = !s ? [] : [['Time', s.time], ['Size', `${s.size} (${s.rate})`],
+    ['Free', s.left ? `${s.free} (${s.left} left)` : s.free], ['Topics', `${s.topics[0]} of ${s.topics[1]}`]];
+  setHtml('recstatus', rows.map(([k, v]) => `<span class="rcn-muted">${k}</span><span>${esc(v)}</span>`).join(''));
+}
+function showSummary(text) {
+  $('recsummary').textContent = text;
+  $('recsummary').hidden = !text;
+  document.querySelector('main').classList.toggle('summary', !!text);
+}
+// The finished recording, as racecar log analyze prints it. The panel opens for it once the mission is over.
+async function takeSummary(id) {
+  const first = summaryId < 0;
+  summaryId = id;
+  if (!id) return;
+  const r = await (await fetch('api/recording', { cache: 'no-store' })).json();
+  showSummary(r.text);
+  if (first || underway() || tool) return;
+  openWps();
+  $('recsummary').scrollIntoView({ block: 'nearest' });
+}
+$('recon').addEventListener('change', () => { plan.record.on = $('recon').checked; $('recon').blur(); recordChanged(); });
+$('recgroups').addEventListener('change', (e) => {
+  const id = e.target.dataset.g, r = plan.record;
+  if (!id) return;
+  r.groups = groups.map((g) => g.id).filter((g) => (g === id ? e.target.checked : r.groups.includes(g)));
+  e.target.blur();
+  recordChanged();
+});
+
+// Every change: plan again, send it to the car while a mission runs, redraw.
+function changed() {
+  preview = null;
+  edited = !underway();
+  clearTimeout(previewTimer); previewTimer = setTimeout(planPreview, 300);
+  if (underway() && plan.waypoints.length) { clearTimeout(editTimer); editTimer = setTimeout(sendEdit, 400); }
+  renderWps(); renderKey = ''; render(); draw();
+}
+async function sendEdit() {
+  editTimer = null;
+  const r = await post('api/edit', { mission: plan });
+  if (!r.ok) report(r);
+}
+
+// The path of every leg, planned from the car before Go; Go stays gray until each is found.
+async function planPreview() {
+  previewTimer = null;
+  if (underway() || !plan.waypoints.length || mode() !== 'localization') return;
+  const asked = JSON.stringify(plan);
+  previewing = true;
+  const r = await post('api/preview', { mission: plan });
+  previewing = false;
+  if (JSON.stringify(plan) !== asked) return;  // changed meanwhile; a newer preview is on its way
+  if (!r.ok) { hint(r.message || ''); renderKey = ''; render(); return; }
+  preview = { legs: r.legs, pose: state.pose };
+  const failed = r.legs.indexOf(null), n = plan.waypoints.length;
+  hint(failed < 0 ? '' : failed < n ? `No path to waypoint ${failed + 1}.` : 'No path back to waypoint 1.');
+  renderKey = ''; render(); draw();
+}
+const planned = () => !!preview && !preview.legs.includes(null);
+
+// -- requests --
+const post = RcnApi.postJson;
+function report(r) { if (!r.ok) flash(r.message || 'Could not finish.', 'bad'); }
+const FLASH_MS = 4000;
+let flashMsg = null;
+function flash(text, kind) { flashMsg = { text, kind, until: Date.now() + FLASH_MS }; showBanner(); }
+function showBanner() {
+  const b = $('banner'), sys = state.sys || {};
+  let msg = null;
+  if (flashMsg && Date.now() < flashMsg.until) msg = flashMsg;
+  else if (lostContact) msg = { text: RcnApi.LOST, kind: 'bad' };
+  else if (sys.throttled_now && sys.throttled_now.length) msg = { text: `Pi throttled now: ${sys.throttled_now.join(', ')}.`, kind: 'bad' };
+  else if (sys.temp_c != null && sys.temp_c >= 78) msg = { text: `Pi is hot (${sys.temp_c.toFixed(0)} \u00b0C).`, kind: 'warn' };
+  else if (relocalizing()) msg = { text: 'Localization lost. Regain position by driving the car or using Set pose.', kind: 'warn' };
+  else if (ms() === 'running' && !overrideOn) msg = { text: 'Hold RB or turn on the safety override.', kind: 'warn' };
+  else if (mode() === 'localization' && !localized()) msg = { text: 'Drive slowly until localized.', kind: 'warn' };
+  b.textContent = msg ? msg.text : '';
+  b.className = msg ? `show ${msg.kind}` : '';
+}
+async function action(body) {
+  if (body.action === 'load') {
+    let driving = [];
+    try { driving = (await (await fetch('api/driving', { cache: 'no-store' })).json()).apps || []; } catch (err) { /* the car stops them anyway */ }
+    if (driving.length && !confirm(`Close ${driving.join(' and ')} and continue?`)) return { ok: false };
+  }
+  const r = await post('api/action', body);
+  if (!r.ok) report(r);
+  poll();
+  return r;
+}
+async function go() {
+  if (tool) endTool();
+  starting = true; renderKey = ''; render();
+  const r = await post('api/run', { mission: plan, name: planName });
+  starting = false; renderKey = '';
+  if (r.ok) hint(''); else report(r);
+  poll();
+}
+async function control(verb) { report(await post('api/control', { verb })); poll(); }
+
+// -- safety override: the banner and the keepalive are /ui/override.js --
+RcnOverride.onChange = (o) => {
+  overrideOn = !!o.on;
+  $('override').setAttribute('aria-pressed', String(overrideOn));
+  // Grayed until the car confirms the override.
+  $('override').classList.toggle('waiting', overrideOn && o.confirmed === false);
+  showBanner();
+};
+RcnOverride.onLost = () => flash(RcnApi.LOST, 'bad');
+function toggleOverride() {
+  if (overrideOn) { RcnOverride.send('stop'); return; }
+  if (!confirm('Turn on safety override?')) return;
+  RcnOverride.send('start');
+}
+
+// -- controls --
+function button(label, cls, onclick, disabled, glyph, small) {
+  const b = document.createElement('button');
+  b.className = `rcn-btn ${cls || 'quiet'}${small ? ' small' : ''}`;
+  b.innerHTML = (glyph ? icon(glyph) : '') + esc(label);
+  b.onclick = onclick; b.disabled = !!disabled;
+  return b;
+}
+function render() {
+  const f = $('controls'), running = jobRunning();
+  f.replaceChildren();
+  if (tool === 'goal') { f.append(button('Done', 'primary', endTool, false, 'check')); return; }
+  if (tool) { f.append(button('Cancel', '', endTool, false, 'cross')); return; }
+  if (mode() === 'localization') {
+    if (underway()) {
+      if (paused()) f.append(button('Resume', 'primary', () => control('resume'), mission().stalled, 'play'));
+      else f.append(button('Pause', '', () => control('pause'), relocalizing(), 'stop'));
+      f.append(button('Skip', '', () => control('skip'), mission().stalled, 'chevron-down'));
+      f.append(button('Stop', 'danger', () => control('stop'), false, 'stop'));
+      f.append(button('Waypoints', wpsOpen ? 'quiet on' : '', toggleWps, false, 'tag'));
+      if (!moving()) f.append(button('Set pose', '', () => startTool('pose'), running, 'map'));
+    } else {
+      f.append(button('Go', 'primary', go, running || starting || !planned() || !localized() || mission().stalled, 'play'));
+      f.append(button('Set goal', '', () => startTool('goal'), running, 'target'));
+      f.append(button('Waypoints', wpsOpen ? 'quiet on' : '', toggleWps, false, 'tag'));
+      f.append(button('Set pose', '', () => startTool('pose'), running, 'map'));
+    }
+  }
+  f.append(button('Load map', mapsOpen ? 'quiet on' : '', toggleMaps, false, 'layers'));
+}
+
+const camera = RcnCamera.mount($('camera'), { key: 'rcn-planner-camera' });
+
+// -- the Waypoints panel --
+function openWps() {
+  if (mapsOpen) closeMaps();
+  wpsOpen = true;
+  document.querySelector('main').classList.add('wps-open');
+  renderWps(); loadMissions(); renderKey = ''; render(); draw();
+}
+function closeWps() { wpsOpen = false; document.querySelector('main').classList.remove('wps-open'); renderKey = ''; render(); draw(); }
+function toggleWps() { if (wpsOpen) closeWps(); else openWps(); }
+$('wpsclose').onclick = closeWps;
+
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+function wpSummary(w) {
+  const bits = [w.heading_deg == null ? 'Any heading' : `${Math.round(w.heading_deg)} deg`, `${w.radius_m} m`];
+  bits.push(w.speed_mps == null ? 'Full speed' : `${w.speed_mps} m/s`);
+  if (w.dwell_sec) bits.push(`Wait ${w.dwell_sec} s`);
+  return bits.join(' \u00b7 ');
+}
+function field(label, f, value, attrs) {
+  return `<label>${esc(label)}<input type="number" class="rcn-input" data-f="${f}" value="${value == null ? '' : value}" ${attrs}></label>`;
+}
+function renderWps() {
+  if (!wpsOpen || $('wps').contains(document.activeElement)) return;
+  const forever = plan.loops === 0;
+  $('forever').checked = forever;
+  $('loops').disabled = forever;
+  $('loops').value = forever ? '' : plan.loops;
+  const list = $('wplist'), n = plan.waypoints.length, waiting = ms() === 'dwelling' ? mission().index : -1;
+  if (!n) { list.innerHTML = '<div class="rcn-small rcn-muted">No waypoints</div>'; }
+  else {
+    list.innerHTML = plan.waypoints.map((w, i) => {
+      const open = i === selected;
+      const head = `<div class="wphead"><span class="wpnum ${wpState(i)}">${i + 1}</span>
+        <span class="wpsum rcn-small">${esc(wpSummary(w))}${i === waiting ? ' \u00b7 <b>Waiting</b>' : ''}</span>
+        ${open ? `<button class="rcn-btn quiet small" data-act="up" ${i === 0 ? 'disabled' : ''} aria-label="Move up">&#9650;</button>
+        <button class="rcn-btn quiet small" data-act="down" ${i === n - 1 ? 'disabled' : ''} aria-label="Move down">&#9660;</button>
+        <button class="rcn-btn quiet small" data-act="remove" ${underway() && n === 1 ? 'disabled' : ''} aria-label="Remove">${icon('cross')}</button>` : ''}</div>`;
+      const grid = open ? `<div class="wpgrid">
+        ${field('Heading (deg)', 'heading_deg', w.heading_deg == null ? null : Math.round(w.heading_deg), `min="0" max="359" step="1" ${w.heading_deg == null ? 'disabled' : ''}`)}
+        <label class="inline"><input type="checkbox" data-f="any" ${w.heading_deg == null ? 'checked' : ''}> Any heading</label>
+        ${field('Radius (m)', 'radius_m', w.radius_m, 'min="0.25" max="3" step="0.05"')}
+        ${field('Speed (m/s)', 'speed_mps', w.speed_mps, 'min="0.5" max="1" step="0.05" placeholder="Full"')}
+        ${field('Wait (s)', 'dwell_sec', w.dwell_sec, 'min="0" max="600" step="1"')}
+        </div>` : '';
+      return `<div class="wp${open ? ' sel' : ''}" data-i="${i}">${head}${grid}</div>`;
+    }).join('');
+  }
+  $('wpclear').disabled = underway() || !n;
+  renderRecord();
+  $('msave').disabled = !n || mode() !== 'localization';
+}
+// The colors follow the car even while a field holds the list still.
+function paintWps() {
+  document.querySelectorAll('#wplist .wpnum').forEach((el, i) => { el.className = `wpnum ${wpState(i)}`; });
+}
+$('wplist').addEventListener('click', (e) => {
+  const row = e.target.closest('.wp');
+  if (!row) return;
+  const i = +row.dataset.i, act = e.target.closest('[data-act]');
+  const wps = plan.waypoints;
+  if (act) {
+    const a = act.dataset.act;
+    if (a === 'remove') { wps.splice(i, 1); selected = Math.min(i, wps.length - 1); }
+    else {
+      const j = a === 'up' ? i - 1 : i + 1;
+      [wps[i], wps[j]] = [wps[j], wps[i]]; selected = j;
+    }
+    changed();
+    return;
+  }
+  if (i !== selected && !e.target.closest('input, label')) { selected = i; renderWps(); draw(); }
+});
+$('wplist').addEventListener('change', (e) => {
+  const f = e.target.dataset.f, row = e.target.closest('.wp');
+  if (!f || !row) return;
+  const w = plan.waypoints[+row.dataset.i], v = parseFloat(e.target.value);
+  if (f === 'any') w.heading_deg = e.target.checked ? null : 0;
+  else if (f === 'heading_deg') w.heading_deg = Number.isFinite(v) ? ((Math.round(v) % 360) + 360) % 360 : 0;
+  else if (f === 'radius_m') w.radius_m = Number.isFinite(v) ? +clamp(v, 0.25, 3).toFixed(2) : 0.25;
+  else if (f === 'speed_mps') w.speed_mps = Number.isFinite(v) ? +clamp(v, 0.5, 1).toFixed(2) : null;
+  else if (f === 'dwell_sec') w.dwell_sec = Number.isFinite(v) ? +clamp(v, 0, 600).toFixed(1) : 0;
+  e.target.blur();
+  changed();
+});
+$('loops').addEventListener('change', () => {
+  const v = parseInt($('loops').value, 10);
+  plan.loops = Number.isFinite(v) ? clamp(v, 1, 99) : 1;
+  $('loops').blur(); changed();
+});
+$('forever').addEventListener('change', () => { plan.loops = $('forever').checked ? 0 : 1; changed(); });
+$('wpclear').onclick = () => {
+  if (!confirm('Clear the waypoints?')) return;
+  plan.waypoints = []; planName = ''; selected = -1; hint(''); changed();
+};
+
+// -- saved missions, beside the loaded map --
+async function loadMissions() {
+  const list = $('missionlist');
+  let data = { missions: [] };
+  try { data = await (await fetch('api/missions', { cache: 'no-store' })).json(); } catch (err) { /* shown empty */ }
+  groups = data.groups || [];
+  renderRecord();
+  if (!data.missions.length) { list.innerHTML = '<div class="rcn-small rcn-muted">No saved missions</div>'; return; }
+  list.replaceChildren();
+  for (const m of data.missions) {
+    const row = document.createElement('div'); row.className = 'mrow';
+    const info = document.createElement('div'); info.className = 'info';
+    const count = m.waypoints === 1 ? '1 waypoint' : `${m.waypoints} waypoints`;
+    const loops = m.loops === 0 ? 'until Stop' : m.loops === 1 ? '' : `${m.loops} loops`;
+    info.innerHTML = `<div><b>${esc(m.name)}</b></div><div class="rcn-small rcn-muted">${esc([count, loops, m.saved].filter(Boolean).join(' \u00b7 '))}</div>`;
+    row.append(info, button('Open', '', () => openMission(m.name), underway(), null, true));
+    list.append(row);
+  }
+}
+async function openMission(name) {
+  if (plan.waypoints.length && !confirm(`Open ${name}?`)) return;
+  const r = await (await fetch(`api/missions/one?name=${encodeURIComponent(name)}`, { cache: 'no-store' })).json();
+  if (!r.ok) { report(r); return; }
+  plan = { loops: r.mission.loops, waypoints: r.mission.waypoints, record: r.mission.record || noRecord() };
+  planName = name;
+  selected = -1;
+  changed();
+}
+$('msave').onclick = () => { $('savesheet').classList.add('show'); setTimeout(() => $('missionname').focus(), 50); };
+$('savecancel').onclick = () => $('savesheet').classList.remove('show');
+$('savego').onclick = async () => {
+  const name = $('missionname').value.trim();
+  if (!/^[A-Za-z0-9_-]+$/.test(name)) { alert('Mission names use letters, digits, - and _.'); return; }
+  $('savesheet').classList.remove('show');
+  let r = await post('api/missions/save', { name, mission: plan });
+  if (r.exists) {
+    if (!confirm(`Replace the mission ${name}?`)) return;
+    r = await post('api/missions/save', { name, mission: plan, replace: true });
+  }
+  report(r);
+  if (r.ok) planName = name;
+  loadMissions();
+};
+
+// -- maps --
+function closeMaps() { mapsOpen = false; document.querySelector('main').classList.remove('maps-open'); render(); draw(); }
+function toggleMaps() { if (mapsOpen) closeMaps(); else openMaps(); }
+async function openMaps() {
+  if (wpsOpen) closeWps();
+  mapsOpen = true;
+  document.querySelector('main').classList.add('maps-open');
+  render(); draw();
+  const data = await (await fetch('api/maps', { cache: 'no-store' })).json();
+  const list = $('maplist'); list.replaceChildren();
+  if (!data.maps.length) { list.textContent = 'No maps'; return; }
+  for (const m of data.maps) {
+    const row = document.createElement('div'); row.className = 'map';
+    const img = document.createElement('img'); img.loading = 'lazy'; img.alt = '';
+    img.src = `api/thumb?name=${encodeURIComponent(m.name)}&t=${encodeURIComponent(m.saved)}`;
+    const info = document.createElement('div'); info.className = 'info';
+    info.innerHTML = '<div class="name"></div><div class="rcn-small rcn-muted"></div><div class="acts"></div>';
+    info.querySelector('.name').textContent = m.name + (m.note ? ` (${m.note})` : '');
+    info.querySelector('.rcn-muted').textContent = [m.state[0].toUpperCase() + m.state.slice(1), m.saved, m.size].join(' \u00b7 ');
+    info.querySelector('.acts').append(button('Load', 'primary', () => openLoad(m.name), jobRunning() || underway() || m.state === 'unsaved', null, true));
+    row.append(img, info); list.append(row);
+  }
+}
+$('mapsclose').onclick = closeMaps;
+
+function openLoad(name) {
+  closeMaps();
+  $('loadtitle').textContent = `"${name}"`;
+  $('loadsheet').dataset.name = name;
+  $('loadsheet').classList.add('show');
+}
+$('loadcancel').onclick = () => $('loadsheet').classList.remove('show');
+function load(name, search) {
+  view.fitted = false; gridVersion = -1; preview = null; hint('');
+  return action({ action: 'load', name, search });
+}
+$('loadgo').onclick = () => {
+  const sheet = $('loadsheet'), name = sheet.dataset.name;
+  const search = document.querySelector('input[name=from]:checked').value === 'global';
+  sheet.classList.remove('show');
+  // A mapping run in the Mapper: save it first, or load without saving.
+  if (mode() === 'mapping') {
+    const u = $('unsavedsheet');
+    $('unsavednote').textContent = `Save ${(state.status || {}).map || 'the map'} before loading?`;
+    u.dataset.name = name; u.dataset.search = search ? '1' : '';
+    u.classList.add('show');
+    return;
+  }
+  if (!confirm(`Load "${name}"?`)) return;
+  load(name, search);
+};
+async function waitForJob() {
+  for (;;) {
+    await new Promise((res) => setTimeout(res, 300));
+    try {
+      const j = (await (await fetch('api/state', { cache: 'no-store' })).json()).job || {};
+      if (!j.running) return j.code === 0;
+    } catch (err) { /* keep waiting */ }
+  }
+}
+const unsavedLoad = () => { const u = $('unsavedsheet'); u.classList.remove('show'); return [u.dataset.name, !!u.dataset.search]; };
+$('unsavedcancel').onclick = () => $('unsavedsheet').classList.remove('show');
+$('unsavednosave').onclick = () => load(...unsavedLoad());
+$('unsavedsave').onclick = async () => {
+  const [name, search] = unsavedLoad();
+  const r = await action({ action: 'save' });
+  if (r.ok && await waitForJob()) load(name, search);
+};
+
+// -- status --
+function showStatus() {
+  const s = state.status || {}, m = mission();
+  const active = mode() === 'localization';
+  $('mapname').textContent = active ? s.map || '' : '';
+  if (mode() === 'mapping') setHtml('loc', pill('warn', 'Mapping'));
+  else setHtml('loc', active ? (localized() ? pill('ok', 'Localized') : pill('err', 'Not localized')) : pill('off', 'No map loaded'));
+  const failed = m.state === 'paused' && m.reason === 'failed';
+  const nav = active ? {
+    // While localization is lost, the Not localized pill and the banner say so.
+    running: pill('ok', 'Navigating'), dwelling: pill('ok', 'Waiting'),
+    paused: failed ? pill('err', `Could not reach waypoint ${m.index + 1}`)
+      : m.reason === 'stalled' ? pill('err', `Car stalled at waypoint ${m.index + 1}`) : pill('off', 'Paused'),
+    arrived: pill('ok', 'Arrived'), failed: pill('err', 'Could not reach the goal'), stalled: pill('err', 'Car stalled'),
+  }[m.state] || '' : '';
+  setHtml('nav', nav);
+  setHtml('rec', active && m.recording ? '<span class="rcn-status err">&#9679; Recording</span>'
+    : active && m.not_recording && underway() && plan.record.on ? pill('warn', 'Not recording') : '');
+  const where = [];
+  // The pill already names the waypoint the car is stuck at.
+  const named = m.state === 'paused' && m.reason !== 'user';
+  if (active && underway() && m.count > 1 && !named) where.push(`Waypoint ${m.index + 1} of ${m.count}`);
+  if (active && underway() && m.loops !== 1) where.push(m.loops === 0 ? `Loop ${m.loop}` : `Loop ${m.loop} of ${m.loops}`);
+  if (active && m.state === 'running' && m.left != null) where.push(`${m.left.toFixed(1)} m left`);
+  if (active && m.state === 'dwelling' && m.dwell_left != null) where.push(`${Math.ceil(m.dwell_left)} s`);
+  $('left').textContent = where.join(' \u00b7 ');
+  const parts = [];
+  if (active && s.scan_fit) parts.push(`Fit ${(parseFloat(s.scan_fit) * 100).toFixed(0)}%`);
+  if (state.pose) parts.push(`x ${state.pose[0].toFixed(2)} y ${state.pose[1].toFixed(2)} ${(state.pose[2] * 180 / Math.PI).toFixed(0)} deg`);
+  if (active && m.recoveries) parts.push(`Recoveries ${m.recoveries}`);
+  $('detail').textContent = parts.join(' | ');
+  const sys = state.sys || {}, bits = [];
+  if (sys.cpu != null) bits.push(`CPU ${sys.cpu.toFixed(0)}%`);
+  if (sys.temp_c != null) bits.push(`${sys.temp_c.toFixed(0)} \u00b0C`);
+  $('sys').textContent = bits.join('  ');
+  showBanner();
+}
+function showJob() {
+  const j = state.job || {}, el = $('job');
+  if (!j.action || j.running || j.code === 0) { el.classList.remove('show'); return; }
+  const [act, name] = j.argv;
+  el.classList.add('show', 'failed');
+  $('jobtitle').textContent = { save: 'Could not save the map.', stop: 'Could not stop.', load: `Could not load ${name}.` }[act] || 'Could not finish.';
+  $('joblines').textContent = j.lines.join('\n');
+}
+$('jobmore').onclick = () => $('job').classList.toggle('open');
+$('more').onclick = () => {
+  const open = $('head').classList.toggle('open');
+  $('more').setAttribute('aria-expanded', open);
+  $('more').textContent = open ? 'Hide' : 'Details';
+};
+
+// -- driving from the map: the Web Teleop joystick or pad --
+const drive = { held: new Set(), joy: { active: false, fwd: 0, turn: 0 }, last: '' };
+const DRIVE_KEYS = { KeyW: ['fwd', 1], ArrowUp: ['fwd', 1], KeyS: ['fwd', -1], ArrowDown: ['fwd', -1],
+  KeyA: ['turn', -1], ArrowLeft: ['turn', -1], KeyD: ['turn', 1], ArrowRight: ['turn', 1] };
+// Nav2 drives during a mission; the panel waits, except while paused or relocalizing.
+const canDrive = () => mode() === 'localization' && !moving();
+function driveCommand() {
+  if (drive.joy.active) return { fwd: +drive.joy.fwd.toFixed(3), turn: +drive.joy.turn.toFixed(3) };
+  const sum = (axis) => [...drive.held].filter((h) => h.startsWith(axis + ':')).reduce((a, h) => a + parseInt(h.split(':')[1]), 0);
+  return { fwd: Math.sign(sum('fwd')), turn: Math.sign(sum('turn')) };
+}
+function sendDrive(force) {
+  const c = driveCommand(), s = JSON.stringify(c);
+  if (s !== drive.last || force) { drive.last = s; post('cmd', c); }
+  for (const b of document.querySelectorAll('#dpad button')) b.classList.toggle('down', drive.held.has(`${b.dataset.axis}:${b.dataset.val}`));
+}
+function driveRelease() { drive.held.clear(); djoy.stop(); sendDrive(true); }
+setInterval(() => { if (drive.held.size || drive.joy.active) sendDrive(true); }, 100);
+const typingIn = (e) => ['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName);
+document.addEventListener('keydown', (e) => {
+  if (e.repeat || !(e.code in DRIVE_KEYS) || typingIn(e) || !canDrive()) return;
+  e.preventDefault(); drive.held.add(DRIVE_KEYS[e.code].join(':')); sendDrive(false);
+});
+document.addEventListener('keyup', (e) => {
+  if (!(e.code in DRIVE_KEYS)) return;
+  drive.held.delete(DRIVE_KEYS[e.code].join(':')); sendDrive(false);
+});
+window.addEventListener('blur', () => driveRelease());
+document.addEventListener('visibilitychange', () => { if (document.hidden) driveRelease(); });
+for (const b of document.querySelectorAll('#dpad button')) {
+  const key = `${b.dataset.axis}:${b.dataset.val}`;
+  b.addEventListener('pointerdown', (e) => { e.preventDefault(); b.setPointerCapture(e.pointerId); drive.held.add(key); sendDrive(false); });
+  for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) b.addEventListener(ev, () => { drive.held.delete(key); sendDrive(false); });
+  b.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+const djoy = RcnJoystick.mount($('djoy'), {
+  size: window.matchMedia('(max-width: 700px)').matches ? 140 : 160,
+  onMove: (x, y) => { drive.joy.active = x !== 0 || y !== 0; drive.joy.fwd = y; drive.joy.turn = x; sendDrive(!drive.joy.active); },
+});
+const DJOY_KEY = 'rcn-planner-joystick', DFOLD_KEY = 'rcn-planner-drive-folded';
+function setDriveJoystick(on) { driveRelease(); $('djoy').hidden = !on; $('dpad').hidden = on; store.set(DJOY_KEY, on ? '1' : '0'); }
+if (window.matchMedia('(pointer: coarse)').matches) {
+  $('djoytoggle').hidden = true; $('djoy').hidden = false; $('dpad').hidden = true;
+} else {
+  $('djoymode').checked = store.get(DJOY_KEY) === '1';
+  setDriveJoystick($('djoymode').checked);
+  $('djoymode').addEventListener('change', () => setDriveJoystick($('djoymode').checked));
+}
+function setFolded(folded) {
+  $('drivebox').classList.toggle('folded', folded);
+  $('dfold').textContent = folded ? 'Show' : 'Hide';
+  store.set(DFOLD_KEY, folded ? '1' : '0');
+  if (folded) driveRelease();
+}
+$('dfold').onclick = () => setFolded(!$('drivebox').classList.contains('folded'));
+setFolded(store.get(DFOLD_KEY) === '1');
+function showDrive() {
+  const on = canDrive() && !(window.RcnDriving && RcnDriving.blocked());
+  if (!on && !$('drivebox').classList.contains('off')) driveRelease();
+  $('drivebox').classList.toggle('off', !on);
+}
+
+async function poll() {
+  if (busy) return;
+  busy = true;
+  try {
+    const s = await (await fetch('api/state', { cache: 'no-store' })).json();
+    state = s;
+    lostContact = false;
+    if (s.map_version && s.map_version !== gridVersion) {
+      gridVersion = s.map_version;
+      const g = await mv.fetchGrid('api/map');
+      if (g) { grid = g; if (!view.fitted) mv.fit(grid); }
+    }
+    if (!s.map_version) grid = null;
+    if (costmapOn && s.costmap_version && s.costmap_version !== costmapVersion) {
+      costmapVersion = s.costmap_version;
+      costmap = await fetchCostmap();
+    }
+    const m = mission();
+    if (m.mission && m.version !== planVersion && !editTimer) {
+      planVersion = m.version;
+      // Another front end's goal shows while it runs; this page's own plan comes back after.
+      const other = !!m.owner && m.owner !== 'planner';
+      if (other && underway() && !kept) kept = plan;
+      if (!other) kept = null;
+      if (!other || underway()) {
+        edited = false;
+        plan = { loops: m.mission.loops, waypoints: m.mission.waypoints, record: m.mission.record || noRecord() };
+        if (selected >= plan.waypoints.length) selected = -1;
+        renderWps();
+      }
+    }
+    if (kept && !underway()) {
+      plan = kept; kept = null; edited = true; selected = -1; preview = null;
+      renderWps(); draw();
+    }
+    // The first leg starts at the car: plan again once it has moved half a meter.
+    const p0 = preview && preview.pose, p = s.pose;
+    if (!underway() && plan.waypoints.length && !previewTimer && !previewing && localized() && p
+        && (!preview || !p0 || Math.hypot(p[0] - p0[0], p[1] - p0[1]) > 0.5)) {
+      previewTimer = setTimeout(planPreview, 0);
+    }
+    showStatus(); showJob(); showDrive();
+    camera.setEnabled((s.sys || {}).camera !== false);
+    // Rebuilt only when the mission moves on, so a press on a row is not lost.
+    const wk = [m.state, m.index, m.version, m.recording].join('|');
+    if (wpsOpen && wk !== wpsKey) { wpsKey = wk; renderWps(); }
+    if (wpsOpen) { paintWps(); renderRecord(); renderRecStatus(); }
+    if (m.recording && !$('recsummary').hidden) showSummary('');
+    if (m.rec_summary !== undefined && m.rec_summary !== summaryId) takeSummary(m.rec_summary).catch(() => {});
+    const key = [mode(), localized(), jobRunning(), tool, planned(), m.state, m.index, m.stalled].join('|');
+    if (key !== renderKey) { renderKey = key; render(); }
+    draw();
+  } catch (err) {
+    lostContact = true; showBanner();
+  } finally { busy = false; }
+}
+
+setCostmap(false);
+render();
+poll();
+setInterval(poll, 100);
+</script>
+</body>
+</html>

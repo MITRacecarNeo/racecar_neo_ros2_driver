@@ -16,7 +16,6 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 import math
-from pathlib import Path
 import sys
 import time
 
@@ -68,11 +67,10 @@ def best_nearby(
 
 def laser_offset() -> sf.Pose:
     """base_link -> laser from frames.yaml with the car's override."""
-    from ament_index_python.packages import get_package_share_directory
-    from racecar_neo_ros2_driver.frames import load_frames
+    from racecar_neo_ros2_driver.frames import laser_mount, load_frames
+    from racecar_neo_ros2_driver.paths import config_dir
 
-    f = load_frames(Path(get_package_share_directory('racecar_neo_ros2_driver')) / 'config')
-    return f['laser_x_mm'] / 1e3, f['laser_y_mm'] / 1e3, math.radians(f['laser_yaw_deg'])
+    return laser_mount(load_frames(config_dir()))
 
 
 def read_live(timeout: float = 5.0) -> tuple[np.ndarray, sf.Pose, int]:
@@ -82,25 +80,24 @@ def read_live(timeout: float = 5.0) -> tuple[np.ndarray, sf.Pose, int]:
     from rclpy.qos import QoSProfile, QoSReliabilityPolicy
     from sensor_msgs.msg import LaserScan
 
-    rclpy.init()
-    node = rclpy.create_node('live_fit')
+    from racecar_neo_ros2_driver.ros_cli import ros_node
+
     scans: list = []
     poses: list = []
     sensor = QoSProfile(depth=5, reliability=QoSReliabilityPolicy.BEST_EFFORT)
-    node.create_subscription(LaserScan, '/scan', scans.append, sensor)
-    node.create_subscription(PoseWithCovarianceStamped, '/autonomy/pose', poses.append, 10)
-    end = time.monotonic() + timeout
-    try:
+    with ros_node('live_fit') as node:
+        node.create_subscription(LaserScan, '/scan', scans.append, sensor)
+        node.create_subscription(PoseWithCovarianceStamped, '/autonomy/pose', poses.append, 10)
+        end = time.monotonic() + timeout
         while time.monotonic() < end and (len(scans) < SCANS or not poses):
             rclpy.spin_once(node, timeout_sec=0.1)
-    finally:
-        node.destroy_node()
-        rclpy.try_shutdown()
     if not scans or not poses:
         raise SystemExit('live_fit: no /scan or /autonomy/pose; is autonomy running?')
     p = poses[-1].pose.pose
     q = p.orientation
-    yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+    from racecar_neo_ros2_driver.geometry import yaw_of
+
+    yaw = yaw_of(q)
     points = np.vstack(
         [
             sf.scan_points(np.asarray(m.ranges, float), m.angle_min, m.angle_increment)

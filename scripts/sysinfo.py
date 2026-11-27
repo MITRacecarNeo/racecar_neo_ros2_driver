@@ -78,6 +78,30 @@ def run_cmd(cmd: list[str], timeout: float = 5.0) -> str:
     return r.stdout if r.returncode == 0 else ''
 
 
+def parse_unit_state(text: str) -> dict[str, str] | None:
+    """Return load, active and enabled from `systemctl show` output, or None when empty."""
+    keys = {'LoadState': 'load', 'ActiveState': 'active', 'UnitFileState': 'enabled'}
+    out = {}
+    for line in text.splitlines():
+        key, _, value = line.partition('=')
+        if key in keys:
+            out[keys[key]] = value.strip()
+    return out if 'load' in out else None
+
+
+def unit_state(unit: str) -> dict[str, str] | None:
+    """
+    Return a systemd unit's load, active and enabled state, or None without systemctl.
+
+    `systemctl is-active` and `is-enabled` exit non-zero for a stopped or
+    disabled unit, which `run_cmd` reads as no output; `systemctl show` exits 0
+    and reports `load` as `not-found` for a unit that is not installed.
+    """
+    return parse_unit_state(
+        run_cmd(['systemctl', 'show', '-p', 'LoadState,ActiveState,UnitFileState', unit])
+    )
+
+
 def read_diagnostic_rates(msg: Any, into: dict[str, float]) -> None:
     """Copy the RealSense per-stream rates from one DiagnosticArray into `into`."""
     for status in msg.status:
@@ -263,12 +287,12 @@ def read_under_voltage_alarm() -> bool | None:
 def classify_rtc(volts: float | None) -> tuple[str, str]:
     """Map an RTC cell voltage to a (status, label) pair for display."""
     if volts is None:
-        return ('dead', 'NO READING')
+        return ('dead', 'No reading')
     if volts >= RTC_OK_VOLTS:
         return ('healthy', f'{volts:.2f} V')
     if volts >= RTC_LOW_VOLTS:
-        return ('stale', f'{volts:.2f} V, recharge soon')
-    return ('dead', f'{volts:.2f} V, RECHARGE NOW')
+        return ('stale', f'{volts:.2f} V. Recharge soon')
+    return ('dead', f'{volts:.2f} V. Recharge now')
 
 
 def read_soc_temp() -> float | None:

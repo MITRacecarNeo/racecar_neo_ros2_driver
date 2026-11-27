@@ -21,6 +21,7 @@ and what supervises them. Companion to the operational instructions in
 - [Terminal app](#terminal-app)
 - [Configuration](#configuration)
 - [Data root](#data-root)
+- [Student library](#student-library)
 - [Calibration data flow](#calibration-data-flow)
 - [Repository layout](#repository-layout)
 - [Known structural issues](#known-structural-issues)
@@ -166,7 +167,8 @@ is slow and revoking immediate: one bad frame hands the gate back.
 ### Safety-controller override
 
 The 8080 dashboard can hold the gate with no controller. Its toggle starts a
-session; the 8080 page and the three driving lab pages (`scripts/web/override.js`)
+session; the 8080 page and the three driving lab pages (`scripts/web/override.js`,
+which also draws the banner; 8080 adds its tile through `RcnOverride.onChange`)
 each post a keepalive to `/api/override` every second, which never starts one.
 The lab pages call 8080 from their own ports, so the reply carries a CORS
 header for those origins only (`override_origin`). `OverrideSession` in
@@ -180,7 +182,9 @@ override back on. `mux_node` reports the state on `/mux/override_active`
 (latched). The dashboard ends its side when the mux reports off, and when the
 mux never confirms within 3 s. `dotmatrix_node` shows the AUTO glyph and
 `pit_node` sets the auto mode bits and flashes the LED strip amber at 2 Hz
-unless a program frame is fresh. Nothing is persisted; a teleop restart ends
+over the firmware battery meter's length (`override_led_frame`: the charge from
+the 1 s mean voltage on the curve in `config/battery.yaml`; the whole strip
+before a reading) unless a program frame is fresh. Nothing is persisted; a teleop restart ends
 it. No extra speed cap applies.
 
 ### Features
@@ -224,9 +228,230 @@ Every app's server is built on `scripts/webui.py`:
 | `AppHandler` | `send`, `send_json`, `read_json` (body read before `do_POST`, at most 64 KiB, so keep-alive stays clean), `page`, `serve_asset` for `/ui/`, HTTP/1.1, no request log |
 | `serve()` | Threaded server, an optional spin thread, SIGINT and SIGTERM taken back from rclpy, then `cleanup` and the join |
 | `ros_spinner`, `spin_until_stopped` | Executor loop on the EventsExecutor (default executor when the import is missing) that logs an error and spins on; ends quietly at shutdown |
-| `fill`, `read_page`, `static_file` | `{{asset}}` (`ASSET_VERSION`), `{{home}}` (the 8080 port) and `{{driver}}` (`package.xml` version) filled in pages and shared scripts; `read_page` adds `web/footer.js` (driver version, firmware version from 8080 `/api/about`) and `web/home.js` (the header's `.rcn-mark` becomes a home link; closes the tab, else loads 8080; skipped on a page whose `<body>` has `data-home`) before `</body>` |
-| `same_origin`, `sibling_origin` | Origin checks for page-only calls and for CORS from the other app ports |
+| `fill`, `read_page`, `static_file` | `{{asset}}` (`ASSET_VERSION`), `{{home}}` (the 8080 port) and `{{driver}}` (`package.xml` version) filled in pages and shared scripts; `read_page` adds `web/footer.js` (the car as `hostname (nickname)`, driver version, firmware version, from 8080 `/api/about`) and `web/home.js` (the header's `.rcn-mark` becomes a home link; closes the tab, else loads 8080; skipped on a page whose `<body>` has `data-home`) before `</body>` |
+| `AppHandler.prefix`, `with_base`, `AppHandler.redirect`, `AppHandler.client_ip` | Name paths: nginx sends `X-Forwarded-Prefix` (`/mapper/`, validated); `page` puts `<base href="<prefix>">` and `web/route.js` after `<head>`, so relative links resolve under the path and on the port; `redirect` keeps the prefix; `client_ip` takes `X-Real-IP` only from loopback |
+| `web/route.js` | `RcnRoute.app(id, sub)`: another app's address, in the name form on port 80 and the port form otherwise, from `apps.routes()` (`{{routes}}`) |
+| `own_host`, `car_names` | `AppHandler.parse_request` refuses (421) any request whose Host is not the car's own: an IP address, `localhost`, the hostname, `hostname.local`, or `car.yaml` `web_hosts`; a name pointed at the car (DNS rebinding) would otherwise pass the Origin checks |
+| `same_origin`, `sibling_origin`, `AppHandler.refuse_cross_site` | Origin checks for page-only calls and for CORS from the other app ports; every app's `do_POST` refuses another site's page |
 | `scripts/web/` `ui.js`, `api.js`, `tune.js`, `logs.js` | The page side: helpers, POST and `/state` polling, tuning sliders, the Logs section (`docs/dashboards.md`) |
+
+### Name paths
+
+```
+browser ──▶ nginx :80 /<path>/ ──▶ 127.0.0.1:<port>/   (X-Forwarded-Prefix, X-Real-IP, Upgrade)
+                      /jupyter/ ──▶ 127.0.0.1:8888/jupyter/   (prefixed: JupyterLab base_url)
+browser ──▶ <car>:<port>/        (direct; prefix /)
+```
+
+`config/apps.yaml` gives each app a `path` (default: its id) and
+`prefixed` (the app serves under its path itself). `apps.routes()` feeds
+both `apps.py nginx` (the site `scripts/setup_web.sh` installs as
+`/etc/nginx/sites-available/racecar`) and `web/route.js`.
+
+### Connections page
+
+`scripts/connections.html`, served by the 8080 dashboard at `/connections`.
+`scripts/netconfig.py` reads through `nmcli` (devices, saved WiFi profiles,
+the wlan0 scan, the `racecar-neo-ap` profile, `iw` stations) and sends
+secrets over the system D-Bus (`Bus.add_and_activate`, `Bus.set_secret`).
+Changes run one at a time in `Jobs` off the request thread; the page polls
+`/api/connections/job` and grays out while one runs.
+
+```
+connections.html ──GET /api/connections──▶ netconfig.view ──▶ nmcli, iw
+                 ──POST /api/connections─▶ dashboard.connection_job (checks)
+                                            └▶ Jobs: join, forget, order, wifi, ap-password
+                                                 ├▶ nmcli (no secrets)
+                                                 └▶ D-Bus NetworkManager (passwords)
+```
+
+`view` names the device the request arrives on (`via`) from the client
+address, so the page warns before a change to that link.
+
+### Navigation (Nav2)
+
+Localization (`launch/autonomy.launch.py`, `mode:=localization`) also starts
+Nav2's controller, planner, behavior and navigator servers under
+`lifecycle_manager_navigation`, `nav_bridge_node`, and the navigator
+(`nav_server_node`). `nav2_param_file`
+writes one parameter file at launch: `config/nav2.yaml`, the car profile
+override, the footprint from `frames.yaml` and the planner's minimum turning
+radius from the steering table. Without a steering table, Nav2 is left out.
+
+```
+Planner ──/nav/command──▶ nav_server_node ──NavigateToPose──▶ bt_navigator (config/nav2_bt.xml)
+racecar nav ──┘   ◀──/nav/state, /nav/mission, /nav/event──┘
+   ──▶ planner_server (Smac Hybrid-A*, Reeds-Shepp) ──▶ controller_server (Regulated Pure Pursuit)
+   ──/nav/cmd_vel──▶ nav_bridge_node ──/drive──▶ mux_node (autonomy source: RB or override)
+```
+
+`racecar_neo_ros2_driver/nav.py` holds the bridge's math: `SpeedMap` inverts
+the firmware's speed band (0.5 to 1.0 m/s past a 0.01 deadband) and
+throttle_node's caps; `drive_steering` maps the curvature w / v through the
+steering table (reverse table backing up). The bridge publishes only while
+Nav2 commands and the car is localized, then a few zeros, then nothing, so
+it does not fight another `/drive` publisher; the Mapper's Drive panel
+follows the same rule. The mux is unchanged.
+
+`racecar_neo_ros2_driver/drive_lease.py` lets one source at a time publish
+`/drive`: a record in `/run/racecar/drive_lease.json` with the holder and a
+heartbeat, free once the heartbeat is 1 s old. `DriveGate` is the check before
+every publish (Web Teleop, Line Follow, Wall Follow, the Drive panels);
+dynamics calibration and `nav_bridge_node` use `DriveLease`. The first to take
+it holds it; the second is refused with the holder's name. A source refused or
+cut off while moving stays off until its command is zero. Without the folder
+nothing is enforced. 8080 reads the record for `/api/driver` (the header pill
+and `scripts/web/driving.js`, which shows "X is driving." and grays the Drive
+panels on the driving pages), `racecar status` for its `driving` row, and
+`open_app` to refuse a driving app over a holder that is not an app. Its
+sampler also holds the lease for a student program whose library takes none
+(`drive_lease.ProgramWatch`) while its `drive_pub` node publishes `/drive`:
+from `create_racecar()` until the process ends. `mux_node` drops `/drive`
+messages with frame `base_link` (the library's; no driver source uses it)
+while another source holds the lease (`drive_lease.ProgramFilter`, read at most
+every 0.1 s), so a program started second does not drive against the holder.
+
+`nav_server_node` runs the missions of every front end.
+`racecar_neo_ros2_driver/nav_runner.py` holds it without ROS: `Run` steps
+through a mission, and `Commander` takes the commands, refuses a start while a
+mission runs or something else drives, and holds the lease (owner `nav`, under
+the name of the front end) from a mission's start to its end. While the car
+waits for the operator (paused, or localization lost) the record is marked
+`share`, and one Drive panel may drive under it (`drive_panel.json`).
+`nav_bridge_node` drives only under the navigator's lease (`follows`), so a goal
+sent to Nav2 directly does not move the car. A mission that fails or stalls
+pauses when its front end can resume it (the Planner) and ends otherwise.
+`racecar map start`, `load` and `resume` are refused while something drives
+(`map_control.require_parked`; the driving apps are stopped instead). A student
+program holds the lease itself, one owner per program (`program-<pid>`,
+`drive_lease.is_program`). Its goal carries its `pid` and `heartbeat`: the
+navigator drives it under the program's lease (the program marks its record
+`nav`, which `follows` accepts), the program sends `alive` (no answer) every
+0.2 s, and the goal stops 0.5 s after the last one or when the program no
+longer holds the car. The 8080 watch leaves a program that holds the lease
+itself. Front ends use
+`nav_link.NavLink`: a command on `/nav/command` (JSON, with an id), its answer
+in `/nav/state` (5 Hz, latched). Closing the Planner stops a mission started
+from it.
+
+The Planner (`scripts/planner_app.py`, page `scripts/planner.html`, unit
+`racecar-planner.service`, port 8090) builds on the Mapper's server:
+`Navigator` subclasses `mapview.Viewer` under the node name `planner`, and
+its `Handler` subclasses `mapview.Handler`. It adds a `NavLink`, a `/plan`
+subscription (thinned to 400 points), and a `/global_costmap/costmap`
+subscription held only while the page has Costmap on. Map actions are
+limited to load, save, and stop. Every leg is previewed through
+`compute_path_to_pose` before Go: the first from the car, the next from each
+waypoint, and one back to the first when the mission loops.
+
+Missions (`racecar_neo_ros2_driver/missions.py`) are YAML files in
+`<map>/missions/`: loops, and per waypoint x, y, heading or any, radius,
+speed limit and wait. `nav_runner.Run` steps through one: each call returns
+actions (send a waypoint, cancel, set the speed limit) that
+`NavServerNode._apply` carries out. A waypoint is one
+`navigate_to_pose` goal; the next preempts it, so the car does not stop
+between waypoints. `Run.tick` (10 Hz, on `/autonomy/status` and
+`/autonomy/pose` subscriptions held for the whole run) accepts a waypoint
+within its radius and heading tolerance (0.5 rad, Nav2's), counts down a
+wait, and pauses on lost localization: the bridge has already stopped the
+car, the Nav2 goal is canceled (so Nav2's progress check cannot abort it),
+and the waypoint is sent again once localized (`autonomy_node` asks AMCL for
+a no-motion update once a second meanwhile). A goal Nav2 aborts pauses the
+mission (`paused`, reason `failed`), and so does a `/pit/stall` state other
+than normal while a goal runs (reason `stalled`; resume and skip wait for
+normal). `Run.view` gives the page the next waypoint and the ones reached. Nav2 can report a goal reached for the path to the goal it
+preempted (`PipelineSequence` succeeds when FollowPath does, even with the
+planner still running), so `Run.result` counts a success only with the car
+near the waypoint and otherwise sends it again (`RETRY_LIMIT`);
+`config/nav2_bt.xml` plans again as soon as the goal changes
+(`GoalUpdatedController`), which makes this less frequent. With its Record toggle on (`record` in the mission, off by default), a
+mission records through `scripts/mission_recorder.py`, which runs `racecar
+log` as a child and only ever stops its own recording. `Run` keeps events
+only meanwhile, under a key of that recording; `Navigator` gets them on
+`/nav/event` and writes them to `events.jsonl` in the bag folder
+(`mission_data.EventLog`) with the first `/plan` per waypoint, and
+`mission_data.summarize` is the mission part of `racecar log analyze`. The
+unit has `KillMode=mixed`, so stopping the Planner lets it stop its mission
+and finish the bag. Speed limits go on `/speed_limit` (`nav2_msgs/SpeedLimit`,
+m/s; 0 lifts it at the end). `racecar nav mission run` posts to the Planner,
+starting its unit first. Both pages draw with
+`scripts/web/mapview_core.js` (`RcnMapView`: view transform, pan, zoom,
+rotate, car-up, drag tools, layers; `pick` turns a press on a marker into a
+one-drag tool). The page loads `override.js`, so it
+keeps the safety override alive as the 8080 page does, and so does the Mapper's;
+8080 refuses a POST from another site, host or port (`may_post`), except
+that the pages of the driving and Autonomy apps may call `/api/override`
+(`override_origin`). `#override-slot` places the banner outside the map.
+
+Both pages show the color camera in `scripts/web/camera_panel.js`
+(`RcnCamera`): frames from 8080 `/api/camera.jpg` (480 px, about 8 a second),
+asked for only while the panel is open and the page is in front. 8080
+(`overview.py`) holds one gate per camera, so a panel opens `/camera/color`
+alone and any number of pages share that subscription; a frame over
+`STALE_SEC` old is not served, and the panel grays out.
+
+```
+planner.html ──HTTP poll 10 Hz──▶ planner_app.py (Navigator) ──▶ /autonomy/*, /map, /scan, /plan
+     │                                   ├── compute_path_to_pose (preview)
+     │                                   ├── /nav/command ──▶ nav_server_node ──▶ navigate_to_pose, /speed_limit
+     │                                   └── /global_costmap/costmap (Costmap on only)
+     └── override.js ──keepalive 1 Hz──▶ 8080 /api/override
+```
+
+The Planner is an `exclusive` app in the `autonomy` group:
+`apps.driving_apps()` includes it (one driving app at a time), and
+`apps.manual_driving_apps()` leaves it out, so `racecar map load` and the
+8080 Autonomy actions do not close it, and opening it does not stop
+autonomy.
+
+### Browser app
+
+`scripts/browser_app.py` (`racecar-browser.service`, port 8087, tools group),
+pages `scripts/browser.html` and `scripts/browser_login.html`. Login, lockout
+and the access point rule come from `scripts/terminal.py`.
+
+```
+browser.html (noVNC core) ──WebSocket /websockify──▶ browser_app.py (session, Origin)
+   ──▶ websockify 127.0.0.1:6087 ──▶ x11vnc 127.0.0.1:5987 ──▶ Xvfb :87 ◀── Firefox (/usr/lib/firefox)
+```
+
+`Screen` starts Xvfb, Firefox, x11vnc and websockify with the first viewer
+and stops them IDLE_STOP_SEC (10 min) after the last one; Firefox restarts if
+it was closed. Its profile is `~/.cache/racecar-browser/firefox`, with a
+`user.js` that skips the first-run screens. `/novnc/` serves only noVNC's
+`core/` and `vendor/` files.
+
+### Files app
+
+`scripts/files_app.py` (`racecar-files.service`, port 8089, core group),
+page `scripts/files.html`. Read-only. `resolve` refuses `..`; a path
+leaves `~/jupyter_ws` only through a link the workspace holds
+(`racecar-neo/library` into `/opt/racecar-neo`). `/api/pages` lists home and every app with `systemctl is-active`;
+`/api/list` a folder; `/api/view` a file as text, or as HTML for Markdown
+(`handbook.render`, script links dropped) and notebooks (cells escaped,
+PNG outputs only when base64); `/api/raw` the bytes, HTML as text/plain and
+SVG under a `default-src 'none'` CSP.
+
+### Car Profile app
+
+`scripts/profile_app.py` (`racecar-profile.service`, port 8088, core group)
+serves the car's own page. The home page (`scripts/profile.html`) draws the
+car model with three.js, vendored in `scripts/web/vendor/three/` (0.170.0,
+MIT; `VERSION` names the files), and the sidebar (`web/profile_nav.js`)
+leads to the other pages.
+
+```
+<data root>/models/car/*.glb ──▶ /model (ETag) ──▶ GLTFLoader ──▶ part click
+car.yaml, params/, frames ──▶ /api/car, /api/part ◀── PARTS (model node -> part)
+docs/handbook/*.md ──▶ handbook.render ──▶ /api/handbook/<page> ──▶ /handbook/<page>
+Live node: a part's topics subscribed while polled, IdleGate closes 10 s after
+```
+
+`PARTS` maps the model's node names (sim export: three decks, named parts) to
+topics, `racecar calibrate` steps, `frames.yaml` prefixes and car record keys.
+The RealSense rates come from `/diagnostics`, the board's firmware from
+`/pit/firmware`; the rest are counted from arrivals over 2 s. The model is
+not in the driver; a car without it shows the part list only.
 
 A new app is one entry, its unit, and for 8080 start and stop its unit in
 `scripts/polkit/49-racecar-dashboards.rules`; `test/test_apps.py` checks that
@@ -529,7 +754,7 @@ it as dead.
 
 ## Process model
 
-Seven core systemd units, all `User=racecar`:
+Eight core systemd units, all `User=racecar`:
 
 ```
 racecar-data.service        (oneshot at boot, before the others)
@@ -541,6 +766,8 @@ racecar-teleop.service ──── Wants= ───▶ racecar-watchdog.service
 racecar-dashboard.service   (independent, port 8080)
 racecar-jupyter.service     (independent, port 8888)
 racecar-mapview.service     (independent, port 8084)
+racecar-profile.service     (independent, port 8088)
+racecar-files.service       (independent, port 8089)
 racecar-battery-guard.service (independent; Restart=always)
 ```
 
@@ -549,6 +776,11 @@ when teleop stops, so the supervisor never outlives the thing it supervises.
 `racecar-data.service` writes the data root to `/run/racecar/`; teleop,
 dashboard, jupyter, mapview and autonomy order after it and load
 `RACECAR_DATA_DIR` from `/run/racecar/environment` (`EnvironmentFile=`).
+The Python units start through `scripts/ros_exec.sh`, which sources ROS and
+the workspace and keeps the unit's `ROS_AUTOMATIC_DISCOVERY_RANGE`
+(`LOCALHOST` when unset; the ROS hook alone would set `SUBNET`). The setup
+scripts that install units, polkit rules, PAM and sudoers files share
+`scripts/setup_lib.sh` (`install_if_changed`, the target user).
 
 `racecar-autonomy.service` runs SLAM on top of teleop, installed but not
 enabled (mapping at boot would build an unsaved map and take CPU from every
@@ -745,7 +977,10 @@ without stall protection (no `fw.stall_protect=1`) sends zeros. A change is
 latched on `/pit/stall` from the reader thread, seconds left in 0.1 s steps,
 and trips, lockouts and the return to normal are logged. The 8080 Stall chip
 and the `racecar status` `stall protection` row read it through
-`sysinfo.read_stall_status`.
+`sysinfo.read_stall_status`. The dashboard keeps the last `/diagnostics`
+report and serves it as `/api/stall` (`stall_banner`: tripped, cooldown or
+lockout with seconds left, CORS for the app ports); `scripts/web/stall.js`
+draws the banner on every page from it.
 
 `shake` and `poke` run `health_watch.Watch`: four threads (EXT5V as fast as
 vcgencmd answers; a 1 s loop for throttle bits and a data-root write; a
@@ -784,7 +1019,7 @@ apart from teleop, so a teleop restart never stops it. Modules:
 | `scripts/battery_curve.py` | Offline analysis of guard logs: charge, capacity, drop per amp (20 s window fits), curve check, and the `Guard` replayed with the estimate shutdown off, scored at 15 and 5 minutes |
 
 ```
-  /battery/state ─▶ battery_guard ─┬─▶ /battery/estimate ─▶ dashboard ─▶ 8080 pills, banner; /api/battery ─▶ /ui/battery.js
+  /battery/state ─▶ battery_guard ─┬─▶ /battery/estimate ─▶ dashboard ─▶ 8080 pills; /api/battery ─▶ /ui/battery.js banner
        (1 Hz)                      ├─▶ terminals, tmux status bar
                                    ├─▶ /dotmatrix/alert, /led/alert ─▶ pit_node
                                    ├─▶ <data root>/health/battery/<start>_guard.csv
@@ -933,6 +1168,21 @@ and `racecar disk` (status, setup, format, check); privileged steps run
 through sudo. `diagnose.check_data_root` gives the `racecar status` row, and
 `dashboard.data_root_health` the 8080 Data indicator.
 
+## Student library
+
+`config/student_library.yaml` pins the library tag and the labs branch.
+`scripts/student_library.py` (`racecar library install`, run by
+`setup_jupyter.sh` with `--labs-if-missing`) clones the library as root into
+`/opt/racecar-neo/library-<tag>/`, precompiles it, and points the
+`~/jupyter_ws/racecar-neo/library` link at its `library/` folder; the labs
+repo is a bare clone in `~/.cache/racecar-neo/labs.git`, and only its
+`labs/` folder is unpacked into `~/jupyter_ws/racecar-neo/labs`, stamped
+with its version in `.racecar-labs-version`. Folders it
+replaces move to `~/backups/<time>_racecar-neo-<labs|library>-<tag>`.
+Python finds the selected library through `racecar_student.pth` in user
+site-packages (`racecar library --select`); driver code finds the pinned
+one with `paths.student_library()`.
+
 ## Calibration data flow
 
 The committed calibration files hold zero defaults. Each utility subscribes to
@@ -947,10 +1197,11 @@ fails or there is too little data.
   /mag/raw ────────▶ calibrate_mag.py ───────────▶ params/lsm9ds1_mag_cal.yaml ─┴─▶ pit_node
   /imu/realsense ──▶ calibrate_realsense_imu.py ─▶ params/realsense_cal.yaml ─────▶ imu_fusion_node
   /scan ───────────▶ calibrate_lidar.py ─────────▶ params/frames.yaml ────────────▶ frames.launch.py
+  /camera/depth ───▶ calibrate_camera.py ────────▶ params/frames.yaml ────────────▶ frames.launch.py
   /imu/lsm9ds1, ───▶ calibrate_odom.py ──────────▶ params/odom.yaml ──────────────▶ pit_node (odometry)
   /odom/integrated
   /scan, ──────────▶ calibrate_steering.py ──────▶ params/throttle.yaml ──────────▶ throttle_node
-  /odom/integrated
+  /odom/integrated                             └──▶ params/steering_table.yaml ────▶ steering.py
   /scan, ──────────▶ calibrate_dynamics.py ──────▶ params/dynamics.yaml ──────────▶ the simulator
   /odom/integrated
 ```
@@ -1011,6 +1262,9 @@ racecar_neo_ros2_driver/
 ├── resource/                  ament index marker
 ├── docs/                      this file, changelog, troubleshooting,
 │   │                          advanced settings
+│   ├── handbook/              operator handbook (index, installation, health,
+│   │                          calibration, upgrade); rendered by
+│   │                          scripts/handbook.py, built by racecar handbook
 │   ├── img/                   RACECAR Neo logo set
 │   └── specifics/             RealSense topics, Coral M.2 migration
 ├── package.xml, setup.py, setup.cfg

@@ -12,6 +12,8 @@
 #   racecar-dashboard.service web status page (port 8080)
 #   racecar-jupyter.service   JupyterLab (port 8888)
 #   racecar-mapview.service   web map viewer (port 8084)
+#   racecar-profile.service   Car Profile app (port 8088)
+#   racecar-files.service     Files app (port 8089)
 #   racecar-battery-guard.service  low-battery warning and safe shutdown
 # Installed, not enabled (started on demand):
 #   racecar-autonomy.service  SLAM mapping or localization, BindsTo=teleop
@@ -21,6 +23,7 @@
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/setup_lib.sh"
 
 SERVICES=(
     racecar-data.service
@@ -29,6 +32,8 @@ SERVICES=(
     racecar-dashboard.service
     racecar-jupyter.service
     racecar-mapview.service
+    racecar-profile.service
+    racecar-files.service
     racecar-battery-guard.service
 )
 # Mapping at boot would build an unsaved map and take CPU from every lab; the
@@ -36,6 +41,7 @@ SERVICES=(
 INSTALL_ONLY=(
     racecar-autonomy.service
     racecar-terminal.service
+    racecar-planner.service
 )
 
 changed=0
@@ -46,13 +52,8 @@ for svc in "${SERVICES[@]}" "${INSTALL_ONLY[@]}"; do
         echo "Missing $src; skipping" >&2
         continue
     fi
-    if cmp -s "$src" "$dst" 2>/dev/null; then
-        echo "  $svc: already up to date"
-    else
-        sudo install -m 0644 "$src" "$dst"
-        echo "  $svc: installed/updated"
-        changed=1
-    fi
+    install_if_changed "$src" "$dst" 0644
+    if [[ $INSTALLED -eq 1 ]]; then changed=1; fi
 done
 
 if [[ $changed -eq 1 ]]; then
@@ -73,12 +74,7 @@ done
 # RACECAR_DATA_DIR for login shells (SSH) from the path racecar-data.service writes.
 PROFILE_SRC="${SCRIPT_DIR}/profile.d-racecar-data.sh"
 PROFILE_DST="/etc/profile.d/racecar-data.sh"
-if cmp -s "$PROFILE_SRC" "$PROFILE_DST" 2>/dev/null; then
-    echo "  $PROFILE_DST: already up to date"
-else
-    sudo install -m 0644 "$PROFILE_SRC" "$PROFILE_DST"
-    echo "  $PROFILE_DST: installed/updated"
-fi
+install_if_changed "$PROFILE_SRC" "$PROFILE_DST" 0644
 
 echo
 echo "Services installed and enabled. To start now:"

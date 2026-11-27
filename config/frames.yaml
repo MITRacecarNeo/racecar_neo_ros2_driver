@@ -1,6 +1,7 @@
 # Frame offsets for urdf/racecar_neo.urdf.xacro, read by launch/frames.launch.py.
 #
-# Fleet base values. Per-car differences go in frames.local.yaml (gitignored),
+# Fleet base values. Per-car differences go in the car profile's
+# params/frames.yaml (racecar setup car, racecar calibrate),
 # whose keys win; calibrate_lidar.py writes laser_yaw_deg there.
 #
 # Units are in each key name: millimeters and degrees, converted to meters and

@@ -16,21 +16,25 @@ session number on /mux/override several times a second, and the override
 lapses override_timeout_sec after the last one. LB still selects the gamepad;
 any other gamepad button ends the session, which stays ended until a new
 session number arrives. /mux/override_active (latched) reports the state.
+
+A student program's /drive commands are dropped while another source holds
+the drive lease (drive_lease.ProgramFilter), so a program started second does
+not drive against it.
 """
 
 from collections.abc import Sequence
 from enum import auto, Enum
 import time
+from typing import Any
 
 from ackermann_msgs.msg import AckermannDriveStamped
-import rclpy
-from rclpy.executors import ExternalShutdownException
+from racecar_neo_ros2_driver.drive_lease import ProgramFilter
+from racecar_neo_ros2_driver.params import declare_params
+from racecar_neo_ros2_driver.qos import LATCHED, SENSOR_LATEST
+from racecar_neo_ros2_driver.spin import run_node
 from rclpy.node import Node
-from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import Joy
 from std_msgs.msg import Bool, Float32MultiArray, UInt32
-
-from .spin import spin
 
 
 class SafetyOverride:
@@ -232,28 +236,33 @@ def select_command[T](
     return latest[0]
 
 
+# Parameters and their defaults; values come from the launch YAML.
+DEFAULTS: dict[str, Any] = {
+    'gamepad_enable_button': 4,
+    'autonomy_enable_button': 5,
+    'joystick_timeout_sec': 0.5,
+    'command_timeout_sec': 0.5,
+    'publish_rate_hz': 50.0,
+    'startup_grace_sec': 1.0,
+    'arm_axis_threshold': 0.2,
+    'arm_ignore_axes': [2, 5],
+    # FlySky authority; off by default (see module docstring).
+    'rc_authority_enable': False,
+    'rc_mode_channel': 5,  # 0-indexed; FlySky CH6
+    'rc_mode_deadband': 0.35,
+    'rc_timeout_sec': 0.5,
+    'rc_link_hold_sec': 1.0,
+    'rc_link_topic': '/rc/link',
+    'rc_channels_topic': '/rc/channels',
+    'override_timeout_sec': 1.0,
+}
+
+
 class MuxNode(Node):
     def __init__(self) -> None:
         super().__init__('mux_node')
 
-        self.declare_parameter('gamepad_enable_button', 4)
-        self.declare_parameter('autonomy_enable_button', 5)
-        self.declare_parameter('joystick_timeout_sec', 0.5)
-        self.declare_parameter('command_timeout_sec', 0.5)
-        self.declare_parameter('publish_rate_hz', 50.0)
-        self.declare_parameter('startup_grace_sec', 1.0)
-        self.declare_parameter('arm_axis_threshold', 0.2)
-        self.declare_parameter('arm_ignore_axes', [2, 5])
-
-        # FlySky authority; off by default (see module docstring).
-        self.declare_parameter('rc_authority_enable', False)
-        self.declare_parameter('rc_mode_channel', 5)  # 0-indexed; FlySky CH6
-        self.declare_parameter('rc_mode_deadband', 0.35)
-        self.declare_parameter('rc_timeout_sec', 0.5)
-        self.declare_parameter('rc_link_hold_sec', 1.0)
-        self.declare_parameter('rc_link_topic', '/rc/link')
-        self.declare_parameter('rc_channels_topic', '/rc/channels')
-        self.declare_parameter('override_timeout_sec', 1.0)
+        declare_params(self, DEFAULTS)
 
         self._gamepad_btn = self.get_parameter('gamepad_enable_button').value
         self._auto_btn = self.get_parameter('autonomy_enable_button').value
@@ -289,24 +298,16 @@ class MuxNode(Node):
         self._gamepad_stamp = 0.0
 
         self._latest_auto: AckermannDriveStamped | None = None
+        self._programs = ProgramFilter()
         self._auto_stamp = 0.0
 
         self._last_mode = MuxMode.IDLE
         self._armed = False
         self._boot_time = time.monotonic()
 
-        qos = QoSProfile(
-            depth=1,
-            history=QoSHistoryPolicy.KEEP_LAST,
-            reliability=QoSReliabilityPolicy.BEST_EFFORT,
-            durability=QoSDurabilityPolicy.VOLATILE,
-        )
+        qos = SENSOR_LATEST
         self._pub = self.create_publisher(AckermannDriveStamped, '/mux_out', qos)
-        latched = QoSProfile(
-            depth=1,
-            reliability=QoSReliabilityPolicy.RELIABLE,
-            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
-        )
+        latched = LATCHED
         self._override_pub = self.create_publisher(Bool, '/mux/override_active', latched)
         self._override_pub.publish(Bool(data=False))
         self.create_subscription(UInt32, '/mux/override', self._override_cb, 10)
@@ -366,6 +367,8 @@ class MuxNode(Node):
         self._gamepad_stamp = time.monotonic()
 
     def _auto_cb(self, msg: AckermannDriveStamped) -> None:
+        if not self._programs.allows(msg.header.frame_id):
+            return
         self._latest_auto = msg
         self._auto_stamp = time.monotonic()
 
@@ -478,15 +481,7 @@ class MuxNode(Node):
 
 
 def main(args: list[str] | None = None) -> None:
-    rclpy.init(args=args)
-    node = MuxNode()
-    try:
-        spin(node)
-    except (KeyboardInterrupt, ExternalShutdownException):
-        pass
-    finally:
-        node.destroy_node()
-        rclpy.try_shutdown()
+    run_node(MuxNode, args)
 
 
 if __name__ == '__main__':

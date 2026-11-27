@@ -126,8 +126,8 @@ registry; a hard-coded port or unit list is a bug.
 5. A lab dashboard: `labkit.Tuning` and `labkit.RunLog` with the app's lock,
    `labkit.drive_msg` for every `/drive` message.
 6. Page: link `rcn.css`, `ui.js`, `api.js` and what it uses of `charts.js`,
-   `tune.js`, `logs.js`, `lidar.js`, `lost.js`, `battery.js` and
-   `override.js` (a driving app) as `/ui/<file>?v={{asset}}`; set
+   `tune.js`, `logs.js`, `lidar.js`, `lost.js`, `battery.js`, `stall.js`
+   and `override.js` (a driving app) as `/ui/<file>?v={{asset}}`; set
    `data-app` on `<html>`; lay out with `rcn-main` and `rcn-section`; poll
    with `RcnApi.poll`; draw canvas colors from `RcnUi.token`. Keep in the
    page only its grid and what only it draws.
@@ -137,7 +137,8 @@ registry; a hard-coded port or unit list is a bug.
 
 ## webteleop
 
-Drive from buttons or the keyboard, with every sensor in view: color and
+Drive from buttons, the keyboard, or a joystick (phones and tablets, or
+Joystick mode on a laptop), with every sensor in view: color and
 depth previews with the object detector's boxes, the lidar, encoder, IMU,
 battery, and compass, plus dot matrix and LED strip editors. The cards match
 the simulator's sensor dashboard, read from ROS topics instead of

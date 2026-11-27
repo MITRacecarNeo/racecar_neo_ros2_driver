@@ -37,7 +37,7 @@
     function load() {
       const name = $(id('sel')).value;
       if (!name) return;
-      fetch('/logs/' + encodeURIComponent(name)).then((r) => r.text()).then((text) => {
+      fetch('logs/' + encodeURIComponent(name)).then((r) => r.text()).then((text) => {
         const { rows, marks } = parse(text);
         const out = render(rows, marks, name);
         $(id('info')).textContent = out.info;
@@ -49,7 +49,7 @@
     }
 
     function refresh(loadLatest) {
-      fetch('/logs').then((r) => r.json()).then((names) => {
+      fetch('logs').then((r) => r.json()).then((names) => {
         const sel = $(id('sel'));
         sel.replaceChildren(...names.map((n) => new Option(n, n)));
         sel.selectedIndex = names.length - 1;
@@ -57,7 +57,7 @@
       });
     }
 
-    $(id('save')).onclick = () => RcnApi.post('/logs/save').then(() => { refresh(true); RcnUi.toast('Log saved.'); });
+    $(id('save')).onclick = () => RcnApi.post('logs/save').then(() => refresh(true));
     $(id('load')).onclick = load;
     refresh(false);
     return { load, refresh };

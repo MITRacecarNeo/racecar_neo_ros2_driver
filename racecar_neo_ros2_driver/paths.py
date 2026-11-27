@@ -18,3 +18,18 @@ def config_dir() -> Path:
     if share is not None and share.is_dir():
         return share
     return Path(__file__).resolve().parent.parent / 'config'
+
+
+STUDENT_LIBRARY_ROOT = Path('/opt/racecar-neo')
+
+
+def student_library(root: Path = STUDENT_LIBRARY_ROOT) -> Path | None:
+    """Return the pinned student library's library/ folder, or None when not installed."""
+    import yaml
+
+    try:
+        pin = yaml.safe_load((config_dir() / 'student_library.yaml').read_text())
+        folder = root / f'library-{pin["library"]["tag"]}' / 'library'
+    except (OSError, KeyError, TypeError, yaml.YAMLError):
+        return None
+    return folder if (folder / 'racecar_core.py').is_file() else None

@@ -18,9 +18,10 @@ import time
 from types import FrameType
 from typing import Any, IO
 
+from racecar_neo_ros2_driver.qos import SENSOR_LATEST
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
-from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -229,12 +230,7 @@ class _FreshnessMonitor:
     and re-attached every poll so a topic that comes up after a restart wires in.
     """
 
-    _QOS = QoSProfile(
-        depth=1,
-        history=QoSHistoryPolicy.KEEP_LAST,
-        reliability=QoSReliabilityPolicy.BEST_EFFORT,
-        durability=QoSDurabilityPolicy.VOLATILE,
-    )
+    _QOS = SENSOR_LATEST
 
     def __init__(self, node: Node, topics: Iterable[str]) -> None:
         self._node = node
@@ -637,7 +633,8 @@ def main() -> None:
     def _spin() -> None:
         try:
             rclpy.spin(intro_node)
-        except (KeyboardInterrupt, SystemExit):
+        except (KeyboardInterrupt, SystemExit, ExternalShutdownException):
+            # A stop signal shuts rclpy down; that ends the spin normally.
             pass
         except Exception:  # noqa: BLE001
             log.exception('rclpy.spin terminated')

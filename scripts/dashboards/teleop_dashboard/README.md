@@ -35,7 +35,7 @@ Saved tuning goes to `dashboards/teleop.yaml` in the car profile
 The browser keeps a set of what is held: each pad button under a pointer or finger, each of the eight keys that is down. That set collapses to two axes, forward/back and left/right, each -1, 0, or +1, and the pair is posted to the service as one command on every change and every 100 ms while anything is held. Forward and left pressed together are therefore one command, applied at the same instant; forward and back together cancel to 0.
 
 ```
-buttons / keys --> held set --> {fwd, turn} --> POST /cmd (on change, 10 Hz while held)
+buttons / keys / joystick --> {fwd, turn} --> POST /cmd (on change, 10 Hz while held)
                                                         |
         throttle = fwd  * speed                         v
         steering = turn * angle          /drive at 15 Hz from a timer
@@ -46,6 +46,8 @@ buttons / keys --> held set --> {fwd, turn} --> POST /cmd (on change, 10 Hz whil
 `/drive` comes from a timer, not from the browser's posts, so the mux never sees a gap. A command older than `cmd_timeout` counts as released: a closed tab, a dropped link, or a page that lost focus with a key down all coast to zero instead of driving the last command forever. The browser also releases everything on its own when the window loses focus or the tab is hidden, so the timeout is the backstop rather than the first line.
 
 Keys: W, A, S, D or the arrow keys. Key auto-repeat is ignored; a key drives from its keydown to its keyup. Keys are read anywhere on the page except inside a slider or the log picker.
+
+Joystick (`scripts/web/joystick.js`): on a phone or tablet the Drive card shows a joystick instead of the pad; on a laptop, Joystick mode in the card's header swaps them, and the browser remembers the choice. Up and down set the throttle, left and right the steering, both in proportion to the push and both linear, after a dead zone of 10% of the reach. `fwd` and `turn` then carry any value from -1 to 1, still scaled by the speed and angle sliders. Releasing the knob, a cancelled touch, a hidden page or a lost focus centers it and stops the car. The keys drive in both modes.
 
 ## Dashboard
 

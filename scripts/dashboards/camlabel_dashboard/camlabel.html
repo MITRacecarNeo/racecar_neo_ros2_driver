@@ -1,15 +1,16 @@
 <!DOCTYPE html>
-<html lang="en" data-app="Camera label">
+<html lang="en" data-app="Camera Label">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Camera label - RACECAR Neo</title>
-<link rel="stylesheet" href="/ui/rcn.css?v={{asset}}">
-<script src="/ui/battery.js?v={{asset}}" defer></script>
-<link rel="icon" href="/ui/brand/app-icon-32.png">
-<script src="/ui/lost.js?v={{asset}}" defer></script>
-<script src="/ui/ui.js?v={{asset}}"></script>
-<script src="/ui/api.js?v={{asset}}"></script>
+<title>Camera Label - RACECAR Neo</title>
+<link rel="stylesheet" href="ui/rcn.css?v={{asset}}">
+<script src="ui/battery.js?v={{asset}}" defer></script>
+<script src="ui/stall.js?v={{asset}}" defer></script>
+<link rel="icon" href="ui/brand/app-icon-32.png">
+<script src="ui/lost.js?v={{asset}}" defer></script>
+<script src="ui/ui.js?v={{asset}}"></script>
+<script src="ui/api.js?v={{asset}}"></script>
 <style>
   .rcn-header .rcn-meta abbr { text-decoration: underline dotted; cursor: help; }
   .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--rcn-space-4); }
@@ -32,12 +33,12 @@
 </head>
 <body>
 <header class="rcn-header">
-  <img class="rcn-mark" src="/ui/brand/mark.png" alt="RACECAR Neo">
+  <img class="rcn-mark" src="ui/brand/mark.png" alt="RACECAR Neo">
   <div class="rcn-heading">
-    <span class="rcn-title">Camera label</span>
+    <span class="rcn-title">Camera Label</span>
     <span class="rcn-meta">unlabeled <b id="ucount">0</b> &middot; labeled <b id="lcount">0</b> &middot;
-      <abbr title="Snaps save at this resolution.">camera</abbr> <b id="res">-</b> &middot;
-      <abbr title="Live preview only.">preview</abbr> <b id="pres">-</b></span>
+      <abbr title="Snaps save at this resolution">camera</abbr> <b id="res">-</b> &middot;
+      <abbr title="Live preview only">preview</abbr> <b id="pres">-</b></span>
   </div>
 </header>
 
@@ -45,36 +46,36 @@
 <div class="grid">
   <div class="rcn-section">
     <h2 class="stepped"><span class="step">1</span>Collect</h2>
-    <div class="note">Point the car at what you want to label, then press Snap.</div>
+    <div class="note">Point the car at the object. Press Snap.</div>
     <canvas id="cam" width="640" height="480"></canvas>
-    <div class="rcn-tools"><button class="rcn-btn primary small" onclick="snap()">Snap</button></div>
-    <div class="readout" id="snapinfo">Spacebar also snaps.</div>
+    <div class="rcn-tools"><button class="rcn-btn primary small" onclick="snap()" title="Snap (Space)">Snap</button></div>
+    <div class="readout" id="snapinfo"></div>
   </div>
   <div class="rcn-section">
     <h2 class="stepped"><span class="step">2</span>Label</h2>
-    <div class="note">Type the class name first. Then click one corner, move, and click again to place the box.</div>
+    <div class="note">Type the class name. Click one corner of the box. Click the opposite corner.</div>
     <canvas id="lab" width="640" height="480"></canvas>
     <label class="field" for="cls">Class name for new boxes
       <input id="cls" class="rcn-input" type="text" placeholder="cone" value=""></label>
     <div class="rcn-tools">
-      <button class="rcn-btn quiet small" onclick="nav(-1)">Prev</button>
-      <button class="rcn-btn quiet small" onclick="nav(1)">Next</button>
-      <button class="rcn-btn primary small" onclick="saveLabels()">Save labels</button>
+      <button class="rcn-btn quiet small" onclick="nav(-1)" title="Previous (Left arrow)">Previous</button>
+      <button class="rcn-btn quiet small" onclick="nav(1)" title="Next (Right arrow)">Next</button>
+      <button class="rcn-btn primary small" onclick="saveLabels()" title="Save labels (Enter)">Save labels</button>
       <button class="rcn-btn quiet small" onclick="undo()">Undo box</button>
       <button class="rcn-btn danger small" onclick="delImg()">Delete image</button>
     </div>
-    <div class="readout" id="boxlist">Pick an unlabeled image below. Arrow keys move between images. Enter saves.</div>
+    <div class="readout" id="boxlist"></div>
   </div>
 </div>
 
 <div class="rcn-section">
   <h2>Unlabeled images (<span id="ucount2">0</span>)</h2>
-  <div class="thumbs" id="uthumbs">None yet. Snap some frames above.</div>
+  <div class="thumbs" id="uthumbs"></div>
 </div>
 
 <div class="rcn-section">
   <h2>Labeled images (<span id="lcount2">0</span>)</h2>
-  <div class="thumbs" id="lthumbs">None yet.</div>
+  <div class="thumbs" id="lthumbs"></div>
   <canvas id="revcam" width="640" height="480" style="display: none"></canvas>
   <div class="readout" id="revinfo"></div>
   <div class="rcn-tools"><button class="rcn-btn danger small" id="delbtn" style="display: none" onclick="delLabeled()">Delete image</button></div>
@@ -88,19 +89,19 @@ const { token, font } = RcnUi;
 const cam = document.getElementById('cam'), camx = cam.getContext('2d');
 const limg = new Image();
 limg.onload = () => camx.drawImage(limg, 0, 0, cam.width, cam.height);
-RcnUi.frames(limg, '/frame', 160);
+RcnUi.frames(limg, 'frame', 160);
 
 function snap() {
-  post('/snap').then(r => {
+  post('snap').then(r => {
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.json();
   }).then(d => {
-    document.getElementById('snapinfo').textContent = `Saved u${d.n}.jpg`;
+    document.getElementById('snapinfo').textContent = '';
     refresh();
   }).catch(err => {
     document.getElementById('snapinfo').textContent = err.message === 'HTTP 503'
-      ? 'Snap failed. No camera frame yet.'
-      : err.message === 'HTTP 404' ? 'Snap failed. Restart Camera label.' : 'Snap failed.';
+      ? 'Could not snap. No camera frame.'
+      : err.message === 'HTTP 404' ? 'Could not snap. Restart Camera Label.' : 'Could not snap.';
   });
 }
 
@@ -138,7 +139,7 @@ function drawLab() {
 
 function pick(n) {
   current = n; boxes = []; drag = null;
-  uimg.src = `/uimg?n=${n}&v=${uv[n]}`;
+  uimg.src = `uimg?n=${n}&v=${uv[n]}`;
   list();
   for (const el of document.querySelectorAll('#uthumbs img')) {
     el.classList.toggle('sel', el.dataset.n == n);
@@ -214,10 +215,10 @@ document.addEventListener('keydown', e => {
 
 function list() {
   document.getElementById('boxlist').textContent = current === null
-    ? 'Pick an unlabeled image below. Enter saves.'
+    ? ''
     : boxes.length
       ? `u${current}: ` + boxes.map(b => b.cls).join(', ')
-      : `u${current}: click a corner, move, and click again. Save with no boxes for a negative.`;
+      : `u${current}: no boxes. Save with no boxes for a negative.`;
 }
 
 function nav(d) {
@@ -239,14 +240,14 @@ function saveLabels() {
   const out = boxes.map(b => ({ cls: b.cls,
     cx: (b.x + b.w / 2) / lab.width, cy: (b.y + b.h / 2) / lab.height,
     w: b.w / lab.width, h: b.h / lab.height }));
-  post('/label', { n: current, boxes: out })
+  post('label', { n: current, boxes: out })
     .then(() => refresh().then(advance))
     .catch(() => refresh().then(advance));
 }
 
 function delImg() {
   if (current === null) return;
-  post('/delu', { n: current })
+  post('delu', { n: current })
     .then(() => refresh().then(advance));
 }
 
@@ -264,21 +265,21 @@ document.addEventListener('keydown', e => {
 let unlabeled = [], labeled = [], uv = {}, lv = {};
 
 function refresh() {
-  return fetch('/info').then(r => r.json()).then(d => {
+  return fetch('info').then(r => r.json()).then(d => {
     uv = {}; lv = {};
     unlabeled = d.unlabeled.map(([n, v]) => (uv[n] = v, n));
     labeled = d.labeled.map(([n, v]) => (lv[n] = v, n));
     for (const id of ['ucount', 'ucount2']) document.getElementById(id).textContent = unlabeled.length;
     for (const id of ['lcount', 'lcount2']) document.getElementById(id).textContent = labeled.length;
-    document.getElementById('res').textContent = d.cam[0] ? `${d.cam[0]}x${d.cam[1]}` : '?';
+    document.getElementById('res').textContent = d.cam[0] ? `${d.cam[0]}x${d.cam[1]}` : '-';
     document.getElementById('pres').textContent =
       d.cam[0] ? `${d.preview_width}x${Math.round(d.preview_width * d.cam[1] / d.cam[0])}` : `${d.preview_width}px`;
     document.getElementById('uthumbs').innerHTML = unlabeled.length
-      ? unlabeled.map(n => `<img src="/thumb?src=u&n=${n}&v=${uv[n]}" data-n="${n}" onclick="pick(${n})" title="u${n}.jpg">`).join('')
-      : 'None yet. Snap some frames above.';
+      ? unlabeled.map(n => `<img src="thumb?src=u&n=${n}&v=${uv[n]}" data-n="${n}" onclick="pick(${n})" title="u${n}.jpg">`).join('')
+      : '';
     document.getElementById('lthumbs').innerHTML = labeled.length
-      ? labeled.map(n => `<img src="/thumb?src=l&n=${n}&v=${lv[n]}" onclick="showLabeled(${n})" title="img${n}.jpg">`).join('')
-      : 'None yet.';
+      ? labeled.map(n => `<img src="thumb?src=l&n=${n}&v=${lv[n]}" onclick="showLabeled(${n})" title="img${n}.jpg">`).join('')
+      : '';
     for (const el of document.querySelectorAll('#uthumbs img')) {
       el.classList.toggle('sel', el.dataset.n == current);
     }
@@ -311,20 +312,20 @@ rimg.onload = () => {
 function showLabeled(n) {
   currentLabeled = n;
   document.getElementById('delbtn').style.display = '';
-  fetch('/label?n=' + n).then(r => r.json()).then(d => {
+  fetch('label?n=' + n).then(r => r.json()).then(d => {
     revBoxes = d.boxes.map(b => ({ x: (b.cx - b.w / 2) * rc.width, y: (b.cy - b.h / 2) * rc.height,
                                    w: b.w * rc.width, h: b.h * rc.height, cls: b.cls }));
     rc.style.display = 'block';
     const names = revBoxes.map(b => b.cls).join(', ');
     document.getElementById('revinfo').textContent = `img${n}${names ? ': ' + names : ': no boxes'}`;
-    rimg.src = `/img?n=${n}&v=${lv[n]}`;
+    rimg.src = `img?n=${n}&v=${lv[n]}`;
   });
 }
 
 function delLabeled() {
   if (currentLabeled === null) return;
   if (!confirm(`Delete img${currentLabeled} and its labels?`)) return;
-  post('/dell', { n: currentLabeled }).then(() => {
+  post('dell', { n: currentLabeled }).then(() => {
     currentLabeled = null;
     rc.style.display = 'none';
     document.getElementById('delbtn').style.display = 'none';

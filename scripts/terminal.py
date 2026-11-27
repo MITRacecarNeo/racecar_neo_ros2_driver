@@ -60,6 +60,7 @@ LOCK_FAILURES = 5
 LOCK_SEC = 60.0
 # NetworkManager's shared (access point) subnet on the car.
 AP_NETWORK = ipaddress.ip_network('10.42.0.0/24')
+AP_DEVICE = 'wlan1'
 PANE_BASE = '/pane'
 TTYD_RESTART_SEC = 2.0
 IDLE_CHECK_SEC = 5.0
@@ -151,7 +152,18 @@ def client_allowed(ip: str, allow_lan: bool) -> bool:
         addr = ipaddress.ip_address(ip)
     except ValueError:
         return False
-    return addr.is_loopback or addr in AP_NETWORK
+    if addr.is_loopback or addr in AP_NETWORK:
+        return True
+    # A phone on the access point may reach the web server over IPv6 link-local:
+    # the neighbor table names the interface it came in on.
+    return addr.version == 6 and addr.is_link_local and via_interface(str(addr)) == AP_DEVICE
+
+
+def via_interface(ip: str) -> str:
+    """Return the interface the neighbor table holds `ip` on, or ''."""
+    import netconfig
+
+    return netconfig.via_device(ip, {})
 
 
 def pane_target(path: str) -> tuple[str, str] | None:
@@ -553,10 +565,10 @@ def make_handler(ctx: Context) -> type[BaseHTTPRequestHandler]:
             return None
 
         def _allowed(self) -> bool:
-            return client_allowed(self.client_address[0], ctx.allow_lan())
+            return client_allowed(self.client_ip(), ctx.allow_lan())
 
         def _redirect(self, where: str, headers: dict[str, str] | None = None) -> None:
-            self.send(303, b'', 'text/plain', headers={'Location': where, **(headers or {})})
+            self.redirect(where, 303, headers)
 
         def do_GET(self) -> None:  # noqa: N802
             if self.serve_asset():
@@ -595,7 +607,7 @@ def make_handler(ctx: Context) -> type[BaseHTTPRequestHandler]:
             try:
                 body = self.read_json()
             except ValueError:
-                self.send_json({'message': 'Bad request.'}, 400)
+                self.send_json({'message': 'Reload the page.'}, 400)
                 return
             if path == '/api/layout':
                 try:
@@ -603,7 +615,7 @@ def make_handler(ctx: Context) -> type[BaseHTTPRequestHandler]:
                         int(body.get('version', -1)), body.get('layout')
                     )
                 except (ValueError, TypeError):
-                    self.send_json({'message': 'Bad layout.'}, 400)
+                    self.send_json({'message': 'Reload the page.'}, 400)
                     return
                 self.send_json(state, 200 if saved else 409)
                 return
@@ -642,9 +654,9 @@ def make_handler(ctx: Context) -> type[BaseHTTPRequestHandler]:
                     ok = ctx.presets.delete(str(body.get('name', '')))
                     self.send_json(ctx.presets.listing(), 200 if ok else 404)
                 else:
-                    self.send_json({'message': 'Not found.'}, 404)
+                    self.send_json({'message': 'Reload the page.'}, 404)
             except (ValueError, TypeError):
-                self.send_json({'message': 'Bad preset.'}, 400)
+                self.send_json({'message': 'Reload the page.'}, 400)
 
         def _scrollback(self, body: dict[str, Any]) -> None:
             """Return a terminal's scrollback for download and keep a copy on the car."""
@@ -683,11 +695,11 @@ def make_handler(ctx: Context) -> type[BaseHTTPRequestHandler]:
             ok = bool(password) and ctx.authenticate(ctx.user, password)
             ctx.guard.record(ok, now)
             if not ok:
-                log.warning('Failed terminal login from %s', self.client_address[0])
+                log.warning('Failed terminal login from %s', self.client_ip())
                 self._redirect('/?e=locked' if ctx.guard.locked(now) else '/?e=password')
                 return
             token = ctx.sessions.create(now)
-            log.info('Terminal login from %s', self.client_address[0])
+            log.info('Terminal login from %s', self.client_ip())
             cookie = f'{COOKIE}={token}; HttpOnly; SameSite=Strict; Path=/'
             self._redirect('/', {'Set-Cookie': cookie})
 
@@ -714,7 +726,7 @@ def make_handler(ctx: Context) -> type[BaseHTTPRequestHandler]:
                 upstream = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 upstream.connect(str(ctx.sock))
             except OSError:
-                self.send(503, b'The terminal is starting. Reload in a moment.', 'text/plain')
+                self.send(503, b'Reload in a moment.', 'text/plain')
                 return
             upstream.sendall(request)
             self.close_connection = True

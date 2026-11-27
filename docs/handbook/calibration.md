@@ -1,18 +1,20 @@
 # Calibration
 
 Every car in the fleet uses the same ESC program settings and the same ESC
-throttle calibration. The Teensy firmware's speed control is tuned for them.
+throttle calibration.
 
 ## Contents
 
 - [ESC program settings](#esc-program-settings)
 - [ESC throttle calibration](#esc-throttle-calibration)
+- [Sensor calibration](#sensor-calibration)
 - [Dynamics after an ESC calibration](#dynamics-after-an-esc-calibration)
 - [Per-car speed constants](#per-car-speed-constants)
 - [Car record](#car-record)
 
 Set up the ESC on a new car, after replacing the ESC, and after an ESC
-factory reset. Do the three ESC steps in order.
+factory reset. Do these in order: the program settings, the throttle
+calibration, then the dynamics.
 
 ## ESC program settings
 
@@ -69,16 +71,14 @@ for example, goes back to 25%.
 ## ESC throttle calibration
 
 The ESC learns three throttle positions: neutral at 1500 us, full forward at
-2000 us, and full reverse at 1000 us. The Teensy holds each position while
-you press SET on the ESC. A special calibration firmware does this. The car
-does not drive while it is on the Teensy.
+2000 us, and full reverse at 1000 us. The car cannot drive while the
+calibration firmware is on the Teensy.
 
 Setup:
 
 1. Put the car on a stand so all four wheels are off the ground.
 2. Plug the Teensy USB cable into the Pi.
-3. Stop any lab app (web teleop, line follow, wall follow) from the 8080
-   page.
+3. Press Clear apps on the 8080 home page.
 4. Open a terminal on the car in the `racecar-pit-firmware` folder.
 
 Steps:
@@ -103,8 +103,7 @@ Steps:
 6. Check out the firmware release tag: `git checkout v0.9.2`.
 7. Flash the normal firmware: `pio run -e teensy41 -t upload`.
 
-At idle on the normal firmware the ESC LED is solid red, because boost
-timing is set. It flashes green while the car drives in reverse.
+At idle on the normal firmware the ESC LED is solid red. It flashes green while the car drives in reverse.
 
 Check: run `racecar status`. The `teensy firmware` row shows the firmware
 version, with no warning for a test build.
@@ -112,10 +111,77 @@ version, with no warning for a test build.
 If the script prints "No reply", the calibration firmware is not on the
 Teensy. Flash it again (step 1).
 
+## Sensor calibration {#sensor-calibration}
+
+Each car needs its own sensor calibration. Teleop must be running.
+
+```sh
+racecar calibrate status      # what is calibrated, and when
+racecar calibrate             # every step but dynamics, in order
+racecar calibrate imu lidar   # chosen steps only
+racecar calibrate check       # each calibration against the live sensors
+```
+
+The Calibration page of the Car Profile app runs one step at a time from a
+browser. Press Calibrate on a step's tile. Follow the panel at the top of
+the page. A tile turns green when its calibration is done and its check
+passed. A result that fails its check is not saved, and the panel turns red.
+
+Each step asks: "Press Enter to run, s to skip, b to go back a step, and q
+to stop". Each step prints its own instructions. At the end, accept the
+teleop restart. Then run
+`racecar calibrate check`.
+
+| Step | Car position | Space |
+| ---- | ------------ | ----- |
+| `imu` | In your hands, turned through six positions (each side up) | none |
+| `mag` | Flat on the floor, turned one full turn, away from large metal | room to turn the car |
+| `realsense` | In your hands, turned through six positions | none |
+| `lidar` | On the floor. It drives itself forward and back while you hold RB. | 3 m straight |
+| `camera` | On its wheels on a flat floor, camera on | 2 m clear ahead |
+| `odom` | On the floor. You drive circles, then straight toward a wall. | 3 by 3 m, a wall 3 to 5 m away |
+| `steering` | On the floor. It drives itself forward and back on arcs while you hold RB. | 3 by 3 m |
+
+Drive with the gamepad. Hold RB while a step drives the car. Releasing RB
+stops the car.
+
+### Calibration check {#calibration-check}
+
+`racecar calibrate check` compares each stored calibration with the live
+sensors. It ends with a table of every value, its limit, and PASS, WARN or
+FAIL. Each WARN and FAIL row says what to do.
+
+| Check | Passes when |
+| ----- | ----------- |
+| `imu` | Gravity within 1% of 9.807 m/s^2, and gyro under 0.01 rad/s with the car still |
+| `mag` | The field traces a round circle centered on the turn |
+| `realsense` | Gravity within 1%, and gyro under 0.01 rad/s with the car still |
+| `lidar` | Lidar yaw within 0.5 deg of the stored value |
+| `odom` | Heading within 1% and distance within 2% of the lidar's |
+| `camera` | Pitch and roll within 0.5 deg, and height within 5 mm |
+| `steering` | Drift at steering 0 under 1 deg/m, and steering 0.5 within 10% of the stored table |
+
+### Expected spread {#expected-spread}
+
+Repeated calibrations of one car differ by about these amounts. A new value
+inside this spread of the old one needs no recalibration.
+
+| Value | Spread between runs |
+| ----- | ------------------- |
+| Camera pitch and roll | 0.2 deg |
+| Camera height | 1.6 mm |
+| Steering curvature from 0.25 outward | 3.5% |
+| Steering drift at 0 | 4 to 5 deg/m |
+| Steering trim | 0.02 |
+| Lidar yaw | 0.15 deg |
+
+A steering drift up to 5 deg/m is a WARN. Recalibrate steering only when the
+warning stays over several checks. Beyond 5 deg/m, check the servo horn and
+the steering linkage.
+
 ## Dynamics after an ESC calibration
 
-Run `racecar calibrate dynamics` after every ESC throttle calibration. The
-car's speeds change with the calibration.
+Run `racecar calibrate dynamics` after every ESC throttle calibration.
 
 Setup:
 
@@ -125,7 +191,6 @@ Setup:
 3. Connect the controller.
 
 Hold RB while the car drives each run. The car stops when you release RB.
-The results go to the car profile.
 
 ## Per-car speed constants
 
@@ -148,27 +213,23 @@ ros2 topic echo --once --full-length /pit/firmware
 A car that matches the fleet in `racecar calibrate dynamics` keeps the fleet
 values.
 
-### Refitting a car
-
-TODO: the measurement runs that decide new constants for a car that does
-not match the fleet. Until then, ask the firmware maintainer.
+### Car refit
 
 The firmware's `scripts/car_constants.py` changes and stores the
-constants over the Teensy's USB port. The car must be parked; changes are
-refused while it moves.
+constants over the Teensy's USB port. Park the car first. The tool refuses
+changes while the car moves.
 
 | Command | Action |
 | ------- | ------ |
 | `python3 scripts/car_constants.py get` | Print the values in use and where they came from |
-| `python3 scripts/car_constants.py set pid.ff_rev_us=110` | Change values now; lost at power-off |
+| `python3 scripts/car_constants.py set pid.ff_rev_us=110` | Change values until power-off |
 | `python3 scripts/car_constants.py save` | Store the values in use, dated today |
 | `python3 scripts/car_constants.py revert` | Go back to the stored values |
-| `python3 scripts/car_constants.py erase` | Remove the stored values; the fleet values load at power-on |
+| `python3 scripts/car_constants.py erase` | Remove the stored values. The fleet values load at power-on. |
 
 ## Car record
 
-Record these for each car. They show how the car was set up, so a car that
-drives differently from the fleet can be compared item by item.
+Record these for each car.
 
 | Field | Where to read it | Reference car |
 | ----- | ---------------- | ------------- |

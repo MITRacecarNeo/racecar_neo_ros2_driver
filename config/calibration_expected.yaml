@@ -1,0 +1,41 @@
+# Expected range of each calibration value (scripts/calibration/expected.py).
+#
+# A value outside `fail` is refused: the tool writes nothing. Outside `warn`
+# it is written and shown as a warning. A list value is checked per element.
+# `spread` is how much repeated calibrations of one car differ, shown beside
+# the value. Ranges come from the reference car's calibrations and the
+# physical limits of each sensor.
+
+# LSM9DS1 (calibrate_imu.py). Gravity is 9.807 m/s^2; a scale outside 0.95 to
+# 1.05 means a pose was held wrong.
+accelerometer.bias: {fail: [-0.6, 0.6], warn: [-0.4, 0.4]}
+accelerometer.scale: {fail: [0.95, 1.05], warn: [0.98, 1.02]}
+gyroscope.bias: {fail: [-0.15, 0.15], warn: [-0.10, 0.10]}
+
+# LSM9DS1 magnetometer (calibrate_mag.py), tesla. The earth's field is about
+# 5e-5 T.
+magnetometer.hard_iron_bias: {fail: [-2.0e-4, 2.0e-4], warn: [-1.0e-4, 1.0e-4]}
+
+# RealSense IMU (calibrate_realsense_imu.py).
+realsense_accel_bias: {fail: [-1.0, 1.0], warn: [-0.7, 0.7]}
+realsense_accel_scale: {fail: [0.95, 1.05], warn: [0.98, 1.03]}
+realsense_gyro_bias: {fail: [-0.02, 0.02], warn: [-0.01, 0.01]}
+
+# Lidar yaw (calibrate_lidar.py): mounted backward, 180 deg.
+laser_yaw_deg: {fail: [177.0, 183.0], warn: [178.5, 181.5], spread: 0.15}
+
+# Camera mount (calibrate_camera.py).
+camera_pitch_deg: {fail: [-2.0, 6.0], warn: [0.0, 4.0], spread: 0.2}
+camera_roll_deg: {fail: [-3.0, 3.0], warn: [-2.0, 2.0], spread: 0.2}
+camera_bottom_z_mm: {fail: [85.0, 115.0], warn: [90.0, 110.0], spread: 1.6}
+
+# Odometry (calibrate_odom.py).
+odometry.speed_scale: {fail: [0.85, 1.15], warn: [0.88, 1.10]}
+odometry.yaw_rate_scale: {fail: [0.90, 1.10], warn: [0.95, 1.05]}
+
+# Steering trim (calibrate_steering.py); the tool itself refuses beyond 0.2.
+steering_trim: {fail: [-0.2, 0.2], warn: [-0.1, 0.1], spread: 0.02}
+
+# Dynamics (calibrate_dynamics.py), m/s at full throttle command.
+steady_speed_mps_10: {fail: [0.7, 1.5], warn: [0.85, 1.3]}
+steady_speed_mps_025: {fail: [0.3, 1.0], warn: [0.45, 0.85]}

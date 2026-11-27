@@ -11,8 +11,14 @@
 #   name, icon, desc
 #               tile label, icon in scripts/web/icons.svg, hover tip
 #   port        where the app serves its page
-#   group       core (started at boot, except Terminal) or utilities (started
-#               when opened, stopped by Clear apps)
+#   path        its name on the car's web server: http://<car>/<path>/ (port 80
+#               forwards to the port; setup_web.sh writes the nginx site)
+#   prefixed    the app itself serves under /<path>/ on its port too
+#               (JupyterLab's base_url); the others serve at / on their port
+#   group       the 8080 row: core, tools, or autonomy. Core apps run at boot
+#               and stay open while setup is unfinished; Tools and Autonomy
+#               wait for setup. Clear apps stops every app whose unit is not
+#               started at boot (units.CORE).
 #   unit        systemd unit without .service; leave it out for a tile that
 #               opens nothing
 #   exclusive   publishes /drive: one runs at a time, and mapping or
@@ -24,44 +30,72 @@
 
 home:
   port: 8080
+  path: home
   unit: racecar-dashboard
 
 apps:
-  - id: terminal
-    name: Terminal
-    icon: terminal
-    port: 8086
+  - id: profile
+    name: Car Profile
+    icon: car
+    port: 8088
+    path: profile
     group: core
-    unit: racecar-terminal
+    unit: racecar-profile
     exclusive: false
-    startable: true
-    desc: Open a terminal
+    startable: false
+    desc: View details about the car
 
   - id: jupyter
     name: JupyterLab
     icon: notebook
     port: 8888
+    path: jupyter
+    prefixed: true
     group: core
     unit: racecar-jupyter
     exclusive: false
     startable: false
     desc: Notebooks and code
 
-  - id: mapview
-    name: Map Viewer
-    icon: map
-    port: 8084
+  - id: files
+    name: Files
+    icon: folder
+    port: 8089
+    path: files
     group: core
-    unit: racecar-mapview
+    unit: racecar-files
     exclusive: false
     startable: false
-    desc: Build and load maps
+    desc: Browse the car's pages and files
+
+  - id: terminal
+    name: Terminal
+    icon: terminal
+    port: 8086
+    path: terminal
+    group: tools
+    unit: racecar-terminal
+    exclusive: false
+    startable: true
+    desc: Command line on the car
+
+  - id: browser
+    name: Browser
+    icon: globe
+    port: 8087
+    path: browser
+    group: tools
+    unit: racecar-browser
+    exclusive: false
+    startable: true
+    desc: Web browser on the car
 
   - id: webteleop
     name: Web Teleop
     icon: gamepad
     port: 8081
-    group: utilities
+    path: webteleop
+    group: tools
     unit: racecar-webteleop
     exclusive: true
     startable: true
@@ -73,7 +107,8 @@ apps:
     name: Line Follow
     icon: line
     port: 8082
-    group: utilities
+    path: linefollow
+    group: tools
     unit: racecar-linefollow
     exclusive: true
     startable: true
@@ -86,7 +121,8 @@ apps:
     name: Wall Follow
     icon: wall
     port: 8083
-    group: utilities
+    path: wallfollow
+    group: tools
     unit: racecar-wallfollow
     exclusive: true
     startable: true
@@ -98,7 +134,8 @@ apps:
     name: Camera Label
     icon: tag
     port: 8085
-    group: utilities
+    path: camlabel
+    group: tools
     unit: racecar-camlabel
     exclusive: false
     startable: true
@@ -106,3 +143,25 @@ apps:
     needs: camera
     dir: camlabel_dashboard
     script: camlabel.py
+
+  - id: mapview
+    name: Mapper
+    icon: map
+    port: 8084
+    path: mapper
+    group: autonomy
+    unit: racecar-mapview
+    exclusive: false
+    startable: false
+    desc: Build and load maps
+
+  - id: planner
+    name: Planner
+    icon: navigate
+    port: 8090
+    path: planner
+    group: autonomy
+    unit: racecar-planner
+    exclusive: true
+    startable: true
+    desc: Drive the car to a point on a map

@@ -1,5 +1,5 @@
 [Unit]
-Description=RACECAR Neo JupyterLab (port 8888)
+Description=RACECAR Neo JupyterLab (port 8888, /jupyter/)
 Wants=racecar-data.service
 After=racecar-data.service
 After=network-online.target
@@ -19,13 +19,17 @@ ExecStart=/bin/bash -c '\
         --notebook-dir=/home/racecar/jupyter_ws \
         --ServerApp.token="" \
         --ServerApp.password="" \
+        --ServerApp.base_url=/jupyter/ \
+        --ServerApp.jpserver_extensions=racecar_jupyter_redirect=True \
         2>&1 | tee -a "$LOG_DIR/jupyter.log"'
 Restart=on-failure
 RestartSec=5
 Environment=HOME=/home/racecar
 # RACECAR_DATA_DIR, from racecar-data.service.
 EnvironmentFile=-/run/racecar/environment
-Environment=PYTHONPATH=/opt/ros/jazzy/lib/python3.12/site-packages:/home/racecar/ros2_ws/install/racecar_neo_ros2_driver/lib/python3.12/site-packages
+# scripts/jupyter: racecar_jupyter_redirect, the server extension that sends
+# :8888/ and :8888/lab to /jupyter/.
+Environment=PYTHONPATH=/opt/ros/jazzy/lib/python3.12/site-packages:/home/racecar/ros2_ws/install/racecar_neo_ros2_driver/lib/python3.12/site-packages:/home/racecar/ros2_ws/src/racecar_neo_ros2_driver/scripts/jupyter
 Environment=AMENT_PREFIX_PATH=/home/racecar/ros2_ws/install/racecar_neo_ros2_driver:/opt/ros/jazzy
 Environment=LD_LIBRARY_PATH=/opt/ros/jazzy/lib/aarch64-linux-gnu:/opt/ros/jazzy/lib
 Environment=ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST

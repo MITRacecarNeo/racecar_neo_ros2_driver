@@ -2,11 +2,12 @@
 Live sensor feeds for the web dashboard's Overview section.
 
 Subscriptions open on the first request and close IDLE_SEC after the last, so
-the dashboard costs nothing extra while nobody watches. The two camera feeds,
-two thirds of the cost, open only while the page asks for frames and close
-CAMERA_IDLE_SEC after the last one. Callbacks keep only
-the latest serialized message; decoding and JPEG encoding happen when the
-page asks, at the page's rate rather than the sensor's.
+the dashboard costs nothing extra while nobody watches. Each camera feed opens
+by itself, only while a page asks for its frames, and closes CAMERA_IDLE_SEC
+after the last one. Callbacks keep only the latest serialized message;
+decoding and JPEG encoding happen when a page asks, at the page's rate rather
+than the sensor's. The color frame also goes to the camera panel of the Mapper
+and the Planner (web/camera_panel.js), so they need no subscription of their own.
 """
 
 from __future__ import annotations
@@ -30,6 +31,11 @@ CAMERAS = ('color', 'depth')
 GRAPH_SEC = 30.0
 GRAPH_HZ = 10.0
 PREVIEW_WIDTH = 320
+PANEL_WIDTH = 480
+PANEL_MAX_AGE_SEC = 0.1
+# A frame older than this is not served: the camera has stopped. With STALE_MS in
+# web/camera_panel.js the panel grays out within a second of the last frame.
+STALE_SEC = 0.3
 JPEG_QUALITY = 60
 SCAN_MAX_M = 8.0
 SCAN_STRIDE = 3
@@ -83,15 +89,12 @@ class Overview:
         self._lock = threading.Lock()
         self._handles: dict[str, Any] = {}
         self._latest: dict[str, tuple[bytes, float]] = {}
-        self._jpeg: dict[str, tuple[bytes, float]] = {}
+        self._jpeg: dict[tuple[str, int], tuple[bytes, float]] = {}  # by feed and width
         self.imu: deque[list[float]] = deque(maxlen=int(GRAPH_SEC * GRAPH_HZ))
         self.speed: deque[list[float]] = deque(maxlen=int(GRAPH_SEC * GRAPH_HZ))
         others = [n for n in FEEDS if n not in CAMERAS]
-        cameras = [n for n in CAMERAS if n in FEEDS]
         self.gate = IdleGate(IDLE_SEC, lambda: self._open(others), self._close)
-        self.cameras = IdleGate(
-            CAMERA_IDLE_SEC, lambda: self._open(cameras), lambda: self._drop(cameras)
-        )
+        self.cameras = {name: self._camera_gate(name) for name in CAMERAS}
         from racecar_neo_ros2_driver import frames
 
         values = frames.current() if config_dir is None else frames.load_frames(config_dir)
@@ -99,6 +102,9 @@ class Overview:
         threading.Thread(target=self._sample, daemon=True).start()
 
     # -- subscriptions --
+
+    def _camera_gate(self, name: str) -> IdleGate:
+        return IdleGate(CAMERA_IDLE_SEC, lambda: self._open([name]), lambda: self._drop([name]))
 
     @property
     def active(self) -> bool:
@@ -108,10 +114,9 @@ class Overview:
         with self._lock:
             self.gate.touch()
 
-    def touch_cameras(self) -> None:
+    def touch_camera(self, name: str) -> None:
         with self._lock:
-            self.gate.touch()
-            self.cameras.touch()
+            self.cameras[name].touch()
 
     def _open(self, names: list[str]) -> None:
         from rclpy.qos import qos_profile_sensor_data
@@ -132,15 +137,13 @@ class Overview:
             if h is not None:
                 self.node.destroy_subscription(h)
             self._latest.pop(name, None)
-            self._jpeg.pop(name, None)
+            for key in [k for k in self._jpeg if k[0] == name]:
+                del self._jpeg[key]
 
     def _close(self) -> None:
-        self._drop(list(self._handles))
-        self._latest.clear()
-        self._jpeg.clear()
+        self._drop([n for n in self._handles if n not in CAMERAS])
         self.imu.clear()
         self.speed.clear()
-        self.cameras.open = False
 
     def _store(self, name: str) -> Callable[[bytes], None]:
         def cb(data: bytes) -> None:
@@ -160,9 +163,10 @@ class Overview:
         while True:
             time.sleep(1.0 / GRAPH_HZ)
             with self._lock:
+                for gate in self.cameras.values():
+                    gate.check()
                 if not self.gate.check():
                     continue
-                self.cameras.check()
                 now = time.time()
                 imu = self._decode('imu')
                 if imu is not None:
@@ -197,12 +201,21 @@ class Overview:
                 'graph_sec': GRAPH_SEC,
             }
 
-    def jpeg(self, name: str, max_age: float = 0.25) -> bytes | None:
-        """Return a small JPEG of the latest color or depth frame; cached for max_age s."""
+    def jpeg(
+        self, name: str, max_age: float = 0.25, width: int = PREVIEW_WIDTH
+    ) -> bytes | None:
+        """
+        Return a JPEG of the latest color or depth frame; cached for max_age s.
+
+        None without a frame, or when the last one is over STALE_SEC old.
+        """
         from racecar_neo_ros2_driver import imaging
 
         with self._lock:
-            cached = self._jpeg.get(name)
+            item = self._latest.get(name)
+            if item is None or time.monotonic() - item[1] > STALE_SEC:
+                return None
+            cached = self._jpeg.get((name, width))
             if cached and time.monotonic() - cached[1] < max_age:
                 return cached[0]
             decoded = self._decode(name)
@@ -210,16 +223,20 @@ class Overview:
             return None
         msg = decoded[0]
         if name == 'depth':
-            data = imaging.depth_preview(msg, PREVIEW_WIDTH, DEPTH_FAR_M, JPEG_QUALITY)
+            data = imaging.depth_preview(msg, width, DEPTH_FAR_M, JPEG_QUALITY)
         else:
             img = imaging.bgr(msg)
             data = (
                 None
                 if img is None
-                else imaging.jpeg(imaging.fit_width(img, PREVIEW_WIDTH), JPEG_QUALITY)
+                else imaging.jpeg(imaging.fit_width(img, width), JPEG_QUALITY)
             )
         if data is None:
             return None
         with self._lock:
-            self._jpeg[name] = (data, time.monotonic())
+            self._jpeg[name, width] = (data, time.monotonic())
         return data
+
+    def panel_jpeg(self) -> bytes | None:
+        """Return the color frame for the camera panel (web/camera_panel.js)."""
+        return self.jpeg('color', PANEL_MAX_AGE_SEC, PANEL_WIDTH)

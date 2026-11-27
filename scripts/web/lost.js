@@ -14,13 +14,12 @@
   function show() {
     if (shown) return;
     shown = true;
-    const back = `${location.protocol}//${location.hostname}:{{home}}/`;
+    const back = RcnRoute.app('home');
     const el = document.createElement('div');
     el.id = 'rcn-lost';
     el.innerHTML = `<div class="box">
-      <img class="rcn-mark" src="/ui/brand/mark.png" alt="RACECAR Neo">
+      <img class="rcn-mark" src="ui/brand/mark.png" alt="RACECAR Neo">
       <h2></h2>
-      <p class="rcn-muted">Open it again from the apps page.</p>
       <a class="rcn-btn primary" href="${back}">Back to apps</a></div>`;
     el.querySelector('h2').textContent = `${name} closed`;
     document.body.append(el);
@@ -28,7 +27,7 @@
 
   async function check() {
     try {
-      await fetch(`/ui/brand/app-icon-32.png?t=${Date.now()}`, { cache: 'no-store' });
+      await fetch(`ui/brand/app-icon-32.png?t=${Date.now()}`, { cache: 'no-store' });
       if (shown) { location.reload(); return; }
       misses = 0;
     } catch (err) {

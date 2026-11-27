@@ -34,8 +34,8 @@ import sys
 from typing import Any
 
 import numpy as np
+import progress
 from racecar_neo_ros2_driver.frames import load_frames
-import rclpy
 from rclpy.utilities import remove_ros_args
 from sensor_msgs.msg import LaserScan
 
@@ -47,7 +47,7 @@ from calibrate_common import (  # noqa: E402, I100
     Criterion,
     finish_check,
     read_line,
-    spin_until_done,
+    run_calibrator,
     stack_config_dir,
     update_local_values,
 )
@@ -132,7 +132,7 @@ def check_criteria(fit: WallFit, yaw_deg: float) -> list[Criterion]:
         status, advice = 'PASS', ''
     elif angle <= WARN_ANGLE_DEG:
         status = 'WARN'
-        advice = 'within hand-squaring precision (1 mm at the wheel centers is 0.32 deg)'
+        advice = 'within hand-squaring precision'
     else:
         status = 'FAIL'
         advice = 'beyond hand-squaring error: check the lidar mount, re-square, recalibrate'
@@ -179,7 +179,7 @@ class LidarYawCalibrator(CalibratorNode):
         lx, ly = frames['laser_x_mm'] * 1e-3, frames['laser_y_mm'] * 1e-3
         yaw_deg = frames['laser_yaw_deg']
         if max(abs(frames['laser_roll_deg']), abs(frames['laser_pitch_deg'])) > MAX_TILT_DEG:
-            log.error(f'Lidar roll or pitch over {MAX_TILT_DEG:.0f} deg; this tool assumes level.')
+            log.error(f'Lidar roll or pitch is over {MAX_TILT_DEG:.0f} deg. Level the lidar.')
             return 1
 
         log.info('Lidar yaw calibration')
@@ -404,7 +404,7 @@ class DriveYawCalibrator:
             if leg.problem:
                 self.log.error(f'{leg.direction.capitalize()}: {leg.problem}')
                 continue
-            note = '' if leg.counted else ' Not counted: the reverse leg returns the car.'
+            note = '' if leg.counted else ' Not counted.'
             self.log.info(
                 f'{leg.direction.capitalize()}: {leg.chord_m:.2f} m, turned '
                 f'{leg.heading_deg:+.1f} deg: lidar yaw {leg.yaw_deg:.2f} deg '
@@ -413,10 +413,7 @@ class DriveYawCalibrator:
             if leg.counted:
                 good.append(leg)
         if any('reverse' in leg.problem for leg in legs):
-            self.log.error(
-                'The car did not reverse from rest. The ESC may need a brake before '
-                'reverse; check its reverse mode.'
-            )
+            self.log.error('The car did not reverse from rest. Check the ESC reverse mode.')
         if not good:
             self.log.error('The forward leg gave no estimate. Run it again.')
             return None
@@ -451,7 +448,7 @@ class DriveYawCalibrator:
                 f'needs {MAX_YAW_SE_DEG}). One more placement is needed.'
             )
             self._show(count, count + 1)
-            if read_line('Press Enter to run it, or s to stop: ').strip().lower() == 's':
+            if read_line('Press Enter to run, and q to stop: ').strip().lower() == 'q':
                 break
             legs = self.placement()
             if legs:
@@ -480,6 +477,7 @@ class DriveYawCalibrator:
                     )
                 )
             mean, _ = yaw_summary([leg.yaw_deg for leg in legs])
+            yaw_plot([leg.yaw_deg for leg in legs], math.degrees(self.laser[2]))
             criteria.append(offset_criterion(mean, math.degrees(self.laser[2])))
         return finish_check(log, criteria, self.report)
 
@@ -489,16 +487,14 @@ def analyze_bags(names: list[str]) -> int:
     import logging
 
     from calibrate_dynamics import laser_pose, read_bag
-    from racecar_log import load_config, resolve_log_root
+    from racecar_log import find_bag
 
     logging.basicConfig(format='%(message)s', level=logging.INFO)
     log = logging.getLogger(TOOL)
     laser = laser_pose()
     estimates = []
     for name in names:
-        bag = Path(name).expanduser()
-        if not bag.exists():
-            bag = Path(resolve_log_root(load_config().get('DIR'))) / name
+        bag = find_bag(name)
         for leg in measure_legs(read_bag(bag), laser):
             state = leg.problem or ('counted' if leg.counted else 'not counted')
             log.info(f'{bag.name} {leg.direction}: {leg.yaw_deg:.3f} deg ({state})')
@@ -507,12 +503,31 @@ def analyze_bags(names: list[str]) -> int:
     return write_yaw(estimates, math.degrees(laser[2]), log)
 
 
+def yaw_plot(estimates: list[float], configured: float) -> None:
+    """Plot each leg's yaw estimate, with their mean and the configured yaw."""
+    if not estimates:
+        return
+    mean = sum(estimates) / len(estimates)
+    progress.plot(
+        'Lidar yaw per leg',
+        [{'name': 'leg', 'points': [[i + 1, round(y, 3)] for i, y in enumerate(estimates)]}],
+        x='leg',
+        y='deg',
+        kind='scatter',
+        lines=[
+            {'name': 'mean', 'y': round(mean, 3)},
+            {'name': 'configured', 'y': round(configured, 3)},
+        ],
+    )
+
+
 def write_yaw(estimates: list[float], configured: float, log: Any) -> int:
     """Report the mean and write it as laser_yaw_deg when its standard error allows."""
     if not estimates:
         log.info('Nothing measured.')
         return 0
     mean, se = yaw_summary(estimates)
+    yaw_plot(estimates, configured)
     log.info(
         f'Lidar yaw {mean:.3f} deg from {len(estimates)} estimates (standard error '
         f'{se:.2f} deg, spread {min(estimates):.2f} to {max(estimates):.2f}); '
@@ -547,8 +562,9 @@ def main() -> int:
         return analyze_bags(args.analyze)
     if not args.wall:
         return DriveYawCalibrator(args.check, args.report).run()
-    rclpy.init()
-    return spin_until_done(LidarYawCalibrator(args.check, args.wall_distance_mm, args.report))
+    return run_calibrator(
+        lambda: LidarYawCalibrator(args.check, args.wall_distance_mm, args.report)
+    )
 
 
 if __name__ == '__main__':

@@ -5,12 +5,25 @@ import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
+import re
 import threading
 import time
 from types import SimpleNamespace
 
 from conftest import completed, load_script
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def set_up_car(car_profile_dir):
+    """Give each test a car that finished `racecar setup car`, so apps open."""
+    import yaml
+
+    car_setup = load_script('car_setup')
+    car_profile_dir.mkdir(parents=True, exist_ok=True)
+    setup = {key: {'done': '2026-11-09 12:00', 'by': 'user'} for key in car_setup.STEP_KEYS}
+    (car_profile_dir / 'car.yaml').write_text(yaml.safe_dump({'name': 'test', 'setup': setup}))
+    return car_profile_dir
 
 
 @pytest.fixture(scope='module')
@@ -160,7 +173,7 @@ class TestSystemHealth:
 
     @pytest.mark.parametrize(
         'temp,status,tail',
-        [(None, 'healthy', 'free'), (57.0, 'healthy', '57 C'), (72.0, 'stale', 'Drive hot')],
+        [(None, 'healthy', 'free'), (57.0, 'healthy', '57 \u00b0C'), (72.0, 'stale', 'Drive hot')],
     )
     def test_data_drive_temperature(self, dashboard, monkeypatch, tmp_path, temp, status, tail):
         from racecar_neo_ros2_driver import data_root
@@ -219,7 +232,7 @@ class TestDashboardHTML:
 
     def test_html_references_api_endpoint(self, dashboard):
         html = dashboard.webui.read_page(dashboard._HTML_PATH)
-        assert "'/api/status'" in html and "'/api/status?refresh=1'" in html
+        assert "'api/status'" in html and "'api/status?refresh=1'" in html
 
     def test_title_says_racecar(self, dashboard):
         html = dashboard.webui.read_page(dashboard._HTML_PATH)
@@ -284,7 +297,11 @@ class TestAutonomyView:
     def test_mapping_shows_the_save(self, dashboard):
         values = {'mode': 'mapping', 'map': 'hall', 'localized': 'true'}
         view = dashboard.autonomy_view(values, 0.5)
-        assert view['headline'] == 'Mapping on hall' and view['lines'][-1] == 'Saved not yet'
+        assert view['headline'] == 'Mapping on hall' and view['lines'][-1] == 'Not saved'
+        no_map = dashboard.autonomy_view({'mode': 'mapping', 'localized': 'false'}, 0.5)
+        assert no_map['headline'] == 'Mapping. No map'
+        late = dashboard.autonomy_view(values, 60.0)
+        assert late['lines'] == ['No status for 60 s.']
 
     def test_old_status_is_red(self, dashboard):
         view = dashboard.autonomy_view({'mode': 'mapping', 'map': 'hall'}, 12.0)
@@ -314,14 +331,23 @@ class FakeRun:
 
 
 class TestHome:
-    def test_apps_cover_the_six_dashboards(self, dashboard):
-        assert [a['port'] for a in dashboard.APPS] == [8086, 8888, 8084, 8081, 8082, 8083, 8085]
-        core = [a['id'] for a in dashboard.APPS if a['group'] == 'core']
-        assert core == ['terminal', 'jupyter', 'mapview']
+    def test_apps_cover_every_dashboard(self, dashboard):
+        ports = [a['port'] for a in dashboard.APPS]
+        assert ports == [8088, 8888, 8089, 8086, 8087, 8081, 8082, 8083, 8085, 8084, 8090]
+        groups = {g: [a['id'] for a in dashboard.APPS if a['group'] == g]
+                  for g in ('core', 'tools', 'autonomy')}  # fmt: skip
+        assert groups == {
+            'core': ['profile', 'jupyter', 'files'],
+            'tools': ['terminal', 'browser', 'webteleop', 'linefollow', 'wallfollow', 'camlabel'],
+            'autonomy': ['mapview', 'planner'],
+        }
+        assert next(a for a in dashboard.APPS if a['id'] == 'mapview')['name'] == 'Mapper'
         exclusive = [a['id'] for a in dashboard.APPS if a['exclusive']]
-        assert exclusive == ['webteleop', 'linefollow', 'wallfollow']
+        assert exclusive == ['webteleop', 'linefollow', 'wallfollow', 'planner']
         startable = [a['id'] for a in dashboard.APPS if a['startable']]
-        assert startable == ['terminal', 'webteleop', 'linefollow', 'wallfollow', 'camlabel']
+        assert startable == [
+            'terminal', 'browser', 'webteleop', 'linefollow', 'wallfollow', 'camlabel', 'planner'
+        ]
 
     def test_every_app_icon_exists(self, dashboard):
         scripts = Path(__file__).resolve().parent.parent / 'scripts'
@@ -335,10 +361,10 @@ class TestHome:
         assert run.states['racecar-terminal'] == 'active'
         assert dashboard.open_app('terminal', run) == (True, 'Terminal is running.')
 
-    def test_clear_apps_leaves_the_terminal_running(self, dashboard):
+    def test_clear_apps_stops_the_terminal_too(self, dashboard):
         run = FakeRun({'racecar-terminal': 'active', 'racecar-camlabel': 'active'})
         dashboard.clear_apps(run)
-        assert run.states['racecar-terminal'] == 'active'
+        assert run.states['racecar-terminal'] == 'inactive'
         assert run.states['racecar-camlabel'] == 'inactive'
 
     def test_open_exclusive_stops_the_other_first(self, dashboard):
@@ -347,6 +373,28 @@ class TestHome:
         assert ok
         verbs = [(c[-2], c[-1]) for c in run.calls if c[1] == '--no-ask-password']
         assert verbs == [('stop', 'racecar-webteleop'), ('start', 'racecar-linefollow')]
+
+    @pytest.fixture
+    def lease(self, tmp_path, monkeypatch):
+        from racecar_neo_ros2_driver import drive_lease
+
+        monkeypatch.setenv(drive_lease.FOLDER_ENV, str(tmp_path))
+        return lambda owner, name: drive_lease.DriveLease(owner, name, tmp_path)
+
+    @pytest.mark.parametrize('owner, name', [('program', 'Program'), ('nav', 'racecar nav'),
+                                             ('calibration', 'Calibration')])  # fmt: skip
+    def test_a_driving_app_does_not_open_over_a_program(self, dashboard, lease, owner, name):
+        lease(owner, name).take()
+        run = FakeRun({'racecar-webteleop': 'active'})
+        assert dashboard.open_app('linefollow', run) == (False, f'{name} is driving.')
+        assert run.states['racecar-webteleop'] == 'active'
+        assert dashboard.open_app('webteleop', run)[0]
+        assert dashboard.open_app('camlabel', run)[0]
+
+    def test_between_apps_the_page_asks_instead(self, dashboard, lease):
+        lease('nav', 'Planner').take()
+        assert dashboard.open_app('linefollow', FakeRun({}))[0]
+        assert dashboard.driver_view() == {'name': 'Planner', 'share': False}
 
     def test_open_running_exclusive_does_nothing(self, dashboard):
         run = FakeRun({'racecar-wallfollow': 'active'})
@@ -360,13 +408,13 @@ class TestHome:
         assert run.states['racecar-webteleop'] == 'active'
         assert run.states['racecar-camlabel'] == 'active'
 
-    def test_open_stopped_core_app_names_the_command(self, dashboard):
+    def test_open_stopped_core_app_says_it_could_not(self, dashboard):
         run = FakeRun({'racecar-mapview': 'inactive'})
         ok, message = dashboard.open_app('mapview', run)
-        assert not ok and 'racecar service start mapview' in message
+        assert not ok and message == 'Could not start Mapper.'
         assert not [c for c in run.calls if c[1] == '--no-ask-password']
 
-    def test_clear_apps_stops_utilities_only(self, dashboard):
+    def test_clear_apps_leaves_the_boot_apps(self, dashboard):
         run = FakeRun(
             {
                 'racecar-mapview': 'active',
@@ -377,20 +425,19 @@ class TestHome:
                 'racecar-teleop': 'active',
             }
         )
-        assert dashboard.clear_apps(run) == (True, 'Utilities stopped.')
+        assert dashboard.clear_apps(run) == (True, '')
         assert run.states['racecar-webteleop'] == 'inactive'
         assert run.states['racecar-camlabel'] == 'inactive'
         for unit in ('racecar-mapview', 'racecar-jupyter', 'racecar-dashboard', 'racecar-teleop'):
             assert run.states[unit] == 'active'
 
-    def test_clear_apps_names_the_unit_it_may_not_stop(self, dashboard):
+    def test_clear_apps_failure_is_one_line(self, dashboard):
         stderr = 'Failed to stop: Interactive authentication required.'
         run = FakeRun({'racecar-linefollow': 'active'}, fail='stop', stderr=stderr)
-        ok, message = dashboard.clear_apps(run)
-        assert not ok and 'racecar-linefollow' in message and 'setup_user_env.sh' in message
+        assert dashboard.clear_apps(run) == (False, 'Could not stop the apps.')
 
     def test_clear_apps_with_none_running(self, dashboard):
-        assert dashboard.clear_apps(FakeRun({})) == (True, 'No utilities running.')
+        assert dashboard.clear_apps(FakeRun({})) == (True, '')
 
     def test_clear_log_hides_earlier_lines_and_keeps_the_file(
         self, dashboard, tmp_path, monkeypatch
@@ -410,7 +457,7 @@ class TestHome:
         assert dashboard._read_watchdog_tail() == ['fresh']
 
     def test_open_refuses_unknown(self, dashboard):
-        assert dashboard.open_app('../x', FakeRun({})) == (False, 'Unknown app: ../x')
+        assert dashboard.open_app('../x', FakeRun({})) == (False, 'Reload the page.')
 
     def test_app_ready_needs_an_answer(self, dashboard):
         server = ThreadingHTTPServer(('127.0.0.1', 0), BaseHTTPRequestHandler)
@@ -425,7 +472,7 @@ class TestHome:
 
     def test_launch_page_opens_then_waits(self, dashboard):
         html = dashboard.webui.read_page(dashboard._LAUNCH_PATH)
-        assert "RcnApi.post('/api/open'" in html and '/api/ready?app=' in html
+        assert "RcnApi.post('api/open'" in html and 'api/ready?app=' in html
         assert 'location.replace' in html and 'id="cancel"' in html
         assert 'window.close()' in html
         assert 'Try again' not in html
@@ -456,12 +503,12 @@ class TestHome:
         assert dashboard.activate('none', run) == (True, 'Lab dashboards stopped.')
         assert run.states['racecar-linefollow'] == 'inactive'
 
-    def test_activate_names_the_missing_permission(self, dashboard):
+    def test_activate_failure_names_the_app(self, dashboard):
         stderr = 'Failed to start: Interactive authentication required.'
         run = FakeRun({}, fail='start', stderr=stderr)
         ok, message = dashboard.activate('linefollow', run)
         assert not ok and message == (
-            'No permission to start racecar-linefollow. Run scripts/setup_user_env.sh.'
+            'Could not start Line Follow.'
         )
 
     def test_activate_refuses_unknown_and_core_units(self, dashboard):
@@ -504,11 +551,28 @@ class TestHome:
             assert other not in body
         assert '49-racecar-teleop.rules' in (scripts / 'setup_user_env.sh').read_text()
 
+    def test_restart_rule_covers_the_core_web_and_guard_units_only(self):
+        scripts = Path(__file__).resolve().parent.parent / 'scripts'
+        rule = (scripts / 'polkit' / '49-racecar-restart.rules').read_text()
+        body = rule.split('polkit.addRule')[1]
+        for unit in ('racecar-dashboard', 'racecar-mapview', 'racecar-battery-guard'):
+            assert f'"{unit}.service"' in body
+        assert 'action.lookup("verb") === "restart"' in body
+        assert 'subject.user === "racecar"' in body
+        for other in ('"start"', '"stop"', 'enable', 'racecar-autonomy', 'racecar-teleop'):
+            assert other not in body
+
+    def test_service_restart_runs_without_sudo(self):
+        tool = (Path(__file__).resolve().parent.parent / 'scripts' / 'racecar-tool.sh').read_text()
+        block = tool.split('                restart)\n', 1)[1].split(';;', 1)[0]
+        assert 'systemctl restart "racecar-${1:-teleop}"' in block
+        assert 'sudo systemctl' not in block
+
     def test_page_uses_the_shared_assets(self, dashboard):
         html = dashboard.webui.read_page(dashboard._HTML_PATH)
-        assert '/ui/rcn.css' in html and '/ui/brand/' in html and '/launch?app=' in html
-        assert html.count('/ui/brand/mark.png') == 1, 'one logo on the page, in color'
-        assert '/ui/brand/lockup' not in html
+        assert 'ui/rcn.css' in html and 'ui/brand/' in html and 'launch?app=' in html
+        assert html.count('ui/brand/mark.png') == 1, 'one logo on the page, in color'
+        assert 'ui/brand/lockup' not in html
 
 
 class TestHistory:
@@ -556,7 +620,7 @@ class TestHistory:
 
     def test_page_charts_both_series(self, dashboard):
         html = dashboard.webui.read_page(dashboard._HTML_PATH)
-        assert "fetch('/api/history')" in html and "fetch('/api/overview')" in html
+        assert "fetch('api/history')" in html and "fetch('api/overview')" in html
         for chart in ('ov-volts', 'ov-amps', 'ov-temp', 'ov-mem', 'ov-imu', 'ov-speed'):
             assert f'id="{chart}"' in html
         assert 'Pack' not in html and 'pack' not in html
@@ -695,8 +759,159 @@ class TestOverrideEndpoint:
 
     def test_page_has_the_toggle_and_warning(self, dashboard):
         html = dashboard.webui.read_page(dashboard._HTML_PATH)
-        assert 'id="override"' in html and 'id="override-banner"' in html
-        assert 'The car may start moving without warning. Do not leave it unattended.' in html
+        assert 'id="override"' in html and 'ui/override.js?v=' in html
+        assert "confirm('Turn on safety override?')" in html
+        assert "$('msg').textContent = 'Safety override off.';" in html
+        assert 'RcnOverride.onChange' in html
+
+
+class TestCrossSitePosts:
+    HOST = 'car.local:8080'
+
+    @pytest.fixture(autouse=True)
+    def names(self, dashboard, monkeypatch):
+        names = frozenset({'localhost', 'car', 'car.local'})
+        monkeypatch.setattr(dashboard.webui, 'car_names', lambda: names)
+    POSTS = (
+        ('/api/override', {'action': 'start'}),
+        ('/api/open', {'app': 'webteleop'}),
+        ('/api/feature', {'feature': 'camera', 'on': False}),
+        ('/api/clear-apps', {}),
+        ('/api/clear-log', {}),
+        ('/api/shutdown', {}),
+        ('/api/battery/cancel', {}),
+        ('/api/connections', {'action': 'names', 'names': {}}),
+        ('/api/connections/ping', {}),
+    )
+    ELSEWHERE = (
+        'http://elsewhere.test',
+        'http://elsewhere.test:8080',
+        'http://elsewhere.test:8084',
+        'http://car.local.elsewhere.test:8084',
+        'https://car.local:8084',
+        'http://car.local',
+        'http://car.local:8085',
+        'http://car.local:8888',
+        'http://car.local:8089',
+        'null',
+    )
+    DRIVING = tuple(f'http://car.local:{p}' for p in (8081, 8082, 8083, 8084, 8090))
+
+    @pytest.fixture
+    def post(self, dashboard, monkeypatch):
+        acted = []
+
+        def stub(name, result=(True, '')):
+            return lambda *a, **k: (acted.append(name), result)[1]
+
+        class Session:
+            number = 1
+
+            def __getattr__(self, name):
+                return stub(name, {'on': False})
+
+        class Sampler:
+            def cancel_shutdown(self):
+                acted.append('cancel')
+
+        monkeypatch.setattr(dashboard, '_override', Session())
+        monkeypatch.setattr(dashboard, '_sampler', Sampler())
+        for name in ('open_app', 'change_feature', 'clear_apps', 'clear_watchdog_log'):
+            monkeypatch.setattr(dashboard, name, stub(name))
+        monkeypatch.setattr(dashboard, 'turn_off', stub('turn_off'))
+        monkeypatch.setattr(dashboard, '_refresh_apps', lambda: None)
+        monkeypatch.setattr(dashboard.netconfig, 'ping_test', stub('ping', {}))
+        monkeypatch.setattr(dashboard.DashboardHandler, '_device_names', stub('names'))
+        srv = ThreadingHTTPServer(('127.0.0.1', 0), dashboard.DashboardHandler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+        def send(path, body, origin, host=self.HOST):
+            acted.clear()
+            conn = http.client.HTTPConnection('127.0.0.1', srv.server_address[1], timeout=5)
+            # text/plain: a browser sends it to another site without asking first.
+            headers = {'Host': host, 'Content-Type': 'text/plain'}
+            if origin:
+                headers['Origin'] = origin
+            conn.request('POST', path, json.dumps(body), headers)
+            res = conn.getresponse()
+            res.read()
+            conn.close()
+            return res.status, list(acted)
+
+        yield send
+        srv.shutdown()
+        srv.server_close()
+
+    def test_the_list_covers_every_post(self, dashboard):
+        text = Path(dashboard.__file__).read_text().split('def do_POST')[1].split('\n    def ')[0]
+        assert set(re.findall(r"'(/api/[a-z/-]+)'", text)) == {path for path, _ in self.POSTS}
+
+    @pytest.mark.parametrize('path, body', POSTS, ids=[p for p, _ in POSTS])
+    def test_another_site_host_or_port_is_refused_and_nothing_acts(self, post, path, body):
+        for origin in self.ELSEWHERE:
+            assert post(path, body, origin) == (403, []), origin
+
+    @pytest.mark.parametrize('path, body', POSTS[1:], ids=[p for p, _ in POSTS[1:]])
+    def test_the_driving_pages_may_call_nothing_but_the_override(self, post, path, body):
+        for origin in self.DRIVING:
+            assert post(path, body, origin) == (403, []), origin
+
+    def test_the_driving_pages_may_call_the_override(self, post):
+        for origin in self.DRIVING:
+            status, acted = post('/api/override', {'action': 'start'}, origin)
+            assert status == 200 and 'start' in acted, origin
+            other = post('/api/override', {'action': 'start'}, origin, 'other.local:8080')
+            assert other == (421, []), origin  # not the car's own address
+
+    @pytest.mark.parametrize(
+        'origin, host',
+        [
+            ('http://car.local:8080', 'car.local:8080'),  # the page on its port
+            ('http://car.local', 'car.local'),  # through port 80
+            (None, 'localhost:8080'),  # a command on the car
+        ],
+    )
+    def test_this_page_and_commands_still_work(self, post, origin, host):
+        for path, body in self.POSTS[:5]:
+            status, acted = post(path, body, origin, host)
+            assert status == 200 and acted, path
+
+
+def test_camera_routes(dashboard, monkeypatch):
+    class Feed:
+        def __init__(self):
+            self.touched, self.frame = [], b'jpeg'
+
+        def touch_camera(self, name):
+            self.touched.append(name)
+
+        def jpeg(self, name):
+            return self.frame
+
+        def panel_jpeg(self):
+            return self.frame
+
+    feed = Feed()
+    monkeypatch.setattr(dashboard, '_overview', feed)
+    srv = ThreadingHTTPServer(('127.0.0.1', 0), dashboard.DashboardHandler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+    def get(path):
+        conn = http.client.HTTPConnection('127.0.0.1', srv.server_address[1], timeout=5)
+        conn.request('GET', path)
+        res = conn.getresponse()
+        out = res.status, res.read()
+        conn.close()
+        return out
+
+    try:
+        assert get('/api/camera.jpg?t=1') == (200, b'jpeg') and feed.touched == ['color']
+        assert get('/api/overview/depth.jpg')[0] == 200 and feed.touched == ['color', 'depth']
+        feed.frame = None
+        assert get('/api/camera.jpg')[0] == 404
+    finally:
+        srv.shutdown()
+        srv.server_close()
 
 
 class TestOverrideOrigin:
@@ -705,13 +920,17 @@ class TestOverrideOrigin:
         [
             ('http://car.local:8081', 'car.local:8080', True),
             ('http://car.local:8083', 'car.local:8080', True),
+            ('http://car.local:8084', 'car.local:8080', True),
+            ('http://car.local:8090', 'car.local:8080', True),
             ('http://car.local:8085', 'car.local:8080', False),
+            ('http://car.local:8888', 'car.local:8080', False),
+            ('http://other:8084', 'car.local:8080', False),
             ('http://other:8081', 'car.local:8080', False),
             ('https://car.local:8081', 'car.local:8080', False),
             (None, 'car.local:8080', False),
         ],
     )
-    def test_only_driving_lab_pages_on_this_host(self, dashboard, origin, host, allowed):
+    def test_only_pages_that_drive_the_car_on_this_host(self, dashboard, origin, host, allowed):
         assert (dashboard.override_origin(origin, host) is not None) is allowed
 
 
@@ -803,7 +1022,7 @@ class TestApplyFeatures:
         run = tool({TELEOP: 'active'})
         message = dashboard.apply_features({'camera': False, 'detections': False}, run)
         assert ['systemctl', '--no-ask-password', 'restart', TELEOP] in run.calls
-        assert run.tool == [] and message == 'Camera off. Detections off.'
+        assert run.tool == [] and message == ''
         assert dashboard.features.read() == {'camera': False, 'detections': False}
 
     def test_autonomy_is_stopped_first_and_resumed(self, dashboard, tool):
@@ -813,22 +1032,25 @@ class TestApplyFeatures:
         )
         restart = run.calls.index(['systemctl', '--no-ask-password', 'restart', TELEOP])
         assert run.tool == ['stop', 'resume'] and restart > 0
-        assert message.endswith('resume done')
+        assert message == ''
 
     def test_a_failed_stop_leaves_teleop_alone(self, dashboard, tool):
         run = tool({TELEOP: 'active', AUTONOMY: 'active'}, codes={'stop': 1})
         message = dashboard.apply_features(dashboard.features.DEFAULTS, run)
-        assert message.startswith('Could not stop autonomy')
+        assert message == 'Could not stop autonomy.'
         assert not [c for c in run.calls if 'restart' in c]
 
     def test_autonomy_actions(self, dashboard, tool):
         run = tool({AUTONOMY: 'active'})
-        assert dashboard.autonomy_action('save-stop', run) == 'stop done'
+        assert dashboard.autonomy_action('save-stop', run) == ''
         assert run.tool == ['save', 'stop']
         run = tool({AUTONOMY: 'active'}, codes={'save': 1})
-        assert dashboard.autonomy_action('save-stop', run).startswith('Not stopped.')
+        assert dashboard.autonomy_action('save-stop', run) == 'Could not stop autonomy.'
         assert run.tool == ['save']
-        assert dashboard.autonomy_action('resume', tool({})) == 'resume done'
+        assert dashboard.autonomy_action('resume', tool({})) == ''
+        assert dashboard.autonomy_action('resume', tool({}, codes={'resume': 1})) == (
+            'Could not resume autonomy.'
+        )
         with pytest.raises(ValueError):
             dashboard.autonomy_action('rm', run)
 
@@ -837,9 +1059,9 @@ class TestFeatureEndpoint:
     def test_rejects_unknown_and_busy(self, dashboard, monkeypatch):
         job = dashboard.FeatureJob()
         monkeypatch.setattr(dashboard, '_features_job', job)
-        assert dashboard.change_feature('lidar', False) == (False, "unknown feature 'lidar'")
-        assert dashboard.change_feature('autonomy', True, 'go')[0] is False
-        assert job.start('busy', lambda: 'x' if __import__('time').sleep(0.3) is None else '')
+        assert dashboard.change_feature('lidar', False) == (False, 'Reload the page.')
+        assert dashboard.change_feature('autonomy', True, 'go') == (False, 'Reload the page.')
+        assert job.start(lambda: 'x' if __import__('time').sleep(0.3) is None else '', 'x')
         assert dashboard.change_feature('autonomy', True, 'resume') == (
             False,
             'Another change is running.',
@@ -848,7 +1070,8 @@ class TestFeatureEndpoint:
     def test_page_has_features(self, dashboard):
         html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert 'id="features"' in html and 'id="autosheet"' in html
-        assert 'needs the camera. Turn it on?' in html
+        assert '`Turn on the camera and open ${app.name}?`' in html
+        assert 'The car stops for about 15 seconds.' not in html
 
 
 class TestDrivingAppsAndAutonomy:
@@ -873,16 +1096,26 @@ class TestDrivingAppsAndAutonomy:
         monkeypatch.setattr(dashboard, 'last_run', lambda: {'mode': 'mapping', 'map': 'hall'})
         run = tool({AUTONOMY: 'active'}, codes={'save': 1})
         ok, message = dashboard.open_app('wallfollow', run)
-        assert not ok and message.startswith('Autonomy is still running.')
+        assert not ok and message == 'Could not stop autonomy.'
         assert run.states.get('racecar-wallfollow', 'inactive') == 'inactive'
 
     def test_camera_label_leaves_autonomy_running(self, dashboard, tool):
         run = tool({AUTONOMY: 'active'})
         assert dashboard.open_app('camlabel', run)[0] and run.tool == []
 
+    def test_planner_drives_through_autonomy(self, dashboard, tool, monkeypatch):
+        monkeypatch.setattr(dashboard, 'last_run', lambda: {'mode': 'localization', 'map': 'hall'})
+        run = tool({AUTONOMY: 'active', 'racecar-webteleop': 'active'})
+        assert dashboard.open_app('planner', run)[0] and run.tool == []
+        assert run.states['racecar-planner'] == 'active'
+        assert run.states['racecar-webteleop'] == 'inactive'
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
+        assert "app.exclusive && app.group !== 'autonomy'" in html
+
     def test_page_asks_before_stopping_autonomy(self, dashboard):
         html = dashboard.webui.read_page(dashboard._HTML_PATH)
-        assert 'Save it, stop it, and open' in html and 'will close.' in html
+        assert '`Save ${last.map}, stop mapping, and open ${app.name}?`' in html
+        assert 'continue mapping ${last.map}?' in html and 'will close.' not in html
 
 
 GUARD_VALUES = {
@@ -945,7 +1178,8 @@ class TestOrigins:
         [
             ('http://car.local:8084', True),
             ('http://car.local:8085', True),
-            ('http://car.local:8089', False),
+            ('http://car.local:8089', True),
+            ('http://car.local:8099', False),
             ('http://other:8084', False),
         ],
     )
@@ -1030,27 +1264,58 @@ class TestBatteryEndpoints:
         assert status == 200 and server.cors == 'http://127.0.0.1:8084'
         assert body['battery']['estimate']['shutdown_in'] == 42.0
 
+    def test_stall_for_a_lab_page(self, server, dashboard, monkeypatch):
+        class Sampler:
+            def stall(self):
+                return {'values': {'supported': '1', 'state': '2', 'seconds_left': '2.0'}}, 0.5
+
+        monkeypatch.setattr(dashboard, '_sampler', Sampler())
+        status, body = server('GET', '/api/stall', {'Origin': 'http://127.0.0.1:8084'})
+        assert status == 200 and server.cors == 'http://127.0.0.1:8084'
+        assert body['stall'] == {'state': 'cooldown', 'seconds_left': 1.5}
+
+    def test_driver_nobody(self, dashboard, server):
+        status, body = server('GET', '/api/driver', {'Origin': 'http://127.0.0.1:8084'})
+        assert status == 200 and body == {'driver': None}
+        assert server.cors == 'http://127.0.0.1:8084'
+
+
+class TestDriver:
+    def test_pill_in_the_header(self, dashboard):
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
+        where = [html.index(f'id="{name}"') for name in ('driver', 'net-pill', 'batt-time')]
+        assert where == sorted(where)
+        assert 'ui/driving.js?v=' in html
+
 
 class TestBatteryPage:
-    def test_turn_off_tile_next_to_the_override(self, dashboard):
+    def test_shut_down_tile_next_to_the_override(self, dashboard):
         html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert html.index('id="override"') < html.index('id="poweroff"')
-        assert html.index('id="poweroff"') < html.index('id="apps-utilities"')
-        assert "confirm('Turn the car off?')" in html
-        assert '/api/shutdown' in html
+        assert html.index('id="poweroff"') < html.index('id="apps-tools"')
+        assert html.index('id="apps-tools"') < html.index('id="apps-autonomy"')
+        assert '<span class="name">Shut Down</span>' in html and 'Turn Off' not in html
+        assert "confirm('Shut down the car?')" in html
+        assert 'api/shutdown' in html
 
-    def test_header_pills_banner_and_cancel(self, dashboard):
+    def test_header_pills_and_cancel_on_the_shared_banner(self, dashboard):
         html = dashboard.webui.read_page(dashboard._HTML_PATH)
-        for element in ('batt-time', 'batt-power', 'battery-banner', 'battery-cancel'):
+        for element in ('batt-time', 'batt-power'):
             assert f'id="{element}"' in html
-        assert '/api/battery/cancel' in html
+        assert 'api/battery/cancel' in html
+        assert 'RcnBattery.onCancel' in html and 'RcnBattery.update(e)' in html
+        # The shared scripts draw the banners; this page keeps no copy.
+        for element in ('battery-banner', 'override-banner', 'battery-cancel'):
+            assert f'id="{element}"' not in html
 
     def test_time_pill_switches_views(self, dashboard):
         html = dashboard.webui.read_page(dashboard._HTML_PATH)
         assert "const PILL_VIEWS = ['percent', 'time', 'clock'];" in html
         assert 'until ${at.toLocaleTimeString' in html
         assert "store.set('rcn-battery-view', pillView)" in html
-        assert 'Turning the car off now. Turn off the power switch.' in html
+        assert 'RcnBattery.final()' in html
+        shared = (dashboard.webui.WEB_DIR / 'battery.js').read_text()
+        assert f"'{dashboard.FINAL_MESSAGE}'" in shared
 
 
 NMCLI_DEVICES = """wlan1:wifi:connected:racecar-neo-ap
@@ -1089,7 +1354,7 @@ class TestNetwork:
             },
             {
                 'device': 'wlan0',
-                'kind': 'Wi-Fi',
+                'kind': 'WiFi',
                 'state': 'connected',
                 'network': 'Duck',
                 'address': '10.0.0.198/24',
@@ -1134,7 +1399,7 @@ class TestLink:
     def test_recent_problem_holds_yellow(self, dashboard):
         v = dashboard.link_view(self._report(dropped_frames=3, reconnects=1), 1.0, 20.0)
         assert v['status'] == 'stale'
-        assert v['detail'] == '200 Hz. Since teleop started: 3 lost frames, 1 reconnects'
+        assert v['detail'] == '200 Hz. Since teleop started: 3 lost frames, 1 reconnect'
 
     def test_old_problem_clears(self, dashboard):
         v = dashboard.link_view(self._report(dropped_frames=3), 1.0, 90.0)
@@ -1168,7 +1433,7 @@ class TestFirmware:
 
     def test_raw_pwm_build_is_yellow(self, dashboard):
         v = dashboard.firmware_view(self._report(**{'fw.speed_control': 'raw_pwm'}), 1.0)
-        assert v['status'] == 'stale' and 'Open-loop PWM test build' in v['detail']
+        assert v['status'] == 'stale' and v['detail'].endswith('Test build. Not for driving')
 
     def test_voltage_dips_are_listed(self, dashboard):
         v = dashboard.firmware_view(
@@ -1183,7 +1448,7 @@ class TestFirmware:
 
     def test_uncommitted_build_is_yellow(self, dashboard):
         v = dashboard.firmware_view(self._report(**{'fw.git_dirty': '1'}), 1.0)
-        assert v['status'] == 'stale' and v['detail'].endswith('Uncommitted build')
+        assert v['status'] == 'stale' and v['detail'].endswith('Development build')
 
     def test_no_reply_is_yellow(self, dashboard):
         v = dashboard.firmware_view(
@@ -1216,7 +1481,33 @@ class TestFirmware:
         }
         assert dashboard.stall_view(report, 1.0)['status'] == status
         assert dashboard.stall_view(None, None)['status'] == 'unsupervised'
-        assert dashboard.stall_view(report, 10.0)['detail'] == 'No report'
+        assert dashboard.stall_view(report, 10.0)['detail'] == 'No reading'
+
+    @pytest.mark.parametrize(
+        'state, left, age, want',
+        [
+            ('0', '0.0', 0.5, {'state': None, 'seconds_left': None}),
+            ('1', '0.0', 0.5, {'state': 'tripped', 'seconds_left': None}),
+            ('2', '2.0', 0.5, {'state': 'cooldown', 'seconds_left': 1.5}),
+            ('3', '30.0', 1.0, {'state': 'lockout', 'seconds_left': 29.0}),
+            ('3', '0.4', 1.0, {'state': 'lockout', 'seconds_left': 0.0}),
+        ],
+    )
+    def test_stall_banner(self, dashboard, state, left, age, want):
+        report = {'values': {'supported': '1', 'state': state, 'seconds_left': left}}
+        assert dashboard.stall_banner(report, age) == want
+
+    @pytest.mark.parametrize(
+        'report, age',
+        [
+            (None, None),
+            ({'values': {'supported': '1', 'state': '3', 'seconds_left': '9'}}, 10.0),
+            ({'values': {'supported': '0', 'state': '3', 'seconds_left': '9'}}, 0.5),
+            ({'values': {'supported': '', 'state': '3', 'seconds_left': '9'}}, 0.5),
+        ],
+    )
+    def test_no_stall_banner_without_a_fresh_supported_report(self, dashboard, report, age):
+        assert dashboard.stall_banner(report, age)['state'] is None
 
     def test_stall_chip_on_the_home_page(self, dashboard):
         html = (Path(dashboard.__file__).parent / 'dashboard.html').read_text()
@@ -1224,7 +1515,8 @@ class TestFirmware:
 
     def test_footer_versions(self, dashboard):
         about = dashboard.about_view(self._report(), 1.0)
-        assert about == {'driver': dashboard.webui.driver_version(), 'firmware': '0.9.1'}
+        assert about['driver'] == dashboard.webui.driver_version()
+        assert about['firmware'] == '0.9.1' and about['car']
         assert dashboard.about_view(None, None)['firmware'] is None
         pending = {'level': 0, 'message': '', 'values': {'state': 'pending'}}
         assert dashboard.about_view(pending, 1.0)['firmware'] is None
@@ -1251,3 +1543,136 @@ class TestBatteryPillsFresh:
         assert "document.addEventListener('visibilitychange'" in dashboard.webui.read_page(
             dashboard._HTML_PATH
         )
+
+
+class TestSetupGate:
+    def _unfinish(self, path):
+        (path / 'car.yaml').write_text('name: test\n')
+
+    def test_utilities_closed_until_setup_is_done(self, dashboard, set_up_car):
+        self._unfinish(set_up_car)
+        view = dashboard.setup_view()
+        assert view['complete'] is False and 'Access point' in view['open']
+        ok, message = dashboard.open_app('wallfollow', run=FakeRun({}))
+        assert not ok and message == dashboard.SETUP_NEEDED
+
+    def test_core_apps_still_open(self, dashboard, set_up_car):
+        self._unfinish(set_up_car)
+        run = FakeRun(states={'racecar-profile': 'active', 'racecar-terminal': 'inactive'})
+        assert dashboard.open_app('profile', run=run)[0]
+        assert dashboard.open_app('terminal', run=run) == (False, dashboard.SETUP_NEEDED)
+
+    def test_page_grays_out_locked_tiles(self, dashboard):
+        html = dashboard.webui.read_page(dashboard._HTML_PATH)
+        assert 'id="setup-note"' in html and "a.group !== 'core'" in html
+        assert 'Finish setup to unlock Tools and Autonomy.' in html
+        assert "'Finish setup to unlock'" in html and 'racecar setup car' not in html
+
+
+def test_footer_names_the_car(dashboard):
+    assert dashboard.car_label('racecar-neo-0', 'Bill') == 'racecar-neo-0 (Bill)'
+    assert dashboard.car_label('racecar-neo-0', '') == 'racecar-neo-0'
+    footer = (Path(dashboard.__file__).parent / 'web' / 'footer.js').read_text()
+    assert 'class="rcn-car"' in footer and 'about.car' in footer
+
+
+def test_planned_apps_show_as_placeholders(dashboard):
+    html = (Path(dashboard.__file__).parent / 'dashboard.html').read_text()
+    assert "name: 'Files'" in html
+    # No placeholder ships for an app that is not built.
+    for name in ('Modules', 'Scripter', 'Planner'):
+        assert f"name: '{name}'" not in html, name
+    assert '.app.planned .glyph { border-style: dashed;' in html
+    assert '!apps.some((a) => a.name === p.name)' in html
+
+
+def test_connections_tile_and_configure_link(dashboard):
+    html = (Path(dashboard.__file__).parent / 'dashboard.html').read_text()
+    assert "name: 'Connections', icon: 'wifi', href: 'connections'" in html
+    assert "after: 'profile', name: 'Connections'" in html
+    assert 'id="net-configure" href="connections"' in html
+    assert "{ group: 'core', after: 'profile', name: 'Connections', icon: 'wifi' }," not in html
+
+
+class FakeJobs:
+    def __getattr__(self, name):
+        return lambda *a: (name, a)
+
+
+class TestConnectionJob:
+    def job(self, dashboard, action, **body):
+        return dashboard.connection_job(action, body, FakeJobs())
+
+    def test_join_checks_before_running(self, dashboard):
+        short = self.job(dashboard, 'join', ssid='Home', security='psk', password='short')
+        assert short == 'Use 8 to 63 characters.'
+        assert self.job(dashboard, 'join', ssid='', security='psk') == 'Reload the page.'
+        assert self.job(dashboard, 'join', ssid='x', security='wep') == 'Reload the page.'
+        body = {'ssid': 'Home', 'security': 'psk', 'password': 'longenough'}
+        run, failure = self.job(dashboard, 'join', **body)
+        assert run() == ('join', ('Home', 'psk', 'longenough', ''))
+        assert failure == 'Could not join Home.'
+        run, _ = self.job(dashboard, 'join', ssid='Duck', security='psk', saved=True)
+        assert run()[0] == 'join'
+
+    def test_other_actions(self, dashboard):
+        run, failure = self.job(dashboard, 'forget', uuid='u1', ssid='Duck')
+        assert run() == ('forget', ('u1',)) and failure == 'Could not forget Duck.'
+        assert self.job(dashboard, 'forget') == 'Reload the page.'
+        run, failure = self.job(dashboard, 'order', uuids=['a', 'b'])
+        assert run() == ('order', (['a', 'b'],)) and failure == 'Could not save the order.'
+        assert self.job(dashboard, 'order', uuids='a') == 'Reload the page.'
+        run, failure = self.job(dashboard, 'wifi', on=True)
+        assert run() == ('wifi_power', (True,)) and failure == 'Could not turn on WiFi.'
+        assert self.job(dashboard, 'wifi', on=False)[1] == 'Could not turn off WiFi.'
+        assert self.job(dashboard, 'ap-password', password='short') == 'Use 8 to 63 characters.'
+        run, failure = self.job(dashboard, 'ap-password', password='newpass123')
+        assert run() == ('ap_password', ('newpass123',))
+        assert failure == 'Could not change the password.'
+        assert self.job(dashboard, 'ap-off') == 'Reload the page.'
+
+
+def test_connections_page_text(dashboard):
+    html = (Path(dashboard.__file__).parent / 'connections.html').read_text()
+    assert "'Sign-in needed'" in html
+    # Sign in opens the Browser, only while the WiFi row says Sign-in needed.
+    assert "state === 'portal'" in html and "RcnRoute.app('browser')" in html
+    assert html.count('class="switch"') == 1
+    # Confirms ask only the question; graying shows a running change.
+    gone_text = (
+        '...', 'It may disconnect', 'Rejoin with', 'Not saved', "'Off'", 'No other networks'
+    )
+    for gone in gone_text:
+        assert gone not in html, gone
+    for asked in ('`Leave ${view.wifi.network}?`', "'Turn off WiFi?'",
+                  '`Disconnect every device from ${view.ap.ssid}?`'):  # fmt: skip
+        assert asked in html, asked
+
+
+def test_device_names_route_and_edit_button(dashboard):
+    src = (Path(dashboard.__file__).parent / 'dashboard.py').read_text()
+    assert "if action == 'names':" in src and 'netconfig.save_names(names)' in src
+    html = (Path(dashboard.__file__).parent / 'connections.html').read_text()
+    assert '>Edit devices</button>' in html and 'maxlength="32"' in html
+    # Ping test is the last pane.
+    assert html.index('<section id="ping">') > html.index('<section id="devices">')
+
+
+GONE_8080 = (
+    '>Loading<', 'Stopping apps...', 'Opening...', 'Safety override starting', 'camera paused',
+    'No watchdog events yet', 'Car Stalled', 'Safety switch override', 'Lost contact with the car',
+    'Open it again from the apps page', 'Run: racecar', "'Wi-Fi'", 'Turn on/off',
+    'The car stops for about', 'will have no camera', 'Do not leave it unattended',
+    "'unknown'", 'Low battery: Charge', '>Refresh<',
+)  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    'name',
+    ['dashboard.html', 'dashboard_launch.html', 'web/battery.js', 'web/stall.js',
+     'web/override.js', 'web/lost.js', 'web/footer.js', 'web/api.js'],
+)  # fmt: skip
+def test_removed_wordings_stay_out(dashboard, name):
+    text = (Path(dashboard.__file__).parent / name).read_text()
+    for gone in GONE_8080:
+        assert gone not in text, (name, gone)

@@ -71,6 +71,8 @@ SHARED = (
     'lost.js',
     'override.js',
     'battery.js',
+    'stall.js',
+    'driving.js',
     'ui.js',
     'api.js',
     'tune.js',
@@ -96,8 +98,8 @@ def test_pages_link_shared_files_with_the_asset_version(webui):
     for page in pages:
         text = page.read_text()
         for name in SHARED:
-            for link in re.findall(rf'"/ui/{re.escape(name)}[^"]*"', text):
-                assert link == f'"/ui/{name}?v={{{{asset}}}}"', (page.name, link)
+            for link in re.findall(rf'"ui/{re.escape(name)}[^"]*"', text):
+                assert link == f'"ui/{name}?v={{{{asset}}}}"', (page.name, link)
 
 
 def test_lab_pages_show_a_closed_screen():
@@ -110,7 +112,7 @@ def test_lab_pages_show_a_closed_screen():
         'camlabel_dashboard/camlabel.html',
     ):
         text = (dashboards / page).read_text()
-        assert '/ui/lost.js?v=' in text and 'data-app="' in text, page
+        assert 'ui/lost.js?v=' in text and 'data-app="' in text, page
 
 
 def test_driving_lab_pages_keep_the_override_alive():
@@ -120,23 +122,68 @@ def test_driving_lab_pages_keep_the_override_alive():
         'linefollow_dashboard/linefollow.html',
         'wallfollow_dashboard/wallfollow.html',
     ):
-        assert '/ui/override.js?v=' in (dashboards / page).read_text(), page
+        assert 'ui/override.js?v=' in (dashboards / page).read_text(), page
+
+
+PAGES = (
+    'dashboard.html',
+    'dashboard_launch.html',
+    'mapview.html',
+    'planner.html',
+    'dashboards/teleop_dashboard/teleop.html',
+    'dashboards/linefollow_dashboard/linefollow.html',
+    'dashboards/wallfollow_dashboard/wallfollow.html',
+    'dashboards/camlabel_dashboard/camlabel.html',
+    'terminal.html',
+)
 
 
 def test_app_pages_show_the_low_battery_banner():
-    # The 8080 home page draws its own banner with the cancel button.
+    # 8080 included: it feeds the shared banner from its own status poll.
     scripts = Path(__file__).resolve().parent.parent / 'scripts'
-    for page in (
-        'dashboard_launch.html',
+    for page in PAGES:
+        assert 'ui/battery.js?v=' in (scripts / page).read_text(), page
+
+
+def test_every_page_shows_the_stall_banner():
+    scripts = Path(__file__).resolve().parent.parent / 'scripts'
+    for page in (*PAGES, 'terminal_login.html'):
+        assert 'ui/stall.js?v=' in (scripts / page).read_text(), page
+
+
+def test_driving_pages_show_who_drives():
+    scripts = Path(__file__).resolve().parent.parent / 'scripts'
+    driving = {
+        'dashboard.html': '',
+        'mapview.html': 'Mapper',
+        'planner.html': 'Planner',
+        'dashboards/teleop_dashboard/teleop.html': 'Web Teleop',
+        'dashboards/linefollow_dashboard/linefollow.html': 'Line Follow',
+        'dashboards/wallfollow_dashboard/wallfollow.html': 'Wall Follow',
+    }
+    for page in PAGES:
+        text = (scripts / page).read_text()
+        assert ('ui/driving.js?v=' in text) == (page in driving), page
+        if driving.get(page):
+            assert f'<html lang="en" data-app="{driving[page]}">' in text, page
+    for page in ('mapview.html', 'planner.html'):
+        text = (scripts / page).read_text()
+        assert 'canDrive() && !(window.RcnDriving && RcnDriving.blocked())' in text
+
+
+def test_override_banner_only_on_8080_and_driving_pages():
+    # Every page that loads override.js keeps the override alive.
+    scripts = Path(__file__).resolve().parent.parent / 'scripts'
+    driving = {
+        'dashboard.html',
         'mapview.html',
+        'planner.html',
         'dashboards/teleop_dashboard/teleop.html',
         'dashboards/linefollow_dashboard/linefollow.html',
         'dashboards/wallfollow_dashboard/wallfollow.html',
-        'dashboards/camlabel_dashboard/camlabel.html',
-        'terminal.html',
-    ):
-        assert '/ui/battery.js?v=' in (scripts / page).read_text(), page
-    assert '/ui/battery.js' not in (scripts / 'dashboard.html').read_text()
+    }
+    for page in (*PAGES, 'terminal_login.html'):
+        assert ('ui/override.js?v=' in (scripts / page).read_text()) == (page in driving), page
 
 
 class TestFill:
@@ -154,7 +201,7 @@ class TestFill:
         page.write_text('<body><main></main></body>')
         text = webui.read_page(page)
         for name in ('footer.js', 'home.js'):
-            assert text.index(f'/ui/{name}?v={webui.ASSET_VERSION}') < text.index('</body>')
+            assert text.index(f'ui/{name}?v={webui.ASSET_VERSION}') < text.index('</body>')
         bare = tmp_path / 'bare.html'
         bare.write_text('<main></main>')
         assert webui.read_page(bare).endswith(
@@ -170,7 +217,7 @@ class TestFill:
     def test_home_shortcut_closes_the_tab_or_loads_the_home_page(self, webui):
         body, _ = webui.static_file('/ui/home.js')
         text = body.decode()
-        assert '{{' not in text and ':8080/' in text
+        assert '{{' not in text and "RcnRoute.app('home')" in text
         assert "hasAttribute('data-home')" in text
         dashboard = (webui.WEB_DIR.parent / 'dashboard.html').read_text()
         assert '<body data-home>' in dashboard
@@ -180,16 +227,95 @@ class TestFill:
     def test_footer_script_gets_the_versions_and_home_port(self, webui):
         body, _ = webui.static_file('/ui/footer.js')
         text = body.decode()
-        assert '{{' not in text and ':8080/api/about' in text
+        assert '{{' not in text and "RcnRoute.app('home', 'api/about')" in text
         assert f'Driver {webui.driver_version()}' in text
         assert 'racecar OS' in text and 'Copyright' not in text
 
-    @pytest.mark.parametrize('name', ['battery.js', 'override.js', 'lost.js'])
+    @pytest.mark.parametrize(
+        'name', ['battery.js', 'override.js', 'lost.js', 'stall.js', 'driving.js']
+    )
     def test_shared_scripts_reach_the_home_page(self, webui, name):
         raw = (webui.WEB_DIR / name).read_text()
-        assert ':{{home}}/' in raw and ':8080/' not in raw
+        assert "RcnRoute.app('home'" in raw and ':8080/' not in raw
         body, _ = webui.static_file(f'/ui/{name}')
-        assert b'{{' not in body and b':8080/' in body
+        assert b'{{' not in body
+
+
+class TestOwnHost:
+    @pytest.fixture(autouse=True)
+    def names(self, webui, monkeypatch):
+        names = frozenset({'localhost', 'car', 'car.local'})
+        monkeypatch.setattr(webui, 'car_names', lambda: names)
+
+    @pytest.mark.parametrize(
+        'host, ok',
+        [
+            ('10.42.0.1:8080', True),
+            ('10.0.0.198', True),
+            ('[fe80::1]:8090', True),
+            ('localhost:8084', True),
+            ('car.local:8090', True),
+            ('CAR.LOCAL.:8090', True),
+            ('car', True),
+            (None, True),
+            ('evil.example:8080', False),
+            ('car.local.evil.example', False),
+            ('10.42.0.1.nip.io:8080', False),
+        ],
+    )
+    def test_own_host(self, webui, host, ok):
+        assert webui.own_host(host) is ok
+
+    def test_a_foreign_host_is_refused_before_any_route(self, webui):
+        import http.client
+        from http.server import ThreadingHTTPServer
+        import threading
+
+        hits = []
+
+        class Handler(webui.AppHandler):
+            def do_GET(self):  # noqa: N802
+                hits.append(self.path)
+                self.send(200, b'ok', 'text/plain')
+
+            do_POST = do_GET  # noqa: N815
+
+            def log_message(self, *args):
+                pass
+
+        srv = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            port = srv.server_address[1]
+            evil, car = 'evil.example:8080', 'car.local:8080'
+            cases = [('GET', evil, 421), ('POST', evil, 421), ('GET', car, 200),
+                     ('GET', f'127.0.0.1:{port}', 200)]  # fmt: skip
+            for method, host, code in cases:
+                conn = http.client.HTTPConnection('127.0.0.1', port, timeout=5)
+                conn.request(method, '/x', body=b'{}', headers={'Host': host})
+                res = conn.getresponse()
+                assert res.status == code, (method, host)
+                res.read()
+                conn.close()
+        finally:
+            srv.shutdown()
+            srv.server_close()
+        assert len(hits) == 2
+
+    def test_names_from_the_car_profile(self, webui, monkeypatch):
+        from racecar_neo_ros2_driver import car_profile
+
+        monkeypatch.undo()
+        webui.car_names.cache_clear()
+        monkeypatch.setattr(webui.socket, 'gethostname', lambda: 'Racecar-Neo-7')
+        extra = {'web_hosts': ['lab-car-7.school.edu.', 3]}
+        monkeypatch.setattr(car_profile, 'car_info', lambda: extra)
+        try:
+            names = webui.car_names()
+        finally:
+            webui.car_names.cache_clear()
+        want = {'localhost', 'racecar-neo-7', 'racecar-neo-7.local', 'lab-car-7.school.edu'}
+        assert names == want
 
 
 class TestOrigins:
@@ -416,7 +542,7 @@ class TestPageKit:
     def test_labs_use_the_shared_kit(self, name):
         text = _lab_page(name)
         for script in ('ui.js', 'api.js', 'tune.js', 'logs.js'):
-            assert f'/ui/{script}?v=' in text, script
+            assert f'ui/{script}?v=' in text, script
         for gone in (
             'function post(',
             'const $ = (id)',
@@ -466,3 +592,153 @@ class TestIdleGate:
         gate.touch()
         t[0] += 16.0
         assert not gate.check()
+
+
+def test_every_app_refuses_cross_site_posts():
+    """Pages that drive the car or change its files refuse another site's POST."""
+    from pathlib import Path
+
+    import yaml
+
+    root = Path(__file__).resolve().parent.parent
+    scripts = root / 'scripts'
+    registry = yaml.safe_load((root / 'config' / 'apps.yaml').read_text())
+    labs = [
+        scripts / 'dashboards' / a['dir'] / a['script'] for a in registry['apps'] if 'dir' in a
+    ]
+    assert labs
+    for path in [scripts / 'mapview.py', *labs]:
+        text = path.read_text()
+        if 'def do_POST' in text:
+            assert 'self.refuse_cross_site()' in text, path.name
+
+
+def test_refuse_cross_site(webui):
+    import http.client
+    from http.server import ThreadingHTTPServer
+    import threading
+
+    class Handler(webui.AppHandler):
+        def do_POST(self):  # noqa: N802
+            if self.refuse_cross_site():
+                return
+            self.send(200, b'ok', 'text/plain')
+
+    srv = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    port = srv.server_address[1]
+
+    def post(headers):
+        conn = http.client.HTTPConnection('127.0.0.1', port, timeout=5)
+        conn.request('POST', '/x', body=b'{}', headers=headers)
+        res = conn.getresponse()
+        res.read()
+        conn.close()
+        return res.status
+
+    try:
+        assert post({'Origin': 'http://evil.example'}) == 403
+        assert post({'Origin': f'http://127.0.0.1:{port}'}) == 200
+        assert post({}) == 200
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_icon_links_carry_the_asset_version():
+    """A new icon shows right after an update: no page or script links icons.svg unversioned."""
+    from pathlib import Path
+
+    scripts = Path(__file__).resolve().parent.parent / 'scripts'
+    files = [
+        *scripts.glob('*.html'),
+        *scripts.glob('dashboards/*/*.html'),
+        *scripts.glob('web/*.js'),
+    ]
+    for path in files:
+        if path.parent.name in ('eps_dashboard', 'pursuit_dashboard', 'smartfollow_dashboard'):
+            continue
+        assert 'ui/icons.svg#' not in path.read_text(), path.name
+
+
+TOP_PAGES = sorted((Path(__file__).resolve().parent.parent / 'scripts').glob('*.html'))
+
+
+@pytest.mark.parametrize('page', TOP_PAGES, ids=lambda p: p.name)
+def test_import_map_addresses_resolve(page):
+    # An import map ignores an address that is not ./, ../, / or a full URL.
+    text = page.read_text()
+    for block in re.findall(r'<script type="importmap">(.*?)</script>', text, re.S):
+        for target in re.findall(r':\s*"([^"]+)"', block):
+            assert target.startswith(('./', '../', '/', 'http')), (page.name, target)
+
+
+def _handler(webui, peer='127.0.0.1', **headers):
+    h = object.__new__(webui.AppHandler)
+    h.client_address = (peer, 50000)
+    h.headers = headers
+    h.sent = []
+    h.send = lambda code, body, kind, headers=None: h.sent.append((code, kind, headers or {}))
+    return h
+
+
+class TestNamePaths:
+    def test_base_goes_right_after_head(self, webui):
+        out = webui.with_base('<html><head lang="en"><title>x</title></head></html>', '/mapper/')
+        head = '<html><head lang="en"><base href="/mapper/"><script src="ui/route.js?v='
+        assert out.startswith(head)
+        assert out.index('<base') < out.index('<title>')
+
+    def test_base_without_head(self, webui):
+        assert webui.with_base('<p>x</p>', '/').startswith('<base href="/">')
+
+    @pytest.mark.parametrize(
+        'value, expected',
+        [
+            (None, '/'),
+            ('/mapper/', '/mapper/'),
+            ('/mapper', '/'),
+            ('/a/b/', '/'),
+            ('/"><script>/', '/'),
+            ('//evil.example/', '/'),
+            ('/mapper/\n', '/'),
+        ],
+    )
+    def test_prefix_is_validated(self, webui, value, expected):
+        headers = {} if value is None else {'X-Forwarded-Prefix': value}
+        assert _handler(webui, **headers).prefix() == expected
+
+    @pytest.mark.parametrize(
+        'peer, forwarded, expected',
+        [
+            ('127.0.0.1', '10.42.0.5', '10.42.0.5'),
+            ('::1', '10.42.0.5', '10.42.0.5'),
+            ('10.42.0.5', '127.0.0.1', '10.42.0.5'),
+            ('127.0.0.1', 'not an address', '127.0.0.1'),
+            ('127.0.0.1', '', '127.0.0.1'),
+        ],
+    )
+    def test_client_ip_trusts_only_the_local_proxy(self, webui, peer, forwarded, expected):
+        assert _handler(webui, peer, **{'X-Real-IP': forwarded}).client_ip() == expected
+
+    def test_redirect_stays_under_the_prefix(self, webui):
+        h = _handler(webui, **{'X-Forwarded-Prefix': '/profile/'})
+        h.redirect('/handbook/index', 303, {'Set-Cookie': 'a=b'})
+        code, _, headers = h.sent[0]
+        assert code == 303
+        assert headers == {'Location': '/profile/handbook/index', 'Set-Cookie': 'a=b'}
+        h = _handler(webui)
+        h.redirect('login')
+        assert h.sent[0][2]['Location'] == '/login'
+
+    def test_route_script_gets_the_routes(self, webui):
+        body, kind = webui.static_file('/ui/route.js')
+        assert kind.startswith(('text/javascript', 'application/javascript'))
+        assert b'{{routes}}' not in body and b'"mapview": ["mapper"' in body
+
+
+@pytest.mark.parametrize('host', ['10.42.0.1', '192.168.52.200', 'racecar-neo-0.local'])
+def test_port_80_pages_are_same_origin(webui, host):
+    # nginx passes Host without a port; the browser's Origin on port 80 has none either.
+    assert webui.same_origin(f'http://{host}', host)
+    assert not webui.same_origin('http://other.local', host)

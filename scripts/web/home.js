@@ -7,7 +7,7 @@
    page instead. Left alone on the home page (its <body> has data-home). */
 (function () {
   'use strict';
-  const home = `${location.protocol}//${location.hostname}:{{home}}/`;
+  const home = RcnRoute.app('home');
   if (document.body.hasAttribute('data-home')) return;
   const mark = document.querySelector('.rcn-header .rcn-mark');
   if (!mark) return;

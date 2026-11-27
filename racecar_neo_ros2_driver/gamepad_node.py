@@ -1,12 +1,14 @@
 """Joy -> /gamepad_drive passthrough. All caps live in throttle_node."""
 
 from collections.abc import Sequence
+from typing import Any
 
 from ackermann_msgs.msg import AckermannDriveStamped
+from racecar_neo_ros2_driver.params import declare_params
+from racecar_neo_ros2_driver.qos import SENSOR_LATEST
+from racecar_neo_ros2_driver.spin import run_node
 import rclpy
-from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
-from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import Joy
 
 from .limits import clamp
@@ -27,26 +29,27 @@ def joy_to_drive(
     return clamp(speed), clamp(steering)
 
 
+# Parameters and their defaults; values come from the launch YAML.
+DEFAULTS: dict[str, Any] = {
+    'throttle_axis': 1,
+    'steering_axis': 3,
+    'throttle_sign': 1,
+    'steering_sign': 1,
+}
+
+
 class GamepadNode(Node):
     def __init__(self) -> None:
         super().__init__('gamepad_node')
 
-        self.declare_parameter('throttle_axis', 1)
-        self.declare_parameter('steering_axis', 3)
-        self.declare_parameter('throttle_sign', 1)
-        self.declare_parameter('steering_sign', 1)
+        declare_params(self, DEFAULTS)
 
         self._throttle_axis = self.get_parameter('throttle_axis').value
         self._steering_axis = self.get_parameter('steering_axis').value
         self._throttle_sign = self.get_parameter('throttle_sign').value
         self._steering_sign = self.get_parameter('steering_sign').value
 
-        qos = QoSProfile(
-            depth=1,
-            history=QoSHistoryPolicy.KEEP_LAST,
-            reliability=QoSReliabilityPolicy.BEST_EFFORT,
-            durability=QoSDurabilityPolicy.VOLATILE,
-        )
+        qos = SENSOR_LATEST
         self._pub = self.create_publisher(AckermannDriveStamped, '/gamepad_drive', qos)
         self.create_subscription(Joy, '/joy', self._joy_cb, qos)
 
@@ -72,15 +75,7 @@ class GamepadNode(Node):
 
 
 def main(args: list[str] | None = None) -> None:
-    rclpy.init(args=args)
-    node = GamepadNode()
-    try:
-        rclpy.spin(node)
-    except (KeyboardInterrupt, ExternalShutdownException):
-        pass
-    finally:
-        node.destroy_node()
-        rclpy.try_shutdown()
+    run_node(GamepadNode, args, spinner=rclpy.spin)
 
 
 if __name__ == '__main__':

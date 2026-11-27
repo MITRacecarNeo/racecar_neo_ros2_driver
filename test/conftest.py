@@ -1,11 +1,15 @@
 """Shared test helpers: load scripts/*.py by path (scripts/ is not a package)."""
 
 import importlib.util
+import os
 from pathlib import Path
 import sys
 from types import ModuleType, SimpleNamespace
 
 import pytest
+
+# Tests never take the car's own drive lease: with no such folder nothing is enforced.
+os.environ['RACECAR_DRIVE_LEASE_DIR'] = '/nonexistent/drive-lease'
 
 SCRIPTS = Path(__file__).resolve().parent.parent / 'scripts'
 # Script folders searched by load_script, in order.

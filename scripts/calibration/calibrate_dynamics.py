@@ -46,7 +46,10 @@ import time
 from typing import Any
 
 import numpy as np
+import progress
 from racecar_neo_ros2_driver.car_profile import param_path
+from racecar_neo_ros2_driver.drive_lease import DriveLease
+from racecar_neo_ros2_driver.geometry import stamp_sec, yaw_of
 import yaml
 
 HERE = Path(__file__).resolve().parent
@@ -61,7 +64,7 @@ from calibrate_common import (  # noqa: E402, I100
     update_local_values,
 )
 from racecar_log import build_bag_name, build_record_argv, load_config  # noqa: E402, I100
-from racecar_log import resolve_log_root  # noqa: E402
+from racecar_log import find_bag, resolve_log_root  # noqa: E402
 from scan_match import (  # noqa: E402
     base_motion,
     compose,
@@ -295,17 +298,11 @@ class Bag:
 
 
 def read_bag(path: Path, axis: int = 2, sign: float = 1.0) -> Bag:
-    import rosbag2_py
+    from racecar_neo_ros2_driver.bags import open_reader
     from rclpy.serialization import deserialize_message
     from rosidl_runtime_py.utilities import get_message
 
-    info = rosbag2_py.Info().read_metadata(str(path), '')
-    reader = rosbag2_py.SequentialReader()
-    reader.open(
-        rosbag2_py.StorageOptions(uri=str(path), storage_id=info.storage_identifier),
-        rosbag2_py.ConverterOptions('cdr', 'cdr'),
-    )
-    types = {t.name: t.type for t in reader.get_all_topics_and_types()}
+    reader, types = open_reader(path)
     classes = {n: get_message(types[n]) for n in TOPICS if n in types}
     odom, gyro, motor, scans = [], [], [], []
     while reader.has_next():
@@ -315,28 +312,30 @@ def read_bag(path: Path, axis: int = 2, sign: float = 1.0) -> Bag:
         msg = deserialize_message(data, classes[topic])
         if topic == '/odom/integrated':
             q = msg.pose.pose.orientation
-            st = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+            st = stamp_sec(msg.header.stamp)
             odom.append(
                 (
                     st,
                     msg.pose.pose.position.x,
                     msg.pose.pose.position.y,
-                    2 * math.atan2(q.z, q.w),
+                    yaw_of(q),
                     msg.twist.twist.linear.x,
                 )
             )
         elif topic == '/imu/lsm9ds1':
-            st = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+            st = stamp_sec(msg.header.stamp)
             gyro.append((st, sign * getattr(msg.angular_velocity, 'xyz'[axis])))
         elif topic == '/motor':
             motor.append((t_ns * 1e-9, msg.drive.speed, msg.drive.steering_angle))
         elif topic == '/scan':
-            st = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+            st = stamp_sec(msg.header.stamp)
             ranges = np.asarray(msg.ranges, float)
             angles = msg.angle_min + msg.angle_increment * np.arange(ranges.size)
             ok = np.isfinite(ranges) & (ranges >= msg.range_min) & (ranges <= msg.range_max)
             beams = st + msg.time_increment * np.arange(ranges.size)
             scans.append((st + msg.scan_time, ranges[ok], angles[ok], beams[ok]))
+    if len(odom) < 2:
+        raise ValueError(f'{path.name}: no /odom/integrated recorded; drive the run again')
     o = np.array(odom)
     xy = o[:, 1:3]
     path_m = np.concatenate(([0.0], np.cumsum(np.hypot(*np.diff(xy, axis=0).T))))
@@ -374,10 +373,9 @@ def command_edges(bag: Bag) -> list[tuple[float, float, float]]:
 
 
 def laser_pose() -> Pose:
-    from racecar_neo_ros2_driver.frames import load_frames
+    from racecar_neo_ros2_driver.frames import laser_mount, load_frames
 
-    f = load_frames(stack_config_dir())
-    return f['laser_x_mm'] * 1e-3, f['laser_y_mm'] * 1e-3, math.radians(f['laser_yaw_deg'])
+    return laser_mount(load_frames(stack_config_dir()))
 
 
 # Scans stacked per rest: a few fill gaps between beams; more only slow the match.
@@ -396,6 +394,22 @@ def speed_tag(speed: float) -> str:
     return f'rev{tag}' if speed < 0 else tag
 
 
+def speed_plot(bag: Bag, t_on: float, command: float) -> None:
+    """Plot the speed over time from the command on, for one straight run."""
+    if not progress.enabled():
+        return
+    pts = [
+        [round(t - t_on, 3), round(float(v), 3)]
+        for t, v in zip(bag.odom_t, bag.speed, strict=True)
+    ]
+    progress.plot(
+        f'Speed at command {command:g}',
+        [{'name': 'speed', 'points': [p for p in pts if p[0] >= -0.5]}],
+        x='time from the command (s)',
+        y='m/s',
+    )
+
+
 def analyze_straight(bag: Bag) -> tuple[dict[str, float], list[str]]:
     """Return (values for params/dynamics.yaml, report lines) for a straight run."""
     edges = command_edges(bag)
@@ -403,6 +417,7 @@ def analyze_straight(bag: Bag) -> tuple[dict[str, float], list[str]]:
     off = next(e for e in edges if e[0] > on[0] and e[1] == 0.0)
     r = straight_metrics(bag.odom_t, bag.speed, bag.path_m, on[0], off[0])
     tag = speed_tag(on[1])
+    speed_plot(bag, on[0], on[1])
     values = {
         f'steady_speed_mps_{tag}': round(r.steady_mps, 3),
         f'rise_90_s_{tag}': round(r.rise_90_s, 2),
@@ -482,7 +497,7 @@ def analyze_circle(bag: Bag) -> tuple[dict[str, float], list[str]]:
     values[f'servo_center_to_lock_s_{side}'] = round(total, 3)
     lines.append(
         f'Center to full {side} lock from the yaw rate: 10-90% in {rise:.3f} s, 95% '
-        f'{total:.3f} s after the command (an upper bound for the servo).'
+        f'{total:.3f} s after the command.'
     )
     return values, lines
 
@@ -520,7 +535,9 @@ class Driver:
         self.node = rclpy.create_node('dynamics_calibrator')
         self.log = self.node.get_logger()
         self.pub = self.node.create_publisher(AckermannDriveStamped, '/drive', 10)
+        self.lease = DriveLease('calibration', 'Calibration')
         self.rb = False
+        self.refused = False  # the last run: something else was driving
         self.node.create_subscription(Joy, '/joy', self._joy, 10)
 
     def _joy(self, msg: Any) -> None:
@@ -529,6 +546,8 @@ class Driver:
     def _hold(self, seconds: float, speed: float, steer: float, need_rb: bool) -> bool:
         end = time.monotonic() + seconds
         while time.monotonic() < end:
+            if not self.lease.refresh():
+                return False
             msg = self.msg_type()
             msg.header.stamp = self.node.get_clock().now().to_msg()
             msg.drive.speed = float(speed)
@@ -550,6 +569,10 @@ class Driver:
 
         `segments` defaults to RUNS[run]; the bag is named <time>_<prefix>_<run>.
         """
+        self.refused = not self.lease.take()
+        if self.refused:
+            self.log.error(self.lease.refused())
+            return None
         root = Path(resolve_log_root(load_config().get('DIR')))
         bag_dir = root / build_bag_name(f'{prefix}_{run}', time.time())
         recorder = subprocess.Popen(
@@ -564,7 +587,7 @@ class Driver:
                 'Press and hold RB. The car starts driving 3 seconds after you press it.'
             )
             self.log.info('Release RB at any time to stop the car.')
-            while not self.rb:
+            while not self.rb and self.lease.held:
                 self._hold(0.1, 0.0, 0.0, need_rb=False)
             ok = self._hold(COUNTDOWN_SEC, 0.0, 0.0, need_rb=True)
             plan = segments or RUNS[run]
@@ -581,11 +604,17 @@ class Driver:
                     ok = False
                     break
         finally:
+            lost = not self.lease.held
+            self.lease.release()
             recorder.send_signal(signal.SIGINT)
             recorder.wait(timeout=15)
         if ok:
             self.log.info('Done.')
             return bag_dir
+        if lost:
+            self.refused = True
+            self.log.error(f'Stopped: {self.lease.refused()} This run is not measured.')
+            return None
         self.log.error('Stopped: RB was released. This run is not measured.')
         return None
 
@@ -652,9 +681,7 @@ def main(argv: list[str] | None = None) -> int:
     log = logging.getLogger(TOOL)
     values: dict[str, float] = {}
     for name in args.analyze:
-        bag = Path(name).expanduser()
-        if not bag.exists():
-            bag = Path(resolve_log_root(load_config().get('DIR'))) / name
+        bag = find_bag(name)
         log.info(bag.name)
         got, lines = analyze(bag)
         for line in lines:

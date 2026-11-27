@@ -8,10 +8,7 @@ After=racecar-teleop.service
 Type=exec
 User=racecar
 Group=racecar
-ExecStart=/bin/bash -c '\
-    source /opt/ros/jazzy/setup.bash && \
-    source /home/racecar/ros2_ws/install/setup.bash && \
-    exec python3 @DIR@/@SCRIPT@'
+ExecStart=/home/racecar/ros2_ws/src/racecar_neo_ros2_driver/scripts/ros_exec.sh python3 @DIR@/@SCRIPT@
 Restart=on-failure
 RestartSec=5
 Environment=HOME=/home/racecar

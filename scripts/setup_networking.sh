@@ -10,7 +10,7 @@
 #      (WPA2 / 2.4 GHz / channel 6 / 10.42.0.1/24). The AP interface is the ALFA
 #      MT7612U dongle, pinned to wlan1 by the 99-racecar.rules udev rule.
 #   3. Puts eth0 in a single IPv4 addressing mode by calling setup_eth.sh
-#      (static by default, at 192.168.52.200/24), which is the only writer of
+#      (static by default, at 192.168.52.(200 + car ID)/24), which is the only writer of
 #      the netplan file. See docs/troubleshooting.md, "eth0 addressing".
 #   4. Resets the Pi's built-in wlan0 to default (client) mode, removing any AP
 #      connection bound to it (images older than v0.7.0 put the AP there).
@@ -29,10 +29,12 @@
 #   RACECAR_AP_ID         (default: 1; the number appended to the SSID base)
 #   RACECAR_AP_SSID_BASE  (default: racecar-neo)
 #   RACECAR_AP_SSID       (default: racecar-neo-<id>; full SSID override)
-#   RACECAR_AP_PSK        (default: racecar@mit)
+#   RACECAR_AP_PSK        (default: racecar@mit; an existing AP keeps its password
+#                          unless this is set, so a change from the Connections
+#                          page survives a rerun)
 #   RACECAR_AP_CHANNEL    (default: 6)
 #   RACECAR_AP_ADDR       (default: 10.42.0.1/24)
-#   RACECAR_ETH_STATIC    (default: 192.168.52.200/24)
+#   RACECAR_ETH_STATIC    (default: 192.168.52.(200 + RACECAR_AP_ID)/24, .200 without an ID)
 #   RACECAR_ETH_MODE      (default: static; or dynamic)
 #
 # All steps are idempotent.
@@ -71,7 +73,8 @@ AP_BAND="bg"
 AP_CHANNEL="${RACECAR_AP_CHANNEL:-6}"
 AP_ADDR="${RACECAR_AP_ADDR:-10.42.0.1/24}"
 
-ETH_STATIC_ADDR="${RACECAR_ETH_STATIC:-192.168.52.200/24}"
+source "$(dirname "${BASH_SOURCE[0]}")/setup_lib.sh"
+ETH_STATIC_ADDR="${RACECAR_ETH_STATIC:-$(eth_static_default "${RACECAR_AP_ID:-}")}"
 
 DISPATCHER_PATH="/etc/NetworkManager/dispatcher.d/99-racecar-ap-isolate"
 
@@ -109,7 +112,7 @@ if [ ! -d "/sys/class/net/$AP_IFACE/wireless" ]; then
         drv="$(basename "$(readlink -f "/sys/class/net/$i/device/driver" 2>/dev/null)" 2>/dev/null)"
         if [ "$drv" = "mt76x2u" ]; then
             echo "  AP interface '$AP_IFACE' not present; using detected ALFA interface '$i'."
-            echo "  (Reboot after setup_udev.sh so the udev rule renames it to wlan1.)"
+            echo "  Reboot so it becomes wlan1."
             AP_IFACE="$i"
             break
         fi
@@ -117,7 +120,7 @@ if [ ! -d "/sys/class/net/$AP_IFACE/wireless" ]; then
 fi
 if [ ! -d "/sys/class/net/$AP_IFACE/wireless" ]; then
     echo "ERROR: no AP wireless interface found (looked for '$AP_IFACE' and an mt76x2u adapter)." >&2
-    echo "       Plug in the ALFA dongle; run scripts/setup_udev.sh and reboot so it becomes wlan1." >&2
+    echo "       Plug in the ALFA dongle. Run scripts/setup_udev.sh, then reboot." >&2
     exit 1
 fi
 echo "AP interface: $AP_IFACE"
@@ -177,6 +180,10 @@ if nmcli -t -f NAME con show | grep -x "$AP_CON_NAME" >/dev/null; then
     # a no-op. --show-secrets exposes the PSK for comparison, and
     # connection.interface-name moves an AP still pinned to wlan0.
     nmcli_get() { sudo nmcli --show-secrets -g "$1" con show "$AP_CON_NAME" 2>/dev/null; }
+    if [ -z "${RACECAR_AP_PSK:-}" ]; then
+        have_psk=$(nmcli_get 802-11-wireless-security.psk || true)
+        [ -n "$have_psk" ] && AP_PSK="$have_psk"
+    fi
     diff_ap=false
     for spec in \
         "connection.interface-name=$AP_IFACE" \
@@ -311,8 +318,8 @@ echo
 echo "Join the AP from a client:"
 echo "  SSID: $AP_SSID"
 echo "  Password: $AP_PSK"
-echo "  Pi reachable at $AP_ADDR (or http://racecar-neo.local)"
+echo "  Pi reachable at $AP_ADDR (or http://$(hostname).local)"
 if [ "$CHANGES_MADE" = "false" ]; then
     echo
-    echo "(No configuration changes were necessary; system already matched.)"
+    echo "No changes needed."
 fi

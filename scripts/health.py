@@ -187,7 +187,7 @@ def battery_row(samples: Sequence[tuple[float, float]], floor_cell_volts: float)
     from racecar_neo_ros2_driver import battery
 
     if not samples:
-        return Check('power', 'battery', SKIP, 'no /battery/state; start teleop')
+        return Check('power', 'battery', SKIP, 'no /battery/state. Start teleop')
     volts = [v for v, _ in samples]
     cells = battery.detect_cells(max(volts))
     detail = (
@@ -286,16 +286,13 @@ def collect_link(seconds: float) -> list[dict[str, float]]:
         if report is not None:
             reports.append(report)
 
-    rclpy.init()
-    node = rclpy.create_node('racecar_health_link')
-    node.create_subscription(DiagnosticArray, '/diagnostics', record, 10)
-    end = time.monotonic() + seconds
-    try:
+    from racecar_neo_ros2_driver.ros_cli import ros_node
+
+    with ros_node('racecar_health_link') as node:
+        node.create_subscription(DiagnosticArray, '/diagnostics', record, 10)
+        end = time.monotonic() + seconds
         while time.monotonic() < end:
             rclpy.spin_once(node, timeout_sec=0.2)
-    finally:
-        node.destroy_node()
-        rclpy.shutdown()
     return reports
 
 
@@ -427,7 +424,7 @@ def speed_row(folder: Path | None, test: Callable[[Path], tuple[float, float]]) 
     except (OSError, ValueError) as exc:
         return Check('nvme', 'speed', FAIL, f'{SPEED_TEST_MB} MB test: {exc}')
     slow = write < SPEED_WARN_WRITE_MBS or read < SPEED_WARN_READ_MBS
-    detail = f'write {write:.0f} MB/s, read {read:.0f} MB/s ({SPEED_TEST_MB} MB, read back)'
+    detail = f'write {write:.0f} MB/s, read {read:.0f} MB/s'
     return Check('nvme', 'speed', WARN if slow else OK, detail)
 
 

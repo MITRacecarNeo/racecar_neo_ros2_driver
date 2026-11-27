@@ -50,7 +50,7 @@ from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallb
 from rclpy.duration import Duration
 from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
-from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy
 from rclpy.serialization import deserialize_message
 from rclpy.signals import SignalHandlerOptions
 from rclpy.time import Time
@@ -61,6 +61,7 @@ from tf2_ros import Buffer, TransformException, TransformListener
 from . import autonomy as au
 from .frames import load_frames
 from .maps import map_stem, parse_pose
+from .qos import LATCHED
 
 PACKAGE = 'racecar_neo_ros2_driver'
 SERVICE_TIMEOUT_SEC = 60.0
@@ -178,33 +179,21 @@ class AutonomyNode(Node):
         self._saves = MutuallyExclusiveCallbackGroup()
 
         sensor = QoSProfile(depth=5, reliability=QoSReliabilityPolicy.BEST_EFFORT)
-        latched_map = QoSProfile(
-            depth=1,
-            reliability=QoSReliabilityPolicy.RELIABLE,
-            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
-        )
+        latched_map = LATCHED
         # Raw: the arrival is recorded for every scan; only the fit_rate_hz
         # scans scored for the fit are deserialized.
         self.create_subscription(LaserScan, '/scan', self._on_scan, sensor, raw=True)
         if self._uses_amcl():
             # AMCL keeps its last pose (transient local); taking it covers an
             # update published before this node subscribed.
-            kept = QoSProfile(
-                depth=1,
-                reliability=QoSReliabilityPolicy.RELIABLE,
-                durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
-            )
+            kept = LATCHED
             self.create_subscription(PoseWithCovarianceStamped, '/amcl_pose', self._on_pose, kept)
         else:
             self.create_subscription(PoseWithCovarianceStamped, '/pose', self._on_pose, 10)
         if self._fit_wanted:
             self.create_subscription(OccupancyGrid, '/map', self._on_map, latched_map)
 
-        latched = QoSProfile(
-            depth=1,
-            reliability=QoSReliabilityPolicy.RELIABLE,
-            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
-        )
+        latched = LATCHED
         self._pub_pose = self.create_publisher(PoseWithCovarianceStamped, '/autonomy/pose', 10)
         self._pub_status = self.create_publisher(DiagnosticStatus, '/autonomy/status', latched)
         self._pub_initial = self.create_publisher(PoseWithCovarianceStamped, '/initialpose', 10)

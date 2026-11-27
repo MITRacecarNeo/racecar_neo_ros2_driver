@@ -152,11 +152,19 @@ def test_forward_and_left_at_once(node):
     assert (tp._state['fwd'], tp._state['turn']) == (1, -1)
 
 
-def test_axes_are_squashed_to_unit(node):
+def test_axes_are_clamped_to_unit(node):
     tp.set_cmd({'fwd': 7, 'turn': -3})
     assert (tp._cmd['fwd'], tp._cmd['turn']) == (1, -1)
     tp.set_cmd({})
     assert (tp._cmd['fwd'], tp._cmd['turn']) == (0, 0)
+    tp.set_cmd({'fwd': 'x', 'turn': float('nan')})
+    assert (tp._cmd['fwd'], tp._cmd['turn']) == (0, 0)
+
+
+def test_joystick_values_scale_the_limits(node):
+    msg = drive(node, 0.5, -0.25)
+    assert msg.drive.speed == pytest.approx(0.5 * tp._params['speed'])
+    assert tp._cmd['fwd'] == 0.5 and tp._cmd['turn'] == -0.25
 
 
 def test_release_stops(node):
@@ -497,3 +505,22 @@ def test_release_stops_the_resends(node):
     tp._last_poll = 200.0
     node._send_display(200.1)
     assert node._pub_pixels.msgs == [] and node._pub_leds.msgs == []
+
+
+def test_page_has_the_joystick():
+    page = (Path(tp.__file__).parent / 'teleop.html').read_text()
+    assert 'ui/joystick.js' in page and 'id="joymode"' in page and 'Joystick mode' in page
+    assert "matchMedia('(pointer: coarse)')" in page
+    assert 'joy.active' in page and 'size: 180' in page
+
+
+def test_joystick_module():
+    from pathlib import Path as P
+
+    js = (P(__file__).resolve().parent.parent / 'scripts' / 'web' / 'joystick.js').read_text()
+    # Dead zone 10%, linear outside it, and every way a touch ends stops the car.
+    assert 'options.deadzone : 0.1' in js
+    assert '(a - deadzone) / (1 - deadzone)' in js
+    for ev in ('pointerup', 'pointercancel', 'lostpointercapture', 'blur', 'visibilitychange'):
+        assert ev in js, ev
+    assert js.isascii()

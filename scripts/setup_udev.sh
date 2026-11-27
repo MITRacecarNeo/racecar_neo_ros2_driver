@@ -8,6 +8,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 RULES_SRC="${SCRIPT_DIR}/udev/99-racecar.rules"
 RULES_DST="/etc/udev/rules.d/99-racecar.rules"
+# PJRC's rules: the Teensy flashes without root.
+TEENSY_SRC="${SCRIPT_DIR}/udev/00-teensy.rules"
+TEENSY_DST="/etc/udev/rules.d/00-teensy.rules"
 
 # hid_nintendo blacklist for the EasySMX gamepad; rationale in the .conf.
 MODPROBE_SRC="${SCRIPT_DIR}/modprobe.d/blacklist-hid-nintendo.conf"
@@ -23,6 +26,7 @@ if [[ ! -f "${MODPROBE_SRC}" ]]; then
 fi
 
 sudo install -m 0644 "${RULES_SRC}" "${RULES_DST}"
+sudo install -m 0644 "${TEENSY_SRC}" "${TEENSY_DST}"
 sudo udevadm control --reload-rules
 # Only the subsystems the racecar rules match; a bare trigger replays every
 # device on a running car (network included).

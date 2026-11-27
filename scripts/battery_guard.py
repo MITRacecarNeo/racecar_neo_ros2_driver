@@ -35,6 +35,7 @@ import csv
 from dataclasses import dataclass, field, replace
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import queue
@@ -223,7 +224,9 @@ class Guard:
         return now - self._recover_since >= RECOVER_HOLD_SEC
 
     def _start_countdown(self, now: float, trigger: str) -> list[str]:
-        self.level, self.trigger, self.shutdown_at = 'countdown', trigger, now + COUNTDOWN_SEC
+        # On a whole second: the dot matrix changes frames on the clock's seconds.
+        self.level, self.trigger = 'countdown', trigger
+        self.shutdown_at = math.ceil(now) + COUNTDOWN_SEC
         self._recover_since = None
         return [f'countdown {trigger}']
 
@@ -338,7 +341,7 @@ def main(argv: list[str] | None = None) -> int:
 
     import rclpy
     from rclpy.node import Node
-    from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
+    from racecar_neo_ros2_driver.qos import LATCHED
     from diagnostic_msgs.msg import DiagnosticStatus, KeyValue
     from sensor_msgs.msg import BatteryState
     from std_msgs.msg import Empty, UInt8MultiArray
@@ -387,11 +390,7 @@ def main(argv: list[str] | None = None) -> int:
     class BatteryGuardNode(Node):
         def __init__(self) -> None:
             super().__init__('battery_guard')
-            latched = QoSProfile(
-                depth=1,
-                reliability=QoSReliabilityPolicy.RELIABLE,
-                durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
-            )
+            latched = LATCHED
             self._pub = self.create_publisher(DiagnosticStatus, '/battery/estimate', latched)
             self.create_subscription(BatteryState, '/battery/state', self._on_state, 10)
             self.create_subscription(Empty, '/battery/cancel_shutdown', self._on_cancel, 10)

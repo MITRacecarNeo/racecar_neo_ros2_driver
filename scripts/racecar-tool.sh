@@ -14,6 +14,25 @@ if [ -z "${RACECAR_DATA_DIR:-}" ]; then
     export RACECAR_DATA_DIR
 fi
 
+# One `racecar service status` row for UNIT: active, enabled and the page link
+# on PORT (may be empty). A unit with no file in /etc/systemd/system reads "not
+# installed"; --active-only leaves out the enabled column.
+_racecar_unit_row() {
+    local unit="$1" port="$2" mode="${3:-}" state enabled
+    if [[ ! -f "/etc/systemd/system/$unit.service" ]]; then
+        printf "  %-22s  not installed\n" "$unit"
+        return 0
+    fi
+    state=$(systemctl is-active "$unit" 2>&1 || true)
+    if [[ "$mode" == "--active-only" ]]; then
+        printf "  %-22s  active=%s\n" "$unit" "$state"
+        return 0
+    fi
+    enabled=$(systemctl is-enabled "$unit" 2>&1 || true)
+    printf "  %-22s  active=%-12s enabled=%-10s %s\n" \
+        "$unit" "$state" "$enabled" "${port:+http://$(hostname).local:$port}"
+}
+
 racecar() {
     local pkg="racecar_neo_ros2_driver"
     local ws="$HOME/ros2_ws"
@@ -65,7 +84,7 @@ racecar() {
             local -a failed=()
             for tool in ruff black mypy; do
                 if [[ ! -x "$lint_bin/$tool" ]]; then
-                    echo "racecar lint: $lint_bin/$tool not found; run scripts/setup_dev_tools.sh" >&2
+                    echo "racecar lint: $lint_bin/$tool not found. Run scripts/setup_dev_tools.sh" >&2
                     return 3
                 fi
             done
@@ -108,9 +127,9 @@ racecar() {
         service)
             local action="${1:-status}"
             shift || true
-            local -a core_units=("racecar-teleop" "racecar-watchdog"
-                                 "racecar-dashboard" "racecar-jupyter"
-                                 "racecar-mapview" "racecar-battery-guard")
+            # racecar_neo_ros2_driver/units.py: started at boot.
+            local -a core_units
+            mapfile -t core_units < <(python3 "$pkg_dir/racecar_neo_ros2_driver/units.py" core)
             # From config/apps.yaml. Apps that publish /drive: a second
             # publisher fights the mux, so starting one stops the others.
             local apps_py="$pkg_dir/racecar_neo_ros2_driver/apps.py"
@@ -131,7 +150,7 @@ racecar() {
                             for u in "${dash_units[@]}"; do
                                 [[ "$u" == "$target" ]] && continue
                                 if systemctl is-active --quiet "$u"; then
-                                    echo "  stopping $u (only one /drive publisher)"
+                                    echo "  stopping $u"
                                     sudo systemctl stop "$u"
                                 fi
                             done
@@ -150,11 +169,10 @@ racecar() {
                     fi
                     ;;
                 restart)
-                    if [[ -n "$1" ]]; then
-                        sudo systemctl restart "racecar-$1"
-                    else
-                        sudo systemctl restart racecar-teleop
-                    fi
+                    # Without sudo: polkit lets the racecar user restart
+                    # teleop, the dashboard, the map viewer and the battery
+                    # guard, and asks for the password for any other unit.
+                    systemctl restart "racecar-${1:-teleop}"
                     ;;
                 enable|disable)
                     if [[ -n "$1" ]]; then
@@ -173,47 +191,30 @@ racecar() {
                     sudo journalctl -u "racecar-$unit" -f
                     ;;
                 status|"")
-                    local u state enabled port
+                    # Page ports from config/apps.yaml (apps, then the home page).
+                    local u p
+                    local -A port_of=()
+                    while IFS=$'\t' read -r u p; do
+                        [[ -n "$u" ]] && port_of[$u]="$p"
+                    done < <(python3 "$apps_py" list --fields unit,port; python3 "$apps_py" home)
                     echo "core:"
                     for u in "${core_units[@]}"; do
-                        state=$(systemctl is-active "$u" 2>&1 || true)
-                        enabled=$(systemctl is-enabled "$u" 2>&1 || true)
-                        port=$(sed -n 's/.*(port \([0-9]*\)).*/\1/p' \
-                            "/etc/systemd/system/$u.service" 2>/dev/null | head -1)
-                        printf "  %-22s  active=%-12s enabled=%-10s %s\n" \
-                            "$u" "$state" "$enabled" \
-                            "${port:+http://$(hostname).local:$port}"
+                        _racecar_unit_row "$u" "${port_of[$u]:-}"
                     done
                     echo "autonomy (started by racecar map):"
-                    u=racecar-autonomy
-                    if [[ ! -f "/etc/systemd/system/$u.service" ]]; then
-                        printf "  %-22s  not installed\n" "$u"
-                    else
-                        state=$(systemctl is-active "$u" 2>&1 || true)
-                        printf "  %-22s  active=%s\n" "$u" "$state"
-                    fi
+                    _racecar_unit_row racecar-autonomy "" --active-only
                     echo "dashboards:"
                     for u in "${dash_units[@]}" "${app_units[@]}"; do
-                        if [[ ! -f "/etc/systemd/system/$u.service" ]]; then
-                            printf "  %-22s  not installed\n" "$u"
-                            continue
-                        fi
-                        state=$(systemctl is-active "$u" 2>&1 || true)
-                        enabled=$(systemctl is-enabled "$u" 2>&1 || true)
-                        port=$(sed -n 's/.*(port \([0-9]*\)).*/\1/p' \
-                            "/etc/systemd/system/$u.service" 2>/dev/null | head -1)
-                        printf "  %-22s  active=%-12s enabled=%-10s %s\n" \
-                            "$u" "$state" "$enabled" \
-                            "${port:+http://$(hostname).local:$port}"
+                        _racecar_unit_row "$u" "${port_of[$u]:-}"
                     done
                     ;;
                 -h|--help|help)
                     cat <<'__RC_SVC_HELP__'
 usage: racecar service <action> [unit]
 actions:
-  install         Install and enable the core units; install the dashboard
-                  units stopped and disabled
-  start [name]    Start racecar-<name>; default = teleop (watchdog follows via BindsTo).
+  install         Install and enable the core units. Install the dashboard
+                  units stopped.
+  start [name]    Start racecar-<name>; default = teleop. Starts the watchdog too.
                   Starting a lab dashboard stops the other /drive publishers first.
   stop [name]     Stop racecar-<name>; default = teleop
   restart [name]  Restart racecar-<name>; default = teleop
@@ -241,11 +242,27 @@ __RC_SVC_HELP__
             case "$phase" in
                 "")
                     echo "usage: racecar setup <phase>" >&2
-                    echo "  phases: all, networking, realsense, dashboards" >&2
+                    echo "  phases: all, car, services, networking, realsense, dashboards, browser, web" >&2
                     return 2
                     ;;
                 all)
                     bash "$pkg_dir/scripts/setup_all.sh" "$@"
+                    ;;
+                car)
+                    # Guided first setup of this car (scripts/car_setup.py).
+                    python3 "$pkg_dir/scripts/car_setup.py" "$@"
+                    ;;
+                services)
+                    # The core units (phase 11 of setup_all.sh), e.g. after an upgrade.
+                    bash "$pkg_dir/scripts/setup_services.sh" "$@"
+                    ;;
+                browser)
+                    # The Browser app: Xvfb, x11vnc, noVNC, Firefox policy, unit (phase 13 of setup_all.sh).
+                    bash "$pkg_dir/scripts/setup_browser.sh" "$@"
+                    ;;
+                web)
+                    # The port-80 web server: every app at /<name>/ (phase 14 of setup_all.sh).
+                    bash "$pkg_dir/scripts/setup_web.sh" "$@"
                     ;;
                 dashboards)
                     # Installs the four lab dashboards' units, stopped and
@@ -290,6 +307,7 @@ __RC_SVC_HELP__
                         fi
                         case "$key" in
                             --ssid)        vals[RACECAR_AP_SSID]="$val";    vals_changed=1 ;;
+                            --id)          vals[RACECAR_AP_ID]="$val";      vals_changed=1 ;;
                             --psk)         vals[RACECAR_AP_PSK]="$val";     vals_changed=1 ;;
                             --channel)     vals[RACECAR_AP_CHANNEL]="$val"; vals_changed=1 ;;
                             --ap-addr)     vals[RACECAR_AP_ADDR]="$val";    vals_changed=1 ;;
@@ -308,7 +326,7 @@ __RC_SVC_HELP__
 
                     if [[ "$action" == "help" ]]; then
                         cat <<'__RC_NET_HELP__'
-usage: racecar setup networking [--ssid=NAME] [--psk=PASS]
+usage: racecar setup networking [--id=N] [--ssid=NAME] [--psk=PASS]
                                 [--channel=N] [--ap-addr=CIDR]
                                 [--ap-iface=NAME] [--eth-static=CIDR]
                                 [--eth-mode=static|dynamic]
@@ -317,18 +335,14 @@ Persists any --flag values to ~/.config/racecar/networking.env and then
 runs scripts/setup_networking.sh (eth0 addressing + ALFA-dongle isolated AP).
   --ap-iface=NAME  AP interface (default wlan1, the ALFA dongle)
   --eth-mode=      eth0 addressing: static (default) or dynamic. Same setting
-                   as `racecar eth`; eth0 never holds both at once.
+                   as `racecar eth`.
   --show   print current persisted overrides and exit
-  --reset  disable the wlan1 AP (down + delete the connection) and clear the
-           saved car ID/overrides; eth0 is left unchanged. Use before imaging.
+  --reset  disable the wlan1 AP and clear the saved car ID. Use before imaging.
 With no --ssid or saved car ID, plain `racecar setup networking` prompts for
-this car's ID and sets the SSID to racecar-neo-<id> (so multiple cars differ).
-Persistence runs before --show, so
-  racecar setup networking --ssid=lab-car-3 --show
-saves lab-car-3, then prints the new file contents.
-WARNING: this reconfigures the AP and can switch eth0 addressing, so an SSH
-session over the AP or eth0 can drop. Run it from the console or over wlan0
-(client WiFi).
+this car's ID and sets the SSID to racecar-neo-<id>.
+--show after other flags prints the new values.
+WARNING: an SSH session over the AP or eth0 can drop. Run this from the
+console or over wlan0.
 __RC_NET_HELP__
                         return 0
                     fi
@@ -339,7 +353,7 @@ __RC_NET_HELP__
                             return 2
                         fi
                         rm -f "$cfg_file"
-                        echo "Cleared $cfg_file; defaults will apply on next run."
+                        echo "Cleared $cfg_file."
                         echo "Disabling the wlan1 AP..."
                         RACECAR_AP_RESET=1 bash "$net_script"
                         return $?
@@ -352,7 +366,7 @@ __RC_NET_HELP__
                     if [[ "$action" == "apply" && -z "${vals[RACECAR_AP_SSID]:-}" \
                           && -z "${vals[RACECAR_AP_ID]:-}" && -t 0 ]]; then
                         local car_id=""
-                        read -r -p "Enter this car's ID (number appended to 'racecar-neo-', e.g. 1): " car_id
+                        read -r -p "Car number (e.g. 1): " car_id
                         if [[ -n "$car_id" ]]; then
                             vals[RACECAR_AP_ID]="$car_id"; vals_changed=1
                         fi
@@ -376,7 +390,7 @@ __RC_NET_HELP__
                             echo "Persisted networking config ($cfg_file):"
                             cat "$cfg_file"
                         else
-                            echo "No persisted networking config; script defaults will apply."
+                            echo "No saved networking overrides. Defaults apply."
                         fi
                         return 0
                     fi
@@ -385,7 +399,7 @@ __RC_NET_HELP__
                     ;;
                 *)
                     echo "racecar setup: unknown phase '$phase'" >&2
-                    echo "  phases: all, networking, realsense, dashboards" >&2
+                    echo "  phases: all, car, services, networking, realsense, dashboards, browser, web" >&2
                     return 2
                     ;;
             esac
@@ -411,8 +425,8 @@ __RC_NET_HELP__
 usage: racecar eth [action] [flags]
 actions:
   status    configured mode, live addresses, routes, conflict checks (default)
-  static    one fixed address (default 192.168.52.200/24), no gateway and no
-            IPv6 default route; the shipped default
+  static    one fixed address (default 192.168.52.(200 + car ID)/24), no gateway and no
+            IPv6 default route. The default mode.
   dynamic   address and default route from DHCP
   monitor   log eth0 addressing and link state until interrupted. Flags:
             --interval, --heartbeat, --log, --once. For days rather than
@@ -420,9 +434,8 @@ actions:
 flags:
   --addr=CIDR  static address to use; persisted for later runs
   --force      skip the confirmation when this SSH session arrives on eth0
-eth0 holds one IPv4 addressing mode at a time. Static is the default because a
-known address is what makes a car debuggable on a bare switch; it carries no
-gateway, so a static car reaches the internet over wlan0 or not at all.
+eth0 holds one IPv4 addressing mode at a time. Static mode has no gateway. Use
+wlan0 for internet.
 WARNING: switching modes drops an SSH session arriving over eth0. Run it from
 the console or over wlan0 (client WiFi).
 __RC_ETH_HELP__
@@ -459,18 +472,14 @@ actions:
   disconnect          drop the wlan0 link until the next connect
 connect flags:
   --identity=USER     account for an enterprise (802.1X) network
-  --psk=PASS          passphrase for scripted use; it lands in shell
-                      history, so prefer the prompt
+  --psk=PASS          passphrase for scripts. Prefer the prompt.
   --ca-cert=PATH      override the CA certificate for an enterprise network
   --domain-suffix-match=DOMAIN
                       override the RADIUS server suffix to require
-A joined network is made to survive a reboot: connect sets the profile's
-autoconnect and clears any device-level block left by an earlier disconnect.
+A joined network rejoins after a reboot.
 `racecar wifi status` says which network comes back.
-Enterprise networks ask for an identity and password and nothing else. Server
-validation is always on: profiles get system CA certificates plus a
-domain-suffix-match derived from the identity's realm, so credentials are
-never offered to an access point that cannot prove who it is.
+Enterprise networks ask for an identity and password. Server validation is
+always on.
 Only wlan0 is ever touched; the AP on wlan1 is left alone.
 __RC_WIFI_HELP__
                     return 0
@@ -486,7 +495,6 @@ __RC_WIFI_HELP__
             fi
             if ! $wifi_nmcli -t -f DEVICE device status 2>/dev/null | grep -qx "$wifi_iface"; then
                 echo "racecar wifi: $wifi_iface is not present." >&2
-                echo "The client radio is the Pi's built-in adapter; wlan1 is the AP dongle." >&2
                 return 3
             fi
 
@@ -500,7 +508,7 @@ __RC_WIFI_HELP__
                     net_perm=$($wifi_nmcli -t general permissions 2>/dev/null |
                         awk -F: -v a="$nm_control" '$1 == a { print $2; exit }')
                     if [[ -n "$net_perm" && "$net_perm" != "yes" ]]; then
-                        echo "racecar wifi: this account may not control networking (polkit says '$net_perm')." >&2
+                        echo "racecar wifi: this account may not control networking." >&2
                         echo "Install the rule that grants it, then retry:" >&2
                         echo "  bash $pkg_dir/scripts/setup_user_env.sh" >&2
                         return 5
@@ -585,7 +593,7 @@ __RC_WIFI_HELP__
                             fi
                             if [[ -z "$domain_match" || "$domain_match" == "$identity" ]]; then
                                 echo "racecar wifi: cannot derive a server domain from '$identity'." >&2
-                                echo "Pass --domain-suffix-match=DOMAIN so the RADIUS server can be verified." >&2
+                                echo "Pass --domain-suffix-match=DOMAIN." >&2
                                 return 2
                             fi
                             local eap_pw=""
@@ -644,9 +652,7 @@ __RC_WIFI_HELP__
                 disconnect)
                     $wifi_nmcli device disconnect "$wifi_iface" || return $?
                     cat <<__RC_WIFI_DISC__
-Disconnected $wifi_iface. NetworkManager marks the device manually
-disconnected, so it will not rejoin on its own until the next
-'racecar wifi connect'. The AP on wlan1 is unaffected.
+Disconnected $wifi_iface. It stays off until racecar wifi connect.
 __RC_WIFI_DISC__
                     ;;
 
@@ -674,7 +680,7 @@ __RC_WIFI_DISC__
                         if [[ "$prof_auto" != "yes" ]]; then
                             boot_note="will NOT rejoin ('$act_con' autoconnect is off)"
                         elif [[ "$dev_auto" == "no" ]]; then
-                            boot_note="will NOT rejoin ($wifi_iface is blocked; reconnect to clear)"
+                            boot_note="will NOT rejoin. Run racecar wifi connect to clear"
                         else
                             boot_note="rejoins '$act_con'"
                         fi
@@ -709,9 +715,13 @@ __RC_WIFI_DISC__
                     if [[ -n "$w_addr" ]]; then
                         python3 - "$w_addr" "${ap_addr:-}" "${eth_addr:-}" <<'__RC_WIFI_COLLIDE__'
 import ipaddress
+import os
 import sys
 
 wifi = sys.argv[1]
+warn = '[WARN]'
+if sys.stdout.isatty() and 'NO_COLOR' not in os.environ:
+    warn = '\033[33m[WARN]\033[0m'
 try:
     wnet = ipaddress.ip_interface(wifi).network
 except ValueError:
@@ -725,12 +735,11 @@ for label, addr in (('the AP on wlan1', sys.argv[2]), ('eth0', sys.argv[3])):
     except ValueError:
         continue
     if other.overlaps(wnet):
-        print(f'  [WARN] {wnet} overlaps {label} ({addr}); routing to that')
-        print('         subnet is ambiguous while both are up.')
+        print(f'  {warn} {wnet} overlaps {label} ({addr})')
 __RC_WIFI_COLLIDE__
                     fi
                     echo
-                    echo "  The AP on wlan1 is a separate radio and is not affected by this command."
+                    echo "  The AP on wlan1 is unaffected."
                     ;;
 
                 *)
@@ -758,7 +767,7 @@ __RC_WIFI_COLLIDE__
                     local current
                     current=$($sctl get-default 2>/dev/null)
                     if [[ "$current" == "$target" ]]; then
-                        echo "Default boot target is already $target; nothing to do."
+                        echo "Default boot target is already $target."
                         return 0
                     fi
 
@@ -767,7 +776,7 @@ __RC_WIFI_COLLIDE__
                     if [[ "$action" == "enable" ]]; then
                         echo "The desktop will start on the next boot."
                     else
-                        echo "The car will boot headless from the next boot; the desktop packages stay installed."
+                        echo "The car boots headless from the next boot."
                     fi
                     echo "The current session is unchanged."
                     echo "Reboot when ready:  sudo reboot"
@@ -799,9 +808,9 @@ __RC_WIFI_COLLIDE__
                     echo
 
                     if [[ "$default_target" == "graphical.target" ]]; then
-                        echo "  Desktop is enabled (boots to the GNOME session)."
+                        echo "  Desktop is enabled."
                     elif [[ "$default_target" == "multi-user.target" ]]; then
-                        echo "  Desktop is disabled (boots headless)."
+                        echo "  Desktop is disabled."
                     else
                         echo "  Default target is neither graphical nor multi-user."
                     fi
@@ -818,9 +827,7 @@ usage: racecar desktop [enable|disable|status]
             a reboot is pending (default)
   enable    boot to the GNOME desktop; the shipped default
   disable   boot headless
-Changes apply on the next boot. There is no immediate variant, so this cannot
-end a desktop session that someone is using. Packages are never removed, so
-the toggle works on a car with no network and is reversible with one command.
+Changes apply on the next boot.
 __RC_DESKTOP_HELP__
                     ;;
 
@@ -841,6 +848,13 @@ __RC_DESKTOP_HELP__
 
             local action=""
             local select_target=""
+            if [[ "${1:-}" == "install" ]]; then
+                # The pinned library in /opt/racecar-neo and the labs
+                # (scripts/student_library.py); flags pass through.
+                shift
+                python3 "$pkg_dir/scripts/student_library.py" install "$@"
+                return
+            fi
             while [[ $# -gt 0 ]]; do
                 local arg="$1"; shift
                 case "$arg" in
@@ -865,17 +879,22 @@ __RC_DESKTOP_HELP__
             done
 
             if [[ -z "$action" ]]; then
-                echo "usage: racecar library [--select <folder> | --list | --reset | --status]" >&2
+                echo "usage: racecar library [install | --select <folder> | --list | --reset | --status]" >&2
                 return 2
             fi
 
             if [[ "$action" == "help" ]]; then
                 cat <<'__RC_LIB_HELP__'
 usage: racecar library <action>
-Manages the racecar_student.pth file in user site-packages so Python scripts
-(e.g. labs/demo.py) can `import racecar_core` without sys.path hacks.
+Selects the student library that Python imports.
 
 Actions:
+  install [--tag T] [--no-labs]
+                     Install the pinned library (config/student_library.yaml)
+                     read-only in /opt/racecar-neo/library-<tag>/, link it at
+                     ~/jupyter_ws/racecar-neo/library, and install the labs from
+                     main into ~/jupyter_ws/racecar-neo/labs. A labs folder
+                     already there moves to ~/backups first. Needs internet.
   --select <folder>  Point the .pth at ~/jupyter_ws/<folder>/library/.
                      <folder> must contain library/racecar_core.py.
   --list             List all ~/jupyter_ws/ folders that look like valid
@@ -923,7 +942,7 @@ __RC_LIB_HELP__
                         fi
                     done
                     if [[ $found -eq 0 ]]; then
-                        echo "  (none; no folder contains library/racecar_core.py)"
+                        echo "  none"
                     fi
                     ;;
 
@@ -973,6 +992,9 @@ __RC_LIB_HELP__
                         echo "  Run: racecar library --select <folder>"
                         echo "  (or: racecar library --list)"
                     fi
+                    if [[ -f "$pkg_dir/scripts/student_library.py" ]]; then
+                        python3 "$pkg_dir/scripts/student_library.py" status
+                    fi
                     ;;
             esac
             ;;
@@ -1020,7 +1042,7 @@ __RC_CLEANUP_HELP__
                         echo "Killing root-owned (sudo): $root_pids"
                         # shellcheck disable=SC2086
                         sudo kill -9 $root_pids 2>/dev/null || \
-                            echo "  (sudo failed; run as your user: sudo kill -9 $root_pids)"
+                            echo "  sudo failed. Run: sudo kill -9 $root_pids"
                     fi
                 else
                     echo "(dry-run; pass --force to kill)"
@@ -1109,9 +1131,24 @@ __RC_CLEANUP_HELP__
             python3 "${RACECAR_MAP_SCRIPT:-$pkg_dir/scripts/racecar_map.py}" "$@"
             ;;
 
+        nav)
+            # Nav2 goals on the loaded map; see scripts/racecar_nav.py.
+            python3 "${RACECAR_NAV_SCRIPT:-$pkg_dir/scripts/racecar_nav.py}" "$@"
+            ;;
+
         health)
             # Hardware checks over time with a saved report; see scripts/health.py.
             python3 "${RACECAR_HEALTH_SCRIPT:-$pkg_dir/scripts/health.py}" "$@"
+            ;;
+
+        check)
+            # Parked checks before mapping and driving; see scripts/racecar_check.py.
+            python3 "$pkg_dir/scripts/racecar_check.py" "$@"
+            ;;
+
+        handbook)
+            # The handbook pages as static HTML; see scripts/handbook.py.
+            python3 "$pkg_dir/scripts/handbook.py" "$@"
             ;;
 
         status)
@@ -1135,8 +1172,7 @@ Commands:
     test                Run the package test suite with verbose results.
     source              Source the workspace overlay into the current shell.
     cd                  Change directory to the racecar_neo_ros2_driver package root.
-    teleop              Launch the full teleop stack via launch_teleop.sh wrapper
-                        (timestamped ~/logs/<ts>/ + FastRTPS SHM cleanup).
+    teleop              Launch the full teleop stack.
                         Forwards args, e.g. `racecar teleop edgetpu_enable:=false`.
     launch <name>       Shortcut for `ros2 launch racecar_neo_ros2_driver <name>.launch.py`.
                         Examples: racecar launch dotmatrix
@@ -1145,26 +1181,24 @@ Commands:
     lint                Run ruff, black --check and mypy on the package
                         (settings in pyproject.toml); non-zero if any fail.
     udev                Re-install the udev rules (refreshes /dev/neo-pit-pcb etc.).
-    watchdog            Run the node watchdog (restart-on-failure supervisor).
-                        Monitors control + sensor nodes; logs to
-                        ~/logs/latest/watchdog.log. Assumes teleop runs separately.
+    watchdog            Run the node watchdog. Logs to ~/logs/latest/watchdog.log.
     eth [action]        eth0 addressing mode; static or DHCP, never both.
                           status    configured mode, live addresses, routes,
                                     and conflict checks (default)
-                          static    fixed 192.168.52.200/24, no gateway and no
-                                    IPv6 default route; the shipped default
+                          static    fixed 192.168.52.(200 + car ID)/24, no gateway and no
+                                    IPv6 default route. The default mode.
                           dynamic   address + default route from DHCP
                           monitor   log addressing + link state until interrupted
                         Flags: --addr=CIDR  --force
-                        Switching modes drops an SSH session on eth0; run it
-                        from the console or over wlan0 (client WiFi).
+                        Switching modes drops an SSH session on eth0. Run it
+                        from the console or over wlan0.
     wifi [action]       WiFi client on wlan0 (the AP on wlan1 is never touched).
                           status              link, addresses, DNS (default)
                           list [--rescan]     visible networks, one row per SSID
                           connect <ssid>      join; prompts for what it needs
                           disconnect          drop the wlan0 link
                         Enterprise networks ask only for an identity and
-                        password; server validation is always on.
+                        password. Server validation is always on.
     desktop [action]    GNOME desktop toggle; enabled by default.
                           status    default + active boot target, display
                                     manager, pending reboot (default)
@@ -1172,7 +1206,12 @@ Commands:
                           disable   boot headless
                         Applies on the next boot; never ends a running session.
     setup <phase>       Run a setup script. Phases:
-                          all          setup_all.sh (the 12-phase orchestrator)
+                          all          setup_all.sh;
+                                         --from N resumes at phase N, --skip N,M
+                          car          guided first setup after setup_all and its reboot:
+                                         identity, drive, access point, firmware, ESC,
+                                         calibration, health, car record (status, done STEP)
+                          services     setup_services.sh: install and enable the core units
                           networking   eth0 addressing + ALFA-dongle isolated AP.
                                          Prompts for this car's ID (SSID
                                          racecar-neo-<id>) when none is set.
@@ -1180,16 +1219,16 @@ Commands:
                                            --ssid=NAME   --psk=PASS   --channel=N
                                            --ap-addr=CIDR (default 10.42.0.1/24)
                                            --ap-iface=NAME (default wlan1, the ALFA dongle)
-                                           --eth-static=CIDR (default 192.168.52.200/24)
+                                           --id=N (car number: SSID racecar-neo-N, eth0 .200+N)
+                                           --eth-static=CIDR (default 192.168.52.(200 + N)/24)
                                            --eth-mode=static|dynamic
                                            --show
                                            --reset (disable the wlan1 AP + clear saved ID)
                           dashboards   install the lab dashboards' units
                                          (stopped, disabled).
                                          Skip with RACECAR_DASHBOARDS=0.
-                          realsense    flash D435i firmware from the locally-staged
-                                         image (offline; for airgapped units). Reads
-                                         /opt/racecar/firmware; idempotent. Flags:
+                          realsense    flash the D435i firmware from
+                                         /opt/racecar/firmware. Flags:
                                            --check (report only)  --force
                                            --version X.Y.Z.W  --serial SN  --fw-dir DIR
     service <action>    systemd service control. Actions:
@@ -1245,32 +1284,39 @@ Commands:
                         PIT link, USB, the drive, data writes, and the sensor
                         rates, and name the step a fault happened in.
                         --seconds N sets the power and link time.
+    check [names] [--all]
+                        Parked checks with the car still: calibration, IMU
+                        at rest, odometry still, lidar, rates, teleop,
+                        battery. --all adds racecar health power, link and
+                        nvme. Exits 1 when a check fails.
+    handbook build [DIR]
+                        Write the handbook (docs/handbook/) as static HTML,
+                        by default to handbook/ under the data root.
     calibrate [steps]   Calibrate the sensors on the car via a guided session.
                         Sensors to calibrate include:
                           imu         LSM9DS1 accel bias and scale, gyro bias
                           mag         LSM9DS1 magnetometer
                           realsense   RealSense accel bias and scale, gyro bias
-                          lidar       lidar yaw from the direction of travel;
-                                      the car drives itself while RB is held
+                          lidar       lidar yaw from the direction of travel.
+                                      The car drives itself while RB is held.
                           odom        gyro yaw scale (circles) and encoder
                                       speed scale (straight drive), both
                                       against the lidar
                           steering    steering trim (straight at steering 0)
                                       and curvature per command, against the
-                                      lidar; the car drives itself while RB
-                                      is held
+                                      lidar. The car drives itself while RB
+                                      is held.
                           dynamics    steering angles, servo time, speeds
-                                      and stop distances for the simulator;
-                                      the car drives itself while RB is held;
-                                      no check
+                                      and stop distances for the simulator.
+                                      The car drives itself while RB is held.
+                                      No check.
                         No arguments: all but dynamics.
                         `racecar calibrate status` lists what is calibrated
                         on this car, when, and the stored values.
                         `racecar calibrate check [steps]` verifies each
                         calibration against the live sensors.
-                        To fully prepare a car for a project, run the
-                        calibration step, then restart teleop, and finally
-                        run the check command.
+                        To prepare a car: calibrate. Restart teleop. Run the
+                        check.
     data [path]         Where the car's data goes (the data root): the NVMe at
                         /mnt/nvme/data when set up, else ~/data. Programs read
                         it from $RACECAR_DATA_DIR. `path` prints it alone.
@@ -1281,8 +1327,7 @@ Commands:
                           format    erase a drive with data on it (asks for
                                     its serial)
                           check     unmount, e2fsck, mount again
-    profile [action]    This car's settings, kept in ~/.config/racecar so a
-                        driver update or re-clone keeps the calibration.
+    profile [action]    This car's settings, in ~/.config/racecar.
                           (none)        path, car name, files and dates
                           path          the profile folder
                           migrate       move config/*.local.yaml and dashboard
@@ -1314,6 +1359,7 @@ Commands:
                           foxglove on|off     foxglove_bridge (port 8765) at the
                                               next start or load
                         Poses are in the map frame: meters, meters, radians.
+    nav <action>        Drive to a pose on the loaded map with Nav2 (goal, cancel, status).
     log <action>        Record and analyze ROS 2 bags. Actions:
                           start [name]        record; bag is <timestamp>_<name>
                                                 --topics A B    default: all
@@ -1324,14 +1370,13 @@ Commands:
                                                 --storage mcap|sqlite3
                                                 --force         record anyway when
                                                                 the rate outruns the disk
-                          stop                SIGINT, so rosbag2 finalizes the bag
+                          stop                stop recording
                           status [--json]     size, rate, elapsed, time until full
                           list                recorded bags, newest first
                           analyze [bag]       duration, size, per-topic counts and
                                               rates; defaults to the newest bag
                           config              show or set persisted defaults
-                        Recording every topic pulls in the camera streams, which
-                        outrun an SD card; start says so before it begins.
+                        Recording every topic can outrun an SD card.
     help                Show this message.
 
 Extra args are forwarded:
@@ -1354,13 +1399,13 @@ _racecar_complete() {
     local sub="${COMP_WORDS[1]:-}"
 
     if [[ $COMP_CWORD -eq 1 ]]; then
-        COMPREPLY=( $(compgen -W "build test source cd teleop launch lint udev watchdog service setup eth wifi desktop library log calibrate profile disk data cleanup map status health help" -- "$cur") )
+        COMPREPLY=( $(compgen -W "build test source cd teleop launch lint udev watchdog service setup eth wifi desktop library log calibrate profile disk data cleanup map status health handbook check nav help" -- "$cur") )
         return
     fi
 
     case "$sub" in
         calibrate)
-            COMPREPLY=( $(compgen -W "status check imu mag realsense lidar odom steering dynamics --help" -- "$cur") )
+            COMPREPLY=( $(compgen -W "status check imu mag realsense lidar camera odom steering dynamics --help" -- "$cur") )
             ;;
         launch)
             local launch_dir="$HOME/ros2_ws/src/racecar_neo_ros2_driver/launch"
@@ -1392,8 +1437,10 @@ _racecar_complete() {
                 else
                     COMPREPLY=( $(compgen -W "$candidates" -- "$cur") )
                 fi
+            elif [[ "${COMP_WORDS[2]}" == "install" && $COMP_CWORD -gt 2 ]]; then
+                COMPREPLY=( $(compgen -W "--tag --no-labs --help" -- "$cur") )
             else
-                COMPREPLY=( $(compgen -W "--select --select= --list --reset --status --help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "install --select --select= --list --reset --status --help" -- "$cur") )
             fi
             ;;
         desktop)
@@ -1407,6 +1454,12 @@ _racecar_complete() {
             ;;
         health)
             COMPREPLY=( $(compgen -W "all power link nvme shake poke --seconds --help" -- "$cur") )
+            ;;
+        handbook)
+            COMPREPLY=( $(compgen -W "build --help" -- "$cur") )
+            ;;
+        check)
+            COMPREPLY=( $(compgen -W "calibration imu odometry lidar rates teleop battery power link nvme --all --seconds --help" -- "$cur") )
             ;;
         data)
             COMPREPLY=( $(compgen -W "path" -- "$cur") )
@@ -1499,9 +1552,9 @@ _racecar_complete() {
             ;;
         setup)
             if [[ $COMP_CWORD -eq 2 ]]; then
-                COMPREPLY=( $(compgen -W "all networking realsense dashboards" -- "$cur") )
+                COMPREPLY=( $(compgen -W "all car services networking realsense dashboards browser web" -- "$cur") )
             elif [[ "${COMP_WORDS[2]}" == "networking" ]]; then
-                COMPREPLY=( $(compgen -W "--ssid= --psk= --channel= --ap-addr= --ap-iface= --eth-static= --eth-mode= --show --reset --help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "--ssid= --id= --psk= --channel= --ap-addr= --ap-iface= --eth-static= --eth-mode= --show --reset --help" -- "$cur") )
             elif [[ "${COMP_WORDS[2]}" == "dashboards" ]]; then
                 COMPREPLY=( $(compgen -W "--help" -- "$cur") )
             elif [[ "${COMP_WORDS[2]}" == "realsense" ]]; then

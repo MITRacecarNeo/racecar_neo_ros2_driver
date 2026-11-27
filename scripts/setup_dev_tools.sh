@@ -28,11 +28,13 @@ sudo apt-get install -y \
 #   polkitd: the rules that let the dashboards and racecar map manage units
 #   python3-matplotlib: JupyterLab plots (setup_jupyter.sh keeps this version)
 #   ttyd, python3-pampy: the terminal app on port 8086 (scripts/terminal.py)
+#   teensy-loader-cli: flashes the Teensy firmware (racecar setup car firmware)
 sudo apt-get install -y \
     raspi-config rpi-eeprom libraspberrypi-bin \
     network-manager avahi-daemon polkitd \
     python3-matplotlib \
-    ttyd python3-pampy
+    ttyd python3-pampy \
+    teensy-loader-cli
 
 # The ttyd package enables its own login shell on localhost:7681. The terminal
 # app runs ttyd itself on a private socket, so that service stays off.

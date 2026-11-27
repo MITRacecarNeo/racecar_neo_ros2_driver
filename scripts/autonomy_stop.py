@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import os
 import sys
-import time
 
 SERVICE_WAIT_SEC = 10.0
 GONE_WAIT_SEC = 1.0
@@ -41,29 +40,25 @@ def running(pid_text: str) -> bool:
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     wait = SERVICE_WAIT_SEC if args and running(args[0]) else GONE_WAIT_SEC
-    import rclpy
+    from racecar_neo_ros2_driver.ros_cli import call_service, ros_node
     from std_srvs.srv import Trigger
 
-    rclpy.init()
-    node = rclpy.create_node('autonomy_stop')
-    try:
-        client = node.create_client(Trigger, '/autonomy/autosave')
-        if not client.wait_for_service(timeout_sec=wait):
-            print('autonomy_stop: no /autonomy/autosave; nothing saved.')
-            return 0
-        future = client.call_async(Trigger.Request())
-        end = time.monotonic() + CALL_TIMEOUT_SEC
-        while not future.done() and time.monotonic() < end:
-            rclpy.spin_once(node, timeout_sec=0.1)
-        result = future.result() if future.done() else None
-        if result is None:
-            print('autonomy_stop: autosave timed out.')
-        else:
-            print(f'autonomy_stop: {result.message}')
-        return 0
-    finally:
-        node.destroy_node()
-        rclpy.try_shutdown()
+    with ros_node('autonomy_stop') as node:
+        status, result = call_service(
+            node,
+            Trigger,
+            '/autonomy/autosave',
+            Trigger.Request(),
+            wait_sec=wait,
+            timeout_sec=CALL_TIMEOUT_SEC,
+        )
+    if status == 'unavailable':
+        print('autonomy_stop: no /autonomy/autosave; nothing saved.')
+    elif status == 'timeout':
+        print('autonomy_stop: autosave timed out.')
+    else:
+        print(f'autonomy_stop: {result.message}')
+    return 0
 
 
 if __name__ == '__main__':

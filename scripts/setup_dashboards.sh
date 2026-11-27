@@ -27,6 +27,7 @@ TEMPLATE="$DASH_DIR/racecar-app.service.in"
 APPS_PY="$SCRIPT_DIR/../racecar_neo_ros2_driver/apps.py"
 SYSTEMD_DIR="${RACECAR_SYSTEMD_DIR:-/etc/systemd/system}"
 SUDO="${RACECAR_SUDO-sudo}"
+source "$SCRIPT_DIR/setup_lib.sh"
 SYSTEMCTL="$SUDO ${RACECAR_SYSTEMCTL:-systemctl}"
 
 # unit, name, port, dir, script; one tab-separated line per dashboard.
@@ -97,19 +98,14 @@ install_unit() {
         return 1
     fi
 
-    if cmp -s "$rendered" "$SYSTEMD_DIR/$unit"; then
-        echo "  $unit: already up to date"
-    elif $SUDO install -m 0644 "$rendered" "$SYSTEMD_DIR/$unit"; then
-        echo "  $unit: installed"
-        changed=1
-    else
-        # Called under `|| true`, so errexit is off here; test the install
-        # explicitly.
-        echo "  $unit: install failed (sudo?)" >&2
+    # Called under `|| true`, so errexit is off here; test the install
+    # explicitly.
+    if ! install_if_changed "$rendered" "$SYSTEMD_DIR/$unit" 0644; then
         failed+=("$unit_name (install)")
         rm -f "$rendered"
         return 1
     fi
+    if [[ $INSTALLED -eq 1 ]]; then changed=1; fi
     rm -f "$rendered"
 }
 

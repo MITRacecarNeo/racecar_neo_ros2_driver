@@ -1,0 +1,33 @@
+{
+  "policies": {
+    "DisableAppUpdate": true,
+    "DisableTelemetry": true,
+    "DisableFirefoxStudies": true,
+    "DisablePocket": true,
+    "DontCheckDefaultBrowser": true,
+    "OverrideFirstRunPage": "",
+    "OverridePostUpdatePage": "",
+    "BlockAboutConfig": true,
+    "PasswordManagerEnabled": false,
+    "OfferToSaveLogins": false,
+    "WebsiteFilter": {
+      "Block": [
+        "file://*"
+      ]
+    },
+    "Homepage": {
+      "URL": "http://detectportal.firefox.com/canonical.html",
+      "StartPage": "homepage"
+    },
+    "Preferences": {
+      "datareporting.policy.dataSubmissionPolicyBypassNotification": {
+        "Value": true,
+        "Status": "locked"
+      },
+      "browser.aboutwelcome.enabled": {
+        "Value": false,
+        "Status": "locked"
+      }
+    }
+  }
+}

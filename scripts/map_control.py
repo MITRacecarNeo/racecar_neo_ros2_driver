@@ -19,23 +19,24 @@ Failures raise MapError carrying the exit code: 1 failed, 2 usage.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from datetime import datetime
 import math
 import os
 from pathlib import Path
-import shlex
 import subprocess
 import time
 from typing import Any
 
-from racecar_neo_ros2_driver import apps, autonomy as au, data_root, fileio
+from racecar_neo_ros2_driver import apps, autonomy as au, data_root, drive_lease, fileio
+from racecar_neo_ros2_driver import ros_cli, units
+from racecar_neo_ros2_driver.geometry import yaw_of
 from racecar_neo_ros2_driver.maps import map_root, parse_pose, ROOT_ENV, valid_name
 
-UNIT = 'racecar-autonomy.service'
-TELEOP_UNIT = 'racecar-teleop.service'
+UNIT = units.service(units.AUTONOMY)
+TELEOP_UNIT = units.service(units.TELEOP)
 MODE_FILE = Path.home() / '.config' / 'racecar' / 'autonomy.conf'
 MODE_FILE_ENV = 'RACECAR_AUTONOMY_CONF'
 KEYS = (
@@ -201,9 +202,9 @@ def plan_start(
     if source is not None:
         check_name(source, 'map to extend')
     if pose is not None and source is None:
-        raise MapError('--pose applies with --from (the car on the map being extended)', 2)
+        raise MapError('--pose needs --from', 2)
     if force and source == name:
-        raise MapError('--force replaces a map; it cannot also extend it', 2)
+        raise MapError('--force cannot be used with --from NAME', 2)
     exists = (root / name).exists()
     if exists and not force and source != name:
         raise MapError(
@@ -237,8 +238,8 @@ def plan_start(
         )
     elif src.unsaved:
         plan.notes.append(
-            f'{source} has an autosave from {src.autosave_time} with changes its saved map lacks; '
-            f'extending the saved map. To include them, run `racecar map recover {source}` first.'
+            f'{source} has unsaved changes. Extending the saved map. '
+            f'To include them, run `racecar map recover {source}` first.'
         )
     if pose is not None:
         start, how, text = given_pose(pose), 'pose', 'given with --pose'
@@ -246,9 +247,8 @@ def plan_start(
         found, how, text, trusted = saved_pose(src, now)
         if not trusted:
             raise MapError(
-                f'not extending from {text}. Load {source}, drive slowly until '
-                '`racecar map status` reports localized, then extend; or give the '
-                "car's pose with --pose."
+                f'Not extending from {text}. Load {source} and drive slowly until it is '
+                'localized. Then extend, or pass --pose.'
             )
         start = found or (0.0, 0.0, 0.0)
     plan.values['AUTONOMY_POSE'] = format_pose(start)
@@ -329,8 +329,9 @@ def systemctl(*args: str) -> subprocess.CompletedProcess[str]:
 
     RACECAR_SYSTEMCTL replaces the systemctl command (tests).
     """
-    argv = shlex.split(os.environ.get('RACECAR_SYSTEMCTL') or 'systemctl')
-    return subprocess.run([*argv, *args], capture_output=True, text=True, check=False)
+    return subprocess.run(
+        [*units.systemctl_argv(), *args], capture_output=True, text=True, check=False
+    )
 
 
 def unit_state(unit: str = UNIT) -> str:
@@ -357,7 +358,7 @@ def _control(action: str) -> None:
 # slam_toolbox. Starting mapping or localization stops them; the map viewer
 # and the apps page ask first. Stopping them is allowed by
 # scripts/polkit/49-racecar-dashboards.rules.
-DRIVING_APPS = tuple((f"{a['unit']}.service", a['name']) for a in apps.driving_apps())
+DRIVING_APPS = tuple((f"{a['unit']}.service", a['name']) for a in apps.manual_driving_apps())
 
 
 def running_driving_apps() -> list[str]:
@@ -374,6 +375,13 @@ def stop_driving_apps(out: Out) -> None:
             out(f'Could not stop {name}. Stop it from the apps page.')
 
 
+def require_parked() -> None:
+    """Refuse while something drives; the driving apps are stopped first instead."""
+    found = drive_lease.holder()
+    if found is not None and found.owner not in [a['id'] for a in apps.manual_driving_apps()]:
+        raise MapError(drive_lease.refused(found))
+
+
 def require_teleop() -> None:
     if unit_state(TELEOP_UNIT) != 'active':
         raise MapError('teleop is not running. Start it with `racecar service start teleop`.')
@@ -382,17 +390,8 @@ def require_teleop() -> None:
 # -- ROS --
 
 
-@contextmanager
-def ros_node() -> Iterator[Any]:
-    import rclpy
-
-    rclpy.init()
-    node = rclpy.create_node('racecar_map')
-    try:
-        yield node
-    finally:
-        node.destroy_node()
-        rclpy.try_shutdown()
+def ros_node() -> AbstractContextManager[Any]:
+    return ros_cli.ros_node('racecar_map')
 
 
 def status_dict(msg: Any) -> dict[str, str]:
@@ -416,7 +415,7 @@ def wait_status(
     """
     import rclpy
     from diagnostic_msgs.msg import DiagnosticStatus
-    from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
+    from racecar_neo_ros2_driver.qos import LATCHED
 
     seen: dict[str, Any] = {'last': None, 'hit': None}
 
@@ -426,11 +425,7 @@ def wait_status(
         if seen['hit'] is None and accept(values):
             seen['hit'] = values
 
-    latched = QoSProfile(
-        depth=1,
-        reliability=QoSReliabilityPolicy.RELIABLE,
-        durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
-    )
+    latched = LATCHED
     sub = node.create_subscription(DiagnosticStatus, '/autonomy/status', on_status, latched)
     end = time.monotonic() + timeout
     next_check = time.monotonic() + 1.0
@@ -454,7 +449,7 @@ def latest_pose(node: Any, timeout: float = 1.0) -> tuple[float, float, float] |
 
     def on_pose(msg: Any) -> None:
         p, q = msg.pose.pose.position, msg.pose.pose.orientation
-        yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+        yaw = yaw_of(q)
         got.append((p.x, p.y, yaw))
 
     sub = node.create_subscription(PoseWithCovarianceStamped, '/autonomy/pose', on_pose, 10)
@@ -473,7 +468,7 @@ def not_ready_reason(status: dict[str, str] | None) -> str:
     if not status.get('scan_age_ms'):
         return 'no lidar scans (/scan); check `racecar status`'
     if status.get('mode') == 'mapping':
-        return 'slam_toolbox has not published map -> odom; check that teleop publishes odometry'
+        return 'no map -> odom yet. Check that teleop is running'
     return (
         f'not localized yet (pose spread {status.get("pose_sd_m") or "?"} m, '
         f'{status.get("pose_sd_deg") or "?"} deg)'
@@ -526,6 +521,7 @@ def _change_mode(
         problem = data_root.session_problem()
         if problem:
             raise MapError(problem)
+    require_parked()
     stop_driving_apps(out)
     if unit_running():
         out('Stopping the current autonomy run.')
@@ -600,12 +596,13 @@ def resume(out: Out = print, timeout: float = READY_TIMEOUT_SEC) -> int:
     values = read_mode_file()
     mode, name = values.get('AUTONOMY_MODE'), values.get('AUTONOMY_MAP', '')
     if mode not in ('mapping', 'localization') or not valid_name(name):
-        raise MapError('no earlier run to resume. Start mapping or load a map in the map viewer.')
+        raise MapError('no earlier run to resume. Start mapping or load a map in the Mapper.')
     if mode == 'localization':
         return load(
             name, localizer=values.get('AUTONOMY_LOCALIZER') or 'amcl', out=out, timeout=timeout
         )
     require_teleop()
+    require_parked()
     stop_driving_apps(out)
     _control('start')
     code = _wait_ready(values, out, timeout)
@@ -638,25 +635,26 @@ def stop(out: Out = print) -> int:
 def save(out: Out = print, timeout: float = SAVE_TIMEOUT_SEC) -> int:
     values = read_mode_file()
     if not unit_running():
-        raise MapError('autonomy is not running; start mapping with `racecar map start NAME`.')
+        raise MapError('autonomy is not running. Start mapping: racecar map start NAME')
     if values.get('AUTONOMY_MODE') != 'mapping':
         raise MapError(
             f'not mapping (localizing on {values.get("AUTONOMY_MAP", "?")}); nothing to save.'
         )
-    import rclpy
     from std_srvs.srv import Trigger
 
+    out(f'Saving {values.get("AUTONOMY_MAP", "")}...')
     with ros_node() as node:
-        client = node.create_client(Trigger, '/autonomy/save_map')
-        if not client.wait_for_service(timeout_sec=10.0):
-            raise MapError(f'/autonomy/save_map is not available; see {LOG_HINT}')
-        out(f'Saving {values.get("AUTONOMY_MAP", "")}...')
-        future = client.call_async(Trigger.Request())
-        end = time.monotonic() + timeout
-        while not future.done() and time.monotonic() < end:
-            rclpy.spin_once(node, timeout_sec=0.1)
-        result = future.result() if future.done() else None
-    if result is None:
+        status, result = ros_cli.call_service(
+            node,
+            Trigger,
+            '/autonomy/save_map',
+            Trigger.Request(),
+            wait_sec=10.0,
+            timeout_sec=timeout,
+        )
+    if status == 'unavailable':
+        raise MapError(f'/autonomy/save_map is not available; see {LOG_HINT}')
+    if status == 'timeout':
         raise MapError(f'no answer from /autonomy/save_map within {timeout:.0f} s')
     if not result.success:
         raise MapError(f'save failed: {result.message}')
@@ -693,8 +691,8 @@ def set_foxglove(on: bool, out: Out = print) -> int:
     values['AUTONOMY_FOXGLOVE'] = '1' if on else '0'
     write_mode_file({k: v for k, v in values.items() if k in KEYS})
     out(
-        f'Foxglove bridge {"on" if on else "off"} (port 8765); '
-        'applies at the next `racecar map start` or `racecar map load`.'
+        f'Foxglove bridge {"on" if on else "off"} (port 8765). '
+        'Applies at the next start or load.'
     )
     return 0
 

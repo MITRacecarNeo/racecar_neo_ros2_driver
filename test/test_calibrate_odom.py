@@ -120,13 +120,10 @@ class TestMergeWrite:
         assert yaml.safe_load(path.read_text())['n']['ros__parameters'] == {'b': 2}
 
     def test_keys_match_what_pit_node_declares(self):
-        from pathlib import Path
+        from racecar_neo_ros2_driver.pit_node import DEFAULTS
 
-        src = (
-            Path(__file__).resolve().parent.parent / 'racecar_neo_ros2_driver' / 'pit_node.py'
-        ).read_text()
         for key in ('odometry.yaw_rate_scale', 'odometry.speed_scale'):
-            assert f"declare_parameter('{key}'" in src
+            assert key in DEFAULTS
 
 
 class TestInstructions:

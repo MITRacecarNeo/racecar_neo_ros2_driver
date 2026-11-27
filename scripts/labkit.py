@@ -22,7 +22,8 @@ import threading
 import time
 from typing import Any
 
-from racecar_neo_ros2_driver import car_profile, data_root
+from racecar_neo_ros2_driver import apps, car_profile, data_root
+from racecar_neo_ros2_driver.drive_lease import DriveGate, DriveLease
 import yaml
 
 T0 = time.monotonic()
@@ -124,7 +125,7 @@ class Tuning:
                 self.params.update(yaml.safe_load(self.path.read_text()) or {})
             self._clean(self.params)
             if before != '{}' and before != json.dumps(self.params, sort_keys=True):
-                self._marks.add('yaml load')
+                self._marks.add('Settings loaded')
 
     def save(self) -> None:
         """Write the current values into the profile file, seeded from the shipped one."""
@@ -227,6 +228,18 @@ class RunLog:
 
 
 # -- /drive --
+
+
+def drive_gate(app_id: str, panel: bool = False) -> DriveGate:
+    """
+    Return the app's gate to /drive (drive_lease.py).
+
+    An app holds the lease while it runs. A Drive panel holds it only while
+    used, and may move a car that waits for the operator.
+    """
+    lease = DriveLease(app_id, apps.app(app_id)['name'])
+    return DriveGate(lease, keep=not panel, shared=panel)
+
 
 # Hard throttle cap either way, as the student library's drive.set_max_speed.
 MAX_SPEED = 1.0

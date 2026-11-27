@@ -14,7 +14,8 @@ polkit.addRule(function (action, subject) {
     }
     var units = ["racecar-webteleop.service", "racecar-linefollow.service",
                  "racecar-wallfollow.service", "racecar-camlabel.service",
-                 "racecar-terminal.service"];
+                 "racecar-terminal.service", "racecar-browser.service",
+                 "racecar-planner.service"];
     var verbs = ["start", "stop"];
     if (units.indexOf(action.lookup("unit")) !== -1 &&
         verbs.indexOf(action.lookup("verb")) !== -1 &&

@@ -95,7 +95,7 @@ __CFG__
     NEEDS_REBOOT=1
 else
     echo "[4/5] Not a Pi 5 and no M.2 Apex on the bus. Coral USB access comes from the racecar"
-    echo "      udev rules (scripts/udev/99-racecar.rules); run 'racecar setup udev'"
+    echo "      udev rules (scripts/udev/99-racecar.rules); run 'racecar udev'"
     echo "      or scripts/setup_udev.sh to install them. No reboot for USB."
 fi
 

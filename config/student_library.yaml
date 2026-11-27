@@ -1,0 +1,15 @@
+# The student library and labs this driver release installs
+# (scripts/student_library.py, `racecar library install`).
+#
+# library: cloned at `tag` into /opt/racecar-neo/library-<tag>/ (read-only);
+#          its library/ folder is linked at ~/jupyter_ws/racecar-neo/library.
+# labs:    the repo's labs/ folder at the tip of `branch`, in ~/jupyter_ws/racecar-neo/labs;
+#          an existing labs folder is moved to ~/backups first.
+
+library:
+  repo: https://github.com/MITRacecarNeo/racecar-neo-library
+  tag: v0.9.3-bot
+
+labs:
+  repo: https://github.com/MITRacecarNeo/racecar-neo-outreach-labs
+  branch: main

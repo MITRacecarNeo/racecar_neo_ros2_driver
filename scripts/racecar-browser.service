@@ -1,0 +1,21 @@
+[Unit]
+Description=RACECAR Neo Browser (port 8087)
+Wants=racecar-data.service
+After=racecar-data.service
+
+[Service]
+Type=exec
+User=racecar
+Group=racecar
+ExecStart=/home/racecar/ros2_ws/src/racecar_neo_ros2_driver/scripts/ros_exec.sh python3 /home/racecar/ros2_ws/src/racecar_neo_ros2_driver/scripts/browser_app.py
+# Stopping the app ends the virtual screen, Firefox and x11vnc: they are in this cgroup.
+KillMode=control-group
+Restart=on-failure
+RestartSec=5
+Environment=HOME=/home/racecar
+EnvironmentFile=-/run/racecar/environment
+Environment=ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
+WorkingDirectory=/home/racecar
+
+[Install]
+WantedBy=multi-user.target

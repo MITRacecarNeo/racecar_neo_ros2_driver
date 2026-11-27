@@ -9,6 +9,7 @@ This package is the v2 successor to [`racecar-neo-ros2-backend`](https://github.
 - [Hardware](#hardware)
 - [Architecture](#architecture)
 - [Quickstart (fresh Ubuntu 24.04 install)](#quickstart-fresh-ubuntu-2404-install)
+- [Handbook](#handbook)
 - [The `racecar` shell tool](#the-racecar-shell-tool)
 - [Linters](#linters)
 - [Networking (optional)](#networking-optional)
@@ -23,8 +24,15 @@ This package is the v2 successor to [`racecar-neo-ros2-backend`](https://github.
 - [Hardware health](#hardware-health)
 - [Car data](#car-data)
 - [Bag recording](#bag-recording)
+- [Car Profile app](#car-profile-app)
+- [Files app](#files-app)
+- [Connections page](#connections-page)
+- [Browser app](#browser-app)
 - [Maps](#maps)
+- [Navigation](#navigation)
+  - [Planner](#planner)
 - [Jupyter notebooks](#jupyter-notebooks)
+  - [Student library and labs](#student-library-and-labs)
 - [Manual build](#manual-build)
 - [Launch](#launch)
 - [Sensor calibration](#sensor-calibration)
@@ -87,6 +95,10 @@ arbitrary at the call site, are in
 [docs/troubleshooting.md](./docs/troubleshooting.md).
 
 ## Quickstart (fresh Ubuntu 24.04 install)
+
+The [handbook](docs/handbook/index.md) has every setup step in full, with
+what a pass looks like and the fix for a fail. This section lists the
+commands.
 
 Target: Raspberry Pi 5 running **Ubuntu Desktop 24.04 LTS for arm64** (Noble). ROS2 Jazzy is the only supported distro for this driver; older Ubuntu releases (22.04 Jammy) are **not** supported because Jazzy doesn't install there.
 
@@ -155,20 +167,43 @@ After reboot, `racecar-teleop.service` auto-starts and pulls the watchdog via `W
 
 ```sh
 racecar status              # full diagnostic; exits non-zero only on a FAIL
-racecar service status      # the 6 core racecar-* units should be active+enabled
+racecar service status      # the 7 core racecar-* units should be active+enabled
 ```
 
 Browse to `http://racecar-neo.local:8080` for the live dashboard.
 
-### 7. AP networking (optional)
+### 7. Car setup
 
-To add the robot's own isolated access point:
+`racecar setup car` takes the car the rest of the way. Run it in a terminal on the car, from the console or over `wlan0`: the access point step reconfigures the AP, and the eth0 step can drop an SSH session arriving over eth0.
 
 ```sh
-racecar setup networking --ssid=racecar-neo-1 --psk='your-password'
+racecar setup car             # the checklist, then the next open step
+racecar setup car status      # the checklist only
+racecar setup car STEP        # run one step again
+racecar setup car done STEP   # mark a step done by hand
 ```
 
-This brings up an isolated AP on the ALFA dongle (`wlan1`) and puts eth0 in one addressing mode, static by default. See [Networking (optional)](#networking-optional). **Run it from the console or over `wlan0`**; the AP is reconfigured, and the eth0 step can drop an SSH session arriving over eth0.
+The steps, in order:
+
+| Step | What it does |
+|---|---|
+| `identity` | Asks the car's name, an optional nickname or codename, and its number (0 to 54); sets the hostname `racecar-neo-<number>` |
+| `hardware` | Checks every device answers and names what to plug in |
+| `nvme` | Runs `racecar disk setup` when an NVMe drive is fitted |
+| `access_point` | Runs `racecar setup networking --id=<number>`: SSID `racecar-neo-<number>`, eth0 `192.168.52.(200 + number)` |
+| `reboot` | Asks for one reboot when the hostname or the drive waits for it |
+| `firmware` | Checks the Teensy firmware against `config/firmware.yaml` |
+| `esc` | The ESC program settings and throttle calibration (see the handbook calibration page); records them |
+| `extras` | Installs the student library and labs if missing; flashes the camera firmware when it differs |
+| `measurements` | Keeps the stock geometry, or takes your measurements into `params/frames.yaml` |
+| `calibration` | Runs `racecar calibrate`, then `racecar calibrate check` |
+| `health` | Runs `racecar health` |
+| `record` | The car record (parts and labels), with the stock build as defaults |
+| `finish` | Backs up the profile to the data root and prints `racecar status` |
+
+Each step checks the car first, so a step already done shows as done and the tool can stop and start again at any point. The state and the car record are kept in the profile's `car.yaml`. Until every step is done, the 8080 home page keeps the Tools and Autonomy apps closed; the Core apps stay open. After the `identity` step, open the car at `http://racecar-neo-<number>.local:8080`.
+
+The access point alone: `racecar setup networking --id=N`. See [Networking (optional)](#networking-optional).
 
 ### `setup_all.sh` phases
 
@@ -176,18 +211,41 @@ Twelve phases, all under `scripts/`:
 
 1. **`setup_ros2.sh`**: ROS2 Jazzy apt repo + message/driver packages (`xacro` and `robot_state_publisher` for the frame tree, slam_toolbox, Nav2 AMCL and map server), `nvme-cli` and `gdisk` for `racecar disk`
 2. **`setup_dev_tools.sh`**: build tools, Python hardware libs (`smbus` / `serial` / `spidev`), Pi tools and services the car relies on (`raspi-config`, `rpi-eeprom`, `vcgencmd`, NetworkManager, avahi, polkit, matplotlib), and the pinned linters (`ruff`, `black`, `mypy`) per-user
-3. **`setup_user_env.sh`**: joins `dialout` / `i2c` / `spi` / `gpio` / `video` groups; installs the polkit rules in `scripts/polkit/` (NetworkManager for `racecar wifi`, the autonomy unit for `racecar map`, the lab dashboards for the apps page, the teleop restart for Features); sources ROS2 + the `racecar` shell tool in `.bashrc` and puts `~/.local/bin` on `PATH`
-4. **`setup_raspi_config.sh`**: boot-level configuration: enable I2C, enable SPI, disable serial console (frees the GPIO UART / `ttyAMA0` for the NEO-PIT link), `usb_max_power_enable=1`, enable RTC backup-cell trickle charging (`RTC_VCHG_UV=0` turns it off; see [RTC backup cell](#rtc-backup-cell)), and reconcile the bootloader EEPROM (`RACECAR_EEPROM=0` skips it; see [Bootloader EEPROM](#bootloader-eeprom))
+3. **`setup_user_env.sh`**: joins `dialout` / `i2c` / `spi` / `gpio` / `video` groups; installs the polkit rules in `scripts/polkit/` (NetworkManager for `racecar wifi`, the autonomy unit for `racecar map`, the lab dashboards for the apps page, the teleop restart for Features, restarts of the dashboard, map viewer and battery guard after an update); sources ROS2 + the `racecar` shell tool in `.bashrc` and puts `~/.local/bin` on `PATH`
+4. **`setup_raspi_config.sh`**: boot-level configuration: enable I2C, enable SPI, disable serial console (frees the GPIO UART / `ttyAMA0` for the NEO-PIT link; edits the kernel command line file named by `cmdline=` and `os_prefix=` in `config.txt`, and only reports it when that file is absent, as on a car booted from the NVMe), `usb_max_power_enable=1`, enable RTC backup-cell trickle charging (`RTC_VCHG_UV=0` turns it off; see [RTC backup cell](#rtc-backup-cell)), and reconcile the bootloader EEPROM (`RACECAR_EEPROM=0` skips it; see [Bootloader EEPROM](#bootloader-eeprom))
 5. **`setup_udev.sh`**: installs `/etc/udev/rules.d/99-racecar.rules` (stable `/dev/neo-pit-pcb`, `/dev/lidar`)
 6. **`setup_dotmatrix.sh`**: `pip install --user luma.led_matrix` (pinned), the font source for the `dotmatrix_node` rasterizer
 7. **`setup_coral.sh`**: installs `libedgetpu1-std`, `tflite_runtime`, `pycoral` from vendored `depend/` artifacts; on a Pi 5, also the M.2 card's gasket DKMS driver and the `coral-msi` overlay, so a card fitted after setup works (reboot required)
-8. **`setup_realsense.sh`**: installs `realsense2_camera` (apt) + the Pi 5 IMU IIO permission fix (script, udev rule, boot service)
+8. **`setup_realsense.sh`**: installs `realsense2_camera` with the RealSense library it was built against (apt; `racecar status` warns on a mismatch) + the Pi 5 IMU IIO permission fix (script, udev rule, boot service)
 9. **`setup_workspace.sh`**: clones `sllidar_ros2` at a pinned commit and runs `colcon build --symlink-install`; `setup_all.sh` then runs `racecar profile migrate` (see [Car profile](#car-profile))
-10. **`setup_jupyter.sh`**: `pip install --user jupyterlab` and the library's notebook packages (pinned), creates `~/jupyter_ws/`, links `~/jupyter_ws/data` and `~/jupyter_ws/maps` to the [data root](#car-data)
-11. **`setup_services.sh`**: installs and enables the core systemd units (`racecar-{data,teleop,watchdog,dashboard,jupyter,mapview}.service`), installs `racecar-autonomy.service` disabled, and installs `/etc/profile.d/racecar-data.sh`
+10. **`setup_jupyter.sh`**: `pip install --user jupyterlab` and the library's notebook packages (pinned), creates `~/jupyter_ws/`, links `~/jupyter_ws/data` and `~/jupyter_ws/maps` to the [data root](#car-data), and installs the [student library and labs](#student-library-and-labs)
+11. **`setup_services.sh`**: installs and enables the core systemd units (`racecar-{data,teleop,watchdog,dashboard,jupyter,mapview,battery-guard}.service`), installs `racecar-autonomy.service` disabled, and installs `/etc/profile.d/racecar-data.sh`
 12. **`setup_dashboards.sh`**: installs a stopped, disabled `racecar-*` unit for each lab dashboard listed in `config/apps.yaml` (web teleop, line follow, wall follow, camera label) and removes units left by retired dashboards (`RACECAR_DASHBOARDS=0` skips it)
 
-Individual phase scripts can be run on their own to re-do or skip steps (e.g. `racecar setup networking` for just the networking phase, or `bash scripts/setup_udev.sh` to reinstall the udev rules after a hardware swap).
+A failed phase stops the run and prints the command that resumes there:
+
+```bash
+bash scripts/setup_all.sh --from 5      # start at phase 5
+bash scripts/setup_all.sh --skip 7,8    # leave out phases 7 and 8
+```
+
+Individual phase scripts can be run on their own to re-do or skip steps (e.g. `racecar setup networking` for just the networking phase, `racecar setup services` to reinstall the core units, or `bash scripts/setup_udev.sh` to reinstall the udev rules after a hardware swap).
+
+## Handbook
+
+`docs/handbook/` is the operator handbook: installation, health checks,
+calibration, and upgrades, one step at a time. The pages are Markdown in a
+small subset that `scripts/handbook.py` renders with no dependencies.
+
+```sh
+racecar handbook build          # static HTML in handbook/ under the data root
+racecar handbook build DIR      # static HTML in DIR
+```
+
+The build refuses a page with Markdown outside the subset (raw HTML, block
+quotes, headings past `####`). A heading ending in `{#id}` keeps that anchor
+when its text changes; the installation steps use the `racecar setup car`
+step names.
 
 ## The `racecar` shell tool
 
@@ -211,10 +269,13 @@ racecar service logs teleop # journalctl -u racecar-teleop -f
 racecar service start wallfollow  # a lab dashboard; stops the other /drive publishers
 racecar service enable wallfollow # enable one unit; bare `enable` covers the core six
 
-racecar setup all                       # run the 12-phase orchestrator
+racecar setup all                       # run setup_all.sh, all 14 phases (--from N, --skip N,M)
+racecar setup services                  # install and enable the core units
 racecar setup networking --ssid=racecar-neo-2   # configure eth0 addressing + ALFA-dongle AP
 racecar setup networking --show         # print persisted overrides
-racecar setup dashboards                # clone the lab dashboards + install units
+racecar setup dashboards                # install the lab dashboards' units
+racecar setup browser                   # install the Browser app (Xvfb, x11vnc, noVNC, Firefox policy)
+racecar setup web                       # the port-80 web server
 racecar setup realsense                 # offline D435i firmware flash
 
 racecar udev                        # re-install the udev rules
@@ -233,6 +294,7 @@ racecar map load room_1             # localize on a saved map
 racecar profile                     # this car's settings in ~/.config/racecar
 racecar data                        # where the car's data goes, free space
 racecar disk                        # the NVMe data drive; setup, format, check
+racecar library install             # pinned student library and the labs from main
 racecar library --list              # student library folders under ~/jupyter_ws
 racecar help                        # full usage
 ```
@@ -274,7 +336,7 @@ With no `--ssid` or saved car ID, it prompts for this car's ID and sets the SSID
 
 What it does:
 
-1. **eth0 addressing** via `setup_eth.sh`; eth0 is put in exactly one IPv4 mode, static by default at `192.168.52.200/24`, so the robot is reachable at a known IP on a bare switch. The eth0-SSH check in `setup_eth.sh` applies here too: a mode switch asks first when the session arrives over eth0. See [Ethernet addressing](#ethernet-addressing).
+1. **eth0 addressing** via `setup_eth.sh`; eth0 is put in exactly one IPv4 mode, static by default at `192.168.52.(200 + car number)/24` (`.200` without a number), so the robot is reachable at a known IP on a bare switch and cars on one switch do not collide. The eth0-SSH check in `setup_eth.sh` applies here too: a mode switch asks first when the session arrives over eth0. See [Ethernet addressing](#ethernet-addressing).
 2. **ALFA-dongle isolated AP** via NetworkManager; the AP runs on the ALFA MT7612U dongle (pinned to `wlan1` by the udev rule), hosting its own 2.4 GHz WiFi network. Clients can SSH / browse the dashboard / use jupyter, but a NetworkManager dispatcher installs `iptables FORWARD REJECT` rules so AP clients **cannot** route through the Pi to the internet. The Pi's built-in `wlan0` is left in default client mode.
 
 Tunables (persisted to `~/.config/racecar/networking.env` and replayed on every re-run):
@@ -286,7 +348,8 @@ Tunables (persisted to `~/.config/racecar/networking.env` and replayed on every 
 | `--channel=N` | `6` |
 | `--ap-addr=CIDR` | `10.42.0.1/24` |
 | `--ap-iface=NAME` | `wlan1` (the ALFA dongle) |
-| `--eth-static=CIDR` | `192.168.52.200/24` |
+| `--id=N` | the car number (`racecar setup car` passes it); asked when no ID or SSID is saved |
+| `--eth-static=CIDR` | `192.168.52.(200 + N)/24`, N from 0 to 54 |
 | `--eth-mode=MODE` | `static` (or `dynamic`) |
 
 Inspect / clear the saved overrides:
@@ -315,7 +378,7 @@ eth0 holds exactly one IPv4 addressing mode. Carrying a static address and a DHC
 
 ```sh
 racecar eth                 # or: racecar eth status
-racecar eth static          # 192.168.52.200/24, no gateway (the default)
+racecar eth static          # 192.168.52.(200 + car number)/24, no gateway (the default)
 racecar eth dynamic         # address and default route from DHCP
 racecar eth static --addr=10.0.0.50/24
 ```
@@ -394,27 +457,62 @@ Changes apply on the **next boot**; `status` reports a pending change when the d
 
 ## Web dashboard
 
-Once `racecar-teleop.service` is running, browse to `http://<robot>:8080`.
+Once `racecar-teleop.service` is running, browse to the car with no port:
+`http://racecar-neo-0.local/`, or an address such as `http://10.42.0.1/` on
+the car's access point. It opens the home page (`/home/`, also
+`http://<robot>:8080`). `racecar setup web` ends by loading the home page
+through each of these addresses.
 
-**Apps.** One tile per app, in two groups. Hover over a tile for what it
+**Addresses.** Every app has a name address on port 80 as well as its port:
+`/home/`, `/profile/`, `/jupyter/`, `/files/`, `/terminal/`, `/webteleop/`,
+`/linefollow/`, `/wallfollow/`, `/camlabel/`, `/mapper/`. The names come
+from the `path` field of `config/apps.yaml`; `racecar setup web` writes the
+nginx site after an app is added.
+
+The apps answer only to the car's own addresses: an IP address, `localhost`,
+the car's hostname, and the hostname with `.local`. To reach the car by
+another name, such as one in your own DNS, list it in the car profile's
+`car.yaml` and restart the car:
+
+```yaml
+web_hosts: [lab-car-7.school.edu]
+```
+
+**Apps.** One tile per app, in three groups. Hover over a tile for what it
 does. A white border means the app is running.
 
-- Core: map viewer and JupyterLab, which start at boot; Terminal, which
-  starts when opened; the safety override and Turn Off (below).
-- Utilities: web teleop, line follow, wall follow, and camera label.
-- Tap a tile to open the app in a new tab. A stopped utility is started
+- Core: Car Profile and JupyterLab, which start at boot; the safety
+  override and Shut Down (below).
+- Tools: Terminal, web teleop, line follow, wall follow, and camera label,
+  which start when opened. Clear apps stops them.
+- Autonomy: Mapper (the map viewer), which starts at boot, and the
+  Planner, which starts when opened. Clear apps stops the Planner.
+
+**Driving.** One source drives the car at a time: an app, a mission or goal,
+a Drive panel, a calibration drive, or a student program. The header shows
+which ("Driving: Planner"), and `racecar status` has a `driving` row. The
+driving pages show "X is driving." while another source drives, and their
+Drive panels gray out. A driving app does not open while a program, a
+`racecar nav` goal or a calibration drives. A student program holds the car
+from its start to its end, moving or not; a notebook holds it until its kernel
+is shut down. A program started while something else holds the car does not
+move it: the safety controller drops its commands.
+- Tap a tile to open the app in a new tab. A stopped app is started
   first, and the tab shows a loading bar until the app is ready. Cancel
   closes that tab without opening the app.
 - Web teleop, line follow, wall follow, and autonomy (mapping or
   localization) drive the car, so only one runs at a time. Opening one while
   another runs asks before closing the other; a map being built is saved
-  first. The map viewer and the Autonomy tile ask the same way, and
-  `racecar map start`, `load`, and `resume` close the driving apps.
-- Clear apps stops every utility to free the CPU. Core apps keep running.
-- Starting and stopping utilities from the page needs the permission rule
+  first. The Mapper and the Autonomy feature ask the same way, and
+  `racecar map start`, `load`, and `resume` close the driving apps. The
+  Planner drives through localization, so opening it leaves autonomy
+  running, and loading a map leaves it open.
+- Clear apps stops every app that does not start at boot, to free the CPU.
+- Starting and stopping apps from the page needs the permission rule
   that `scripts/setup_user_env.sh` installs.
 
-**Footer.** Every page the car serves shows "racecar OS", the driver
+**Footer.** Every page the car serves shows the car (`racecar-neo-0 (Bill)`,
+or the hostname alone without a nickname), "racecar OS", the driver
 version, and the Teensy firmware version at the bottom of the screen.
 
 **Home shortcut.** On every app page, the R logo in the header goes home. It
@@ -443,7 +541,8 @@ dashboards drive with no controller in hand. It asks first. While it is on,
 the tile turns red and:
 
 - A red banner shows on this page and on web teleop, line follow, and wall
-  follow. The dot matrix shows AUTO, and the LED strip flashes amber.
+  follow. The dot matrix shows AUTO, and the LED strip flashes amber over
+  the battery meter's length.
 - Holding LB drives from the controller.
 - Any other controller button turns it off.
 - Turn off in any banner turns it off.
@@ -466,7 +565,7 @@ about 30 s after boot.
 
 See [Low-battery shutdown](#low-battery-shutdown).
 
-**Turn Off.** The Turn Off tile shuts the car down safely. It asks first.
+**Shut Down.** The Shut Down tile shuts the car down safely. It asks first.
 It stops a recording, the driving apps, autonomy (saving a map being
 built), and teleop, then powers off. Turn off the power switch after the
 car is off.
@@ -567,6 +666,10 @@ teleop.
 | Battery at 7.1 V (3.55 V per cell) | A 60 s countdown: "Shutting down in 30 s." on terminals and pages, the seconds left on the dot matrix from 20 s, faster LED flashing. |
 | 0 s | "Turning the car off now. Turn off the power switch." SHUT and DOWN on the dot matrix. The guard stops a `racecar log` recording, the driving apps, autonomy (saving a map being built), and teleop, then powers off. |
 
+To see the dot matrix and LED strip sequence without shutting down, run
+`python3 scripts/battery_display.py --preview` from the driver folder
+(about 70 s).
+
 After a shutdown, turn off the power switch. The PIT board and the halted Pi
 still draw about 100 to 200 mA until the switch is off, so the battery keeps
 draining. Do not leave the car unattended on battery.
@@ -654,6 +757,18 @@ tmux -L racecar-terminal attach -t rcn-main   # Ctrl+B, then D, to detach
 
 ## Hardware health
 
+`racecar check` (`scripts/racecar_check.py`, rules in
+`racecar_neo_ros2_driver/readiness.py`) runs the parked checks with the car
+still, in about 5 seconds: every required calibration done and no failed
+check, the IMU at rest (gyro mean under 0.01 rad/s, failing at the
+odometry's 2 deg/s stopped gate; gravity within 1%), the odometry holding
+still, the lidar's rate and valid share, the board and camera rates from
+`/diagnostics`, teleop, and the battery guard's level. `--all` adds
+`racecar health power`, `link` and `nvme`. Each row that is not OK names
+its repair. Results go to `checks/last.json` under the data root, merged
+with the checks not run; the Car Profile Checks page (`/checks`) shows them
+and runs the same, with shake and poke as guided buttons.
+
 `racecar health` (`scripts/health.py`) checks the power supply and the data
 drive over time and saves a report. `racecar status` takes one reading of
 each; `racecar health` samples and tests.
@@ -720,7 +835,9 @@ The firmware stops the motor when it stalls under load: throttle to neutral
 until the throttle returns to neutral, then a 2 s cooldown; 3 trips within 60
 s lock the motor out for 30 s. The 8080 Stall chip and the `racecar status`
 `stall protection` row show the state: yellow when tripped or cooling down,
-red during a lockout. `/pit/stall` carries each change. They turn yellow
+red during a lockout. While the throttle is held, a banner on every page the
+car serves says so and counts down the cooldown or lockout. `/pit/stall`
+carries each change. They turn yellow
 for a test build (open-loop PWM or ESC calibration), a build with
 uncommitted changes, or firmware too old to answer (before 0.9.0). The full
 reply is on `/pit/firmware`.
@@ -799,7 +916,7 @@ racecar log start lap3 --topics /scan /odom
 racecar log status                         # size, rate, time until full
 racecar log stop                           # SIGINT, so rosbag2 finalizes
 racecar log list
-racecar log analyze                        # newest bag: duration, per-topic rates
+racecar log analyze                        # newest bag: duration, per-topic rates, mission
 racecar log config --storage=mcap        # saved defaults; --dir sets a fixed bag folder
 ```
 
@@ -817,6 +934,176 @@ Recording every topic pulls in `/camera/color` and `/camera/depth`, roughly
 unless you pass `--force`, because rosbag2 drops messages rather than blocking:
 the bag looks healthy until it is read. Name the topics you need, or
 `--exclude '/camera/.*'`.
+
+## Connections page
+
+The Connections tile in Core, or Configure in the 8080 network menu, opens
+`http://<robot>/home/connections`.
+
+- WiFi (wlan0): on or off, the current network and whether it reaches the
+  internet (Online, No internet, Sign-in needed), the visible networks (tap
+  one to join), and the saved ones in the order the car tries them (arrows,
+  then Save order; the cross forgets one).
+- Access point (wlan1): name, channel, address, and Change password (typed
+  twice). Every device on the access point disconnects and rejoins with the
+  new password. `racecar setup networking` keeps it unless
+  `RACECAR_AP_PSK` is set.
+- Ethernet (eth0): state and address.
+- Devices: everything connected to the car, on the access point or eth0:
+  name, address, MAC, interface, signal, and time connected. Edit devices
+  gives each one a nickname, kept by MAC in the car profile
+  (`~/.config/racecar/devices.yaml`); a device without one shows the name
+  it sends, if any.
+- Ping test: four pings to google.com; whether they arrive, the average
+  time, and the interface used.
+
+A change to the network the browser is on asks first.
+
+## Browser app
+
+The Browser tile in Tools opens `http://<robot>/browser/` (port 8087): Firefox
+running on the car, seen and used from the page. It signs the car in to a lab
+WiFi login page, which only works from the car itself. When the Connections
+page shows Sign-in needed, its Sign in button opens it.
+
+- Log in with the racecar password, from the car's access point, as for the
+  Terminal.
+- On a phone, Keyboard opens the phone's keyboard.
+- Firefox starts with the first viewer and stops 10 minutes after the last one
+  leaves. Clear apps stops it at once.
+- `racecar setup browser` installs it (phase 13 of `setup_all.sh`): Xvfb,
+  x11vnc, noVNC, websockify, and Firefox from Mozilla's APT repository (the
+  snap cannot open a display in a service). Firefox's policy file blocks
+  `file://` pages and `about:config` and turns off updates and telemetry, for
+  every Firefox on the car.
+
+## Files app
+
+`racecar-files.service` serves port 8089 (`/files/`) from boot. The Pages
+list shows every app, its address, and a green dot when it runs. The file
+browser opens `~/jupyter_ws` and the folders it links to (data, maps, the
+student library): code with line numbers, Markdown and notebooks rendered,
+images, and a download button for any file. It changes nothing.
+
+## Car Profile app
+
+`racecar-profile.service` serves the car's own page on port 8088 from boot:
+`http://<robot>:8088`. The home page shows the car in 3D. Tap a part to see
+what it is, its live data rate and message type, its calibration values, its
+position from `frames.yaml`, and its car record entry; the deck buttons hide
+the top, middle or bottom deck. The menu leads to the
+[handbook](docs/handbook/index.md) pages. The 8080 Core group has its tile.
+
+The Setup page (`/setup`) runs the `racecar setup car` steps from a
+browser: one tile per step, grouped, done or open. A tile opens a popup
+that asks the step's questions, says about how long it takes, runs the
+step's command in a pseudo-terminal with its output shown, and passes the
+password to sudo when it asks. One step runs at a time, from the page or
+the CLI. Sensor calibration stays on the command line.
+
+The car model is read from `models/car/racecar_neo_v2_high.glb` under the
+data root and is not part of the driver. Without it, the page lists the parts
+without the 3D view. With no page open, the app holds no ROS subscriptions.
+
+## Navigation
+
+Loading a map (`racecar map load NAME`) also starts Nav2: the car drives itself
+to a pose on the map, forward or in reverse, around obstacles the lidar sees.
+It moves only while RB is held, or under the 8080 safety override.
+
+```sh
+racecar nav goal X Y HEADING      # x, y in meters, heading in degrees (map frame)
+racecar nav move 3                # 3 m ahead of the car, keeping its heading (-2: behind)
+racecar nav status                # whether Nav2 is up and who drives
+racecar nav cancel                # stop the goal or mission that is running
+racecar nav mission list          # saved Planner missions of the loaded map
+racecar nav mission run NAME      # run one in the Planner (started if needed)
+racecar nav mission stop          # stop the mission that is running
+```
+
+Student programs send goals with `rc.nav` in the student library (`go_to`,
+`move`, `run_mission`, `cancel`, `get_status`); a goal holds the driving, and
+`rc.drive` calls are ignored until it ends. A program's goal stops 0.5 s after
+the program stops answering.
+
+- A goal is refused while something else drives ("Planner is driving."). A
+  goal the car cannot reach, or a stall, ends it.
+- Loading a map and starting to map are refused while a mission, a goal, a
+  Drive panel, or a calibration drives.
+- Speeds: 0.5 to 1.0 m/s forward and 0.5 to 0.6 m/s in reverse. The
+  firmware holds nothing slower than 0.5 m/s, so Nav2 stops instead.
+- The car needs a steering table (`racecar calibrate steering`); without one,
+  localization runs without Nav2.
+- The safety override stays on only while the 8080 page, the Mapper, or the
+  Planner is in front. On a phone, switching to another app ends it within a second or
+  so, and the car stops.
+- Settings: `config/nav2.yaml` (planner, controller, costmaps) and
+  `config/nav2_bt.xml` (recovery: clear the costmaps and wait; no turning
+  in place). A car profile `params/nav2.yaml` overrides any of them.
+
+### Planner
+
+`racecar-planner.service` serves the Planner on port 8090
+(`http://<robot>/planner/`), in the 8080 Autonomy group. It starts when
+opened and stops with Clear apps. The page shows the map, the car, the lidar
+scan, the waypoints, and the paths Nav2 plans. A mission is a list of
+waypoints; a single goal is a mission of one.
+
+| Button | Does |
+|---|---|
+| Set goal | Adds waypoints until Done: a tap for any heading, a drag for a heading. The path of every leg shows dashed, or "No path to waypoint N." |
+| Waypoints | Lists the waypoints: heading or any, radius (0.25 to 3 m), speed (0.5 to 1.0 m/s, or full), wait (0 to 600 s), order; loops (1 to 99, or until Stop); Save, and the saved missions of the loaded map |
+| Go | Runs the mission; the header shows the waypoint, the loop, and the distance left, then Arrived |
+| Pause, Resume | Stops the car and holds the mission; Resume sends the waypoint again |
+| Skip | Goes on to the next waypoint |
+| Stop | Ends the mission |
+| Set pose | As in the Mapper |
+| Safety override (top right) | Turns the 8080 safety override on or off; the page keeps it on while it is in front |
+| Load map | Lists the saved maps; Load starts localization and Nav2 on one |
+| Costmap (map tools) | Shows Nav2's global costmap over the map |
+
+- A tap on a marker opens it in Waypoints; a drag moves it. Changes during a
+  mission apply from the next waypoint; a change to the one being driven to
+  sends it again.
+- Go is refused while something else drives ("Web Teleop is driving."). While
+  a mission is paused or the car is not localized, a Drive panel can move it.
+- A waypoint is reached within its radius, facing its heading if it has
+  one. The car drives on to the next waypoint without stopping, unless the
+  waypoint has a wait.
+- Nav2's report that a waypoint is reached counts only with the car near it
+  (its radius plus 0.15 m, and its heading). Otherwise the waypoint is sent
+  again, up to 10 times.
+- A waypoint Nav2 cannot reach pauses the mission ("Could not reach
+  waypoint N"): Resume tries again, Skip goes on, Stop ends it.
+- The motor's stall protection pauses it too ("Car stalled at waypoint N").
+  Resume and Skip work once the car can drive again.
+- Waypoints are red, yellow for the next one, and green once reached. They
+  stay green on later loops, except the next one.
+- Record (in Waypoints) is off until you turn it on, and can be turned on and
+  off during a mission. It records a bag and an event log until the mission
+  ends, for the groups checked: Car state, Commands, Lidar, Navigation, and
+  Camera. The choice is saved with the mission. Go waits up to 3 s for the
+  recorder. The header shows Recording, or Not recording when it cannot; the
+  mission goes on. Waypoints shows the time, size, rate, free space, and
+  topics once a second, and the `racecar log analyze` output at the end.
+- The bag is `bags/<time>_mission_<name>` under the [data root](#car-data),
+  with `events.jsonl` and `mission.yaml` in it; `racecar log analyze` reads
+  both. Groups: `config/mission_data.yaml`, and the car profile's
+  `params/mission_data.yaml`.
+- Missions are saved beside the map, in `<map>/missions/NAME.yaml`; saving
+  over one moves the old file to `missions/previous/`.
+- Loading a map while the Mapper is mapping asks to save the map first.
+  Mapping stays in the Mapper.
+- The Drive panel works as in the Mapper, during localization and while no
+  goal is running.
+- The costmap is sent only while Costmap is on.
+- The Camera panel shows the color camera. Show and Hide open and close it,
+  and a tap on the picture enlarges it. The picture grays out when frames
+  stop, and the panel grays out while the camera is off.
+- Lost localization pauses the mission: the car stops, and the header shows
+  Relocalizing. AMCL updates once a second without the car moving.
+  Driving the car a little or Set pose helps. The mission continues once the
+  car is localized again, with no time limit; Stop ends it.
 
 ## Maps
 
@@ -892,7 +1179,7 @@ overrides the folder. `scripts/setup_jupyter.sh` links `~/jupyter_ws/data` to
 the data root and `~/jupyter_ws/maps` to its `maps/`, so JupyterLab shows
 them.
 
-### Map viewer
+### Mapper
 
 `racecar-mapview.service` serves a map page on port 8084 from boot,
 independent of teleop: `http://<robot>:8084` on a phone or laptop on the
@@ -903,7 +1190,8 @@ page shows their output:
 
 | Button | Does |
 |---|---|
-| Start mapping | `racecar map start NAME` |
+| Run checks | `racecar check` (the parked checks, about 5 seconds, car still); the rows show in a panel with their repairs |
+| Start mapping | `racecar map start NAME`; grayed until the checks pass |
 | Save, Stop | `racecar map save`, `racecar map stop` |
 | Maps | Lists the saved maps with thumbnails; Load, Extend, and Keep (on an unsaved map) |
 | Extend | Shows the saved map; drag from the car's position toward the way it faces, then `racecar map start NEW --from NAME --pose ...` |
@@ -911,8 +1199,22 @@ page shows their output:
 | Find me | Searches the whole map (AMCL only); drive slowly until `localized` |
 | Clear trail | Clears the car's path on every open map page |
 
-The page never drives the car. Start, stop, and load restart the autonomy
-service and ask first. With no browser open it holds no ROS subscriptions
+Start mapping and Extend stay grayed until the parked checks pass. A pass
+(a WARN counts) lasts until a reboot, a teleop restart, or a calibration
+written since; a pass from the Car Profile Checks page counts too.
+`racecar map start` runs the same checks first unless a pass stands, and
+refuses on a FAIL; `--skip-checks` starts anyway.
+
+The Drive panel (bottom left) drives the car while mapping or localization
+runs, grayed out otherwise: the joystick on touch screens, the pad or WASD
+on a laptop with a Joystick toggle, as Web Teleop. It publishes `/drive` at
+15 Hz with full speed and steering (`throttle_node` still applies the
+mapping speed cap), so RB on the gamepad or the 8080 safety override must
+allow it. A command older than 0.5 s drives zero, and releasing, a lost
+focus or a hidden page stops the car. Requests from another site's page
+are refused. Start, stop, and load restart the autonomy service and ask
+first. The Camera panel and the Safety override button (top right) work as
+in the [Planner](#planner). With no browser open it holds no ROS subscriptions
 and uses about 0.1% of a core; with one open, about 6%.
 
 `racecar map foxglove on` adds `foxglove_bridge` for Lichtblick from the next
@@ -921,7 +1223,25 @@ start or load; see [docs/advanced-settings.md](docs/advanced-settings.md),
 
 ## Jupyter notebooks
 
-`http://<robot>:8888/lab`: JupyterLab with `import rclpy` working out of the box. Notebooks land in `~/jupyter_ws/`. No token / password by default (the systemd unit assumes the robot's network is trusted).
+`http://<robot>/jupyter/` or `http://<robot>:8888/jupyter/lab` (`:8888/` and
+`:8888/lab` lead there): JupyterLab with `import rclpy` working out of the box. Notebooks land in `~/jupyter_ws/`. No token / password by default (the systemd unit assumes the robot's network is trusted).
+
+### Student library and labs
+
+Setup installs the student library and labs named in `config/student_library.yaml`:
+
+- The library repo at its pinned tag, read-only in `/opt/racecar-neo/library-<tag>/`. Its `library/` folder is linked at `~/jupyter_ws/racecar-neo/library`.
+- The labs repo's `labs/` folder at the tip of `main`, in `~/jupyter_ws/racecar-neo/labs`. Setup installs them only when that folder does not exist.
+
+```bash
+racecar library install             # pinned library, and fresh labs from main
+racecar library install --no-labs   # library only; labs stay as they are
+racecar library --status            # selected library, pinned and installed versions
+```
+
+`racecar library install` moves an existing labs folder to `~/backups/YYYYMMDD_HHMMSS_racecar-neo-labs-<tag>` before it installs the new one, so a student's work is kept. A library folder that is not the link moves to `~/backups` the same way. Older library tags stay in `/opt/racecar-neo` for rollback. Both need internet.
+
+`racecar library --select <folder>` chooses which library Python imports: `racecar-neo`, or another `~/jupyter_ws` folder with a `library/` and `labs/` pair copied from a computer. The first install selects `racecar-neo` when nothing is selected.
 
 ## Manual build
 
@@ -960,16 +1280,33 @@ committed `config/lsm9ds1_cal.yaml`, `config/lsm9ds1_mag_cal.yaml`,
 own values go in `params/<name>.yaml` in the [car profile](#car-profile),
 which the launch files load after the committed file.
 
-The ESC program settings, the ESC throttle calibration, the per-car speed
-constants and the car record are in the handbook:
-[docs/handbook/calibration.md](docs/handbook/calibration.md).
+The calibration steps for an operator, the ESC program settings, the ESC
+throttle calibration, the per-car speed constants and the car record are in
+the handbook: [docs/handbook/calibration.md](docs/handbook/calibration.md).
 
 ```sh
 racecar calibrate status      # profile path, what is calibrated, when, stored values
 racecar calibrate             # every step but dynamics, in order, one guided session
 racecar calibrate imu lidar   # chosen steps only
 racecar calibrate check       # verify each calibration against the live sensors
+racecar calibrate imu --verify  # one step: calibrate, restart teleop, check
 ```
+
+`--verify` runs one step, restarts teleop so the nodes load the new values,
+then runs the step's check. A failed check puts the previous file back (from
+the profile's `history/`) and restarts teleop again, so a calibration that
+does not check out is never kept. Each value is also compared with its
+expected range (`config/calibration_expected.yaml`, from the reference car
+and each sensor's physical limits): a value outside it is refused before
+anything is written, in every mode. The last check result of each step is
+kept in `car.yaml` under `calibration:`.
+
+The Calibration page of the Car Profile app (`/calibration`) runs the same:
+pick a step, follow the instructions in the central panel, and answer with
+its buttons. The panel shows the stage, the time and samples left, how still
+the car is while an IMU pose records, each value against its expected range,
+the check, and a plot of the run. A tile turns green once its calibration is
+checked.
 
 Car prep is three commands: `racecar calibrate`, a teleop restart (offered at
 the end), then `racecar calibrate check`. At each check's prompt, Enter runs
@@ -986,11 +1323,12 @@ if any check failed. One line per prompt on stdin scripts the whole run.
 | `realsense` | Still and level, 3 s | the stored calibration applied to `/imu/realsense` gives gravity within 1%, gyro under 0.01 rad/s |
 | `lidar` | Driven forward and back about 1.3 m, parked 2 s before, between, and after | the lidar yaw from the direction of travel within 0.5 deg of `laser_yaw_deg` (warn to 1); each scan match under 30 mm RMS with at least 30% of points matched |
 | `odom` | Driven 2 circles and stopped anywhere near the start, then driven straight toward a wall and stopped anywhere short of it; parked 2 s before and after each run | `/odom/integrated` heading within 1% of the lidar's (warn to 3%); distance within 2% of the lidar's (warn to 5%); each scan match under 30 mm RMS with at least 30% of points matched; the scales `pit_node` runs with match `params/odom.yaml` |
-| `steering` | Driven straight at steering 0 about 2 m, parked 2 s before and after | heading drift within 1 deg/m (warn to 5, naming servo and linkage play); the trim `throttle_node` runs with matches `params/throttle.yaml` |
+| `camera` | On its wheels on a flat floor, 2 m clear ahead; camera on | pitch and roll within 0.5 deg and the case height within 5 mm of `params/frames.yaml` |
+| `steering` | Forward/reverse pairs at steering 0 and +/-0.5 from one placement | heading drift at 0 within 1 deg/m (warn to 5, naming servo and linkage play); the +/-0.5 legs within 10% of `params/steering_table.yaml`; the trim `throttle_node` runs with matches `params/throttle.yaml` |
 
 `racecar calibrate` runs the tools in `scripts/calibration/` in this order:
-the hand-held steps first (`imu`, `mag`, `realsense`), then `lidar`, `odom`
-and `steering` with the car on the floor. `dynamics` measures the car for the
+the hand-held steps first (`imu`, `mag`, `realsense`), then `lidar`, `camera`,
+`odom` and `steering` with the car on the floor. `dynamics` measures the car for the
 simulator and runs only when named (`racecar calibrate dynamics`); it has no
 check.
 Each step can be run, skipped (`s`), or gone back from (`b`, to run the previous
@@ -1008,8 +1346,9 @@ ros2 run racecar_neo_ros2_driver calibrate_imu.py         # LSM9DS1 accel bias +
 ros2 run racecar_neo_ros2_driver calibrate_mag.py         # LSM9DS1 hard/soft iron
 ros2 run racecar_neo_ros2_driver calibrate_realsense_imu.py   # D435i accel bias + scale, gyro bias
 ros2 run racecar_neo_ros2_driver calibrate_lidar.py       # lidar yaw from the direction of travel; the car drives itself while RB is held
+ros2 run racecar_neo_ros2_driver calibrate_camera.py      # RealSense mount pitch, roll and height from the floor
 ros2 run racecar_neo_ros2_driver calibrate_odom.py        # odometry against the lidar: circles, then a straight run
-ros2 run racecar_neo_ros2_driver calibrate_steering.py    # steering trim against the lidar; the car drives itself while RB is held
+ros2 run racecar_neo_ros2_driver calibrate_steering.py    # steering trim and curvature table against the lidar; the car drives itself while RB is held
 ros2 run racecar_neo_ros2_driver calibrate_dynamics.py    # simulator dynamics; the car drives itself while RB is held
 racecar service restart teleop                            # nodes read the values at start
 ```
@@ -1020,8 +1359,9 @@ racecar service restart teleop                            # nodes read the value
 | `calibrate_mag.py` | `/mag/raw` | `params/lsm9ds1_mag_cal.yaml` | `pit_node` |
 | `calibrate_realsense_imu.py` | `/imu/realsense` | `params/realsense_cal.yaml` | `imu_fusion_node` |
 | `calibrate_lidar.py` | `/scan`, `/odom/integrated`, `/motor` (recorded); `/joy` (RB) | `params/frames.yaml` (`laser_yaw_deg`) | `frames.launch.py` |
+| `calibrate_camera.py` | `/camera/depth`, `/camera/depth/camera_info`, `/camera/accel/sample`, `/tf` | `params/frames.yaml` (`camera_pitch_deg`, `camera_roll_deg`, `camera_bottom_z_mm`) | `frames.launch.py` |
 | `calibrate_odom.py` | `/imu/lsm9ds1`, `/odom/integrated`, `/scan` | `params/odom.yaml` (`odometry.yaw_rate_scale`, `odometry.speed_scale`) | `pit_node` |
-| `calibrate_steering.py` | `/scan`, `/odom/integrated`, `/motor` (recorded); `/joy` (RB) | `params/throttle.yaml` (`steering_trim`) | `throttle_node` |
+| `calibrate_steering.py` | `/scan`, `/odom/integrated`, `/motor` (recorded); `/joy` (RB) | `params/throttle.yaml` (`steering_trim`), `params/steering_table.yaml` | `throttle_node`; `racecar_neo_ros2_driver.steering` |
 | `calibrate_dynamics.py` | `/scan`, `/imu/lsm9ds1`, `/odom/integrated`, `/motor`, plus `/encoder/speed`, `/odom`, `/mux_out`, `/imu/fused`, `/battery/voltage`, `/tf` (recorded); `/joy` (RB) | `params/dynamics.yaml` | the simulator (no node reads it) |
 
 Each utility writes the file to the car profile; launch reads it at start,
@@ -1067,14 +1407,44 @@ The scene must stay still between the two scans, and a room works better
 than a long corridor. Each step keeps the other's value in
 `params/odom.yaml`.
 
+`calibrate_camera.py` measures how the RealSense sits on the car; the lens
+and depth calibration is the camera's own, from the factory. With the car on
+its wheels on a flat floor, clear 2 m ahead, it fits a plane to the floor in
+about 3 s of depth and expresses it at the tripod screw, where the URDF
+rotates the camera: the plane's tilt gives `camera_pitch_deg` and
+`camera_roll_deg`, its distance `camera_bottom_z_mm`. Yaw keeps its value.
+The camera's accelerometer is a cross-check: a difference over 1 deg from the
+floor names an unlevel floor or the RealSense IMU calibration. `--check`
+passes within 0.5 deg and 5 mm of the file. The camera feature must be on.
+
 `calibrate_steering.py` sets the steering trim, the offset `throttle_node`
-adds to every steering command so the car drives straight at steering 0. It
-drives seven short runs by itself while RB is held, one per steering command
-(0, +/-0.25, +/-0.5, +/-1.0), each needing about 3 by 3 m of clear floor. In
-each run the wheels are set with the car still and the steering never
-changes, so the car moves on one arc; the lidar scans at rest before and
-after give its chord and heading change, and curvature = 2 sin(heading / 2) /
-chord, with no encoder distance. The command that drives straight is the
+adds to every steering command so the car drives straight at steering 0, and
+measures the command-to-curvature table. It drives by itself while RB is
+held, one pair of legs per steering command at speed 0.25: forward on an
+arc, then backing up about the same distance at the same steering, so the
+car ends near where it started. Straight first, then the left commands
+(0.125, 0.25, 0.375, 0.5, 0.75, 1.0), then the same to the right, in about 3
+by 3 m of clear floor. Every run is driven first; between runs you can drive
+the car back to its mark with the controller (LB). Then every run is
+analyzed, one progress line each, and the runs that could not be measured
+are offered to drive again (or `s` finishes without them; the table needs
+full lock on both sides). Backing up at tight steering the wheels slip at
+the start, so a reverse leg's lidar distance may be well under the
+encoder's; the curvature comes from the lidar alone. In each leg
+the wheels are set with the car still and the steering never changes, so the
+car moves on one arc; the lidar scans at rest before and after give its chord
+and heading change, and curvature = 2 sin(heading / 2) / chord per meter
+traveled, positive to the left in both directions, with no encoder distance.
+
+The forward legs give the table, written to `params/steering_table.yaml`
+(`steering_table.command`, `steering_table.curvature_per_m`, under `/**` so
+any node can load it; `racecar_neo_ros2_driver/steering.py` reads it and
+converts either way). The reverse legs are written as
+`steering_table.curvature_per_m_reverse` only when one differs from forward
+by more than 10%. The same pairs at speed 0.5 for +/-0.5 and +/-1.0 report
+how much the curvature changes with speed. The table is refused when the
+curvature does not rise with the command, and it is stored in the terms of
+the trim written with it. The command that drives straight is the
 drift at 0 divided by the slope near center (from +/-0.25; at +/-0.5 the
 curvature already flattens toward full lock). The new trim is the old one
 plus that command; a change under 0.01 (about 5 us of servo pulse, below what
@@ -1089,7 +1459,8 @@ it; it does not write it. With `odometry.turn_gain` set to k in
 1 + k (1/cos delta - 1), with delta from the gyro (atan(wheelbase x yaw
 rate / speed), `odometry.wheelbase_m`), above 0.1 m/s. The default 0 turns
 the correction off.
-`--check` drives straight at command 0: drift within 1 deg/m passes. Up to
+`--check` drives the pairs at 0 and +/-0.5: the +/-0.5 legs must match the
+table within 10%, and the drift at 0 within 1 deg/m passes. Up to
 5 deg/m warns, and the warning names servo and linkage play, which alone
 moves the drift by up to about 3 deg/m between runs, so recalibrate only if
 it stays. Beyond 5 deg/m fails as a mechanical fault (servo horn or
@@ -1141,7 +1512,7 @@ driver update, re-clone, or delete leaves them in place. It lives in
 
 | File | Holds |
 |---|---|
-| `car.yaml` | car name, profile version |
+| `car.yaml` | car name, nickname and number, profile version, the car record and the setup checklist (`racecar setup car`), extra names for the apps (`web_hosts`) |
 | `params/<name>.yaml` | ROS parameter overrides for `config/<name>.yaml`; calibration writes here |
 | `dashboards/<name>.yaml` | lab dashboard tuning |
 | `autonomy.conf`, `features.conf`, `networking.env` | autonomy mode, camera and detections choice, network settings |
@@ -1280,6 +1651,20 @@ switch it to slow mode before mapping.
 
 Full history in [docs/changelog.md](./docs/changelog.md). Most recent:
 
+- **0.9.3** (2026-11-27): every car on v0.9.2 should upgrade (re-run
+  `setup_all.sh`, then reboot): the apps now answer only to the car's own
+  addresses, which closes a DNS rebinding gap in their cross-site checks.
+  Navigation with Nav2: the Planner app (goals and saved missions with
+  waypoints, loops, waits and recording), `racecar nav`, and `rc.nav` in the
+  student library. One driver at a time: apps, missions, Drive panels,
+  calibration and student programs share one hold on the car, shown on 8080
+  and in `racecar status`. The Car Profile app (the car in 3D, setup,
+  calibration, checks, the handbook pages), the guided `racecar setup car`,
+  the Connections, Files, Terminal and Browser apps, and every app by name on
+  port 80. Battery guard: SHUT always shows at a shutdown, and
+  `battery_display.py --preview` plays the sequence. The safety override's
+  LED flash shows the battery level. Pairs with firmware v0.9.2 and student
+  library v0.9.3-bot.
 - **0.9.2** (2026-11-07): one app registry (`config/apps.yaml`) for the
   8080 tiles, `racecar service` and the unit install; every app on one
   server base (`scripts/webui.py`) and one page kit (`scripts/web/`); lab

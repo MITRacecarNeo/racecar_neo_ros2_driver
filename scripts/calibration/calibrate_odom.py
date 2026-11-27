@@ -34,10 +34,11 @@ from typing import Any
 
 from nav_msgs.msg import Odometry
 import numpy as np
-from racecar_neo_ros2_driver.frames import load_frames
+import progress
+from racecar_neo_ros2_driver.frames import laser_mount, load_frames
+from racecar_neo_ros2_driver.geometry import stamp_sec, yaw_of
 from rcl_interfaces.msg import ParameterType
 from rcl_interfaces.srv import GetParameters
-import rclpy
 from rclpy.qos import qos_profile_sensor_data
 from rclpy.utilities import remove_ros_args
 from sensor_msgs.msg import Imu, LaserScan
@@ -51,8 +52,8 @@ from calibrate_common import (  # noqa: E402, I100
     finish_check,
     node_params,
     read_line,
+    run_calibrator,
     run_sequence,
-    spin_until_done,
     stack_config_dir,
     write_local_yaml,
 )
@@ -100,13 +101,13 @@ DRIVE_PLACE = 'Place the car on the floor facing a wall or furniture 3 to 5 mete
 def spin_lines(turns: int) -> list[str]:
     return [
         f'Drive the car in a circle (fully right or fully left) {turns} times.',
-        'Stop the car close to where it started. The exact position does not matter.',
+        'Stop the car close to where it started.',
     ]
 
 
 DRIVE_LINES = [
     'Drive straight toward the wall at a steady speed.',
-    'Stop at least 0.5 meters before the wall. The exact position does not matter.',
+    'Stop at least 0.5 meters before the wall.',
 ]
 
 
@@ -207,6 +208,20 @@ def odom_motion(poses: list[list[float]]) -> Pose:
     return rel[0], rel[1], heading
 
 
+def path_plot(poses: list[list[float]], lidar: Pose) -> None:
+    """Plot the odometry's path from the start, and where the lidar says the car ended."""
+    if not progress.enabled() or not poses:
+        return
+    start = invert((poses[0][1], poses[0][2], poses[0][3]))
+    path = [compose(start, (p[1], p[2], p[3])) for p in poses]
+    progress.plot(
+        'Path from the start',
+        [{'name': 'odometry', 'points': [[round(x, 3), round(y, 3)] for x, y, _ in path]},
+         {'name': 'lidar end', 'points': [[round(lidar[0], 3), round(lidar[1], 3)]]}],
+        x='ahead (m)', y='left (m)', equal_axes=True,
+    )  # fmt: skip
+
+
 @dataclass(frozen=True)
 class Run:
     """One run between two rest scans: the lidar's account and the odometry's."""
@@ -266,12 +281,7 @@ class OdomCalibrator(CalibratorNode):
         self.sign = float(params.get('odometry.yaw_rate_sign', 1.0))
         self.yaw_scale = float(params.get('odometry.yaw_rate_scale', 1.0))
         self.speed_scale = float(params.get('odometry.speed_scale', 1.0))
-        frames = load_frames(stack_config_dir())
-        self.laser: Pose = (
-            frames['laser_x_mm'] * 1e-3,
-            frames['laser_y_mm'] * 1e-3,
-            math.radians(frames['laser_yaw_deg']),
-        )
+        self.laser: Pose = laser_mount(load_frames(stack_config_dir()))
         self._gyro: list[tuple[float, float]] = []
         self._gyro_on = False
         self._last_rate = 0.0
@@ -285,12 +295,12 @@ class OdomCalibrator(CalibratorNode):
 
     def extract(self, msg: Any) -> list[float]:
         q = msg.pose.pose.orientation
-        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        stamp = stamp_sec(msg.header.stamp)
         return [
             stamp,
             msg.pose.pose.position.x,
             msg.pose.pose.position.y,
-            2 * math.atan2(q.z, q.w),
+            yaw_of(q),
             msg.twist.twist.linear.x,
         ]
 
@@ -302,7 +312,7 @@ class OdomCalibrator(CalibratorNode):
         rate = self.sign * float(getattr(msg.angular_velocity, 'xyz'[self.axis]))
         self._last_rate = rate
         if self._gyro_on:
-            stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+            stamp = stamp_sec(msg.header.stamp)
             with self._aux_lock:
                 self._gyro.append((stamp, rate))
 
@@ -388,7 +398,9 @@ class OdomCalibrator(CalibratorNode):
             laser_motion((0.0, 0.0, gyro_rad), self.laser),
         ]
         match = best_match(start_scan, end_scan, guesses)
-        return Run(base_motion(match.pose, self.laser), match, odom, gyro_rad)
+        lidar = base_motion(match.pose, self.laser)
+        path_plot(poses, lidar)
+        return Run(lidar, match, odom, gyro_rad)
 
     def spin(self, turns: int) -> tuple[Run, float] | None:
         """Return the spin run and its true heading change (rad), or None."""
@@ -410,7 +422,8 @@ class OdomCalibrator(CalibratorNode):
     def _match_ok(self, run: Run) -> bool:
         c = match_criterion('scan match', run.match)
         if c.status != 'PASS':
-            self.get_logger().error(f'Scan match too poor ({c.measured}); {c.advice}.')
+            advice = c.advice[:1].upper() + c.advice[1:]
+            self.get_logger().error(f'Scan match too poor ({c.measured}). {advice}.')
             return False
         return True
 
@@ -451,8 +464,8 @@ class OdomCalibrator(CalibratorNode):
         )
         if not scale_ok(scale):
             log.error(
-                f'Gyro scale {scale:.3f} is outside 0.8 to 1.25, so imu.gyro_scale in '
-                'config/pit.yaml is likely wrong (deg/s for rad/s).'
+                f'Gyro scale {scale:.3f} is outside 0.8 to 1.25. '
+                'Check imu.gyro_scale in config/pit.yaml.'
             )
             return None
         self._warn_odom_mismatch(run.odom[2], run.gyro_rad, 'heading')
@@ -558,8 +571,7 @@ def main() -> int:
     parser.add_argument('--check', action='store_true', help='check the scales in use')
     parser.add_argument('--report', help='with --check: write the result as JSON to this file')
     args = parser.parse_args(remove_ros_args(sys.argv)[1:])
-    rclpy.init()
-    return spin_until_done(OdomCalibrator(args.check, args.report))
+    return run_calibrator(lambda: OdomCalibrator(args.check, args.report))
 
 
 if __name__ == '__main__':

@@ -84,6 +84,24 @@ def resolve_log_root(
     return data_dir('bags')
 
 
+def find_bag(name: str | None = None, root: Path | None = None) -> Path:
+    """
+    Return the bag a tool was asked for: a path, a name under the bag root, or the newest.
+
+    A name that is not a path to an existing bag is looked up under the bag
+    root. With no name, the most recently changed bag there; FileNotFoundError
+    when there is none.
+    """
+    root = resolve_log_root(load_config().get('DIR')) if root is None else root
+    if name:
+        bag = Path(name).expanduser()
+        return bag if bag.exists() or bag.is_absolute() else root / name
+    bags = [p for p in root.iterdir() if p.is_dir()] if root.is_dir() else []
+    if not bags:
+        raise FileNotFoundError(f'no bags in {root}')
+    return max(bags, key=lambda p: p.stat().st_mtime)
+
+
 def build_record_argv(
     bag_dir: str | Path,
     topics: Sequence[str] | None = None,
@@ -427,6 +445,23 @@ def cmd_stop(args: argparse.Namespace) -> int:
     return 0
 
 
+def progress(state: Mapping[str, Any]) -> dict[str, Any]:
+    """Return how far a recording is: elapsed_sec, size_bytes, rate_bytes_per_sec, free_bytes."""
+    bag = Path(state['bag'])
+    size = dir_size(bag) if bag.exists() else 0
+    elapsed = time.time() - state['started']
+    try:
+        free = shutil.disk_usage(bag.parent).free
+    except OSError:
+        free = 0
+    return {
+        'elapsed_sec': elapsed,
+        'size_bytes': size,
+        'rate_bytes_per_sec': size / elapsed if elapsed > 0 else 0.0,
+        'free_bytes': free,
+    }
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     """Report on the running recording without attaching to it."""
     state = active_state()
@@ -438,13 +473,9 @@ def cmd_status(args: argparse.Namespace) -> int:
         return 0
 
     bag = Path(state['bag'])
-    size = dir_size(bag) if bag.exists() else 0
-    elapsed = time.time() - state['started']
-    rate = size / elapsed if elapsed > 0 else 0.0
-    try:
-        free = shutil.disk_usage(bag.parent).free
-    except OSError:
-        free = 0
+    now = progress(state)
+    size, elapsed = now['size_bytes'], now['elapsed_sec']
+    rate, free = now['rate_bytes_per_sec'], now['free_bytes']
     remaining = (free / rate) if rate > 0 else None
 
     if args.json:
@@ -471,8 +502,6 @@ def cmd_status(args: argparse.Namespace) -> int:
     print(f'  pid      {state["pid"]}')
     print(f'  elapsed  {format_duration(elapsed)}')
     print(f'  size     {format_size(size)}  ({format_size(rate)}/s)')
-    if size == 0 and elapsed > 2.0:
-        print('           (mcap flushes in chunks; a slow bag reads 0 until the first flush)')
     print(
         f'  free     {format_size(free)}'
         + (f'  (full in about {format_duration(remaining)})' if remaining else '')
@@ -517,17 +546,11 @@ def _read_metadata(bag: Path) -> Any:
 
 def cmd_analyze(args: argparse.Namespace) -> int:
     """Summarize a bag: duration, size, and per-topic counts and rates."""
-    if args.bag:
-        bag = Path(args.bag).expanduser()
-        if not bag.is_absolute() and not bag.exists():
-            bag = resolve_log_root(load_config().get('DIR')) / args.bag
-    else:
-        root = resolve_log_root(load_config().get('DIR'))
-        bags = [p for p in root.iterdir() if p.is_dir()] if root.is_dir() else []
-        if not bags:
-            print(f'no bags in {root}', file=sys.stderr)
-            return 1
-        bag = max(bags, key=lambda p: p.stat().st_mtime)
+    try:
+        bag = find_bag(args.bag)
+    except FileNotFoundError as exc:
+        print(exc, file=sys.stderr)
+        return 1
 
     if not bag.is_dir():
         print(f'no such bag: {bag}', file=sys.stderr)
@@ -544,6 +567,11 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     rows = summarize_topics(counts, duration)
     size = dir_size(bag)
 
+    from racecar_neo_ros2_driver import mission_data
+
+    events = mission_data.read_events(bag)
+    mission = mission_data.summarize(events) if events else None
+
     if args.json:
         print(
             json.dumps(
@@ -553,6 +581,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
                     'size_bytes': size,
                     'messages': meta.message_count,
                     'topics': rows,
+                    **({'mission': mission} if mission else {}),
                 },
                 indent=2,
             )
@@ -573,6 +602,9 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     empty = [r['topic'] for r in rows if r['count'] == 0]
     if empty:
         print(f'\n  {len(empty)} topic(s) recorded no messages: {", ".join(empty)}')
+    if mission:
+        print()
+        print('\n'.join(mission_data.summary_lines(mission)))
     return 0
 
 

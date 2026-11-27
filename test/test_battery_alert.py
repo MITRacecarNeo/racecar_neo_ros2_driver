@@ -13,7 +13,7 @@ class TestMessages:
         assert (
             ba.warn_message(14.4).text == 'Low battery: 14 min left. Charge or swap the battery.'
         )
-        assert ba.warn_message(None).text == 'Low battery: Charge or swap the battery.'
+        assert ba.warn_message(None).text == 'Low battery. Charge or swap the battery.'
 
     def test_countdown(self):
         start = ba.countdown_message(60, start=True)

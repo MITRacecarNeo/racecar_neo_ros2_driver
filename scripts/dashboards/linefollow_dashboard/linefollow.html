@@ -1,19 +1,21 @@
 <!DOCTYPE html>
-<html lang="en" data-app="Line follow">
+<html lang="en" data-app="Line Follow">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Line follow - RACECAR Neo</title>
-<link rel="stylesheet" href="/ui/rcn.css?v={{asset}}">
-<script src="/ui/battery.js?v={{asset}}" defer></script>
-<link rel="icon" href="/ui/brand/app-icon-32.png">
-<script src="/ui/lost.js?v={{asset}}" defer></script>
-<script src="/ui/override.js?v={{asset}}" defer></script>
-<script src="/ui/charts.js?v={{asset}}"></script>
-<script src="/ui/ui.js?v={{asset}}"></script>
-<script src="/ui/api.js?v={{asset}}"></script>
-<script src="/ui/tune.js?v={{asset}}"></script>
-<script src="/ui/logs.js?v={{asset}}"></script>
+<title>Line Follow - RACECAR Neo</title>
+<link rel="stylesheet" href="ui/rcn.css?v={{asset}}">
+<script src="ui/battery.js?v={{asset}}" defer></script>
+<script src="ui/stall.js?v={{asset}}" defer></script>
+<script src="ui/driving.js?v={{asset}}" defer></script>
+<link rel="icon" href="ui/brand/app-icon-32.png">
+<script src="ui/lost.js?v={{asset}}" defer></script>
+<script src="ui/override.js?v={{asset}}" defer></script>
+<script src="ui/charts.js?v={{asset}}"></script>
+<script src="ui/ui.js?v={{asset}}"></script>
+<script src="ui/api.js?v={{asset}}"></script>
+<script src="ui/tune.js?v={{asset}}"></script>
+<script src="ui/logs.js?v={{asset}}"></script>
 <style>
   .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--rcn-space-4); }
   @media (max-width: 1100px) { .grid { grid-template-columns: 1fr; } }
@@ -37,9 +39,9 @@
 </head>
 <body>
 <header class="rcn-header">
-  <img class="rcn-mark" src="/ui/brand/mark.png" alt="RACECAR Neo">
+  <img class="rcn-mark" src="ui/brand/mark.png" alt="RACECAR Neo">
   <div class="rcn-heading">
-    <span class="rcn-title">Line follow</span>
+    <span class="rcn-title">Line Follow</span>
     <span class="rcn-meta">line <b id="mode">-</b> &middot; offset <b id="err">-</b> &middot; steer <b id="steer">-</b> &middot; throttle <b id="thr">-</b> &middot; encoder <b id="enc">-</b> m/s &middot; camera <b id="fps">-</b> fps &middot; processed <b id="pfps">-</b> fps &middot; frame <b id="res">-</b></span>
   </div>
   <span class="rcn-spacer"></span>
@@ -66,10 +68,10 @@
 </div>
 
 <div class="rcn-section">
-  <h2>Tune</h2>
+  <h2>Settings</h2>
   <div class="tunecols">
     <div>
-      <h3 title="Drag both thumbs of each bar">1. HSV threshold</h3>
+      <h3>1. HSV threshold</h3>
       <div id="hsvform"></div>
     </div>
     <div>
@@ -81,7 +83,7 @@
       <div id="cropform"></div>
     </div>
     <div>
-      <h3 title="Proportional speed gain and derivative steering gain">4. Proportional speed and derivative angle</h3>
+      <h3>4. Proportional speed and derivative angle</h3>
       <div id="pdform"></div>
     </div>
   </div>
@@ -102,30 +104,30 @@ const { timeChart, legendHtml, recentTicks } = RcnCharts;
 // Single-thumb sliders, in the order each group shows them.
 const FORMS = [
   RcnTune.sliders($('driveform'), [
-    { key: 'speed', tip: 'Throttle, 0 to 1', min: 0, max: 1, step: 0.01 },
-    { key: 'angle_kp', tip: 'Proportional steering gain', min: 0, max: 4, step: 0.01 },
+    { key: 'speed', label: 'Speed', tip: 'Throttle, 0 to 1', min: 0, max: 1, step: 0.01 },
+    { key: 'angle_kp', label: 'Angle kp', tip: 'Proportional steering gain', min: 0, max: 4, step: 0.01 },
   ]),
   RcnTune.sliders($('cropform'), [
-    { key: 'crop_top', tip: 'Top edge, 0 to 1', min: 0, max: 1, step: 0.01 },
-    { key: 'crop_bottom', tip: 'Bottom edge, 0 to 1', min: 0, max: 1, step: 0.01 },
-    { key: 'min_area', tip: 'Smallest contour that counts, in pixels', min: 1, max: 2000, step: 1, int: true },
+    { key: 'crop_top', label: 'Crop top', tip: 'Top edge, 0 to 1', min: 0, max: 1, step: 0.01 },
+    { key: 'crop_bottom', label: 'Crop bottom', tip: 'Bottom edge, 0 to 1', min: 0, max: 1, step: 0.01 },
+    { key: 'min_area', label: 'Min area', tip: 'Smallest contour that counts, in pixels', min: 1, max: 2000, step: 1, int: true },
   ]),
   RcnTune.sliders($('pdform'), [
-    { key: 'speed_kp', tip: 'Proportional speed gain. 0: constant speed', min: 0, max: 1, step: 0.01 },
-    { key: 'angle_kd', tip: 'Derivative steering gain. Raise it if the car weaves', min: 0, max: 2, step: 0.01 },
+    { key: 'speed_kp', label: 'Speed kp', tip: 'Proportional speed gain. 0: constant speed', min: 0, max: 1, step: 0.01 },
+    { key: 'angle_kd', label: 'Angle kd', tip: 'Derivative steering gain. Raise it if the car weaves', min: 0, max: 2, step: 0.01 },
   ]),
 ];
 // Two-thumb bars: one per color channel.
 const DUALS = [
-  { lo: 'h_low', hi: 'h_high', label: 'hue', tip: '0 to 179. Low above high wraps, for red', max: 179, cls: 'hue' },
-  { lo: 's_low', hi: 's_high', label: 'saturation', tip: '0 to 255', max: 255, cls: '' },
-  { lo: 'v_low', hi: 'v_high', label: 'value', tip: '0 to 255', max: 255, cls: '' },
+  { lo: 'h_low', hi: 'h_high', label: 'Hue', tip: '0 to 179. Set low above high for red', max: 179, cls: 'hue' },
+  { lo: 's_low', hi: 's_high', label: 'Saturation', tip: '0 to 255', max: 255, cls: '' },
+  { lo: 'v_low', hi: 'v_high', label: 'Value', tip: '0 to 255', max: 255, cls: '' },
 ];
 
-function saveTune() { post('/save').then(() => RcnUi.toast('Saved.')); }
-function loadTune() { post('/load').then(() => RcnUi.toast('Loaded.')); }
-function reset() { post('/load'); }
-function stopCar() { post('/params', { speed: 0 }); }
+function saveTune() { post('save').then(() => RcnUi.toast('Saved.')); }
+function loadTune() { post('load'); }
+function reset() { post('load'); }
+function stopCar() { post('params', { speed: 0 }); }
 
 function setFill(d) {
   const lo = parseInt($(`in_${d.lo}`).value), hi = parseInt($(`in_${d.hi}`).value);
@@ -172,12 +174,12 @@ function syncDuals(p) {
   }
 }
 
-RcnUi.frames($('color'), '/frame/color', 120);
-RcnUi.frames($('mask'), '/frame/mask', 120);
+RcnUi.frames($('color'), 'frame/color', 120);
+RcnUi.frames($('mask'), 'frame/mask', 120);
 
 const LOST = '<span><svg viewBox="0 0 22 8"><rect x="1" y="1" width="20" height="6" fill="var(--rcn-led-red)"/></svg>Line lost</span>';
 
-RcnApi.poll('/state', 120, (d) => {
+RcnApi.poll('state', 120, (d) => {
   $('mode').textContent = d.found ? 'found' : 'lost';
   $('err').textContent = d.error;
   $('steer').textContent = d.steer;
@@ -185,14 +187,14 @@ RcnApi.poll('/state', 120, (d) => {
   $('enc').textContent = d.enc_speed;
   $('fps').textContent = d.cam_fps;
   $('pfps').textContent = d.proc_fps;
-  $('res').textContent = d.res[0] ? `${d.res[0]}x${d.res[1]} -> ${d.proc_res[0]}x${d.proc_res[1]}` : 'none';
+  $('res').textContent = d.res[0] ? `${d.res[0]}x${d.res[1]} -> ${d.proc_res[0]}x${d.proc_res[1]}` : '-';
 
   const box = $('state');
-  box.textContent = d.found ? 'LINE FOUND' : 'LINE LOST';
+  box.textContent = d.found ? 'Line found' : 'Line lost';
   box.className = 'rcn-state' + (d.found ? '' : ' err');
   box.title = d.found
     ? `Contour center: column ${d.cx}, row ${d.cy}. Area: ${d.area} px`
-    : `No contour for ${d.lost_for === null ? 'the whole run' : d.lost_for + ' s'}. Holding the last command`;
+    : `No contour for ${d.lost_for === null ? 'the whole run' : d.lost_for + ' s'}`;
 
   syncDuals(d.params);
   for (const f of FORMS) f.sync(d.params);

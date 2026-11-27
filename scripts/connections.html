@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RACECAR Neo connections</title>
+<link rel="stylesheet" href="ui/rcn.css?v={{asset}}">
+<script src="ui/ui.js?v={{asset}}"></script>
+<script src="ui/api.js?v={{asset}}"></script>
+<script src="ui/battery.js?v={{asset}}" defer></script>
+<script src="ui/stall.js?v={{asset}}" defer></script>
+<link rel="icon" href="ui/brand/app-icon-32.png">
+<link rel="apple-touch-icon" href="ui/brand/app-icon-180.png">
+<style>
+main { max-width: 860px; margin: 0 auto; padding: var(--rcn-space-4); }
+main > .rcn-override { margin: 0 0 var(--rcn-space-3); }
+section { background: var(--rcn-surface); border-radius: var(--rcn-radius-lg); padding: var(--rcn-space-3) var(--rcn-space-4); margin-bottom: var(--rcn-space-4); }
+.head { display: flex; align-items: center; justify-content: space-between; gap: var(--rcn-space-2); }
+h2 { font-size: 20px; line-height: 28px; margin: 0; }
+h3 { font-size: 15px; line-height: 22px; margin: var(--rcn-space-4) 0 var(--rcn-space-1); color: var(--rcn-text-muted); }
+.now { display: flex; flex-wrap: wrap; align-items: center; gap: var(--rcn-space-2) var(--rcn-space-3); margin-top: var(--rcn-space-2); }
+.now b { font-size: 17px; }
+.chip { font: 600 13px/18px var(--rcn-font-sans); padding: 2px 10px; border-radius: 999px; background: var(--rcn-steel); }
+.chip.online { background: #2f6b45; } .chip.portal, .chip.limited { background: #7a5a16; }
+.rows > * { display: flex; align-items: center; gap: var(--rcn-space-3); padding: 8px 6px; border-bottom: 1px solid var(--rcn-border); }
+.rows > *:last-child { border-bottom: 0; }
+.rows .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.rows button.net { width: 100%; background: none; border: 0; border-bottom: 1px solid var(--rcn-border); color: var(--rcn-text); font: inherit; text-align: left; cursor: pointer; }
+.rows button.net:hover { background: var(--rcn-steel); }
+.rows .dim { color: var(--rcn-text-muted); font-size: 14px; white-space: nowrap; }
+.bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 16px; }
+.bars i { width: 4px; background: var(--rcn-steel); border-radius: 1px; }
+.bars i.on { background: var(--rcn-orange); }
+.bars i:nth-child(1) { height: 25%; } .bars i:nth-child(2) { height: 50%; } .bars i:nth-child(3) { height: 75%; } .bars i:nth-child(4) { height: 100%; }
+.up .rcn-icon { transform: rotate(180deg); }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px var(--rcn-space-4); margin: var(--rcn-space-2) 0 0; }
+dt { color: var(--rcn-text-muted); } dd { margin: 0; font-weight: 600; }
+.tools { display: flex; gap: var(--rcn-space-2); }
+td input.rcn-input { width: 160px; padding: 4px 8px; }
+.table { overflow-x: auto; margin-top: var(--rcn-space-2); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th { text-align: left; color: var(--rcn-text-muted); font-weight: 600; padding: 6px 12px 6px 0; white-space: nowrap; }
+td { padding: 8px 12px 8px 0; border-top: 1px solid var(--rcn-border); white-space: nowrap; }
+td.mono { font-family: var(--rcn-font-mono); }
+.switch { position: relative; width: 52px; height: 30px; flex: none; }
+.switch input { opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; position: relative; z-index: 1; }
+.switch span { position: absolute; inset: 0; border-radius: 15px; background: var(--rcn-steel); transition: background 0.15s; }
+.switch span::after { content: ''; position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%; background: var(--rcn-paper); transition: transform 0.15s; }
+.switch input:checked + span { background: var(--rcn-orange); }
+.switch input:checked + span::after { transform: translateX(22px); }
+.busy section { opacity: 0.55; pointer-events: none; }
+#status { margin-bottom: var(--rcn-space-2); font-weight: 600; }
+#status:empty { display: none; }
+.sheet { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); display: none; align-items: center; justify-content: center; z-index: 30; padding: var(--rcn-space-3); }
+.sheet.show { display: flex; }
+.sheet > div { width: 100%; max-width: 440px; background: var(--rcn-bg); border: 1px solid var(--rcn-border); border-radius: var(--rcn-radius-lg); padding: var(--rcn-space-4); }
+.sheet h2 { margin-bottom: var(--rcn-space-2); overflow-wrap: anywhere; }
+.sheet label { display: block; margin: var(--rcn-space-3) 0 var(--rcn-space-1); font-weight: 600; }
+.sheet .rcn-input { width: 100%; }
+.sheet .row { display: flex; justify-content: flex-end; gap: var(--rcn-space-2); margin-top: var(--rcn-space-4); }
+</style>
+</head>
+<body>
+<header class="rcn-header">
+  <img class="rcn-mark" src="ui/brand/mark.png" alt="RACECAR Neo">
+  <span class="rcn-title">Connections</span>
+  <span class="rcn-spacer"></span>
+</header>
+<main>
+  <div id="status" role="status"></div>
+  <section id="wifi">
+    <div class="head"><h2>WiFi</h2><label class="switch" title="WiFi on or off"><input type="checkbox" id="wifipower" aria-label="WiFi"><span></span></label></div>
+    <div class="now" id="wifinow"></div>
+    <div class="head"><h3>Networks</h3><button class="rcn-btn quiet small" id="rescan" aria-label="Scan" title="Scan"></button></div>
+    <div class="rows" id="visible"></div>
+    <div class="head" id="savedhead"><h3>Saved</h3><button class="rcn-btn small" id="saveorder" hidden>Save order</button></div>
+    <div class="rows" id="saved"></div>
+  </section>
+  <section id="ap">
+    <div class="head"><h2>Access point</h2><button class="rcn-btn small" id="appass">Change password</button></div>
+    <dl id="apinfo"></dl>
+  </section>
+  <section id="eth">
+    <div class="head"><h2>Ethernet</h2></div>
+    <dl id="ethinfo"></dl>
+  </section>
+  <section id="devices">
+    <div class="head"><h2>Devices</h2><span class="tools">
+      <button class="rcn-btn small" id="editdev">Edit devices</button>
+      <button class="rcn-btn quiet small" id="devcancel" hidden>Cancel</button>
+      <button class="rcn-btn small" id="devsave" hidden>Save</button></span></div>
+    <div class="table"><table><thead><tr><th>Name</th><th>Address</th><th>MAC</th><th>Interface</th><th>Signal</th><th>Connected</th></tr></thead>
+    <tbody id="devlist"></tbody></table></div>
+  </section>
+  <section id="ping">
+    <div class="head"><h2>Ping test</h2><button class="rcn-btn small" id="pingrun">Run</button></div>
+    <dl id="pinginfo"></dl>
+  </section>
+</main>
+<div class="sheet" id="sheet"><div>
+  <h2 id="stitle"></h2>
+  <form id="sform" autocomplete="off">
+    <div id="sfields"></div>
+    <div class="row"><button type="button" class="rcn-btn quiet" id="scancel">Cancel</button><button type="submit" class="rcn-btn" id="sok"></button></div>
+  </form>
+</div></div>
+<script>
+'use strict';
+const { $, esc, icon, toast } = RcnUi;
+const INTERNET = { online: 'Online', limited: 'No internet', portal: 'Sign-in needed', none: 'Not connected' };
+let view = null, order = null, wasBusy = false, editing = false;
+
+function bars(signal) {
+  const n = signal >= 75 ? 4 : signal >= 50 ? 3 : signal >= 25 ? 2 : 1;
+  return `<span class="bars" title="${signal}%">${[1, 2, 3, 4].map((i) => `<i class="${i <= n ? 'on' : ''}"></i>`).join('')}</span>`;
+}
+function duration(s) {
+  if (s == null) return '-';
+  if (s < 60) return `${s} s`;
+  if (s < 3600) return `${Math.floor(s / 60)} min`;
+  return `${Math.floor(s / 3600)} h ${Math.floor((s % 3600) / 60)} min`;
+}
+const dl = (pairs) => pairs.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v || '-')}</dd>`).join('');
+
+function render() {
+  const w = view.wifi;
+  $('wifipower').checked = w.on;
+  const state = w.connected ? w.internet : 'none';
+  $('wifinow').innerHTML = w.connected
+    ? `<b>${esc(w.network)}</b>${w.signal != null ? bars(w.signal) : ''}<span class="chip ${state}">${INTERNET[state]}</span>${state === 'portal' ? `<a class="rcn-btn small" href="${esc(RcnRoute.app('browser'))}" target="_blank">Sign in</a>` : ''}<span class="dim">${esc(w.address)}</span>`
+    : (w.on ? '<span class="chip">Not connected</span>' : '');
+  $('visible').innerHTML = w.visible.filter((n) => !n.in_use).map((n, i) => `<button class="net" data-i="${w.visible.indexOf(n)}">
+      ${bars(n.signal)}<span class="nm">${esc(n.ssid)}</span><span class="dim">${n.saved ? 'Saved' : n.security === 'open' ? 'Open' : ''}</span></button>`).join('');
+  if (!order) order = w.saved.map((s) => s.uuid);
+  const byId = Object.fromEntries(w.saved.map((s) => [s.uuid, s]));
+  order = order.filter((u) => byId[u]).concat(w.saved.map((s) => s.uuid).filter((u) => !order.includes(u)));
+  $('saved').innerHTML = order.map((u, i) => `<div><span class="nm">${esc(byId[u].ssid)}</span>
+      <button class="rcn-btn quiet small up" data-move="${i}" data-by="-1" aria-label="Up" ${i === 0 ? 'disabled' : ''}>${icon('chevron-down')}</button>
+      <button class="rcn-btn quiet small" data-move="${i}" data-by="1" aria-label="Down" ${i === order.length - 1 ? 'disabled' : ''}>${icon('chevron-down')}</button>
+      <button class="rcn-btn quiet small" data-forget="${esc(u)}" aria-label="Forget" title="Forget">${icon('cross')}</button></div>`).join('');
+  $('savedhead').hidden = !order.length;
+  $('saveorder').hidden = order.join() === w.saved.map((s) => s.uuid).join();
+  const a = view.ap;
+  $('apinfo').innerHTML = dl([['Name', a.ssid], ['Channel', a.channel], ['Address', a.address]]);
+  const IFACE = { wlan1: 'Access point', eth0: 'Ethernet' };
+  if (editing) return;
+  $('devlist').innerHTML = view.devices.map((d) => `<tr><td>${esc(d.nickname || d.name || '-')}</td><td class="mono">${esc(d.address || '-')}</td>
+    <td class="mono">${esc(d.mac)}</td><td>${esc(IFACE[d.device] || d.device)}</td>
+    <td>${d.signal == null ? '-' : `${d.signal} dBm`}</td><td>${duration(d.seconds)}</td></tr>`).join('');
+  $('devices').hidden = !view.devices.length;
+  $('ethinfo').innerHTML = dl([['State', view.eth.state[0].toUpperCase() + view.eth.state.slice(1)], ['Address', view.eth.address]]);
+}
+
+function setBusy(job) {
+  document.body.classList.toggle('busy', job.busy);
+  if (wasBusy && !job.busy && job.message) toast(job.message);
+  if (wasBusy && !job.busy) { order = null; load(); }
+  wasBusy = job.busy;
+}
+
+async function load(rescan) {
+  const r = await fetch(`api/connections${rescan ? '?rescan=1' : ''}`);
+  view = await r.json();
+  render();
+  setBusy(view.job);
+}
+
+const FAILED = {
+  join: (b) => `Could not join ${b.ssid}.`,
+  forget: (b) => `Could not forget ${b.ssid}.`,
+  order: () => 'Could not save the order.',
+  wifi: (b) => `Could not turn ${b.on ? 'on' : 'off'} WiFi.`,
+  'ap-password': () => 'Could not change the password.',
+};
+async function send(body) {
+  let r;
+  try { r = await RcnApi.post('api/connections', body); } catch (e) { toast('No contact'); return false; }
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { toast(d.message || FAILED[body.action](body)); return false; }
+  setBusy(d.job);
+  return true;
+}
+
+// The sheet: a form and one button.
+let submit = null;
+function sheet(title, fields, ok, onSubmit) {
+  $('stitle').textContent = title;
+  $('sfields').innerHTML = fields;
+  $('sok').textContent = ok;
+  submit = onSubmit;
+  $('sheet').classList.add('show');
+  const first = $('sfields').querySelector('input');
+  if (first) first.focus();
+}
+const closeSheet = () => $('sheet').classList.remove('show');
+$('scancel').onclick = closeSheet;
+$('sheet').onclick = (e) => { if (e.target === $('sheet')) closeSheet(); };
+$('sform').onsubmit = (e) => { e.preventDefault(); if (submit) submit(); };
+const field = (id, label, type) => `<label for="${id}">${label}</label><input class="rcn-input" id="${id}" type="${type}" autocomplete="off" autocapitalize="none" spellcheck="false">`;
+// The page's own link runs over wlan0: a change there asks first.
+const onWifi = () => view.via === 'wlan0';
+
+$('visible').onclick = (e) => {
+  const b = e.target.closest('button.net');
+  if (!b) return;
+  const n = view.wifi.visible[Number(b.dataset.i)];
+  const needs = n.saved || n.security === 'open' ? '' : n.security === 'enterprise'
+    ? field('fid', 'Account', 'text') + field('fpw', 'Password', 'password') : field('fpw', 'Password', 'password');
+  sheet(n.ssid, needs, 'Join', async () => {
+    if (onWifi() && view.wifi.connected && !confirm(`Leave ${view.wifi.network}?`)) return;
+    const body = { action: 'join', ssid: n.ssid, security: n.security, saved: n.saved,
+      password: $('fpw') ? $('fpw').value : '', identity: $('fid') ? $('fid').value : '' };
+    if (await send(body)) closeSheet();
+  });
+};
+$('saved').onclick = async (e) => {
+  const mv = e.target.closest('[data-move]');
+  if (mv) {
+    const i = Number(mv.dataset.move), j = i + Number(mv.dataset.by);
+    [order[i], order[j]] = [order[j], order[i]];
+    render();
+    return;
+  }
+  const fg = e.target.closest('[data-forget]');
+  if (!fg) return;
+  const s = view.wifi.saved.find((x) => x.uuid === fg.dataset.forget);
+  if (s && confirm(`Forget ${s.ssid}?`)) send({ action: 'forget', uuid: s.uuid, ssid: s.ssid });
+};
+$('saveorder').onclick = () => send({ action: 'order', uuids: order });
+$('wifipower').onchange = (e) => {
+  const on = e.target.checked;
+  if (!on && onWifi() && !confirm('Turn off WiFi?')) { e.target.checked = true; return; }
+  send({ action: 'wifi', on });
+};
+$('appass').onclick = () => {
+  const fields = field('fpw', 'New password', 'password') + field('fpw2', 'Confirm password', 'password');
+  sheet('Access point password', fields, 'Save', async () => {
+    if ($('fpw').value !== $('fpw2').value) { toast('The passwords do not match.'); return; }
+    if (!confirm(`Disconnect every device from ${view.ap.ssid}?`)) return;
+    if (await send({ action: 'ap-password', password: $('fpw').value })) closeSheet();
+  });
+};
+// Edit devices: the Name column becomes text boxes; an empty box drops the nickname.
+function setEditing(on) {
+  editing = on;
+  $('editdev').hidden = on;
+  $('devcancel').hidden = $('devsave').hidden = !on;
+  if (!on) { render(); return; }
+  $('devlist').querySelectorAll('tr').forEach((tr, i) => {
+    const d = view.devices[i];
+    tr.cells[0].innerHTML = `<input class="rcn-input" maxlength="32" data-mac="${esc(d.mac)}"
+      value="${esc(d.nickname)}" placeholder="${esc(d.name)}" aria-label="Name">`;
+  });
+  const first = $('devlist').querySelector('input');
+  if (first) first.focus();
+}
+$('editdev').onclick = () => setEditing(true);
+$('devcancel').onclick = () => setEditing(false);
+$('devsave').onclick = async () => {
+  const names = {};
+  $('devlist').querySelectorAll('input[data-mac]').forEach((i) => { names[i.dataset.mac] = i.value; });
+  $('devsave').disabled = true;
+  try {
+    const r = await RcnApi.post('api/connections', { action: 'names', names });
+    if (!r.ok) { toast((await r.json().catch(() => ({}))).message || 'Could not save the names.'); return; }
+    editing = false;
+    setEditing(false);
+    await load();
+  } catch (e) {
+    toast('No contact');
+  } finally {
+    $('devsave').disabled = false;
+  }
+};
+const PING = { reached: 'Reached', unreached: 'Not reached', 'no-name': 'Name not found' };
+function renderPing(p) {
+  const rows = [['Host', p ? p.host : 'google.com']];
+  if (p) {
+    rows.push(['Result', PING[p.result]]);
+    if (p.result !== 'no-name') rows.push(['Received', `${p.received} of ${p.sent}`]);
+    if (p.avg_ms != null) rows.push(['Average', `${p.avg_ms} ms`]);
+    const IFACE_WORDS = { wlan0: 'WiFi', wlan1: 'Access point', eth0: 'Ethernet' };
+    if (p.device) rows.push(['Interface', IFACE_WORDS[p.device] || p.device]);
+  }
+  $('pinginfo').innerHTML = dl(rows);
+}
+renderPing(null);
+$('pingrun').onclick = async () => {
+  $('pingrun').disabled = true;
+  try {
+    const r = await RcnApi.post('api/connections/ping', {});
+    renderPing(await r.json());
+  } catch (e) {
+    toast('No contact');
+  } finally {
+    $('pingrun').disabled = false;
+  }
+};
+$('rescan').innerHTML = icon('refresh');
+$('rescan').onclick = async () => {
+  $('rescan').disabled = true;
+  try { await load(true); } finally { $('rescan').disabled = false; }
+};
+
+load()
+  .then(() => { $('rescan').click(); })
+  .catch(() => { $('status').textContent = 'No contact'; });
+setInterval(() => {
+  if (wasBusy) fetch('api/connections/job').then((r) => r.json()).then(setBusy).catch(() => {});
+}, 1500);
+setInterval(() => { if (!wasBusy && !$('sheet').classList.contains('show')) load().catch(() => {}); }, 10000);
+</script>
+</body>
+</html>

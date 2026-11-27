@@ -12,7 +12,7 @@
   'use strict';
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const icon = (name, cls = 'rcn-icon') => `<svg class="${cls}"><use href="/ui/icons.svg#${name}"/></svg>`;
+  const icon = (name, cls = 'rcn-icon') => `<svg class="${cls}"><use href="ui/icons.svg?v={{asset}}#${name}"/></svg>`;
   const STATUS_ICON = { ok: 'check', warn: 'alert', err: 'cross', off: 'info', info: 'info' };
   // kind: ok | warn | err | off, each with its icon and word.
   const pill = (kind, word) => `<span class="rcn-status ${kind}">${icon(STATUS_ICON[kind])}${esc(word)}</span>`;
@@ -31,6 +31,24 @@
 
   const token = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   const font = (size, weight = 600) => `${weight} ${size}px ${token('--rcn-font-sans') || 'Barlow, Arial, sans-serif'}`;
+
+  // File keys read as labels: laser_x_mm -> X (mm), accelerometer.bias -> Accelerometer bias,
+  // esc_model -> ESC model. A key with a capital or a space is a label already.
+  const UNITS = { mm: '(mm)', deg: '(\u00b0)', hz: '(Hz)', v: '(V)', a: '(A)', s: '(s)', m: '(m)' };
+  const ACRONYMS = { esc: 'ESC', imu: 'IMU', pit: 'PIT', rtc: 'RTC', led: 'LED', pwm: 'PWM', id: 'ID', fw: 'Firmware' };
+  const SAY = { gyroscope: 'gyro', 'hard iron': 'hard-iron' };
+  function keyLabel(k) {
+    k = String(k);
+    if (!k || /[A-Z ]/.test(k)) return k;
+    let words = k.split(/[._]/).filter(Boolean);
+    if (words.length === 3 && /^(x|y|z|roll|pitch|yaw)$/.test(words[1])) words = words.slice(1);
+    const unit = words.length > 1 && UNITS[words[words.length - 1]] ? UNITS[words.pop()] : '';
+    let text = words.map((w) => ACRONYMS[w] || w).join(' ');
+    for (const [a, b] of Object.entries(SAY)) text = text.replace(a, b);
+    text = text[0].toUpperCase() + text.slice(1);
+    return unit ? `${text} ${unit}` : text;
+  }
+  const cap = (s) => (s ? String(s)[0].toUpperCase() + String(s).slice(1) : s);
 
   let toastTimer = null;
   function toast(text) {
@@ -65,5 +83,5 @@
     })();
   }
 
-  window.RcnUi = { $, esc, icon, pill, STATUS_ICON, setHtml, store, token, font, toast, frames };
+  window.RcnUi = { $, esc, icon, pill, STATUS_ICON, setHtml, store, token, font, toast, frames, keyLabel, cap };
 })();

@@ -73,7 +73,8 @@ class TestFloor:
         assert guard.level == 'countdown' and guard.trigger == 'floor'
         # The 30 s median crosses once more than half the window is under the floor.
         start = guard.shutdown_at - bg.COUNTDOWN_SEC
-        assert t - 25 <= start <= t - 15
+        assert t - 25 <= start <= t - 14
+        assert guard.shutdown_at == int(guard.shutdown_at)  # on a whole second
         t, events = _run(guard, FLOOR_V, guard.shutdown_at - t, t)
         assert guard.level == 'countdown' and events == []
         _, events = _run(guard, FLOOR_V, 2, t)

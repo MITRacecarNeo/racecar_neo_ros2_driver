@@ -3,7 +3,7 @@ Safe shutdown of the car.
 
 Stops recording, driving, autonomy, and teleop, then powers off.
 
-Used by the battery guard (battery_guard.py) and by the Turn Off tile on the
+Used by the battery guard (battery_guard.py) and by the Shut Down tile on the
 8080 home page (dashboard.py). Both run as the racecar user;
 polkit/49-racecar-power.rules grants the teleop stop and the power off, and
 the other rules the lab apps and autonomy.
@@ -17,14 +17,14 @@ import subprocess
 import sys
 from typing import Any
 
-from racecar_neo_ros2_driver import apps
+from racecar_neo_ros2_driver import apps, units
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 # Apps that publish /drive (config/apps.yaml).
 DRIVING_UNITS = tuple(f"{a['unit']}.service" for a in apps.driving_apps())
-AUTONOMY_UNIT = 'racecar-autonomy.service'
-TELEOP_UNIT = 'racecar-teleop.service'
+AUTONOMY_UNIT = units.service(units.AUTONOMY)
+TELEOP_UNIT = units.service(units.TELEOP)
 STEP_TIMEOUT_SEC = 30.0
 
 

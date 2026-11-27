@@ -19,7 +19,7 @@ Same pattern as the other lab dashboards (stdlib HTTP + rclpy) on port
 each -1, 0, or +1, from whichever buttons or keys are down at once, and
 posts it on every change and every 100 ms while anything is held:
 
-  throttle = fwd  * speed      (fwd  = +1 forward, -1 back)
+  throttle = fwd  * speed      (fwd  = +1 forward, -1 back; the joystick anything between)
   steering = turn * angle      (turn = +1 right,  -1 left; student convention)
 
 /drive is published at a fixed rate from a timer. A command older than
@@ -152,10 +152,15 @@ _params = TUNING.params
 LOG = labkit.RunLog('teleop', 't,fwd,turn,speed_cmd,steer,speed_ms', _marks)
 
 
-def _axis(v: Any) -> int:
-    """Squash whatever the browser sent to -1, 0, or +1."""
-    v = int(v)
-    return (v > 0) - (v < 0)
+def _axis(v: Any) -> float:
+    """Clamp what the browser sent to -1..1: the pad sends -1, 0, 1, the joystick any value."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(f):
+        return 0.0
+    return round(max(-1.0, min(1.0, f)), 3)
 
 
 def heading_deg(mag: list[float]) -> float:
@@ -197,7 +202,7 @@ def set_display(kind: str, value: Any) -> None:
 
 def set_cmd(data: dict[str, Any], now: float | None = None) -> None:
     """
-    Take the browser's command: {'fwd': -1|0|1, 'turn': -1|0|1}.
+    Take the browser's command: {'fwd': -1..1, 'turn': -1..1}.
 
     Both axes together are one command, so forward and left arrive as one
     post and are applied at the same instant.
@@ -216,6 +221,7 @@ class TeleopNode(Node):
             depth_topic = _params.get('depth_topic') or ''
             det_topic = _params.get('detections_topic') or ''
         self._pub = self.create_publisher(AckermannDriveStamped, '/drive', 1)
+        self.drive_gate = labkit.drive_gate('webteleop')
         self.create_subscription(Image, cam_topic, self._image_cb, qos_profile_sensor_data)
         # Depth is a separate stream on the same camera, and only the D435i
         # has one. An empty depth_topic is a car whose camera is color only;
@@ -448,13 +454,14 @@ class TeleopNode(Node):
         self._speed_cmd = labkit.clamp_speed(fwd * p['speed'], reverse=True)
         self._steer_cmd = max(-1.0, min(1.0, turn * p['angle']))
 
-        self._pub.publish(labkit.drive_msg(self._speed_cmd, self._steer_cmd, reverse=True))
+        if self.drive_gate.allow(self._speed_cmd != 0.0):
+            self._pub.publish(labkit.drive_msg(self._speed_cmd, self._steer_cmd, reverse=True))
 
         t = labkit.now()
         sensors = self._sample_sensors(t)
         self._send_display(now)
         LOG.rows.append(
-            f'{t},{fwd},{turn},{self._speed_cmd:.3f},{self._steer_cmd:.3f},{self._enc:.3f}\n'
+            f'{t},{fwd:g},{turn:g},{self._speed_cmd:.3f},{self._steer_cmd:.3f},{self._enc:.3f}\n'
         )
         LOG.hist.append([t, round(self._enc, 3), round(self._speed_cmd, 3)])
         with _lock:
@@ -512,6 +519,8 @@ class Handler(webui.AppHandler):
             self.send_error(404)
 
     def do_POST(self) -> None:
+        if self.refuse_cross_site():
+            return
         if self.path == '/cmd':
             set_cmd(self.read_json())
         elif self.path == '/params':

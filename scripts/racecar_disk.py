@@ -31,7 +31,7 @@ import subprocess
 import sys
 from typing import Any
 
-from racecar_neo_ros2_driver import data_root
+from racecar_neo_ros2_driver import apps, data_root, units
 
 DEVICE = '/dev/nvme0n1'
 LABEL = 'racecar-data'
@@ -43,13 +43,13 @@ FSTAB = Path('/etc/fstab')
 DEVICE_TIMEOUT_SEC = 45
 MOUNT_OPTIONS = f'defaults,noatime,nofail,x-systemd.device-timeout={DEVICE_TIMEOUT_SEC}'
 # Units that write to the data root; stopped before the drive is unmounted.
-WRITERS = (
-    'racecar-autonomy.service',
-    'racecar-mapview.service',
-    'racecar-webteleop.service',
-    'racecar-linefollow.service',
-    'racecar-wallfollow.service',
-    'racecar-camlabel.service',
+WRITERS = tuple(
+    units.service(u)
+    for u in (
+        units.AUTONOMY,
+        apps.app('mapview')['unit'],
+        *(a['unit'] for a in apps.all_apps() if a['unit'] and a['unit'] not in units.CORE),
+    )
 )
 # ~/data folders whose place under the data root differs.
 COPY_RENAMES = {'camlabel': 'datasets/camlabel'}
@@ -206,8 +206,8 @@ def recording_now() -> bool:
 
 
 def refuse_while_busy(run: Run = run_command) -> None:
-    if unit_active('racecar-autonomy.service', run) and mapping_now():
-        raise DiskError('mapping is running. Save and stop it in the map viewer first.')
+    if unit_active(units.service(units.AUTONOMY), run) and mapping_now():
+        raise DiskError('mapping is running. Save and stop it in the Mapper first.')
     if recording_now():
         raise DiskError('a recording is running. Stop it first: racecar log stop')
 
@@ -286,7 +286,7 @@ class Steps:
         return uuid
 
     def refresh_data_root(self) -> None:
-        self.sudo('systemctl', 'restart', 'racecar-data.service')
+        self.sudo('systemctl', 'restart', units.service(units.DATA))
 
     def link_jupyter(self, root: Path, ws: Path | None = None) -> None:
         """Point ~/jupyter_ws/data and maps at the new root; a real folder there is left alone."""
@@ -365,7 +365,7 @@ def status(run: Run = run_command, out: Callable[[str], None] = print, fstab: Pa
             entry = ''
         out(f'fstab: {entry or "no line for this drive"}')
         if str(OLD_MOUNT) in part.mounts or f' {OLD_MOUNT} ' in f' {entry} ':
-            out(f'Set up at {OLD_MOUNT}; run racecar disk setup to move it to {MOUNT}.')
+            out(f'Set up at {OLD_MOUNT}. Run racecar disk setup to move it to {MOUNT}.')
     for line in health_lines(drive.path, run):
         out(line)
     data_command([], out)
@@ -474,7 +474,7 @@ def setup(
     root = data_root.resolve()[0]
     copy_home_data(steps, data_root.fallback(), root, ask_fn)
     steps.link_jupyter(root)
-    out('Done. Reboot so every service writes to the new data root: sudo reboot')
+    out('Done. Reboot: sudo reboot')
     return 0
 
 
@@ -516,7 +516,7 @@ def format_drive(
     steps.mount_and_own()
     steps.refresh_data_root()
     steps.link_jupyter(MOUNT / 'data')
-    out(f'Formatted and mounted at {MOUNT}. Reboot so every service writes there: sudo reboot')
+    out(f'Formatted and mounted at {MOUNT}. Reboot: sudo reboot')
     return 0
 
 

@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RACECAR Neo checks</title>
+<link rel="stylesheet" href="ui/rcn.css?v={{asset}}">
+<script src="ui/ui.js?v={{asset}}"></script>
+<script src="ui/profile_nav.js?v={{asset}}"></script>
+<script src="ui/battery.js?v={{asset}}" defer></script>
+<script src="ui/stall.js?v={{asset}}" defer></script>
+<link rel="icon" href="ui/brand/app-icon-32.png">
+<link rel="apple-touch-icon" href="ui/brand/app-icon-180.png">
+<style>
+main { max-width: 1100px; margin: 0 auto; padding: var(--rcn-space-4); }
+main > .rcn-override { margin: 0 0 var(--rcn-space-4); }
+.top { display: flex; flex-wrap: wrap; gap: var(--rcn-space-3); align-items: center; margin-bottom: var(--rcn-space-4); }
+.top .note { color: var(--rcn-text-muted); }
+#summary { font-weight: 700; }
+#summary.OK { color: #6fd08c; } #summary.WARN { color: var(--rcn-gold); } #summary.FAIL { color: var(--rcn-led-red); }
+h2 { font-size: 18px; line-height: 26px; margin: var(--rcn-space-6) 0 var(--rcn-space-2); }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: var(--rcn-space-3); }
+.card { background: var(--rcn-surface); border: 2px solid var(--rcn-border); border-radius: var(--rcn-radius-md); padding: var(--rcn-space-3); }
+.card.OK { border-color: #6fd08c; } .card.WARN { border-color: var(--rcn-gold); } .card.FAIL { border-color: var(--rcn-led-red); }
+.card .head { display: flex; justify-content: space-between; align-items: center; gap: var(--rcn-space-2); }
+.card .name { font-weight: 700; }
+.card .desc { color: var(--rcn-text-muted); font-size: 13px; margin: 2px 0 var(--rcn-space-2); }
+.r { display: grid; grid-template-columns: 56px 1fr; gap: 4px var(--rcn-space-2); font-size: 14px; margin-top: 4px; }
+.mark { font: 700 13px/20px var(--rcn-font-mono); white-space: nowrap; }
+.mark.OK { color: #6fd08c; } .mark.WARN { color: var(--rcn-gold); } .mark.FAIL { color: var(--rcn-led-red); }
+.r .repair { grid-column: 2; color: var(--rcn-text-muted); }
+.r .repair a { color: var(--rcn-link); }
+#job { display: none; background: var(--rcn-surface); border-radius: var(--rcn-radius-md); padding: var(--rcn-space-3); margin-bottom: var(--rcn-space-4); }
+#job.show { display: block; }
+#job pre { max-height: 40vh; overflow: auto; white-space: pre-wrap; margin-top: var(--rcn-space-2); }
+.answers { display: none; gap: var(--rcn-space-2); flex-wrap: wrap; margin-top: var(--rcn-space-2); align-items: center; }
+.answers.show { display: flex; }
+.answers .rcn-input { flex: 1; min-width: 140px; }
+</style>
+</head>
+<body>
+<header class="rcn-header">
+  <img class="rcn-mark" src="ui/brand/mark.png" alt="RACECAR Neo">
+  <span class="rcn-title">Checks</span>
+  <span class="rcn-spacer"></span>
+</header>
+<main>
+  <div class="top">
+    <button class="rcn-btn primary" id="runall">Run all</button>
+    <span class="note">Takes about 2 minutes. Keep the car still on a stand with the battery connected.</span>
+  </div>
+  <div id="summary"></div>
+  <div id="job">
+    <b id="jobtitle"></b>
+    <div class="answers" id="answers">
+      <span id="ptext"></span>
+      <button class="rcn-btn primary small" data-answer="">Enter</button>
+      <input class="rcn-input" id="answer" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <button class="rcn-btn quiet small" id="send">Send</button>
+    </div>
+    <pre class="rcn-code" id="out"></pre>
+    <button class="rcn-btn danger small" id="stop">Stop</button>
+  </div>
+  <h2>Parked checks</h2>
+  <div class="cards" id="parked"></div>
+  <h2>Hardware health</h2>
+  <div class="cards" id="health"></div>
+  <h2>Loose contacts</h2>
+  <div class="cards" id="guided"></div>
+</main>
+<script>
+'use strict';
+RcnProfileNav.mount('checks');
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const MARK = { OK: '[ OK ]', WARN: '[WARN]', FAIL: '[FAIL]' };
+const INFO = {
+  calibration: ['Calibration', 'Every required sensor calibrated, and no failed check.'],
+  imu: ['IMU at rest', 'Gyro and gravity with the car still. About 5 seconds.'],
+  odometry: ['Odometry still', 'The car does not move or turn while parked. About 5 seconds.'],
+  lidar: ['Lidar', 'Scan rate and the share of valid distances. About 5 seconds.'],
+  rates: ['Sensor rates', 'The board, IMU and camera streams at their rates. About 5 seconds.'],
+  teleop: ['Teleop', 'The driver stack is running.'],
+  battery: ['Battery', 'Charge above the warning level.'],
+  power: ['Power', 'The 5 V supply and the battery for 30 seconds.'],
+  link: ['Board link', 'The link to the NEO-PIT board for 30 seconds.'],
+  nvme: ['Data drive', 'The NVMe drive: mount, speed and errors. About 20 seconds.'],
+  shake: ['Shake', 'Hold the car with the wheels off the ground. Shake it along each axis when asked, then tap the top deck. About 1 minute.'],
+  poke: ['Poke', 'Put the car on a stand with the top deck off. Press and wiggle each connector when asked. About 2 minutes.'],
+};
+let view = null, since = 0, timer = null;
+
+function post(path, body) {
+  return fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) })
+    .then((r) => r.json().then((d) => ({ ok: r.ok, ...d })));
+}
+
+function card(name, rows, runBody) {
+  const [title, desc] = INFO[name];
+  const status = rows.length ? rows.reduce((w, r) => (['OK', 'WARN', 'FAIL'].indexOf(r.status) > ['OK', 'WARN', 'FAIL'].indexOf(w) ? r.status : w), 'OK') : '';
+  const body = rows.map((r) => `<div class="r"><span class="mark ${r.status}">${MARK[r.status]}</span><span>${esc(r.name)}: ${esc(r.detail)}</span>`
+    + (r.repair ? `<span class="repair">${r.link ? `<a href="${esc(r.link)}">${esc(r.repair)}</a>` : esc(r.repair)}</span>` : '') + '</div>').join('');
+  return `<div class="card ${status}"><div class="head"><span class="name">${esc(title)}</span>
+    <button class="rcn-btn quiet small" data-run='${esc(JSON.stringify(runBody))}'>Run</button></div>
+    <div class="desc">${esc(desc)}</div>${body}</div>`;
+}
+
+function render() {
+  const last = view.last;
+  const rows = last ? last.rows : [];
+  const by = (g) => rows.filter((r) => r.group === g);
+  $('parked').innerHTML = view.parked.map((n) => card(n, by(n), { names: [n] })).join('');
+  $('health').innerHTML = view.health.map((n) => card(n, by(n), { names: [n] })).join('');
+  $('guided').innerHTML = view.guided.map((n) => card(n, [], { guided: n })).join('');
+  $('summary').className = last ? last.result : '';
+  $('summary').textContent = last ? `Last run ${last.time.slice(0, 16)} ${MARK[last.result] || ''}` : 'No checks run';
+  const busy = view.job.running;
+  for (const b of document.querySelectorAll('[data-run], #runall')) b.disabled = busy;
+  for (const b of document.querySelectorAll('[data-run]')) b.addEventListener('click', () => run(JSON.parse(b.dataset.run)));
+}
+
+async function load() {
+  view = await fetch('api/checks').then((r) => r.json());
+  render();
+  if (view.job.running && view.job.label.startsWith('check:') && !timer) watch(view.job.label);
+}
+
+async function run(body) {
+  const r = await post('api/checks/run', body);
+  if (!r.ok) { alert(r.message || 'Could not start the check.'); return; }
+  since = 0;
+  $('out').textContent = '';
+  watch(body.guided ? INFO[body.guided][0] : body.all ? 'All checks' : INFO[body.names[0]][0]);
+  load();
+}
+
+function watch(title) {
+  $('jobtitle').textContent = title.replace(/^check:/, '');
+  $('job').classList.add('show');
+  poll();
+}
+
+async function poll() {
+  clearTimeout(timer);
+  let job;
+  try { job = await fetch(`api/setup/job?since=${since}`).then((r) => r.json()); } catch (e) { timer = setTimeout(poll, 2000); return; }
+  if (job.lines.length) {
+    $('out').textContent += job.lines.join('\n') + '\n';
+    $('out').scrollTop = $('out').scrollHeight;
+  }
+  since = job.next;
+  $('answers').classList.toggle('show', !!job.prompt);
+  if (job.prompt) $('ptext').textContent = job.prompt.text.trim();
+  if (job.running) { timer = setTimeout(poll, 400); return; }
+  timer = null;
+  // The result rows show how it went.
+  load();
+}
+
+$('runall').addEventListener('click', () => run({ all: true }));
+for (const b of document.querySelectorAll('[data-answer]')) b.addEventListener('click', () => post('api/setup/input', { text: b.dataset.answer }));
+function send() { post('api/setup/input', { text: $('answer').value }); $('answer').value = ''; }
+$('send').addEventListener('click', send);
+$('answer').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); send(); } });
+$('stop').addEventListener('click', () => post('api/setup/stop'));
+load();
+</script>
+</body>
+</html>

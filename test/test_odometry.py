@@ -242,9 +242,9 @@ def _odom_params():
 
 class TestConfig:
     def test_yaml_keys_are_declared_by_pit_node(self):
-        src = (ROOT / 'racecar_neo_ros2_driver' / 'pit_node.py').read_text()
-        missing = [k for k in _odom_params() if f"declare_parameter('{k}'" not in src]
-        assert missing == []
+        from racecar_neo_ros2_driver.pit_node import DEFAULTS
+
+        assert [k for k in _odom_params() if k not in DEFAULTS] == []
 
     def test_yaw_axis_is_body_z(self):
         p = _odom_params()

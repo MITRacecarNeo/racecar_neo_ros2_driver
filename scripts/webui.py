@@ -22,11 +22,13 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from functools import cache
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import ipaddress
 import json
 import logging
 from pathlib import Path
 import re
 import signal
+import socket
 import threading
 import time
 from types import FrameType
@@ -41,7 +43,7 @@ PREFIX = '/ui/'
 CACHE_CONTROL = 'max-age=300'
 # Pages link the shared files as /ui/<file>?v={{asset}}; bump this when a file
 # in scripts/web/ changes, so browsers fetch the new copy at once.
-ASSET_VERSION = '19'
+ASSET_VERSION = '46'
 TYPES = {
     '.css': 'text/css; charset=utf-8',
     '.js': 'text/javascript; charset=utf-8',
@@ -52,8 +54,8 @@ TYPES = {
 }
 PACKAGE_XML = Path(__file__).resolve().parent.parent / 'package.xml'
 PAGE_TAGS = (
-    '<script src="/ui/footer.js?v={{asset}}" defer></script>'
-    '<script src="/ui/home.js?v={{asset}}" defer></script>'
+    '<script src="ui/footer.js?v={{asset}}" defer></script>'
+    '<script src="ui/home.js?v={{asset}}" defer></script>'
 )
 # Shared files whose text gets the placeholders filled.
 FILLED = ('.js',)
@@ -80,13 +82,42 @@ def driver_version() -> str:
     return found.group(1).strip() if found else 'unknown'
 
 
+@cache
+def routes_json() -> str:
+    from racecar_neo_ros2_driver import apps
+
+    return json.dumps(apps.routes())
+
+
 def fill(text: str) -> str:
-    """Replace {{asset}}, {{home}} and {{driver}} in a page or a shared script."""
+    """Replace {{asset}}, {{home}}, {{driver}} and {{routes}} in a page or a shared script."""
+    if '{{routes}}' in text:
+        text = text.replace('{{routes}}', routes_json())
     return (
         text.replace('{{asset}}', ASSET_VERSION)
         .replace('{{home}}', str(home_port()))
         .replace('{{driver}}', driver_version())
     )
+
+
+# The path nginx forwards an app under (/mapper/); anything else reads as /.
+PREFIX_HEADER = 'X-Forwarded-Prefix'
+VALID_PREFIX = re.compile(r'/[a-z0-9-]+/')
+HEAD_TAG = re.compile(r'<head[^>]*>', re.I)
+
+
+def base_tags(prefix: str) -> str:
+    """Return the tags every page's head starts with: its base path and the app addresses."""
+    return f'<base href="{prefix}"><script src="ui/route.js?v={ASSET_VERSION}"></script>'
+
+
+def with_base(text: str, prefix: str) -> str:
+    """Put base_tags right after <head>, so the page's relative links resolve under its path."""
+    m = HEAD_TAG.search(text)
+    if m is None:
+        return base_tags(prefix) + text
+    end = m.end()
+    return text[:end] + base_tags(prefix) + text[end:]
 
 
 def with_page_scripts(text: str) -> str:
@@ -132,6 +163,54 @@ def same_origin(origin: str | None, host: str | None, allow_missing: bool = Fals
     return bool(host) and urlparse(origin).netloc == host
 
 
+def host_name(host: str) -> str:
+    """Return the name or address of a Host header, without its port."""
+    host = host.strip().lower()
+    if host.startswith('['):
+        return host[1:].split(']', 1)[0]
+    if host.count(':') == 1:
+        host = host.rsplit(':', 1)[0]
+    return host.rstrip('.')
+
+
+@cache
+def car_names() -> frozenset[str]:
+    """
+    Return the names this car answers to.
+
+    They are localhost, its hostname, the hostname with .local, and car.yaml's
+    web_hosts, read at the app's start.
+    """
+    name = socket.gethostname().lower()
+    names = {'localhost', name, f'{name}.local'}
+    try:
+        from racecar_neo_ros2_driver import car_profile
+
+        extra = car_profile.car_info().get('web_hosts') or []
+    except (OSError, ValueError, ImportError):
+        extra = []
+    names.update(str(n).lower().rstrip('.') for n in extra if isinstance(n, str))
+    return frozenset(names)
+
+
+def own_host(host: str | None) -> bool:
+    """
+    Return True for a request addressed to this car: an IP address or one of its names.
+
+    A page on another name pointed at the car (DNS rebinding) sends that name,
+    so its Origin and Host match and would pass same_origin. No Host at all
+    is not a browser page.
+    """
+    if not host:
+        return True
+    name = host_name(host)
+    try:
+        ipaddress.ip_address(name)
+        return True
+    except ValueError:
+        return name in car_names()
+
+
 def sibling_origin(origin: str | None, host: str | None, ports: Iterable[int]) -> str | None:
     """Return `origin` when it is a page on this car on one of `ports`, for a CORS reply."""
     if not origin or not host:
@@ -160,6 +239,10 @@ class AppHandler(BaseHTTPRequestHandler):
 
     def parse_request(self) -> bool:
         if not super().parse_request():
+            return False
+        if not own_host(self.headers.get('Host')):
+            self.close_connection = True
+            self.send(421, b'Not allowed from this address.', 'text/plain')
             return False
         try:
             length = int(self.headers.get('Content-Length') or 0)
@@ -201,8 +284,49 @@ class AppHandler(BaseHTTPRequestHandler):
             raise ValueError('expected a JSON object')
         return data
 
+    def client_ip(self) -> str:
+        """
+        Return the client's address; through the car's own web server, the one it forwards.
+
+        X-Real-IP is trusted only from this machine (nginx on port 80), so a
+        client elsewhere cannot name itself as the access point or the car.
+        """
+        peer = self.client_address[0]
+        forwarded = (self.headers.get('X-Real-IP') or '').strip()
+        try:
+            if forwarded and ipaddress.ip_address(peer).is_loopback:
+                ipaddress.ip_address(forwarded)
+                return forwarded
+        except ValueError:
+            pass
+        return peer
+
+    def prefix(self) -> str:
+        """Return the path this request came under through port 80 (/mapper/), else /."""
+        value = self.headers.get(PREFIX_HEADER) or '/'
+        return value if VALID_PREFIX.fullmatch(value) else '/'
+
     def page(self, path: Path) -> None:
-        self.send(200, read_page(path).encode(), 'text/html; charset=utf-8')
+        html = with_base(read_page(path), self.prefix())
+        self.send(200, html.encode(), 'text/html; charset=utf-8')
+
+    def redirect(self, where: str, code: int = 302, headers: dict[str, str] | None = None) -> None:
+        """Redirect to `where`, a path inside this app, under the path the request came in."""
+        location = self.prefix() + where.lstrip('/')
+        self.send(code, b'', 'text/plain', headers={'Location': location, **(headers or {})})
+
+    def refuse_cross_site(self) -> bool:
+        """
+        Refuse a POST from another site's page with 403; return True when refused.
+
+        Pages on the car drive it and change its files, so a page elsewhere
+        must not post to them from a visitor's browser. A request with no
+        Origin (curl on the car, a script) is allowed.
+        """
+        if same_origin(self.headers.get('Origin'), self.headers.get('Host'), allow_missing=True):
+            return False
+        self.send(403, b'Not allowed from this page.', 'text/plain')
+        return True
 
     def serve_asset(self) -> bool:
         """Send a /ui/ file and return True, or return False for any other path."""

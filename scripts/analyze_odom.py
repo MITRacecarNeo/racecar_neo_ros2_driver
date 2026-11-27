@@ -36,7 +36,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'calibration'))
 
 from calibrate_common import criteria_lines, Criterion, overall, use_color  # noqa: E402, I100
-from racecar_log import load_config, resolve_log_root  # noqa: E402
+from racecar_log import find_bag  # noqa: E402
+from racecar_neo_ros2_driver.geometry import stamp_sec, yaw_of  # noqa: E402
 
 # Acceptance limits.
 CIRCLE_YAW_TOLERANCE_DEG = 5.0
@@ -107,34 +108,27 @@ def run_from_arrays(
 
 def read_bag(bag: Path) -> Run:
     """Read `/odom/integrated` and `/motor` from a bag (any storage the bag declares)."""
-    import rosbag2_py
+    from racecar_neo_ros2_driver.bags import open_reader
     from rclpy.serialization import deserialize_message
     from rosidl_runtime_py.utilities import get_message
 
-    info = rosbag2_py.Info().read_metadata(str(bag), '')
-    reader = rosbag2_py.SequentialReader()
-    reader.open(
-        rosbag2_py.StorageOptions(uri=str(bag), storage_id=info.storage_identifier),
-        rosbag2_py.ConverterOptions('cdr', 'cdr'),
-    )
-    types = {m.name: m.type for m in reader.get_all_topics_and_types()}
+    reader, types = open_reader(bag, TOPICS)
     missing = [topic for topic in TOPICS[:1] if topic not in types]
     if missing:
         raise ValueError(f'{bag} has no {", ".join(missing)}; record it with racecar log')
-    reader.set_filter(rosbag2_py.StorageFilter(topics=[t for t in TOPICS if t in types]))
     classes = {name: get_message(types[name]) for name in TOPICS if name in types}
 
     cols: dict[str, list[float]] = {k: [] for k in ('t', 'x', 'y', 'yaw', 'v', 'w', 'st', 's')}
     while reader.has_next():
         topic, data, _ = reader.read_next()
         msg = deserialize_message(data, classes[topic])
-        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        stamp = stamp_sec(msg.header.stamp)
         if topic == '/odom/integrated':
             q = msg.pose.pose.orientation
             cols['t'].append(stamp)
             cols['x'].append(msg.pose.pose.position.x)
             cols['y'].append(msg.pose.pose.position.y)
-            cols['yaw'].append(2.0 * math.atan2(q.z, q.w))
+            cols['yaw'].append(yaw_of(q))
             cols['v'].append(msg.twist.twist.linear.x)
             cols['w'].append(msg.twist.twist.angular.z)
         else:
@@ -283,14 +277,7 @@ def cpu_criteria(percent: float, baseline: float | None) -> list[Criterion]:
 
 
 def resolve_bag(arg: str | None) -> Path:
-    root = resolve_log_root(load_config().get('DIR'))
-    if arg:
-        bag = Path(arg).expanduser()
-        return bag if bag.exists() else root / arg
-    bags = [p for p in root.iterdir() if p.is_dir()] if root.is_dir() else []
-    if not bags:
-        raise FileNotFoundError(f'no bags in {root}')
-    return max(bags, key=lambda p: p.stat().st_mtime)
+    return find_bag(arg)
 
 
 def report(title: str, criteria: list[Criterion]) -> int:

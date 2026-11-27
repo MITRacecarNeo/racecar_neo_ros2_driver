@@ -29,7 +29,7 @@ setting cuts your current connection.
 
 | | |
 |---|---|
-| Default | `static`, `192.168.52.200/24`, no gateway |
+| Default | `static`, `192.168.52.(200 + car number)/24` (`.200` without a number), no gateway |
 | Change | `racecar eth dynamic` |
 | Revert | `racecar eth static` |
 | Safe path | `wlan0`, the AP (`wlan1`), or an HDMI console |
@@ -169,10 +169,11 @@ ALFA dongle together.
 
 Each launch file loads the profile's `params/<name>.yaml` after the committed
 `config/<name>.yaml`, so its keys win. Launch reads it at start, so a teleop
-restart applies a change. The calibration utilities (`calibrate_imu.py`,
-`calibrate_mag.py`, `calibrate_realsense_imu.py`, `calibrate_lidar.py`) write
-`lsm9ds1_cal.yaml`, `lsm9ds1_mag_cal.yaml`, `realsense_cal.yaml` and
-`frames.yaml` there; see README "Sensor calibration". The profile sits outside
+restart applies a change. The calibration utilities in
+`scripts/calibration/` write `lsm9ds1_cal.yaml`, `lsm9ds1_mag_cal.yaml`,
+`realsense_cal.yaml`, `frames.yaml` (lidar yaw, camera mount), `odom.yaml`,
+`throttle.yaml`, `steering_table.yaml` and `dynamics.yaml` there; see README
+"Sensor calibration". The profile sits outside
 the driver folder, so a driver update or re-clone keeps it; `racecar profile
 export FILE` saves it for a fresh image. See README "Car profile".
 
@@ -250,7 +251,7 @@ applies.
 | | |
 |---|---|
 | Default | `config/battery.yaml`: 4700 mAh usable, floor 3.55 V per cell (7.1 V on 2S), warning at 15 min left, shutdown at 5 min left, 30 mOhm load correction above 2.3 A |
-| Change | `params/battery.yaml` in the car profile, under `battery_guard: ros__parameters:`; then `sudo systemctl restart racecar-battery-guard` |
+| Change | `params/battery.yaml` in the car profile, under `battery_guard: ros__parameters:`; then `racecar service restart battery-guard` |
 | Revert | remove the key, restart the guard |
 | Safe path | any |
 

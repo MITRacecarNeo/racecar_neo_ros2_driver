@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en" data-app="Browser">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RACECAR Neo browser</title>
+<link rel="stylesheet" href="ui/rcn.css?v={{asset}}">
+<script src="ui/ui.js?v={{asset}}"></script>
+<script src="ui/battery.js?v={{asset}}" defer></script>
+<script src="ui/stall.js?v={{asset}}" defer></script>
+<link rel="icon" href="ui/brand/app-icon-32.png">
+<link rel="apple-touch-icon" href="ui/brand/app-icon-180.png">
+<style>
+html, body { height: 100%; }
+body { display: flex; flex-direction: column; overflow: hidden; }
+main { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--rcn-code-bg); }
+main > .rcn-override { margin: var(--rcn-space-2); }
+#screen { flex: 1; min-height: 0; transition: opacity 0.2s; }
+#screen.off { opacity: 0.35; }
+header form { margin: 0; }
+/* Off screen but focusable: a touch screen shows its keyboard for it. */
+#keys { position: absolute; left: -1000px; width: 1px; height: 1px; opacity: 0; }
+</style>
+</head>
+<body>
+<header class="rcn-header">
+  <img class="rcn-mark" src="ui/brand/mark.png" alt="RACECAR Neo">
+  <span class="rcn-title">Browser</span>
+  <span class="rcn-spacer"></span>
+  <button class="rcn-btn quiet small" id="keyboard" hidden>Keyboard</button>
+  <form method="post" action="logout"><button class="rcn-btn quiet small" type="submit">Log out</button></form>
+</header>
+<main>
+  <div id="screen" class="off"></div>
+  <input id="keys" aria-label="Keyboard" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+</main>
+<script type="module">
+import RFB from './novnc/core/rfb.js';
+
+const $ = (id) => document.getElementById(id);
+const RETRY_MS = 2000;
+const KEY = { Backspace: 0xff08, Enter: 0xff0d, Tab: 0xff09, Escape: 0xff1b };
+let rfb = null;
+
+// Grayed until the screen answers; the virtual screen and Firefox start with the first viewer.
+function connect() {
+  const url = new URL('websockify', document.baseURI);
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  rfb = new RFB($('screen'), url.href);
+  rfb.scaleViewport = true;
+  rfb.resizeSession = false;
+  rfb.focusOnClick = true;
+  rfb.addEventListener('connect', () => $('screen').classList.remove('off'));
+  rfb.addEventListener('disconnect', () => {
+    $('screen').classList.add('off');
+    rfb = null;
+    setTimeout(connect, RETRY_MS);
+  });
+}
+connect();
+
+// A touch screen has no keys of its own: the button opens its keyboard, and typed text goes to Firefox.
+const keysym = (ch) => (ch.codePointAt(0) < 0x100 ? ch.codePointAt(0) : 0x01000000 + ch.codePointAt(0));
+if (window.matchMedia('(pointer: coarse)').matches) $('keyboard').hidden = false;
+$('keyboard').onclick = () => $('keys').focus();
+$('keys').addEventListener('beforeinput', (e) => {
+  e.preventDefault();
+  if (!rfb) return;
+  if (e.inputType === 'insertText' && e.data) for (const ch of e.data) rfb.sendKey(keysym(ch));
+  else if (e.inputType === 'deleteContentBackward') rfb.sendKey(KEY.Backspace, 'Backspace');
+  else if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') rfb.sendKey(KEY.Enter, 'Enter');
+});
+$('keys').addEventListener('keydown', (e) => {
+  if (rfb && (e.key === 'Tab' || e.key === 'Escape')) { e.preventDefault(); rfb.sendKey(KEY[e.key], e.key); }
+});
+</script>
+</body>
+</html>

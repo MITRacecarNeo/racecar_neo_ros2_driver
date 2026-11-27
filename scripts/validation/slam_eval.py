@@ -32,6 +32,7 @@ import time
 from typing import Any
 
 from racecar_neo_ros2_driver import data_root
+from racecar_neo_ros2_driver.geometry import yaw_of  # noqa: F401  slam_session uses it
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
@@ -72,25 +73,24 @@ def save(name: str) -> int:
         return 2
     stem = map_stem(name)
     stem.parent.mkdir(parents=True, exist_ok=True)
-    import rclpy
+    from racecar_neo_ros2_driver.ros_cli import call_service, ros_node
     from slam_toolbox.srv import SerializePoseGraph
 
-    rclpy.init()
-    node = rclpy.create_node('slam_eval_save')
-    try:
-        client = node.create_client(SerializePoseGraph, '/slam_toolbox/serialize_map')
-        if not client.wait_for_service(timeout_sec=5.0):
-            print('slam_toolbox is not running: racecar launch autonomy', file=sys.stderr)
-            return 1
-        future = client.call_async(SerializePoseGraph.Request(filename=str(stem)))
-        rclpy.spin_until_future_complete(node, future, timeout_sec=60.0)
-        result = future.result()
-        if result is None or result.result != SerializePoseGraph.Response.RESULT_SUCCESS:
-            print('slam_toolbox could not write the pose graph.', file=sys.stderr)
-            return 1
-    finally:
-        node.destroy_node()
-        rclpy.shutdown()
+    with ros_node('slam_eval_save') as node:
+        status, result = call_service(
+            node,
+            SerializePoseGraph,
+            '/slam_toolbox/serialize_map',
+            SerializePoseGraph.Request(filename=str(stem)),
+            wait_sec=5.0,
+            timeout_sec=60.0,
+        )
+    if status == 'unavailable':
+        print('slam_toolbox is not running: racecar launch autonomy', file=sys.stderr)
+        return 1
+    if result is None or result.result != SerializePoseGraph.Response.RESULT_SUCCESS:
+        print('slam_toolbox could not write the pose graph.', file=sys.stderr)
+        return 1
     if not run_map_saver(stem):
         print('map_saver_cli failed; the pose graph is saved.', file=sys.stderr)
         return 1
@@ -251,7 +251,7 @@ def record_load(seconds: float | None, out_dir: Path) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f'{datetime.now():%Y%m%d-%H%M%S}-load.csv'
     recorder = LoadRecorder()
-    print(f'Recording to {path}; nodes started later are added. Ctrl-C ends.')
+    print(f'Recording to {path}. Press Ctrl-C to stop.')
     try:
         while seconds is None or not recorder.samples or recorder.samples[-1].t < seconds:
             time.sleep(1.0)
@@ -282,10 +282,6 @@ def mean_pose(poses: list[tuple[float, float, float]]) -> tuple[float, float, fl
     y = sum(p[1] for p in poses) / n
     yaw = math.atan2(sum(math.sin(p[2]) for p in poses), sum(math.cos(p[2]) for p in poses))
     return x, y, yaw
-
-
-def yaw_of(q: Any) -> float:
-    return math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
 
 
 def sample_map_pose(buffer: Any, spin: Any = None) -> list[tuple[float, float, float]]:
@@ -334,15 +330,12 @@ def mark(label: str, tag: str, out_dir: Path) -> int:
     import rclpy
     from tf2_ros import Buffer, TransformListener
 
-    rclpy.init()
-    node = rclpy.create_node('slam_eval_mark')
-    buffer = Buffer()
-    TransformListener(buffer, node)
-    try:
+    from racecar_neo_ros2_driver.ros_cli import ros_node
+
+    with ros_node('slam_eval_mark') as node:
+        buffer = Buffer()
+        TransformListener(buffer, node)
         poses = sample_map_pose(buffer, lambda: rclpy.spin_once(node, timeout_sec=0.05))
-    finally:
-        node.destroy_node()
-        rclpy.shutdown()
     if not poses:
         print('No map -> base_link transform: is the localizer running?', file=sys.stderr)
         return 1

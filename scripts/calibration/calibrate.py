@@ -25,9 +25,10 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 from typing import Any
 
-from racecar_neo_ros2_driver import car_profile
+from racecar_neo_ros2_driver import car_profile, steering, units
 import yaml
 
 HERE = Path(__file__).resolve().parent
@@ -36,6 +37,7 @@ sys.path.insert(0, str(HERE))
 from calibrate_common import (  # noqa: E402, I100
     criteria_lines,
     Criterion,
+    MARK,
     paint,
     read_line,
     SESSION_ENV,
@@ -43,12 +45,18 @@ from calibrate_common import (  # noqa: E402, I100
     use_color,
 )
 
-TELEOP_UNIT = 'racecar-teleop'
+TELEOP_UNIT = units.TELEOP
 RUN_PROMPT = 'Press Enter to run, s to skip, and q to stop: '
 RUN_PROMPT_BACK = 'Press Enter to run, s to skip, b to go back a step, and q to stop: '
+SUMMARY_MARK = {**MARK, 'skipped': '[SKIP]', 'not run': '[SKIP]'}
 LIDAR_SETUP = (
     'Use a clear straight path of about 2 meters with walls or furniture nearby.\n'
     'Connect the controller. Hold RB to autonomously drive the car.'
+)
+CAMERA_SETUP = (
+    'Turn the camera on: 8080 home page, Features, Camera.\n'
+    'Set the car on its wheels on a flat floor.\n'
+    'Clear the floor 2 meters ahead of the car.'
 )
 STEERING_SETUP = (
     'Use a clear area of about 3 by 3 meters surrounded by walls or furniture.\n'
@@ -108,8 +116,7 @@ STEPS = (
         'imu',
         'LSM9DS1 accel bias and scale, gyro bias',
         'calibrate_imu.py',
-        'Place the car on a table.\n'
-        'The instructions will direct you to hold the car in 6 poses.',
+        'Place the car on a table.',
         'lsm9ds1_cal',
         ('accelerometer.bias', 'accelerometer.scale', 'gyroscope.bias'),
         check='Place the car on a level surface.',
@@ -118,8 +125,7 @@ STEPS = (
         'mag',
         'LSM9DS1 magnetometer',
         'calibrate_mag.py',
-        'Hold the car in your hands, away from large metal structures.\n'
-        'The instructions will direct you to turn the car about 3 axes.',
+        'Hold the car in your hands, away from large metal structures.',
         'lsm9ds1_mag_cal',
         ('magnetometer.hard_iron_bias',),
         check='Place the car down flat on the floor and away from large metal structures.',
@@ -128,8 +134,7 @@ STEPS = (
         'realsense',
         'RealSense accel bias and scale, gyro bias',
         'calibrate_realsense_imu.py',
-        'Place the car on a table.\n'
-        'The instructions will direct you to hold the car in 6 poses.',
+        'Place the car on a table.',
         'realsense_cal',
         ('realsense_accel_bias', 'realsense_accel_scale', 'realsense_gyro_bias'),
         check='Place the car on a level surface.',
@@ -144,6 +149,15 @@ STEPS = (
         check=LIDAR_SETUP,
     ),
     Step(
+        'camera',
+        'RealSense mount pitch, roll and height',
+        'calibrate_camera.py',
+        CAMERA_SETUP,
+        'frames',
+        ('camera_pitch_deg', 'camera_roll_deg', 'camera_bottom_z_mm'),
+        check=CAMERA_SETUP,
+    ),
+    Step(
         'odom',
         'Odometry yaw and speed scale',
         'calibrate_odom.py',
@@ -154,7 +168,7 @@ STEPS = (
     ),
     Step(
         'steering',
-        'Steering trim',
+        'Steering trim and command-to-curvature table',
         'calibrate_steering.py',
         STEERING_SETUP,
         'throttle',
@@ -231,7 +245,22 @@ def status_lines(config_dir: Path, color: bool = False) -> list[str]:
         values = step_values(step)
         width = max((len(k) for k in values), default=0)
         lines += [f'  {k:<{width}}  {fmt(values[k], 7)}' for k in step.keys if k in values]
+        if step.key == 'steering':
+            lines.append(f'  {table_summary(steering.load())}')
     return lines
+
+
+def table_summary(table: steering.SteeringTable | None) -> str:
+    """Return the steering table's line in `racecar calibrate status`."""
+    if table is None:
+        return 'steering_table  not measured'
+    right, left = table.max_curvature()
+    return (
+        f'steering_table  {len(table.command)} commands, full lock radius '
+        f'{1 / left:.2f} m left, {-1 / right:.2f} m right'
+        + (', own reverse table' if table.curvature_reverse else '')
+        + (f', {table.measured}' if table.measured else '')
+    )
 
 
 def status_rows(config_dir: Path) -> list[tuple[str, str, str]]:
@@ -244,7 +273,7 @@ def status_rows(config_dir: Path) -> list[tuple[str, str, str]]:
             stamp = datetime.fromtimestamp(local.stat().st_mtime).strftime('%Y-%m-%d %H:%M')
             rows.append((step.key, 'calibrated', stamp))
         elif (config_dir / f'{step.local_name}.yaml').exists():
-            rows.append((step.key, 'default', 'committed defaults; not calibrated on this car'))
+            rows.append((step.key, 'default', 'not calibrated on this car'))
         else:
             rows.append((step.key, 'default', 'not measured on this car'))
     return rows
@@ -257,7 +286,7 @@ def fmt(value: Any, digits: int = 4) -> str:
 
 
 def systemctl() -> list[str]:
-    return shlex.split(os.environ.get('RACECAR_SYSTEMCTL', 'systemctl'))
+    return units.systemctl_argv()
 
 
 def teleop_active() -> bool:
@@ -329,10 +358,9 @@ def run_steps(steps: list[Step]) -> int:
             print(f'    {key}: {old} -> {fmt(after.get(key, "?"))}')
 
     if any(outcome == 'done' for _, outcome, *_ in results):
-        restart = [*shlex.split(os.environ.get('RACECAR_SUDO', 'sudo')), *systemctl()]
-        restart += ['restart', TELEOP_UNIT]
-        print('Restarting teleop uses sudo, which may ask for your password.')
-        if ask('Restart teleop now so the nodes load the new values? [y/N] ') == 'y':
+        # A polkit rule lets the racecar user restart teleop without a password.
+        restart = [*systemctl(), 'restart', TELEOP_UNIT]
+        if ask('Restart teleop now? [y/N] ') == 'y':
             subprocess.run(restart, check=False)
         else:
             print(f'Apply later: {shlex.join(restart)}')
@@ -356,7 +384,7 @@ def summary_lines(
     """Render the end-of-run table: each step's verdict, then each criterion."""
     lines = ['', '=== Check summary ===']
     for step, verdict, criteria in results:
-        mark = paint(f'{verdict:7s}', verdict, color, bold=True)
+        mark = paint(SUMMARY_MARK.get(verdict, verdict), verdict, color, bold=True)
         lines.append(f'{step.key:10s} {mark} {step.label}')
         lines += criteria_lines(criteria, indent='    ', color=color)
     counts = {
@@ -397,11 +425,107 @@ def run_checks(steps: list[Step]) -> int:
                 ]
                 return step, 'FAIL', criteria
             verdict, criteria = parsed
+            record_result(step.key, verdict, 'checked')
             return step, verdict, criteria
 
         results = [e if len(e) == 3 else (*e, []) for e in walk_steps(steps, header, run)]
     print('\n'.join(summary_lines(results, use_color())))
     return 1 if any(verdict == 'FAIL' for _, verdict, _ in results) else 0
+
+
+# Teleop is up again when active and its nodes have started.
+RESTART_TIMEOUT_SEC = 60.0
+RESTART_SETTLE_SEC = 10.0
+CAL_STATE_KEY = 'calibration'
+# Profile files a step writes besides its own (calibrate_steering.py writes the table).
+EXTRA_FILES = {'steering': ('steering_table',)}
+
+
+def restart_teleop() -> bool:
+    """Restart teleop so the nodes load the new values; wait until it runs again."""
+    print('Restarting teleop.')
+    subprocess.run([*systemctl(), 'restart', TELEOP_UNIT], check=False)
+    deadline = time.monotonic() + RESTART_TIMEOUT_SEC
+    while time.monotonic() < deadline:
+        if teleop_active():
+            time.sleep(RESTART_SETTLE_SEC)
+            return True
+        time.sleep(1.0)
+    print(f'{TELEOP_UNIT} did not start again.')
+    return False
+
+
+def record_result(key: str, result: str, detail: str) -> None:
+    """Keep the step's last verified result in car.yaml under `calibration:`."""
+    path = car_profile.profile_dir() / 'car.yaml'
+    data = car_profile.read_yaml(path)
+    state = dict(data.get(CAL_STATE_KEY) or {})
+    state[key] = {
+        'result': result,
+        'time': datetime.now().strftime('%Y-%m-%d %H:%M'),
+        'detail': detail,
+    }
+    data[CAL_STATE_KEY] = state
+    car_profile.write_text(path, yaml.safe_dump(data, sort_keys=False))
+
+
+def verify_step(step: Step) -> int:
+    """
+    Calibrate one step, restart teleop, then run its check.
+
+    A check that fails puts the previous file back and restarts teleop again,
+    so a failed calibration is never kept. A step without a check passes once
+    it is written.
+    """
+    import progress
+
+    targets = [
+        car_profile.param_path(n) for n in (step.local_name, *EXTRA_FILES.get(step.key, ()))
+    ]
+    before = {t: t.read_bytes() if t.exists() else None for t in targets}
+    print(f'=== {step.label} ===')
+    print(setup_text(step.position))
+    rc = subprocess.run(
+        [sys.executable, str(HERE / step.tool)], check=False, env={**os.environ, SESSION_ENV: '1'}
+    ).returncode
+    after = {t: t.read_bytes() if t.exists() else None for t in targets}
+    if rc != 0 or after == before:
+        reason = 'the calibration did not finish' if rc != 0 else 'nothing was written'
+        print(f'Calibration failed: {reason}.')
+        progress.emit('outcome', result='FAIL', reason=reason)
+        record_result(step.key, 'FAIL', reason)
+        return 1
+    if not restart_teleop():
+        progress.emit('outcome', result='FAIL', reason='teleop did not start again')
+        return 1
+    if not step.check:
+        progress.emit('outcome', result='PASS', reason='written')
+        record_result(step.key, 'PASS', 'written')
+        return 0
+    with tempfile.TemporaryDirectory() as tmp:
+        report = Path(tmp) / 'check.json'
+        print(f'\n=== Check: {step.label} ===')
+        print(setup_text(step.check))
+        cmd = [sys.executable, str(HERE / step.tool), '--check', '--report', str(report)]
+        subprocess.run(cmd, check=False)
+        parsed = read_report(report)
+    verdict, criteria = parsed if parsed is not None else ('FAIL', [])
+    rows = [c.__dict__ for c in criteria]
+    if verdict == 'FAIL':
+        for target, old in before.items():
+            if old is None:
+                target.unlink(missing_ok=True)
+            elif after[target] != old:
+                car_profile.write_text(target, old.decode())
+        print('The check failed. The previous values are back.')
+        restart_teleop()
+        progress.emit('outcome', result='FAIL', reason='the check failed', criteria=rows)
+        record_result(step.key, 'FAIL', 'the check failed')
+        return 1
+    print(f'Check {verdict}.')
+    progress.emit('outcome', result=verdict, reason='checked', criteria=rows)
+    record_result(step.key, verdict, 'checked')
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -417,6 +541,11 @@ def main(argv: list[str] | None = None) -> int:
         metavar='step',
         help=f'status; check [steps]; or steps to run in order ({", ".join(STEP_KEYS)}); '
         f'default: all but {", ".join(OPTIONAL_KEYS)}',
+    )
+    parser.add_argument(
+        '--verify',
+        action='store_true',
+        help='one step: calibrate, restart teleop, check; a failed check restores the old values',
     )
     args = parser.parse_args(argv)
 
@@ -444,10 +573,15 @@ def main(argv: list[str] | None = None) -> int:
             return 2
     if not teleop_active():
         print(
-            f'{TELEOP_UNIT} is not running. Start it with racecar service start teleop, '
-            'then run racecar calibrate again.'
+            f'{TELEOP_UNIT} is not running. Start it: racecar service start teleop. '
+            'Then run racecar calibrate again.'
         )
         return 1
+    if args.verify:
+        if checking or len(chosen) != 1:
+            print('--verify takes exactly one step.', file=sys.stderr)
+            return 2
+        return verify_step(chosen[0])
     return run_checks(chosen) if checking else run_steps(chosen)
 
 

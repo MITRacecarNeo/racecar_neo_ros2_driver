@@ -4,11 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RACECAR Neo</title>
-<link rel="stylesheet" href="/ui/rcn.css?v={{asset}}">
-<script src="/ui/ui.js?v={{asset}}"></script>
-<script src="/ui/api.js?v={{asset}}"></script>
-<script src="/ui/battery.js?v={{asset}}" defer></script>
-<link rel="icon" href="/ui/brand/app-icon-32.png">
+<link rel="stylesheet" href="ui/rcn.css?v={{asset}}">
+<script src="ui/ui.js?v={{asset}}"></script>
+<script src="ui/api.js?v={{asset}}"></script>
+<script src="ui/battery.js?v={{asset}}" defer></script>
+<script src="ui/stall.js?v={{asset}}" defer></script>
+<link rel="icon" href="ui/brand/app-icon-32.png">
 <style>
   main { max-width: 420px; margin: 0 auto; padding: 15vh var(--rcn-space-4) var(--rcn-space-8); text-align: center; }
   .glyph { width: 76px; height: 76px; margin: 0 auto var(--rcn-space-4); border-radius: 20px; background: var(--rcn-surface); display: grid; place-items: center; color: var(--rcn-orange); border: 3px solid var(--rcn-gold); }
@@ -21,11 +22,11 @@
 </head>
 <body>
 <header class="rcn-header">
-  <img class="rcn-mark" src="/ui/brand/mark.png" alt="RACECAR Neo">
+  <img class="rcn-mark" src="ui/brand/mark.png" alt="RACECAR Neo">
 </header>
 <main>
   <div class="glyph" id="glyph"></div>
-  <h2 id="title">Opening...</h2>
+  <h2 id="title"></h2>
   <div class="bar" role="progressbar" aria-label="Loading"><div id="fill"></div></div>
   <div class="rcn-small rcn-muted" id="note"></div>
   <div class="acts">
@@ -46,7 +47,7 @@ function fillTo(pct) {
 }
 let cancelled = false;
 function fail(text) {
-  $('title').textContent = 'Could not open';
+  $('title').textContent = 'App not opened';
   $('note').textContent = text;
 }
 // Close this tab; the apps page is still open in the tab that opened it. A
@@ -63,14 +64,14 @@ async function launch() {
   $('fill').style.width = '0';
   let app = null;
   try {
-    app = ((await (await fetch('/api/status')).json()).apps || []).find((a) => a.id === id);
+    app = ((await (await fetch('api/status')).json()).apps || []).find((a) => a.id === id);
   } catch (err) { /* reported below */ }
-  if (!app) { fail('Unknown app.'); return; }
+  if (!app) { fail('No such app.'); return; }
   document.title = `${app.name} - RACECAR Neo`;
-  $('glyph').innerHTML = `<svg class="rcn-icon"><use href="/ui/icons.svg#${app.icon}"/></svg>`;
-  $('title').textContent = `Opening ${app.name}...`;
+  $('glyph').innerHTML = `<svg class="rcn-icon"><use href="ui/icons.svg?v={{asset}}#${app.icon}"/></svg>`;
+  $('title').textContent = app.name;
   try {
-    const r = await (await RcnApi.post('/api/open', { app: id })).json();
+    const r = await (await RcnApi.post('api/open', { app: id })).json();
     if (!r.ok) { fail(r.message); return; }
   } catch (err) { fail(RcnApi.LOST); return; }
 
@@ -80,12 +81,12 @@ async function launch() {
     // Most apps answer within 5 to 15 s; the bar slows toward the end rather than stopping.
     $('fill').style.width = `${Math.round(95 * (1 - Math.exp(-elapsed / 6000)))}%`;
     try {
-      const s = await (await fetch(`/api/ready?app=${encodeURIComponent(id)}`)).json();
+      const s = await (await fetch(`api/ready?app=${encodeURIComponent(id)}`)).json();
       if (cancelled) return;
       if (s.ready) {
         // Let the bar reach the end before the app replaces this page.
         await fillTo(100);
-        location.replace(`${location.protocol}//${location.hostname}:${s.port}/`);
+        location.replace(RcnRoute.app(id));
         return;
       }
     } catch (err) { /* keep trying until the limit */ }

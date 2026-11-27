@@ -1,0 +1,38 @@
+<!--
+  Navigate to a pose for a car: replan at 1 Hz and as soon as the goal
+  changes (a mission's next waypoint), and follow the path. On a
+  failure, clear both costmaps and wait, then try again (up to 3 times). No
+  spin and no back-up: a car cannot turn in place, and a stuck car pauses
+  for the operator to drive it free (plan decision 54).
+-->
+<root BTCPP_format="4" main_tree_to_execute="NavigateToPoseCar">
+  <BehaviorTree ID="NavigateToPoseCar">
+    <RecoveryNode number_of_retries="3" name="NavigateRecovery">
+      <PipelineSequence name="NavigateWithReplanning">
+        <ControllerSelector selected_controller="{selected_controller}" default_controller="FollowPath" topic_name="controller_selector"/>
+        <PlannerSelector selected_planner="{selected_planner}" default_planner="GridBased" topic_name="planner_selector"/>
+        <RateController hz="1.0">
+          <RecoveryNode number_of_retries="1" name="ComputePathToPose">
+            <ComputePathToPose goal="{goal}" path="{path}" planner_id="{selected_planner}" error_code_id="{compute_path_error_code}"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-Context" service_name="global_costmap/clear_entirely_global_costmap"/>
+          </RecoveryNode>
+        </RateController>
+        <GoalUpdatedController goal="{goal}">
+          <RecoveryNode number_of_retries="1" name="ComputePathToNewGoal">
+            <ComputePathToPose goal="{goal}" path="{path}" planner_id="{selected_planner}" error_code_id="{compute_path_error_code}"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-NewGoal" service_name="global_costmap/clear_entirely_global_costmap"/>
+          </RecoveryNode>
+        </GoalUpdatedController>
+        <RecoveryNode number_of_retries="1" name="FollowPath">
+          <FollowPath path="{path}" controller_id="{selected_controller}" error_code_id="{follow_path_error_code}"/>
+          <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>
+        </RecoveryNode>
+      </PipelineSequence>
+      <Sequence name="RecoveryActions">
+        <ClearEntireCostmap name="ClearLocalCostmap-Subtree" service_name="local_costmap/clear_entirely_local_costmap"/>
+        <ClearEntireCostmap name="ClearGlobalCostmap-Subtree" service_name="global_costmap/clear_entirely_global_costmap"/>
+        <Wait wait_duration="2.0"/>
+      </Sequence>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>

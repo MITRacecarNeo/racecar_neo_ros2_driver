@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RACECAR Neo calibration</title>
+<link rel="stylesheet" href="ui/rcn.css?v={{asset}}">
+<script src="ui/ui.js?v={{asset}}"></script>
+<script src="ui/profile_nav.js?v={{asset}}"></script>
+<script src="ui/battery.js?v={{asset}}" defer></script>
+<script src="ui/stall.js?v={{asset}}" defer></script>
+<link rel="icon" href="ui/brand/app-icon-32.png">
+<link rel="apple-touch-icon" href="ui/brand/app-icon-180.png">
+<style>
+main { max-width: 1200px; margin: 0 auto; padding: var(--rcn-space-4); }
+main > .rcn-override { margin: 0 0 var(--rcn-space-4); }
+#center { background: var(--rcn-surface); border: 2px solid var(--rcn-border); border-radius: var(--rcn-radius-lg);
+          padding: var(--rcn-space-4); margin-bottom: var(--rcn-space-4); }
+#center.pass { border-color: #6fd08c; } #center.fail { border-color: var(--rcn-led-red); }
+#center h2 { font-size: 22px; line-height: 30px; margin: 0; }
+#stage { color: var(--rcn-text-muted); font-weight: 600; margin-top: var(--rcn-space-1); }
+#instruction { margin-top: var(--rcn-space-3); white-space: pre-wrap; font-weight: 600; }
+.meters { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--rcn-space-3); margin-top: var(--rcn-space-3); }
+.meter .bar { height: 12px; border-radius: 6px; background: var(--rcn-code-bg); overflow: hidden; margin-top: 4px; }
+.meter .bar > i { display: block; height: 100%; width: 0; background: var(--rcn-accent); }
+.meter.ok .bar > i { background: #6fd08c; } .meter.warn .bar > i { background: var(--rcn-gold); } .meter.bad .bar > i { background: var(--rcn-led-red); }
+.answers { display: flex; flex-wrap: wrap; gap: var(--rcn-space-2); margin-top: var(--rcn-space-3); align-items: center; }
+.answers .rcn-input { flex: 1; min-width: 160px; }
+#outcome { margin-top: var(--rcn-space-3); font-weight: 700; font-size: 18px; }
+#outcome.pass { color: #6fd08c; } #outcome.fail { color: var(--rcn-led-red); }
+table.vals { border-collapse: collapse; width: 100%; margin-top: var(--rcn-space-3); font-size: 14px; }
+table.vals th, table.vals td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--rcn-border); vertical-align: top; }
+td.OK, td.PASS { color: #6fd08c; } td.WARN { color: var(--rcn-gold); } td.FAIL { color: var(--rcn-led-red); }
+.plots { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: var(--rcn-space-3); margin-top: var(--rcn-space-3); }
+.plot { background: var(--rcn-code-bg); border-radius: var(--rcn-radius-md); padding: var(--rcn-space-2); }
+.plot h3 { font: 600 14px/20px var(--rcn-font-sans); margin: 0 0 4px; }
+.plot svg { width: 100%; height: auto; display: block; }
+.plot .legend { display: flex; flex-wrap: wrap; gap: var(--rcn-space-3); font-size: 12px; }
+details { margin-top: var(--rcn-space-3); }
+details pre { max-height: 40vh; overflow: auto; white-space: pre-wrap; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: var(--rcn-space-3); }
+.tile { background: var(--rcn-surface); border: 2px solid var(--rcn-border); border-radius: var(--rcn-radius-md); padding: var(--rcn-space-3); }
+.tile.valid { border-color: #6fd08c; } .tile.failed { border-color: var(--rcn-led-red); }
+.tile .top { display: flex; justify-content: space-between; gap: var(--rcn-space-2); align-items: baseline; }
+.tile .name { font-weight: 700; }
+.tile .state { font: 700 13px/18px var(--rcn-font-mono); white-space: nowrap; }
+.state.valid { color: #6fd08c; } .state.failed, .state.open { color: var(--rcn-led-red); } .state.unchecked { color: var(--rcn-gold); }
+.tile .detail { color: var(--rcn-text-muted); font-size: 13px; margin-top: 2px; overflow-wrap: anywhere; }
+.tile .row { display: flex; gap: var(--rcn-space-2); margin-top: var(--rcn-space-2); flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<header class="rcn-header">
+  <img class="rcn-mark" src="ui/brand/mark.png" alt="RACECAR Neo">
+  <span class="rcn-title">Calibration</span>
+  <span class="rcn-spacer"></span>
+</header>
+<main>
+  <section id="center">
+    <h2 id="ctitle"></h2>
+    <div id="stage"></div>
+    <div id="instruction"></div>
+    <div class="meters" id="meters"></div>
+    <div class="answers" id="answers" hidden>
+      <button class="rcn-btn primary" data-answer="">Enter</button>
+      <button class="rcn-btn quiet" data-answer="s">Skip</button>
+      <button class="rcn-btn quiet" data-answer="b">Back</button>
+      <input class="rcn-input" id="answer" placeholder="Answer" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <button class="rcn-btn quiet" id="send">Send</button>
+    </div>
+    <div class="row"><button class="rcn-btn danger small" id="stop" hidden>Stop</button></div>
+    <div id="outcome"></div>
+    <div id="results"></div>
+    <div class="plots" id="plots"></div>
+    <details><summary>Output</summary><pre class="rcn-code" id="out"></pre></details>
+  </section>
+  <div class="tiles" id="tiles"></div>
+</main>
+<script>
+'use strict';
+RcnProfileNav.mount('calibration');
+const $ = (id) => document.getElementById(id);
+const { keyLabel, cap } = RcnUi;
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const WORD = { valid: '[ OK ]', failed: '[FAIL]', unchecked: '[ -- ]', open: '[OPEN]' };
+const TIP = { valid: 'Calibrated and checked', failed: 'The last check failed', unchecked: 'Not checked since it was calibrated', open: 'Not calibrated on this car' };
+const COLORS = ['#f49a4b', '#5fb3ff', '#6fd08c', '#e3e3eb', '#ff6b8b', '#c9a0ff'];
+// rad/s, spread of the gyro over 0.5 s: a car at rest reads 0.004 to 0.03.
+const STILL_LIMIT = 0.05;
+let view = null, since = 0, psince = 0, timer = null, running = null, events = [];
+
+function post(path, body) {
+  return fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) })
+    .then((r) => r.json().then((d) => ({ ok: r.ok, ...d })));
+}
+function fmt(v) {
+  if (Array.isArray(v)) return v.map(fmt).join(', ');
+  if (typeof v === 'number') return Math.abs(v) >= 100 ? v.toFixed(1) : Math.abs(v) < 0.001 && v !== 0 ? v.toExponential(2) : v.toPrecision(4).replace(/\.?0+$/, '');
+  return String(v ?? '-');
+}
+
+function renderTiles() {
+  $('tiles').innerHTML = view.steps.map((s) => {
+    const vals = Object.entries(s.values).map(([k, v]) => `${esc(keyLabel(k))} ${esc(fmt(v))}`).join('<br>');
+    const busy = !!running;
+    return `<div class="tile ${s.state}"><div class="top"><span class="name">${esc(s.label)}</span>
+      <span class="state ${s.state}" title="${TIP[s.state]}">${WORD[s.state]}</span></div>
+      <div class="detail">${s.state === 'open' ? esc(cap(s.detail)) : `Calibrated ${esc(s.detail)}`}${s.result ? `<br>Check ${esc(s.result.result)} ${esc(s.result.time)}` : ''}</div>
+      ${vals ? `<div class="detail">${vals}</div>` : ''}
+      <div class="row"><button class="rcn-btn primary small" data-run="${s.key}" ${busy ? 'disabled' : ''}>Calibrate</button>
+      ${s.check ? `<button class="rcn-btn quiet small" data-check="${s.key}" ${busy ? 'disabled' : ''}>Check</button>` : ''}</div></div>`;
+  }).join('');
+  for (const b of document.querySelectorAll('[data-run]')) b.addEventListener('click', () => start(b.dataset.run, 'calibrate'));
+  for (const b of document.querySelectorAll('[data-check]')) b.addEventListener('click', () => start(b.dataset.check, 'check'));
+}
+
+async function load() {
+  view = await fetch('api/calibration').then((r) => r.json());
+  running = view.job.running && view.job.label.includes(':') ? view.job.label : null;
+  renderTiles();
+  if (running && !timer) { showStep(running); poll(); }
+}
+
+function showStep(label) {
+  const [mode, key] = label.split(':');
+  const s = view.steps.find((x) => x.key === key);
+  $('ctitle').textContent = `${mode === 'check' ? 'Checking' : 'Calibrating'}: ${s ? s.label : key}`;
+  $('center').className = '';
+  for (const id of ['stage', 'instruction', 'meters', 'outcome', 'results', 'plots', 'out']) $(id).textContent = '';
+  $('outcome').className = '';
+}
+
+async function start(key, mode) {
+  const r = await post('api/calibration/run', { step: key, mode });
+  if (!r.ok) { alert(r.message || `Could not start the ${mode === 'check' ? 'check' : 'calibration'}.`); return; }
+  since = 0; psince = 0; events = [];
+  running = `${mode}:${key}`;
+  showStep(running);
+  renderTiles();
+  $('center').scrollIntoView({ behavior: 'smooth' });
+  poll();
+}
+
+function meter(label, value, max, cls, text) {
+  const pct = Math.max(0, Math.min(100, (100 * value) / max));
+  return `<div class="meter ${cls}"><div class="rcn-small">${esc(label)}: ${esc(text)}</div><div class="bar"><i style="width:${pct}%"></i></div></div>`;
+}
+
+function renderLive(e) {
+  if (!e) { $('meters').innerHTML = ''; return; }
+  let html = meter(e.label, e.elapsed, e.duration, '', `${Math.max(0, e.duration - e.elapsed).toFixed(0)} s left, ${e.samples} samples`);
+  if (e.still && e.still.length) {
+    const gyro = e.still.length === 6 ? e.still.slice(3) : e.still;
+    const worst = Math.max(...gyro);
+    const cls = worst < STILL_LIMIT ? 'ok' : worst < 2 * STILL_LIMIT ? 'warn' : 'bad';
+    const word = cls === 'ok' ? 'Still' : cls === 'warn' ? 'Moving a little' : 'Moving';
+    html += meter('Stillness', Math.min(worst, 3 * STILL_LIMIT), 3 * STILL_LIMIT, cls, word);
+  }
+  $('meters').innerHTML = html;
+}
+
+function renderResults() {
+  const results = events.filter((e) => e.kind === 'result').flatMap((e) => e.values);
+  const outcome = events.filter((e) => e.kind === 'outcome').pop();
+  let html = '';
+  if (results.length) {
+    html += '<table class="vals"><tr><th>Value</th><th>Measured</th><th>Expected</th><th>Between runs</th><th></th></tr>'
+      + results.map((r) => `<tr><td>${esc(keyLabel(r.key))}</td><td>${esc(fmt(r.value))}</td>
+        <td>${r.warn ? `${fmt(r.warn[0])} to ${fmt(r.warn[1])}` : '-'}</td><td>${r.spread ? `+/- ${fmt(r.spread)}` : '-'}</td>
+        <td class="${r.verdict}">${r.verdict}</td></tr>`).join('') + '</table>';
+  }
+  if (outcome && outcome.criteria && outcome.criteria.length) {
+    html += '<table class="vals"><tr><th>Check</th><th>Measured</th><th>Limit</th><th></th></tr>'
+      + outcome.criteria.map((c) => `<tr><td>${esc(c.name)}</td><td>${esc(c.measured)}</td><td>${esc(c.limit)}</td>
+        <td class="${c.status}">${esc(c.status)}</td></tr>`).join('') + '</table>';
+  }
+  $('results').innerHTML = html;
+  if (outcome) {
+    const pass = outcome.result !== 'FAIL';
+    $('center').className = pass ? 'pass' : 'fail';
+    $('outcome').className = pass ? 'pass' : 'fail';
+    // The tile shows a pass; only a failure has words.
+    $('outcome').textContent = pass ? '' : `Calibration failed: ${outcome.reason}.`;
+  }
+}
+
+function plotSvg(p) {
+  const W = 360, H = 240, L = 48, R = 10, T = 8, B = 34;
+  const pts = p.series.flatMap((s) => s.points);
+  const ys = pts.map((q) => q[1]).concat((p.lines || []).map((l) => l.y));
+  let x0 = Math.min(...pts.map((q) => q[0])), x1 = Math.max(...pts.map((q) => q[0]));
+  let y0 = Math.min(...ys), y1 = Math.max(...ys);
+  if (x0 === x1) { x0 -= 1; x1 += 1; }
+  if (y0 === y1) { y0 -= 1; y1 += 1; }
+  const padY = (y1 - y0) * 0.08, padX = (x1 - x0) * 0.04;
+  y0 -= padY; y1 += padY; x0 -= padX; x1 += padX;
+  if (p.equal_axes) {
+    const sx = (x1 - x0) / (W - L - R), sy = (y1 - y0) / (H - T - B), sc = Math.max(sx, sy);
+    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    x0 = cx - (sc * (W - L - R)) / 2; x1 = cx + (sc * (W - L - R)) / 2;
+    y0 = cy - (sc * (H - T - B)) / 2; y1 = cy + (sc * (H - T - B)) / 2;
+  }
+  const X = (v) => L + ((v - x0) / (x1 - x0)) * (W - L - R);
+  const Y = (v) => H - B - ((v - y0) / (y1 - y0)) * (H - T - B);
+  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(p.title)}">`;
+  for (let i = 0; i <= 4; i++) {
+    const yv = y0 + ((y1 - y0) * i) / 4, xv = x0 + ((x1 - x0) * i) / 4;
+    svg += `<line x1="${L}" x2="${W - R}" y1="${Y(yv)}" y2="${Y(yv)}" stroke="#505166" stroke-width="0.5"/>`;
+    svg += `<text x="${L - 4}" y="${Y(yv) + 4}" fill="#e3e3eb" font-size="10" text-anchor="end">${esc(fmt(yv))}</text>`;
+    svg += `<text x="${X(xv)}" y="${H - B + 14}" fill="#e3e3eb" font-size="10" text-anchor="middle">${esc(fmt(xv))}</text>`;
+  }
+  svg += `<text x="${(L + W - R) / 2}" y="${H - 4}" fill="#e3e3eb" font-size="11" text-anchor="middle">${esc(p.x)}</text>`;
+  svg += `<text x="11" y="${(T + H - B) / 2}" fill="#e3e3eb" font-size="11" text-anchor="middle" transform="rotate(-90 11 ${(T + H - B) / 2})">${esc(p.y)}</text>`;
+  (p.lines || []).forEach((l) => {
+    svg += `<line x1="${L}" x2="${W - R}" y1="${Y(l.y)}" y2="${Y(l.y)}" stroke="#ffb84a" stroke-dasharray="4 3"/>`;
+  });
+  p.series.forEach((s, i) => {
+    const c = COLORS[i % COLORS.length];
+    if (p.plot === 'scatter' || s.points.length === 1) {
+      const r = s.points.length > 200 ? 1.5 : 3;
+      svg += s.points.map((q) => `<circle cx="${X(q[0]).toFixed(1)}" cy="${Y(q[1]).toFixed(1)}" r="${r}" fill="${c}"/>`).join('');
+    } else {
+      svg += `<polyline fill="none" stroke="${c}" stroke-width="1.5" points="${s.points.map((q) => `${X(q[0]).toFixed(1)},${Y(q[1]).toFixed(1)}`).join(' ')}"/>`;
+    }
+  });
+  svg += '</svg>';
+  const legend = p.series.map((s, i) => `<span style="color:${COLORS[i % COLORS.length]}">&#9679; ${esc(s.name)}</span>`)
+    .concat((p.lines || []).map((l) => `<span style="color:#ffb84a">- - ${esc(l.name)} ${esc(fmt(l.y))}</span>`)).join('');
+  return `<div class="plot"><h3>${esc(p.title)}</h3>${svg}<div class="legend">${legend}</div></div>`;
+}
+
+function renderPlots() {
+  const plots = events.filter((e) => e.kind === 'plot' && e.series.some((s) => s.points.length));
+  $('plots').innerHTML = plots.map(plotSvg).join('');
+}
+
+async function poll() {
+  clearTimeout(timer);
+  let job, prog;
+  try {
+    [job, prog] = await Promise.all([
+      fetch(`api/setup/job?since=${since}`).then((r) => r.json()),
+      fetch(`api/calibration/progress?since=${psince}`).then((r) => r.json()),
+    ]);
+  } catch (e) {
+    timer = setTimeout(poll, 2000);
+    return;
+  }
+  if (job.lines.length) {
+    $('out').textContent += job.lines.join('\n') + '\n';
+    $('out').scrollTop = $('out').scrollHeight;
+    const lines = $('out').textContent.trim().split('\n').filter((l) => l.trim());
+    $('instruction').textContent = lines.slice(-3).join('\n');
+  }
+  since = job.next;
+  if (prog.events.length) {
+    events = events.concat(prog.events);
+    const stage = prog.events.filter((e) => e.kind === 'stage').pop();
+    if (stage) $('stage').textContent = `Step ${stage.index + 1} of ${stage.total}`;
+    renderResults();
+    if (prog.events.some((e) => e.kind === 'plot')) renderPlots();
+  }
+  psince = prog.next;
+  const live = events.filter((e) => e.kind === 'collect').pop();
+  renderLive(live && Date.now() / 1000 - live.t < 1.5 ? live : null);
+  $('answers').hidden = !job.running || !job.prompt;
+  if (job.prompt) $('answer').type = job.prompt.secret ? 'password' : 'text';
+  $('stop').hidden = !job.running;
+  if (job.running) { timer = setTimeout(poll, 300); return; }
+  timer = null;
+  running = null;
+  if (!events.some((e) => e.kind === 'outcome')) {
+    $('outcome').className = job.code === 0 ? 'pass' : 'fail';
+    $('outcome').textContent = job.code === 0 ? '' : 'Stopped.';
+  }
+  await load();
+}
+
+for (const b of document.querySelectorAll('[data-answer]')) b.addEventListener('click', () => post('api/setup/input', { text: b.dataset.answer }));
+function send() { post('api/setup/input', { text: $('answer').value }); $('answer').value = ''; }
+$('send').addEventListener('click', send);
+$('answer').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); send(); } });
+$('stop').addEventListener('click', () => post('api/setup/stop'));
+load();
+</script>
+</body>
+</html>

@@ -27,6 +27,9 @@ sudo apt-get update
 # Dev:     ros-dev-tools (ament_cmake et al.), colcon, rosdep.
 # SLAM:    slam_toolbox for mapping; nav2 AMCL, map_server and lifecycle_manager
 #          for localization on a saved map.
+# Nav2:    planner (Smac Hybrid-A*), controller (Regulated Pure Pursuit),
+#          behavior tree navigator, behaviors, costmaps and the simple
+#          commander for `racecar nav`.
 # Diag:    rviz2, rqt, foxglove_bridge for visualization on a remote laptop.
 sudo apt-get install -y \
     ros-jazzy-ros-base \
@@ -45,6 +48,14 @@ sudo apt-get install -y \
     ros-jazzy-nav2-map-server \
     ros-jazzy-nav2-amcl \
     ros-jazzy-nav2-lifecycle-manager \
+    ros-jazzy-nav2-planner \
+    ros-jazzy-nav2-controller \
+    ros-jazzy-nav2-bt-navigator \
+    ros-jazzy-nav2-behaviors \
+    ros-jazzy-nav2-costmap-2d \
+    ros-jazzy-nav2-smac-planner \
+    ros-jazzy-nav2-regulated-pure-pursuit-controller \
+    ros-jazzy-nav2-simple-commander \
     ros-jazzy-rqt-graph \
     ros-jazzy-rviz2 \
     ros-jazzy-rqt \

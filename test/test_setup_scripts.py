@@ -332,6 +332,7 @@ class TestNetworkPolkitRule:
             'org.freedesktop.NetworkManager.wifi.scan',
             'org.freedesktop.NetworkManager.settings.modify.own',
             'org.freedesktop.NetworkManager.settings.modify.system',
+            'org.freedesktop.NetworkManager.wifi.share.protected',
         ],
     )
     def test_grants_the_actions_the_wifi_command_needs(self, text, action_id):
@@ -347,7 +348,8 @@ class TestNetworkPolkitRule:
         text = self.INSTALLER.read_text()
         rules = (
             '49-racecar-network.rules 49-racecar-autonomy.rules '
-            '49-racecar-dashboards.rules 49-racecar-teleop.rules 49-racecar-power.rules'
+            '49-racecar-dashboards.rules 49-racecar-teleop.rules 49-racecar-power.rules '
+            '49-racecar-restart.rules'
         )
         assert f'for rule in {rules}; do' in text
         assert 'POLKIT_SRC="${SCRIPT_DIR}/polkit/${rule}"' in text
@@ -621,7 +623,7 @@ class TestDashboardScript:
 
     def test_one_template_for_every_dashboard(self):
         body = (SCRIPTS_DIR / 'dashboards' / 'racecar-app.service.in').read_text()
-        assert '/opt/ros/jazzy' in body and '/opt/ros/humble' not in body
+        assert 'scripts/ros_exec.sh python3 @DIR@/@SCRIPT@' in body
         assert '(port @PORT@)' in body
         assert body.count('@DIR@') == 2
         # Like the 8080, 8084 and 8086 units: the data root is known at start.
@@ -648,8 +650,9 @@ class TestDashboardScript:
     def test_a_failed_install_is_not_reported_as_success(self, text):
         # install_unit runs under `|| true`, which suppresses errexit for its
         # whole body, so the install has to be tested explicitly.
-        assert 'elif $SUDO install -m 0644' in text
-        assert 'install failed' in text
+        assert 'if ! install_if_changed "$rendered" "$SYSTEMD_DIR/$unit" 0644; then' in text
+        lib = (SCRIPTS_DIR / 'setup_lib.sh').read_text()
+        assert 'install failed' in lib
 
     def test_a_failed_daemon_reload_still_reaches_the_summary(self, text):
         assert 'if $SYSTEMCTL daemon-reload; then' in text
@@ -852,6 +855,85 @@ otg_mode=1
         )
         assert out.endswith('dtparam=rtc_bbat_vchg=3000000\n')
 
+    def _cmdline(self, tmp_path, config, func, files=()):
+        """Run resolve_cmdline or remove_serial_console against a temp boot folder."""
+        boot = tmp_path / 'boot'
+        boot.mkdir(exist_ok=True)
+        (boot / 'config.txt').write_text(config)
+        for name, text in files:
+            (boot / name).parent.mkdir(parents=True, exist_ok=True)
+            (boot / name).write_text(text)
+        text = self.SCRIPT.read_text()
+        bodies = ''
+        for name in ('resolve_cmdline', 'remove_serial_console'):
+            body = text.split(f'{name}() {{', 1)[1].split('\n}\n', 1)[0]
+            bodies += f'{name}() {{{body}\n}}\n'
+        script = f'set -eo pipefail\nCONFIG_TXT={boot}/config.txt\nSUDO=\n{bodies}{func}\n'
+        result = subprocess.run(['bash', '-c', script], capture_output=True, text=True)
+        return result, boot
+
+    def test_cmdline_defaults_next_to_config(self, tmp_path):
+        result, boot = self._cmdline(tmp_path, '[all]\nkernel=vmlinuz\n', 'resolve_cmdline')
+        assert result.stdout.strip() == f'{boot}/cmdline.txt'
+
+    def test_cmdline_follows_cmdline_and_os_prefix(self, tmp_path):
+        config = '[all]\nos_prefix=current/\ncmdline=nvme.txt\n'
+        result, boot = self._cmdline(tmp_path, config, 'resolve_cmdline')
+        assert result.stdout.strip() == f'{boot}/current/nvme.txt'
+
+    def test_missing_cmdline_is_reported_not_fatal(self, tmp_path):
+        result, _ = self._cmdline(tmp_path, '[all]\n', 'remove_serial_console')
+        assert result.returncode == 0, result.stderr
+        assert 'serial console left as is' in result.stdout
+
+    def test_serial_console_removed_from_the_resolved_file(self, tmp_path):
+        line = 'console=serial0,115200 console=tty1 root=LABEL=writable\n'
+        result, boot = self._cmdline(
+            tmp_path, '[all]\ncmdline=cmd.txt\n', 'remove_serial_console', [('cmd.txt', line)]
+        )
+        assert result.returncode == 0, result.stderr
+        assert (boot / 'cmd.txt').read_text() == 'console=tty1 root=LABEL=writable\n'
+
+    def test_no_unguarded_cmdline_edit(self):
+        assert 'CMDLINE_TXT' not in self.SCRIPT.read_text()
+
+
+class TestSetupAllPhases:
+    """setup_all.sh --from / --skip and the resume hint on a failed phase."""
+
+    def _run(self, *args, body='for n in 3 4 7; do echo "$n:"; phase $n true; done'):
+        text = (SCRIPTS_DIR / ORCHESTRATOR).read_text()
+        start, end = text.index('PHASES='), text.index('SCRIPT_DIR=')
+        head = text[start:end]
+        script = f'set -eo pipefail\n{head}\n{body}\n'
+        return subprocess.run(
+            ['bash', '-c', script, 'setup_all', *args], capture_output=True, text=True
+        )
+
+    def test_every_phase_but_the_dashboards_runs_through_phase(self):
+        text = (SCRIPTS_DIR / ORCHESTRATOR).read_text()
+        for n in range(1, 12):
+            assert f'\nphase {n} ' in text, n
+
+    def test_from_skips_earlier_phases(self):
+        out = self._run('--from', '4').stdout
+        assert out.split('4:')[0].count('skipped') == 1 and 'skipped' not in out.split('4:')[1]
+
+    def test_skip_list(self):
+        out = self._run('--skip', '4,7').stdout
+        assert out.count('skipped') == 2 and out.index('3:') < out.index('skipped')
+
+    @pytest.mark.parametrize(
+        'args', [('--from',), ('--from', '15'), ('--skip', 'x'), ('--bogus',)]
+    )
+    def test_bad_options_exit_2(self, args):
+        assert self._run(*args).returncode == 2
+
+    def test_failed_phase_names_the_resume_command(self):
+        result = self._run(body='phase 5 false; echo after')
+        assert result.returncode == 1 and 'after' not in result.stdout
+        assert 'bash scripts/setup_all.sh --from 5' in result.stderr
+
 
 def test_terminal_app_packages_are_installed_by_setup():
     # A fresh car must get what scripts/terminal.py runs: ttyd, PAM for Python, tmux.
@@ -913,7 +995,7 @@ class TestNvmeSudoers:
     def test_setup_checks_with_visudo_and_installs_0440(self):
         setup = (SCRIPTS_DIR / 'setup_user_env.sh').read_text()
         assert 'sudo visudo -cf "$SUDOERS_SRC"' in setup
-        assert 'install -m 0440 -o root -g root "$SUDOERS_SRC" "$SUDOERS_DST"' in setup
+        assert 'install_if_changed "$SUDOERS_SRC" "$SUDOERS_DST" 0440 root' in setup
         assert 'SUDOERS_DST="/etc/sudoers.d/racecar-nvme"' in setup
 
 
@@ -1049,3 +1131,76 @@ class TestRerunOnASetUpCar:
         # Under pipefail, grep -q exiting at the first match can SIGPIPE the
         # writer and fail the test even though it matched.
         assert '| grep -q' not in (SCRIPTS_DIR / script).read_text()
+
+
+class TestSetupLib:
+    """setup_lib.sh: install a file only when it changed; the target user."""
+
+    def _run(self, body, **env):
+        lib = SCRIPTS_DIR / 'setup_lib.sh'
+        script = f'set -eo pipefail\nSUDO=\nsource "{lib}"\n{body}\n'
+        return subprocess.run(
+            ['bash', '-c', script], capture_output=True, text=True, env=env or None
+        )
+
+    def test_installs_then_reports_up_to_date(self, tmp_path):
+        src, dst = tmp_path / 'src', tmp_path / 'dst'
+        src.write_text('a\n')
+        body = f'install_if_changed {src} {dst} 0640; echo "INSTALLED=$INSTALLED"'
+        first = self._run(body)
+        assert first.returncode == 0 and 'INSTALLED=1' in first.stdout
+        assert dst.read_text() == 'a\n' and oct(dst.stat().st_mode & 0o777) == '0o640'
+        again = self._run(body)
+        assert 'already up to date' in again.stdout and 'INSTALLED=0' in again.stdout
+
+    def test_failed_install_returns_1(self, tmp_path):
+        src = tmp_path / 'src'
+        src.write_text('a\n')
+        r = self._run(
+            f'if install_if_changed {src} {tmp_path}/no/such/dir/dst 0644; then echo ok;'
+            ' else echo failed; fi'
+        )
+        assert 'failed' in r.stdout and 'install failed' in r.stderr
+
+    def test_target_user_is_the_sudo_caller(self):
+        import getpass
+
+        r = self._run(
+            'echo "$TARGET_USER $TARGET_HOME"', SUDO_USER=getpass.getuser(), PATH='/usr/bin:/bin'
+        )
+        user, home = r.stdout.split()
+        assert user == getpass.getuser() and home.startswith('/')
+
+
+class TestRosExec:
+    """ros_exec.sh: the units' ROS launcher."""
+
+    SCRIPT = SCRIPTS_DIR / 'ros_exec.sh'
+
+    def test_units_start_through_it(self):
+        for unit in (
+            'racecar-battery-guard.service',
+            'racecar-dashboard.service',
+            'racecar-mapview.service',
+            'racecar-watchdog.service',
+            'racecar-terminal.service',
+        ):
+            text = (SCRIPTS_DIR / unit).read_text()
+            assert 'scripts/ros_exec.sh python3 ' in text and 'source /opt/ros' not in text, unit
+        autonomy = (SCRIPTS_DIR / 'racecar-autonomy.service').read_text()
+        assert 'ros_exec.sh python3 ' in autonomy and 'autonomy_stop.py $MAINPID' in autonomy
+
+    @pytest.mark.skipif(not Path('/opt/ros/jazzy/setup.bash').exists(), reason='no ROS install')
+    @pytest.mark.parametrize('given, want', [(None, 'LOCALHOST'), ('SUBNET', 'SUBNET')])
+    def test_discovery_range_kept_or_localhost(self, given, want):
+        env = {'HOME': str(Path.home()), 'PATH': '/usr/bin:/bin'}
+        if given:
+            env['ROS_AUTOMATIC_DISCOVERY_RANGE'] = given
+        r = subprocess.run(
+            [str(self.SCRIPT), 'printenv', 'ROS_AUTOMATIC_DISCOVERY_RANGE', 'ROS_DISTRO'],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.split() == [want, 'jazzy']
