@@ -73,8 +73,7 @@ not run it with `sudo`.
 Pass: the setup ends with a request to reboot.
 
 Fail: the setup stops at the failed part and prints the command that
-resumes there, for example `bash scripts/setup_all.sh --from 5`. Fix the
-problem it names. Then run that command.
+resumes there. Fix the problem it names. Then run that command.
 
 ## Hardware fitting {#hardware-fitting}
 
@@ -100,8 +99,9 @@ Log in again over SSH.
 `racecar setup car` takes the car the rest of the way. It shows a checklist,
 then runs the next open step.
 
-The Setup page of the Car Profile app (`http://<car>.local/profile/setup`)
-runs the same steps from a browser. Tap a tile to run a step or fill in its
+The Setup page of the Car Profile app runs the same steps from a browser:
+`http://<car address>/profile/setup`, for example
+`http://10.42.0.1/profile/setup` on the car's access point. Tap a tile to run a step or fill in its
 answers. When a step asks for the password, type the racecar password in
 the box that opens.
 
@@ -112,8 +112,8 @@ racecar setup car STEP        # run one step again
 racecar setup car done STEP   # mark a step done by hand
 ```
 
-At each step, press Enter to run or confirm the step, d to mark it done, s
-to skip it, or q to stop. Every step checks the car first, so a step already
+Each step asks: "Press Enter to run or confirm a step, d to mark done, s to
+skip, and q to stop". Every step checks the car first, so a step already
 done shows `[DONE]`. Stop at any point and run `racecar setup car` again
 later to continue.
 

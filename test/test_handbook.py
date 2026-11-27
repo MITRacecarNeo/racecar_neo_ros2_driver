@@ -101,7 +101,7 @@ def test_static_build_writes_every_page(hb, tmp_path):
     index = (tmp_path / 'index.html').read_text()
     assert 'href="installation.html#identity"' in index
     assert (tmp_path / 'rcn.css').exists()
-    assert 'href="troubleshooting.html#gamepad-joy-rate"' in (tmp_path / 'health.html').read_text()
+    assert 'href="troubleshooting.html"' in (tmp_path / 'health.html').read_text()
     assert (tmp_path / 'troubleshooting.html').exists()
     assert not list(tmp_path.glob('*.png'))
 

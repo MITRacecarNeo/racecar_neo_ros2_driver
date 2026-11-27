@@ -58,8 +58,8 @@ page.
 
 ## Health run {#health-run}
 
-`racecar health` tests the power supply, the link to the NEO-PIT PCB, and
-the data drive over 30 seconds each. Teleop must be running.
+`racecar health` tests the power supply and the link to the NEO-PIT PCB
+for 30 seconds each, then the data drive. Teleop must be running.
 
 1. Put the car on a stand so all four wheels are off the ground.
 2. Connect a charged battery.
@@ -113,6 +113,3 @@ connector and run the check again.
 Each run saves a report to `health/<time>/` on the data drive:
 `report.md` to read, `report.json` for tools, and `samples.csv` with every
 5 V reading.
-
-The gamepad sends about 15 messages a second, with short gaps. This is
-normal. See [Gamepad /joy rate](../troubleshooting.md#gamepad-joy-rate).

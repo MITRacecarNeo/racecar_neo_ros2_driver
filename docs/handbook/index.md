@@ -25,8 +25,6 @@ Problems not covered here are in the
 
 ## Setup order
 
-Follow the steps in order on a new car.
-
 | Step | Task | Page |
 | ---- | ---- | ---- |
 | 1 | Operating system on the SD card | [Installation](installation.md#os-image) |

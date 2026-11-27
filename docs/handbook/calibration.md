@@ -13,7 +13,8 @@ throttle calibration.
 - [Car record](#car-record)
 
 Set up the ESC on a new car, after replacing the ESC, and after an ESC
-factory reset. Do the three ESC steps in order.
+factory reset. Do these in order: the program settings, the throttle
+calibration, then the dynamics.
 
 ## ESC program settings
 
@@ -123,12 +124,11 @@ racecar calibrate check       # each calibration against the live sensors
 
 The Calibration page of the Car Profile app runs one step at a time from a
 browser. Press Calibrate on a step's tile. Follow the panel at the top of
-the page. A
-tile turns green when its calibration is done and its check passed. A result
-that fails its check is not saved, and the panel turns red.
+the page. A tile turns green when its calibration is done and its check
+passed. A result that fails its check is not saved, and the panel turns red.
 
-At each step, press Enter to run it, s to skip it, b to go back a step, or
-q to stop. Each step prints its own instructions. At the end, accept the
+Each step asks: "Press Enter to run, s to skip, b to go back a step, and q
+to stop". Each step prints its own instructions. At the end, accept the
 teleop restart. Then run
 `racecar calibrate check`.
 
@@ -181,8 +181,7 @@ the steering linkage.
 
 ## Dynamics after an ESC calibration
 
-Run `racecar calibrate dynamics` after every ESC throttle calibration. The
-car's speeds change with the calibration.
+Run `racecar calibrate dynamics` after every ESC throttle calibration.
 
 Setup:
 
@@ -192,7 +191,6 @@ Setup:
 3. Connect the controller.
 
 Hold RB while the car drives each run. The car stops when you release RB.
-The results go to the car profile.
 
 ## Per-car speed constants
 
