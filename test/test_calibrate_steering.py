@@ -414,7 +414,7 @@ class TestRunFlow:
 
         cal.driver.drive = drive
         assert cal.drive_pairs([(0.0, 0.25)]) == {(0.0, 0.25): 'bag'}
-        assert prompts == ['Press Enter to run it again: ']
+        assert prompts == ['Press Enter to run again: ']
         assert logged.count('The run stopped before the end. It runs again.') == 1
 
     def test_operator_can_finish_without_them(self, st, monkeypatch):

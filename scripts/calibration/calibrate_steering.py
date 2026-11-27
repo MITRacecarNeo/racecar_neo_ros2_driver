@@ -651,7 +651,7 @@ class SteeringCalibrator:
                     bags[key] = bag
                     break
                 if self.driver.refused:
-                    read_line('Press Enter to run it again: ')
+                    read_line('Press Enter to run again: ')
                     continue
                 log.info('The run stopped before the end. It runs again.')
         return bags

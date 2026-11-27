@@ -132,7 +132,7 @@ def run_mission(args: argparse.Namespace) -> int:
     if args.mission_command == 'list':
         name = args.map or loaded_map()
         if not name:
-            print('No map loaded. Load one (racecar map load NAME) or name one: --map NAME',
+            print('No map loaded. Load one: racecar map load NAME. Or name one: --map NAME',
                   file=sys.stderr)  # fmt: skip
             return 2
         found = missions.listing(name)
@@ -148,7 +148,8 @@ def run_mission(args: argparse.Namespace) -> int:
         print('No map loaded. Load one first: racecar map load NAME', file=sys.stderr)
         return 2
     if not start_planner():
-        print('The Planner did not start: racecar service status planner', file=sys.stderr)
+        print('The Planner did not start. Check it: racecar service status planner',
+              file=sys.stderr)  # fmt: skip
         return 1
     code, reply = planner_post('api/run_saved', {'name': args.name})
     if code != 200:
@@ -211,7 +212,7 @@ def run_goal(node: Any, x: float, y: float, heading: float, wait: bool) -> int:
                 print('Arrived.')
                 return 0
             if state in ENDINGS:
-                print(ENDINGS[state], view['message'])
+                print(' '.join(filter(None, (ENDINGS[state], view['message']))))
                 return 1
             if state != shown and state in NOTES:
                 print(f'  {NOTES[state]}')
