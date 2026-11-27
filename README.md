@@ -1007,6 +1007,11 @@ racecar nav mission run NAME      # run one in the Planner (started if needed)
 racecar nav mission stop          # stop the mission that is running
 ```
 
+Student programs send goals with `rc.nav` in the student library (`go_to`,
+`move`, `run_mission`, `cancel`, `get_status`); a goal holds the driving, and
+`rc.drive` calls are ignored until it ends. A program's goal stops 0.5 s after
+the program stops answering.
+
 - A goal is refused while something else drives ("Planner is driving."). A
   goal the car cannot reach, or a stall, ends it.
 - Loading a map and starting to map are refused while a mission, a goal, a

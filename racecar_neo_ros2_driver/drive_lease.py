@@ -52,6 +52,7 @@ class Holder:
     pid: int
     beat: float  # time.monotonic(), one clock for every process of a boot
     share: bool = False  # the car waits: a Drive panel may move it under this lease
+    nav: bool = False  # the navigator drives for this holder (a program's goal)
 
     def fresh(self, now: float) -> bool:
         return 0.0 <= now - self.beat <= STALE_SEC
@@ -64,9 +65,9 @@ def folder() -> Path:
 def _read(where: Path, record: str = RECORD) -> Holder | None:
     try:
         raw = json.loads((where / record).read_text())
-        share = bool(raw.get('share', False))
+        share, nav = bool(raw.get('share', False)), bool(raw.get('nav', False))
         beat = float(raw['beat'])
-        return Holder(str(raw['owner']), str(raw['name']), int(raw['pid']), beat, share)
+        return Holder(str(raw['owner']), str(raw['name']), int(raw['pid']), beat, share, nav)
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return None
 
@@ -118,11 +119,12 @@ class DriveLease:
         self.owner = owner
         self.name = name
         self.share = False
+        self.nav = False
         self._where = where or folder()
         self._clock = clock
         self._record = record
         self._beat: float | None = None  # this object's last heartbeat while holding
-        self._shared = False  # what the record says
+        self._shared = (False, False)  # share and nav, as the record says
 
     @property
     def enforced(self) -> bool:
@@ -140,12 +142,23 @@ class DriveLease:
         with _locked(self._where) as got:
             now = self._clock()
             found = _read(self._where, self._record)
-            if not got or (found and found.fresh(now) and found.owner != self.owner):
+            if not got or (found and found.fresh(now) and not self._yields(found)):
                 self._beat = None
                 return False
-            self._write(Holder(self.owner, self.name, os.getpid(), now, self.share))
-            self._beat, self._shared = now, self.share
+            self._write(Holder(self.owner, self.name, os.getpid(), now, self.share, self.nav))
+            self._beat, self._shared = now, (self.share, self.nav)
             return True
+
+    def _yields(self, found: Holder) -> bool:
+        """
+        Return True when `found` gives way to this lease.
+
+        It does for the same owner, and 8080's stand-in for a program gives way
+        to the program itself.
+        """
+        if found.owner == self.owner:
+            return True
+        return found.owner == PROGRAM_OWNER and self.owner.startswith(PROGRAM_OWNER + '-')
 
     def refresh(self) -> bool:
         """Keep the lease; False once it is lost, and until the next take()."""
@@ -157,7 +170,7 @@ class DriveLease:
         if now - self._beat > STALE_SEC:
             self._beat = None
             return False
-        if now - self._beat >= REFRESH_SEC or self.share != self._shared:
+        if now - self._beat >= REFRESH_SEC or (self.share, self.nav) != self._shared:
             return self.take()
         found = _read(self._where, self._record)
         if found is None or found.owner != self.owner:
@@ -191,9 +204,19 @@ class DriveLease:
         return found is not None and found.owner == self.owner and found.pid != os.getpid()
 
     def follows(self) -> bool:
-        """Return True while another process of this owner drives; always without the folder."""
+        """
+        Return True while the navigator may drive.
+
+        Another process of this owner holds the lease, or a holder lets the
+        navigator drive for it (`nav`), and the car is not waiting for the
+        operator. Always without the folder.
+        """
         found = self._fresh()
-        return not self.enforced or (self.joined() and found is not None and not found.share)
+        if not self.enforced:
+            return True
+        if found is None or found.share:
+            return False
+        return found.nav or (found.owner == self.owner and found.pid != os.getpid())
 
     def panel(self) -> DriveLease:
         """Return the lease a Drive panel takes while this one is shared."""
@@ -215,9 +238,14 @@ class DriveLease:
 # The student library's /drive node, there from create_racecar() until the process ends,
 # and the frame its commands carry; no driver source uses it.
 PROGRAM_NODE = 'drive_pub'
-PROGRAM_OWNER = 'program'
+PROGRAM_OWNER = 'program'  # the 8080 watch; a library that holds itself adds -<pid>
 PROGRAM_FRAME = 'base_link'
 PROGRAM_CHECK_SEC = 0.1
+
+
+def is_program(owner: str) -> bool:
+    """Return True for a student program's lease, one per program."""
+    return owner == PROGRAM_OWNER or owner.startswith(PROGRAM_OWNER + '-')
 
 
 class ProgramWatch:
@@ -235,7 +263,9 @@ class ProgramWatch:
 
     def tick(self, present: bool) -> None:
         """Hold the lease, take it when free, or give it back; `present`: the node publishes."""
-        if present:
+        found = self.lease._fresh()
+        itself = found is not None and is_program(found.owner) and found.pid != os.getpid()
+        if present and not itself:  # a newer library holds the car itself
             self.lease.hold()
         elif self.lease.enforced and self.lease.held:
             self.lease.release()
@@ -264,7 +294,7 @@ class ProgramFilter:
         now = self._clock()
         if now - self._checked >= PROGRAM_CHECK_SEC:
             found = holder(self._where, now)
-            self._checked, self._other = now, found is not None and found.owner != PROGRAM_OWNER
+            self._checked, self._other = now, found is not None and not is_program(found.owner)
         return not self._other
 
 

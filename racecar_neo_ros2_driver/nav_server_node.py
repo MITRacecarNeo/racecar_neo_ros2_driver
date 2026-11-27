@@ -90,6 +90,8 @@ class NavServerNode(Node):
         except (ValueError, KeyError, TypeError) as exc:
             self.get_logger().warn(f'Command refused: {exc}')
             ok, message, actions = False, BAD_MISSION, []
+        if raw.get('verb') == 'alive':
+            return  # a program's heartbeat, 5 a second: no answer, nothing to publish
         self._answers[key] = (ok, message)
         while len(self._answers) > ANSWERS_KEPT:
             self._answers.popitem(last=False)

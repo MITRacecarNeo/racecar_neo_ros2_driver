@@ -23,6 +23,9 @@ All notable changes to this project will be documented in this file. The format 
   student program holds the car from its start to its end, and a notebook
   until its kernel is shut down. The safety controller drops a program's
   commands while something else holds the car.
+- The navigator drives a student program's goal under the program's own hold
+  on the car, and stops it 0.5 s after the program stops answering; two
+  programs no longer share the car. For `rc.nav` in the student library.
 - A stall banner on every page the car serves (`scripts/web/stall.js`,
   8080 `/api/stall`): yellow while the throttle is held after a stall or
   during the cooldown, red during a lockout, with the seconds left.

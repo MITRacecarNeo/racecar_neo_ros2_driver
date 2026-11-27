@@ -14,17 +14,25 @@ refused; check asks without starting. The other verbs are always taken. Where
 the car fails or stalls, a mission started with `resumable` pauses; any other
 ends (failed, stalled) and gives the car back. `log` (a key, '' for off) keeps
 the mission's events for the front end that sent it.
+
+A student program holds the drive lease itself while it runs. Its start
+carries its `pid` and `heartbeat`: the goal is driven under the program's
+lease (the program marks its record `nav`, and the drive bridge follows it),
+the verb `alive` refreshes it, and it stops HEARTBEAT_SEC after the last
+refresh, or when the program no longer holds the car.
 """
 
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable
 import math
 import threading
+import time
 from typing import Any
 
 from . import missions
-from .drive_lease import DriveLease
+from .drive_lease import DriveLease, is_program, refused
 
 YAW_TOLERANCE = 0.5  # rad, Nav2's yaw_goal_tolerance (config/nav2.yaml)
 # Nav2 can report a new goal reached for the path to the one before it. Its word
@@ -44,6 +52,8 @@ NOT_LOCALIZED = 'Wait until the car is localized.'
 STALLED = 'Car stalled.'
 UNKNOWN = 'Unknown command.'
 BAD_MISSION = 'Not a valid mission.'
+PROGRAM_GONE = 'The program stopped.'
+HEARTBEAT_SEC = 0.5
 
 Pose = tuple[float, float, float]
 Action = tuple[Any, ...]
@@ -372,14 +382,20 @@ class Run:
 
 
 class Commander:
-    def __init__(self, lease: DriveLease | None = None) -> None:
+    def __init__(
+        self, lease: DriveLease | None = None, clock: Callable[[], float] = time.monotonic
+    ) -> None:
         self.run = Run()
+        self._clock = clock
         self.lease = lease or DriveLease(OWNER, 'Navigation')
         self.owner = ''
         self.name = ''
         self.message = ''  # why the last mission ended by itself, if it did
         self.log = ''
         self.resumable = False
+        self.program = 0  # the pid of the program whose goal runs, under its lease
+        self.heartbeat = False
+        self._alive = 0.0
 
     def command(
         self,
@@ -394,8 +410,12 @@ class Commander:
         if verb == 'start':
             return self._start(raw, pose, localized, stalled, ready)
         if verb == 'check':
-            message = self._problem(localized, stalled, ready)
+            message = self._problem(localized, stalled, ready, self._pid(raw))
             return not message, message, []
+        if verb == 'alive':
+            if raw.get('owner') == self.owner:
+                self._alive = self._clock()
+            return True, '', []
         if verb == 'edit':
             return True, '', self.run.edit(missions.parse(raw.get('mission')), pose)
         if verb == 'log':
@@ -419,19 +439,38 @@ class Commander:
         ready: bool,
     ) -> tuple[bool, str, list[Action]]:
         mission = missions.parse(raw.get('mission'))
-        message = self._problem(localized, stalled, ready)
+        pid = self._pid(raw)
+        message = self._problem(localized, stalled, ready, pid)
         if message:
             return False, message, []
         self.lease.name, self.lease.share = str(raw.get('name') or 'Navigation'), False
-        if not self.lease.take():
+        self.program = pid if self._holds(pid) else 0
+        if not self.program and not self.lease.take():
             return False, self.lease.refused(), []
         self.owner, self.name, self.message = str(raw.get('owner') or ''), self.lease.name, ''
+        self.heartbeat, self._alive = bool(raw.get('heartbeat')), self._clock()
         self.resumable = bool(raw.get('resumable'))
         self.log = str(raw.get('log') or '')
         self.run.record_events(bool(self.log))
         return True, '', self.run.start(mission, pose)
 
-    def _problem(self, localized: bool | None, stalled: bool, ready: bool) -> str:
+    @staticmethod
+    def _pid(raw: dict[str, Any]) -> int:
+        try:
+            return int(raw.get('pid') or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def _holds(self, pid: int) -> bool:
+        """Return True when the program `pid` holds the car."""
+        found = self.lease.holder()
+        if not pid or found is None:
+            return False
+        return is_program(found.owner) and found.pid == pid
+
+    def _problem(
+        self, localized: bool | None, stalled: bool, ready: bool, pid: int = 0
+    ) -> str:
         """Return why a mission cannot start, or ''."""
         if not ready or localized is None:
             return NO_MAP
@@ -441,7 +480,7 @@ class Commander:
             return NOT_LOCALIZED
         if stalled:
             return STALLED
-        return self.lease.refused() if self.lease.holder() else ''
+        return self.lease.refused() if self.lease.holder() and not self._holds(pid) else ''
 
     def tick(
         self, now: float, pose: Pose | None, localized: bool | None, stalled: bool
@@ -450,7 +489,17 @@ class Commander:
         actions = self.run.tick(now, pose, localized, stalled)
         if not self.resumable:
             actions += self.run.give_up()
-        if self.run.underway():
+        if self.heartbeat and self.run.underway() and now - self._alive > HEARTBEAT_SEC:
+            self.message = PROGRAM_GONE
+            actions += self.run.stop()
+        if self.program:
+            if not self.run.underway():
+                self.program = 0
+            elif self.lease.enforced and not self._holds(self.program):
+                found = self.lease.holder()
+                self.message = refused(found) if found else PROGRAM_GONE
+                actions += self.run.stop()
+        elif self.run.underway():
             self.lease.share = self.run.state in SHARED
             if not self.lease.hold():
                 self.message = self.lease.refused()

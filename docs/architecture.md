@@ -319,7 +319,14 @@ waits for the operator (paused, or localization lost) the record is marked
 sent to Nav2 directly does not move the car. A mission that fails or stalls
 pauses when its front end can resume it (the Planner) and ends otherwise.
 `racecar map start`, `load` and `resume` are refused while something drives
-(`map_control.require_parked`; the driving apps are stopped instead). Front ends use
+(`map_control.require_parked`; the driving apps are stopped instead). A student
+program holds the lease itself, one owner per program (`program-<pid>`,
+`drive_lease.is_program`). Its goal carries its `pid` and `heartbeat`: the
+navigator drives it under the program's lease (the program marks its record
+`nav`, which `follows` accepts), the program sends `alive` (no answer) every
+0.2 s, and the goal stops 0.5 s after the last one or when the program no
+longer holds the car. The 8080 watch leaves a program that holds the lease
+itself. Front ends use
 `nav_link.NavLink`: a command on `/nav/command` (JSON, with an id), its answer
 in `/nav/state` (5 Hz, latched). Closing the Planner stops a mission started
 from it.

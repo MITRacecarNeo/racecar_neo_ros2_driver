@@ -107,6 +107,12 @@ def test_a_command_is_sent_again_until_answered(node, monkeypatch):
     assert node.pub.sent[0]['id'] == node.pub.sent[1]['id']
 
 
+def test_notify_waits_for_nothing(node):
+    link = nav_link.NavLink(node)
+    link.notify('alive', owner='program-1')
+    assert node.pub.sent[0]['verb'] == 'alive' and node.pub.sent[0]['owner'] == 'program-1'
+
+
 def test_no_answer(node, monkeypatch):
     monkeypatch.setattr(nav_link, 'ANSWER_SEC', 0.1)
     link = nav_link.NavLink(node)

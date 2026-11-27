@@ -154,6 +154,40 @@ class TestRules:
         navigator.release()
         assert not bridge.follows()
 
+    def test_the_bridge_follows_a_program_that_lets_the_navigator_drive(self, make):
+        bridge, program = make('nav'), make('program', 'Program')
+        program.take()
+        assert not bridge.follows()
+        program.nav = True
+        program.refresh()
+        assert bridge.follows()
+        program.share = True
+        program.refresh()
+        assert not bridge.follows()
+
+    def test_a_library_takes_the_car_from_the_watch_and_keeps_it(self, make, monkeypatch):
+        watch = dl.ProgramWatch(make('program', 'Program'))
+        watch.tick(present=True)  # 8080 sees the library's node before the library holds
+        library = make('program-4242', 'Program')
+        with monkeypatch.context() as m:
+            m.setattr(dl.os, 'getpid', lambda: 4242)
+            assert library.take()
+        watch.tick(present=True)
+        assert dl._read(library._where).owner == 'program-4242'
+        assert not make('program-7', 'Program').take()  # another program still waits
+        assert not make('webteleop').take()
+
+    def test_the_watch_leaves_a_library_that_holds_itself(self, make, monkeypatch):
+        watch = dl.ProgramWatch(make('program', 'Program'))
+        library = make('program', 'Program')
+        library.nav = True
+        library.take()
+        with monkeypatch.context() as m:
+            m.setattr(dl.os, 'getpid', lambda: 999999)
+            watch.tick(present=True)
+            assert not watch.lease.held
+        assert dl._read(library._where).nav
+
     def test_hold_takes_when_free(self, make):
         a, b = make('a'), make('b')
         assert a.hold() and a.hold() and not b.hold()
@@ -317,6 +351,17 @@ class TestProgramFilter:
         assert not filt.allows('base_link')  # read again after PROGRAM_CHECK_SEC
         clock.now += 0.2
         assert filt.allows('base_link')
+
+    def test_a_program_that_holds_itself_passes(self, filt, make, clock):
+        make('program-4242', 'Program').take()
+        clock.now += 0.2
+        assert filt.allows('base_link')
+        assert dl.is_program('program-4242') and dl.is_program('program')
+        assert not dl.is_program('programs') and not dl.is_program('planner')
+
+    def test_two_programs_do_not_share_the_car(self, make):
+        first, second = make('program-1', 'Program'), make('program-2', 'Program')
+        assert first.take() and not second.take()
 
     def test_without_the_folder_everything_passes(self, clock, tmp_path):
         assert dl.ProgramFilter(tmp_path / 'none', clock).allows('base_link')

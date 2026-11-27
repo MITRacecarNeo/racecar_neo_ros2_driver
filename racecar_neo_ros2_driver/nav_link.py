@@ -7,7 +7,7 @@ A front end's side of the navigator (nav_server_node.py).
 
 Topics, all std_msgs/String with JSON:
 
-    /nav/command   a command (nav_runner.py) with an id
+    /nav/command   a command (nav_runner.py) with an id; `alive` gets no answer
     /nav/state     latched, 5 times a second: the mission's state and the answers
                    to the last commands by id
     /nav/mission   latched: the mission and its version, when it changes
@@ -103,6 +103,11 @@ class NavLink:
 
     def underway(self) -> bool:
         return self.view()['state'] in (*ACTIVE, 'paused')
+
+    def notify(self, verb: str, **fields: Any) -> None:
+        """Send a command that needs no answer (alive)."""
+        text = json.dumps({'id': uuid.uuid4().hex, 'verb': verb, **fields})
+        self._pub.publish(self._msg(data=text))
 
     def command(
         self, verb: str, wait: Callable[[float], Any] | None = None, **fields: Any

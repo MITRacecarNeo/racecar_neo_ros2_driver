@@ -1,6 +1,7 @@
 """nav_runner.py: the mission runner and the navigator's commands."""
 
 import math
+from pathlib import Path
 
 import pytest
 from racecar_neo_ros2_driver import missions, nav_runner
@@ -355,8 +356,8 @@ def make(tmp_path, clock):
 
 
 @pytest.fixture
-def commander(make):
-    return nav_runner.Commander(make('nav', 'Navigation'))
+def commander(make, clock):
+    return nav_runner.Commander(make('nav', 'Navigation'), clock)
 
 
 HERE = (0.0, 0.0, 0.0)
@@ -517,6 +518,77 @@ class TestCommander:
         start(commander, name='racecar nav')
         assert ('cancel',) in happens()
         assert commander.run.state == why and make('b').take()
+
+    def test_a_programs_goal_drives_under_its_own_lease(self, commander, make, clock, tmp_path):
+        from racecar_neo_ros2_driver.drive_lease import DriveLease, holder
+
+        program = make('program', 'Program')
+        program.take()
+        pid = holder(tmp_path, clock.now).pid
+        ok, _, actions = start(commander, name='Program', pid=pid, heartbeat=True)
+        assert ok and sends(actions) and commander.program == pid
+        assert holder(tmp_path, clock.now).owner == 'program'  # the navigator took nothing
+        assert start(commander, name='Planner')[:2] == (False, 'Program is driving.')
+        assert make('webteleop').refused() == 'Program is driving.'
+        assert isinstance(commander.lease, DriveLease) and not commander.lease.held
+
+    def test_another_program_or_none_is_refused(self, commander, make, tmp_path, clock):
+        from racecar_neo_ros2_driver.drive_lease import holder
+
+        make('program', 'Program').take()
+        pid = holder(tmp_path, clock.now).pid
+        assert start(commander, pid=pid + 1)[:2] == (False, 'Program is driving.')
+        assert say(commander, 'check', pid=pid)[:2] == (True, '')
+        assert say(commander, 'check', pid=pid + 1)[:2] == (False, 'Program is driving.')
+
+    def test_a_program_that_holds_itself_by_pid(self, commander, make, clock, tmp_path):
+        from racecar_neo_ros2_driver.drive_lease import holder
+
+        make('program-77', 'Program').take()
+        pid = holder(tmp_path, clock.now).pid
+        assert start(commander, name='Program', pid=pid)[0] and commander.program == pid
+
+    def test_a_program_that_lets_go_stops_its_goal(self, commander, make, clock, tmp_path):
+        from racecar_neo_ros2_driver.drive_lease import holder
+
+        program = make('program', 'Program')
+        program.take()
+        start(commander, pid=holder(tmp_path, clock.now).pid)
+        program.release()
+        assert ('cancel',) in commander.tick(clock.now, HERE, True, False)
+        assert commander.run.state == 'stopped'
+        assert commander.view(0)['message'] == 'The program stopped.'
+        assert commander.program == 0 or not commander.run.underway()
+
+    def test_a_program_gone_quiet_stops_its_goal(self, commander, make, clock, tmp_path):
+        from racecar_neo_ros2_driver.drive_lease import holder
+
+        program = make('program', 'Program')
+        program.take()
+        start(commander, name='Program', pid=holder(tmp_path, clock.now).pid, heartbeat=True)
+        for _ in range(10):
+            clock.now += 0.2
+            program.refresh()
+            say(commander, 'alive', owner='program')
+            commander.tick(clock.now, HERE, True, False)
+        assert commander.run.state == 'running'
+        say(commander, 'alive', owner='someone else')
+        clock.now += 0.6
+        program.refresh()
+        commander.tick(clock.now, HERE, True, False)
+        assert commander.run.state == 'stopped'
+        assert commander.view(0)['message'] == 'The program stopped.'
+
+    def test_without_the_folder_the_heartbeat_still_counts(self, clock):
+        from racecar_neo_ros2_driver.drive_lease import DriveLease
+
+        lease = DriveLease('nav', 'Navigation', Path('/nonexistent/x'), clock)
+        c = nav_runner.Commander(lease, clock)
+        assert start(c, pid=123, heartbeat=True)[0]
+        c.tick(clock.now, HERE, True, False)
+        clock.now += 1.0
+        c.tick(clock.now, HERE, True, False)
+        assert c.run.state == 'stopped'
 
     def test_events_are_kept_under_the_key_asked_for(self, commander):
         start(commander, log='k1')
